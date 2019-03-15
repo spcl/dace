@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+
+from diode import diode
+
+if __name__ == '__main__':
+    diode.run_main()

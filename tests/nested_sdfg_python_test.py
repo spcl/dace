@@ -1,0 +1,49 @@
+#!/usr/bin/env python
+import numpy as np
+
+import dace as dp
+from dace.sdfg import SDFG
+from dace.memlet import Memlet
+
+N = dp.symbol('N')
+
+
+@dp.program
+def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
+    @dp.map
+    def elements(i: _[0:N], j: _[0:N]):
+        input << A[i, j]
+        output >> B[i, j]
+
+        @dp.program
+        def sdfg_internal(input: dp.float32, output: dp.float32):
+            @dp.tasklet
+            def init():
+                inp << input
+                out >> output
+                out = inp
+
+            for k in range(4):
+
+                @dp.tasklet
+                def do():
+                    inp << input
+                    oin << output
+                    out >> output
+                    out = oin * inp
+
+
+if __name__ == '__main__':
+    print('Nested SDFG test (Python syntax)')
+    # Externals (parameters, symbols)
+    N.set(64)
+
+    input = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
+    output = np.zeros((N.get(), N.get()), dp.float32.type)
+
+    sdfg_with_children(input, output)
+
+    diff = np.linalg.norm(output - np.power(input, 5)) / dp.eval(N * N)
+    print("Difference:", diff)
+    print("==== Program end ====")
+    exit(0 if diff <= 1e-5 else 1)

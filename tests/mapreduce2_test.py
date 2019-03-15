@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+import dace
+import numpy as np
+
+M = dace.symbol('M')
+N = dace.symbol('N')
+K = dace.symbol('K')
+
+A = dace.ndarray([M, N], dtype=dace.float64)
+B = dace.ndarray([N, K], dtype=dace.float64)
+C = dace.ndarray([M, K], dtype=dace.float64)
+
+
+@dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K])
+def mapreduce_test_2(A, B, C):
+    # Transient variable
+    tmp = dace.define_local([M, K, N], dtype=A.dtype)
+
+    @dace.map(_[0:K, 0:N, 0:M])
+    def multiplication(j, k, i):
+        in_A << A[i, k]
+        in_B << B[k, j]
+        out >> tmp[i, j, k]
+
+        out = in_A * in_B
+
+    dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
+
+
+if __name__ == "__main__":
+
+    M.set(50)
+    N.set(20)
+    K.set(5)
+
+    print('Matrix multiplication %dx%dx%d' % (M.get(), N.get(), K.get()))
+
+    # Initialize arrays: Randomize A and B, zero C
+    A[:] = np.random.rand(M.get(), N.get()).astype(dace.float64.type)
+    B[:] = np.random.rand(N.get(), K.get()).astype(dace.float64.type)
+    C[:] = dace.float64(0)
+
+    A_regression = np.ndarray([M.get(), N.get()], dtype=np.float64)
+    B_regression = np.ndarray([N.get(), K.get()], dtype=np.float64)
+    C_regression = np.ndarray([M.get(), K.get()], dtype=np.float64)
+    A_regression[:] = A[:]
+    B_regression[:] = B[:]
+    C_regression[:] = C[:]
+
+    mapreduce_test_2(A, B, C)
+    np.dot(A_regression, B_regression, C_regression)
+
+    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * K))
+    print("Difference:", diff)
+    exit(0 if diff <= 1e-5 else 1)

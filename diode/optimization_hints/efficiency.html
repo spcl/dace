@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Efficiency information</title>
+</head>
+<body>
+    <h1>Efficiency information</h1>    
+    <h2>Formal Definition</h2>
+    <p>
+        The number displayed is defined as <math><mi>eff</mi><mo>=</mo>
+            <mfrac>
+                <mfrac>
+                    <msub>
+                        <mi>T</mi>
+                        <mn>N</mn>
+                    </msub>
+                    <msub>
+                        <mi>T</mi>
+                        <mn>1</mn>
+                    </msub>
+                </mfrac>
+                <mi>N</mi>
+            </mfrac>
+        </math>, for <math><mi>N</mi></math> being the maximum number of threads committed with OMP_NUM_THREADS and <math><msub><mi>T</mi><mi>i</mi></msub></math> begin the time the section took with <math><mi>i</mi></math> threads.
+    </p>
+    <h2>Interpreting efficiency</h2>
+    <p>
+        Efficiency represents scalabilty to many cores. An efficiency close to 100% is desirable, but speedups can happen even with low efficiency. (See speedup) <br>
+        <math><mi>efficiency</mi><mo>&gt;</mo><mn>1</mn></math> implies superscalar speedup. In this case, it is likely that one best solution has been found.
+    </p>
+    <h2>Improving efficiency</h2>
+    <p>
+        Efficiency is affected by multiple parameters. In small programs, removing a parallel section or parallelizing a larger super-section might improve efficiency.
+        Low efficiency can also be caused by contention (<math><mi>speedup</mi><mo>&lt;</mo><mn>1</mn></math>). In this case, using StripMining and InLocalStorage/OutLocalStorage might mitigate contention and improve efficiency.
+    </p>
+    
+</body>
+</html>

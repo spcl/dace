@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Balance information</title>
+</head>
+<body>
+
+    <h1>Balance information</h1>    
+    <h2>Formal Definition</h2>
+    <p>
+        Balance actually describes the imbalance of the result.
+        The number displayed is defined as the maximum difference of each thread over multiple runs, <math><mi>i</mi><mo>in</mo> <mi>runs</mi></math>: <math><mi>max</mi><mo>(</mo><mi>abs</mi><mo>(</mo><msub><mi>C</mi><mi>i</mi></msub> <mo>-</mo> <munder><mi>mean</mi> <mi>j</mi></munder><msub><mi>C</mi><mi>j</mi></msub><mo>)</mo><mo>)</mo></math>
+    </p>
+    <h2>Interpreting Balance</h2>
+    <p>
+        Balance is an indicator of the health of the result. Specifically, runs with a balance number of <math><mo>></mo><mn>1</mn></math> should always be repeated.<br>
+        High balance numbers can also be indicators for unbalanced workloads, where one core is doing significantly more work than another.
+    </p>
+    <h2>Improving Balance</h2>
+    <p>
+        The balance number can be improved by reducing the difference in workload between different cores. If the current workload is very small, increasing the workload might also help.
+    </p>
+    
+</body>
+</html>

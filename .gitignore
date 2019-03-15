@@ -102,3 +102,60 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Windows
+Thumbs.db
+
+# Ignore files built by Visual Studio [code]
+*.obj
+*.exe
+*.pdb
+*.user
+*.dot
+*.jpg
+*.aps
+*.pch
+*.vspscc
+*_i.c
+*_p.c
+*.ncb
+*.suo
+*.tlb
+*.tlh
+*.bak
+*.cache
+*.ilk
+[Bb]in
+[Dd]ebug*/
+*.lib
+*.sbr
+obj/
+[Rr]elease*/
+_ReSharper*/
+[Tt]est[Rr]esult*
+.vs/
+.vscode/
+src.VC.db
+src.VC.VC.opendb
+*.exp
+
+# DaCe
+.dacecache/
+out.sdfg
+*.dot
+*.out
+results.log
+perf.json
+perf*.csv
+/dace/frontend/octave/parsetab.py
+
+# Xilinx
+xilinx_vcu1525_*
+sdaccel_profile_*
+sdaccel_timeline_*
+
+# NVIDIA
+*.nvprof
+
+# Miscellaneous
+*~

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <script src="dagre.js"></script> <!-- Graph library. -->
+    <script src="renderer_util.js"></script> <!-- Offloaded display functions and classes -->
+    <script src="sdfg_renderer.js"></script> <!-- Offloaded SDFG drawing functions -->
+    <script src="datahelper.js"></script> <!-- Offloaded data analysis functions and classes -->
+    <script src="Chart.bundle.min.js"></script> <!-- Library for charts -->
+
+
+    <script src="parallelization_button.js"></script>
+    <script src="memory_button.js"></script>
+    <script src="windowing.js"></script>
+    <script src="DataViewSettings.js"></script>
+    <script>
+        window.onload = () => {
+            console.log("Creating settings window");
+            let _thisclient = new SettingsWindow(window);
+            console.log("Logic initialization done");
+            window._thisclient = _thisclient;
+        };
+    </script>
+</head>
+<body>
+    <h3>Settings for $NAME</h3>    
+    <div id="settingsdiv">
+        <!-- Setting options should be inserted here... -->
+
+    </div>
+</body>
+</html>

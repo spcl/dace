@@ -1,0 +1,740 @@
+<html>
+
+<head>
+    <meta charset="utf-8" />
+</head>
+
+<body>
+    <canvas id="myCanvas" width="1200" height="1200" style="border:1px solid #000000;"> </canvas>
+    <script src="global_vars.js"></script> <!-- Global defines -->
+    <script src="dagre.js"></script> <!-- Graph library -->
+    <script src="renderer_util.js"></script> <!-- Offloaded display functions and classes -->
+    <script src="sdfg_renderer.js"></script> <!-- Offloaded SDFG drawing functions -->
+    <script src="datahelper.js"></script> <!-- Offloaded data analysis functions and classes -->
+    <script src="Chart.bundle.min.js"></script> <!-- Library for charts -->
+    
+    <!-- Offloaded button constructors -->
+    <script src="parallelization_button.js"></script>
+    <script src="memory_button.js"></script>
+
+    <!-- Subwindow magic -->
+    <script src="windowing.js"></script>
+
+    <script>
+
+        var socket = 0; // this is the websocket we use to communicate with the Python part
+        var LINEHEIGHT = 10;
+        var current_sdfg = 0;
+
+        var global_state = null;
+
+        // This is a zoom function
+        // To be called only by DIODE itself!
+        window.zoom_func = scale => {
+            console.log("Zooming");
+            global_state.canvas_manager.scale(scale);
+        };
+
+        window.get_zoom = () => {
+            return global_state.canvas_manager.getScale();
+        };
+
+        window.onerror = (msg, url, lineNo, colNo, error) => {
+            if(error == null) {
+                console.log("Error object was null.");
+            }
+            console.log("Error: " + msg + " in " + url.toString() + ":" + lineNo + ":" + colNo);
+            console.log("Error occurred.\n" + error.message);
+        }
+
+        window.onload = function () {
+            global_state = new SdfgState();
+            global_state.setCtx(document.getElementById("myCanvas").getContext("2d"));
+            socket = new WebSocket('ws://localhost:8023/');
+            setInterval(x => socket.send(JSON.stringify({ "msg_type": "heartbeat" })), 100); // Set the heartbeat.
+            socket.onopen = function (event) {
+                socket.send(JSON.stringify({"msg_type": "info", "info": "client connected"}));
+            }
+            socket.onmessage = function (event) {
+                message_handler(event.data);
+            }
+            socket.onclose = function (event) {
+                console.log("Connection closed");
+            }
+            socket.onerror = function (event) {
+                console.log("There was an error with the connection");
+            }
+            
+        }
+
+        document.getElementById("myCanvas").addEventListener('click', function(event) { 
+            let x = event.pageX - document.getElementById("myCanvas").offsetLeft;
+            let y = event.pageY - document.getElementById("myCanvas").offsetTop;
+            
+            if(window.get_zoom != undefined) {
+                x /= window.get_zoom();
+                y /= window.get_zoom();
+            }
+
+            clicked_elements = [];
+            current_sdfg.nodes.forEach(function (state) {
+                if (isWithinBB(x,y, state.attributes.layout)) {
+                    let elem = {'type': state.attributes.type, 'id': state.id};
+                    clicked_elements.push(elem);
+                    state.attributes.nodes.forEach(function (node) {
+                        if (isWithinBB(x,y, node.attributes.layout)) {
+                            let elem = {'type': node.attributes.type, 'id': node.id};
+                            clicked_elements.push(elem);
+                        }
+                    });
+                }
+            });
+            socket.send(JSON.stringify({"msg_type": "click", "clicked_elements": clicked_elements}));
+        });
+
+
+        class SdfgState {
+            constructor() {
+                this.ctx = null;
+                this.sdfg = null;
+                this.perfdata = null;
+                this.graph = null;
+                this.top_level_graph = null;
+                this.state_graphs = {};
+                this.canvas_manager = null;
+                this.brackets = [];
+
+                this.target_memory_speed = 0;
+
+                this.highlights = []; // List of tuples of stateid and nodeid to highlight.
+
+                this.graphcache = {}; // Cache for the graphs
+            }
+
+
+            setTargetMemBandwidth(target_bandwidth) {
+                console.log("Target memory speed:" + target_bandwidth);
+                this.target_memory_speed = target_bandwidth;
+            }
+            defaultRun() {
+                return this.perfdata.payload.find(x => x.runopts == "# ;export OMP_NUM_THREADS=4; Running in multirun config").data;
+            }
+            setCtx(ctx) { this.ctx = ctx; this.canvas_manager = new CanvasDrawManager(ctx, this); this.canvas_manager.draw(); }
+            setSDFG(sdfg) { this.sdfg = sdfg; this.graphcache = {}; }
+            setPerfData(pd) { this.perfdata = pd; }
+            clearPerfData() { this.perfdata = null; this.brackets = []; }
+            addHighlight(hl) {
+                this.highlights.push(hl);
+            }
+            clearHighlights() {
+                this.highlights = [];
+            }
+
+            setGraph(stateid, g) { this.state_graphs[stateid] = g; }
+
+            setTopLevelGraph(g) { ObjectHelper.assert("g valid", g != null); this.top_level_graph = g; }
+
+            nodeid(unified) {
+                return unified & 0xFFFF;
+            }
+
+            // Passed through from graph
+            node(stateid, nodeid) {
+                return this.state_graphs[stateid].node(this.nodeid(nodeid));
+            }
+
+            addBracket(b) {
+                this.brackets.push(b);
+            }
+
+            drawSDFG() {
+                let g = this.top_level_graph;
+                if(g == null) return; // Nothing to draw (yet)
+                paint_sdfg(g, this.sdfg, new DrawNodeState(this.ctx, -1));
+
+                // Draw what is inside the state boxes, offset by the top 
+                // left corner of the state box
+                this.sdfg.nodes.forEach(state => {
+                    let state_x_offs = g.node(state.id).x - g.node(state.id).width / 2.0;
+                    let state_y_offs = g.node(state.id).y - g.node(state.id).height / 2.0;
+                    let ctx = this.ctx;
+                    ctx.fillText(state.id, state_x_offs+1.0*LINEHEIGHT, state_y_offs+1.0*LINEHEIGHT);
+                    let state_g = null;
+                    if(cache_graphs && (state.id in this.graphcache)) {
+                        state_g = this.graphcache[state.id];
+                    }
+                    else {
+                        if (state.attributes.collapsed == true) {
+                            state_g = new dagre.graphlib.Graph();
+                            g.setGraph({});
+                            g.setDefaultEdgeLabel(function (u, v) { return {}; });
+                            dagre.layout(g);
+                        }
+                        else {
+                            state_g = layout_state(state.attributes);
+                            addXYOffset(state_g, state_x_offs + 2*LINEHEIGHT, state_y_offs+2*LINEHEIGHT);
+                            this.graphcache[state.id] = state_g;
+                        }
+
+                    }
+                    
+                    paint_state(state_g, new DrawNodeState(ctx, state.id));
+                });
+            }
+
+            // drawPerfInfo for all states
+            drawAllPerfInfo() {
+                let states = ObjectHelper.flatten(this.defaultRun().map(x => new SuperSection(x).allSectionStateIds()));
+                states = MathHelper.unique(states);
+                ObjectHelper.logObject("All states", states);
+                for(let x of states) {
+                    this.drawPerfInfo(x);
+                }
+            }
+
+            drawPerfInfo(stateid) {
+                let ctx = this.ctx;
+
+                let scopedict = {};
+
+                let payload = this.perfdata.payload;
+
+                // Check correctness of data
+                let x = new ResultVerifier(payload);
+
+                // There are 2 types of nodes: Those that open a scope 
+                // (MapEntry) and those that don't (the rest).
+                // We search first for all section entry nodes.
+                let all_entry_nodes = ObjectHelper.flatten(this.defaultRun().map(x => new SuperSection(x).allSectionNodeIds(stateid)));
+                // Filter that down to uniques.
+                all_entry_nodes = MathHelper.unique(all_entry_nodes);
+                // For every entry node, we create an array.
+                for(let tmp of all_entry_nodes) {
+                    scopedict[tmp] = [];
+                }
+                // Add an extra one for the top-level
+                scopedict[null] = [];
+
+
+                for(let sdfgnode of this.sdfg.nodes) {
+                    if(sdfgnode.id != stateid) continue;
+                    for(let node of sdfgnode.attributes.nodes) {
+                        let gnode = this.node(stateid, node.id);
+                        if(gnode == undefined) {
+                            console.log("Welp. How did this happen? (undefined gnode for (" + stateid + ", " + node.id + "))");
+                        }
+                        else {
+                            let anchor_x = gnode.x + gnode.width / 2.;
+                            let anchor_y = gnode.y - gnode.height / 2;
+
+                            // We are only interested in scopes for now.
+                            // Ordering scopes "upside down", because an 
+                            // entry node is not marked as scope entry, but 
+                            // nodes inside that scope have a link to the 
+                            // starting node.
+                            if(node.scope_entry != null) {
+                                // This node has a scope entry. Add this node to the dict with the key of the entry node (reverse the mapping basically)
+                                if(scopedict[node.scope_entry] == undefined) {
+                                    scopedict[node.scope_entry] = [];
+                                    console.log("Had to create an array for unknown entry node " + node.scope_entry);
+                                }
+                                scopedict[node.scope_entry].push(this.nodeid(node.id));
+                            }
+                        }
+                    }
+                }
+
+
+                // Topologically sort scopes
+                let sorted_array = [];
+                {
+                    let changed = true;
+                    while(changed) {
+                        changed = false;
+                        
+                        for(let key in scopedict) {
+                            // Skip objects already taken
+                            if(sorted_array.some(e => e == key)) continue; 
+
+
+                            // For each array, check if the selected key is a dependency. If it is, check next (we are going outside -> inside)
+                            let retry = false;
+                            Object.keys(scopedict).forEach(e => {
+                                if(scopedict[e].some(o => o == key && !sorted_array.some(x => x == e))) {
+                                    retry = true;
+                                }
+                            });
+                            if(retry) continue;
+                            
+                            // Otherwise, we'll have a change
+                            changed = true;
+
+                            // Add the key to the sorted array
+                            sorted_array.push(key);
+                        }
+
+                    }
+                }
+
+                // Since we now have the sorted array, but in the wrong 
+                // order, reverse it.
+                let sa = sorted_array.reverse();
+
+                for(let k of sa) {
+                    if(k == null) break;
+                    if(k == "null") break;
+
+                    if(!all_entry_nodes.map(x => x.toString()).includes(k.toString())) {
+                        continue; // Skip nodes for which we don't have performance data.
+                    }
+
+                    // From the key, we can read the affected nodes
+                    let affected = new Array();
+                    affected.push(k);
+                    let tmp = scopedict[k];
+                    affected.push(...tmp);
+
+
+                    // Now get the maximum and minimum y-positions
+                    let top = min_func(affected, x => {
+
+                        let gnode = this.node(stateid, x);
+
+                        return gnode.y - gnode.height / 2;
+                    });
+                    let bot = max_func(affected, x => {
+                        let gnode = this.node(stateid, x);
+
+                        return gnode.y + gnode.height / 2;
+                    });
+
+                    // Now we just have to do the same for the right side :)
+                    let right = max_func(affected, x => {
+                        let gnode = this.node(stateid, x);
+
+                        return gnode.x + gnode.width / 2;
+                    });
+
+                    let b = new Bracket(ctx);
+                    global_state.addBracket(b);
+
+
+                    let sections = this.defaultRun();
+                    let targetsection = null;
+                    // Only selects one single section
+                    for(let section of sections) {
+                        let clsec = new SuperSection(section);
+                        ObjectHelper.assert("correct type", clsec instanceof SuperSection);
+                                                
+                        if(clsec.containsSection(k, stateid)) {
+                            targetsection = clsec.toSection(k, stateid);
+                            if(targetsection === undefined) continue;
+                            break; 
+                        }
+                    }
+                    if(targetsection == null) {
+                        console.log("Failed to obtain a valid section!");
+                        if(targetsection_ignore_error) continue; 
+                    }
+                    ObjectHelper.assert("targetsection valid", targetsection != null);
+                    
+                    let path_analysis = new CriticalPathAnalysis(this.perfdata.payload, k, stateid).analyze();
+
+                    // Same thing as above, now for multiple runs.
+                    let all_threads_data = sections.map(x => new SuperSection(x).toSection(k, stateid)).filter(x => x != undefined && x._entries != undefined).map(x => new ThreadAnalysis(x).analyze());
+                    let all_threads_data_supersection = sections.map(x => new SuperSectionThreadAnalysis(new SuperSection(x), k, stateid).analyze());
+                    let all_analyses = new DataBlock(all_threads_data, "all_threads");
+
+                    let but1 = new ParallelizationButton(ctx, targetsection, all_analyses, path_analysis);
+                    b.addButton(but1);
+
+                    let oldcode = () => {
+                        // #TODO: Before running the memory analysis, we should group the same sections (i.e. the sections with the same nodeids together)
+                        // This way, sections are grouped by nodeid and threadid, so every section only has 1 node and 1 thread if certain conditions apply.
+                        let presel = sections.filter(x => x['entry_node'] == k);
+                        // After preselecting, merge all ENTRIES with the same thread together to subgroups
+                        let entries = presel.map(x => x.entries);
+                        let grouped = ObjectHelper.groupBy(entries, x => {  return x[0]['node']; }); // #TODO: Thread_id is not yet an element in the dict
+                        ObjectHelper.assert("Grouped length should be 1", grouped.length == 1); // Only true when considering sections containing only 1 node
+                        grouped = grouped[0];
+                        let flattened = ObjectHelper.flatten(grouped);
+                        let threadgrouped = ObjectHelper.groupBy(flattened, x => x['thread']);
+                        let merged_section = {
+                            "entry_node": presel[0]['entry_node'],
+                            "static_movement": MathHelper.sum(presel.map(x => parseInt(x['static_movement']))),
+                            "entries": flattened
+                        };
+                        // Merge the nodes and then pass to the constructor 
+                        // below
+                        let all_mem_analyses = new DataBlock(sections.filter(x => x['entry_node'] == k).map(x => new MemoryAnalysis(new Section(x), global_state.target_memory_speed).analyze()), "all_thread_mem");
+                    };
+
+                    //ObjectHelper.logObject("sections", sections);
+                    let supersections = sections.map(x => new SuperSection(x));
+                    
+                    let memsubsel = supersections.map(x => x.getSections(k, stateid)).filter(x => x != undefined);
+                    // Flattening is a bad idea here because it does not group sections together
+                    memsubsel = ObjectHelper.flatten(memsubsel);
+                    let all_mem_analyses = new DataBlock(memsubsel.map(x => new MemoryAnalysis(new Section(x)).analyze()).filter(x => x != undefined), "all_thread_mem");
+                    
+                    // Try with a full supersection analysis
+                    let supersection_all_mem_analyses = new DataBlock(sections.map(x => new SuperSectionMemoryAnalysis(new SuperSection(x), k, stateid, global_state.target_memory_speed).analyze()).filter(x => x != null), "all_thread_mem");
+
+                    all_mem_analyses = supersection_all_mem_analyses;
+
+                    let but2 = new MemoryButton(ctx, all_mem_analyses, global_state.target_memory_speed);
+                    b.addButton(but2);
+
+
+
+                    let but3 = new Button(ctx);
+                    but3.setOnEnterHover(p => { but3.color = "#0000FF"; });
+                    but3.setOnLeaveHover(p => { but3.color = "orange"; });
+
+                    but1.setOnDoubleClick(p => {
+                        let newwin = new DiodeWindow(window);
+                        newwin.setSenderData({ 
+                            className: "ParallelizationButton",
+                            dataParams: but1.dataparams
+                        });
+                        let subwin = newwin.open("subwindow.html", "_blank");
+                        if(!subwin) {
+                            console.log("Failed to open subwindow");
+                            alert("failed to open subwindow");
+                        }
+
+                        return true;
+                    });
+                    but2.setOnDoubleClick(p => {
+                        let newwin = new DiodeWindow(window);
+                        newwin.setSenderData({ 
+                            className: "MemoryButton",
+                            dataParams: but2.dataparams
+                        });
+                        let subwin = newwin.open("subwindow.html", "_blank");
+                        if(!subwin) {
+                            console.log("Failed to open subwindow");
+                            alert("failed to open subwindow");
+                        }
+
+                        return true;
+                    });
+
+                    b.addButton(but3);
+
+                    b.setupEventListeners();
+                    
+                    b.drawEx(new Pos(right, top), new Pos(right, bot), 50, 20, true, () => {});
+
+                    this.canvas_manager.addDrawable(b);
+                }
+            }
+
+        }
+
+        function message_handler(msg) {
+            let sdfg = JSON.parse(msg);
+            if (sdfg.type == "SDFG") {
+                global_state.clearPerfData();
+                global_state.canvas_manager.clearDrawables();
+                global_state.setSDFG(sdfg); // Set the SDFG to a global helper
+                current_sdfg = sdfg;
+
+                // New SDFG also means completely cleared brackets.
+                for(let x of global_state.brackets) {
+                    x.destroy();
+                }
+                global_state.brackets = [];
+                global_state.graphcache = {};
+                global_state.canvas_manager.clearDrawables();
+            }
+            else if(sdfg.type == "PerfInfo") {
+                global_state.setPerfData(sdfg);
+                global_state.canvas_manager.clearDrawables();
+                global_state.drawAllPerfInfo();
+                return;
+            }
+            else if(sdfg.type == "MemSpeed") {
+                global_state.setTargetMemBandwidth(sdfg.payload);
+                return;
+            }
+            else if(sdfg.type == "highlight-element") {
+                let tmp = {
+                    "state-id": sdfg['sdfg-id'],
+                    "node-id": sdfg['node-id']
+                };
+                global_state.addHighlight(tmp);
+                return;
+            }
+            else if(sdfg.type == "clear-highlights") {
+                global_state.clearHighlights();
+                return;
+            }
+            else {
+                console.log("Expected to receive an SDFG, but I got " + msg);
+                return;
+            }
+
+            
+
+            // draw the state boxes
+            let g = layout_sdfg(sdfg);
+            let bb = calculateBoundingBox(g);
+            let cnvs = document.getElementById("myCanvas");
+            cnvs.width = Math.min(Math.max(bb.width + 1000, cnvs.width), 16384);
+            cnvs.height = Math.min(Math.max(bb.height + 1000, cnvs.height), 16384);
+            paint_sdfg(g, null, new DrawNodeState(global_state.ctx, -1));
+
+            global_state.setTopLevelGraph(g);
+
+            // draw what is inside the state boxes, offset by the top left corner of the state box
+            sdfg.nodes.forEach(function (state) {
+                let state_x_offs = g.node(state.id).x - g.node(state.id).width / 2.0;
+                let state_y_offs = g.node(state.id).y - g.node(state.id).height / 2.0;
+                let ctx = document.getElementById("myCanvas").getContext('2d');
+                ctx.fillText(state.id, state_x_offs+1.0*LINEHEIGHT, state_y_offs+1.0*LINEHEIGHT);
+                let state_g = layout_state(state.attributes);
+                addXYOffset(state_g, state_x_offs + 2*LINEHEIGHT, state_y_offs+2*LINEHEIGHT);
+                paint_state(state_g, new DrawNodeState(ctx, state.id));
+                global_state.setGraph(state.id, state_g);
+            });
+
+        }
+
+        function isWithinBB(x, y, layoutinfo) {
+            if ((x > layoutinfo.x - layoutinfo.width/2.0) && 
+                (x < layoutinfo.x + layoutinfo.width/2.0) &&
+                (y > layoutinfo.y - layoutinfo.height/2.0) &&
+                (y < layoutinfo.y + layoutinfo.height/2.0)) {
+                    return true;
+            }
+            return false;
+        }
+
+        function addXYOffset(g, x_offs, y_offs) {
+            "use strict";
+            g.nodes().forEach(function (v) {
+                g.node(v).x += x_offs;
+                g.node(v).y += y_offs;
+            });
+            g.edges().forEach(function (e) {
+                let edge = g.edge(e);
+                edge.x += x_offs;
+                edge.y += y_offs;
+                edge.points.forEach(function (p) {
+                    p.x += x_offs;
+                    p.y += y_offs;
+                }); 
+            });
+        }
+
+        function paint_sdfg(g, sdfg, drawnodestate) {
+
+            ObjectHelper.assert("drawnodestate must be defined", drawnodestate != undefined);
+
+            let ctx = drawnodestate.ctx;
+
+            g.nodes().forEach( v => {
+                let topleft_x = g.node(v).x - g.node(v).width / 2.0;
+                let topleft_y = g.node(v).y - g.node(v).height / 2.0;
+                
+                ctx.beginPath();
+                ctx.moveTo(topleft_x, topleft_y);
+                ctx.lineTo(topleft_x + g.node(v).width, topleft_y);
+                ctx.lineTo(topleft_x + g.node(v).width, topleft_y+g.node(v).height);
+                ctx.lineTo(topleft_x, topleft_y+g.node(v).height);
+                ctx.lineTo(topleft_x, topleft_y);
+                ctx.closePath();
+                ctx.strokeStyle="blue";
+                ctx.stroke();
+
+            });
+            g.edges().forEach(e => {
+                drawnodestate.draw_edge(g.edge(e));
+            });
+        
+        }
+
+        function layout_sdfg(sdfg) {
+
+            // layout the sdfg as a dagre graph
+            let g = new dagre.graphlib.Graph();
+
+            let ctx = global_state.ctx;
+
+            // Set an object for the graph label
+            g.setGraph({});
+
+            // Default to assigning a new object as a label for each new edge.
+            g.setDefaultEdgeLabel(function (u, v) { return {}; });
+
+            // layout each state to get its size
+            sdfg.nodes.forEach(function (state) {
+                let stateinfo = {};
+                stateinfo.label = state.id;
+                if (state.attributes.collapsed == true) {
+                    stateinfo.width = ctx.measureText(stateinfo.label).width;
+                    stateinfo.height = LINEHEIGHT;
+                } 
+                else {
+                    let state_g = layout_state(state.attributes);
+                    stateinfo = calculateBoundingBox(state_g);
+                }
+                stateinfo.width += 4*LINEHEIGHT;
+                stateinfo.height += 4*LINEHEIGHT;
+                g.setNode(state.id, stateinfo);
+            });
+
+            sdfg.edges.forEach(function (edge) {
+                let label = edge.attributes
+                let ctx = document.getElementById("myCanvas").getContext('2d');
+                let textmetrics = ctx.measureText(label);
+                g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width });
+            });
+
+            dagre.layout(g);
+
+            // annotate the sdfg with its layout info
+            sdfg.nodes.forEach(function (state) {
+                let gnode = g.node(state.id);
+                state.attributes.layout = {};
+                state.attributes.layout.x = gnode.x;
+                state.attributes.layout.y = gnode.y;
+                state.attributes.layout.width = gnode.width;
+                state.attributes.layout.height = gnode.height;
+            });
+
+            sdfg.edges.forEach(function (edge) {
+                let gedge = g.edge(edge.src, edge.dst);
+                edge.attributes = {};
+                // FIXME: edge.attributes should be an object when we generate json SDFG in Python
+                edge.attributes.label = gedge.label; 
+                edge.attributes.layout = {};
+                edge.attributes.layout.width = gedge.width;
+                edge.attributes.layout.height = gedge.height;
+                edge.attributes.layout.x = gedge.x;
+                edge.attributes.layout.y = gedge.y;
+                edge.attributes.layout.points = gedge.points;
+            });
+
+            return (g);
+
+        }
+
+        function layout_state(sdfg_state) {
+            // layout the state as a dagre graph
+
+            let g = new dagre.graphlib.Graph();
+
+            // Set an object for the graph label
+            g.setGraph({});
+
+            // Default to assigning a new object as a label for each new edge.
+            g.setDefaultEdgeLabel(function (u, v) { return {}; });
+
+            // Add nodes to the graph. The first argument is the node id. The 
+            // second is metadata about the node (label, width, height),
+            // which will be updated by dagre.layout (will add x,y).
+
+            sdfg_state.nodes.forEach(function (node) {
+                let nodesize = calculateNodeSize(sdfg_state, node)
+                node.attributes.layout = {}
+                node.attributes.layout.width = nodesize.width;
+                node.attributes.layout.height = nodesize.height;
+                node.attributes.layout.label = node.attributes.label;
+                node.attributes.layout.type = node.attributes.type;
+                node.attributes.layout.in_connectors = node.attributes.in_connectors;
+                node.attributes.layout.out_connectors = node.attributes.out_connectors;
+                g.setNode(node.id, node.attributes.layout);
+            });
+
+            sdfg_state.edges.forEach(function (edge) {
+                let label = edge.attributes.label
+                let ctx = document.getElementById("myCanvas").getContext('2d');
+                let textmetrics = ctx.measureText(label);
+                g.setEdge(edge.src, edge.dst, { label: label, height: LINEHEIGHT, width: textmetrics.width });
+            });
+
+            dagre.layout(g);
+            return g;
+        }
+
+        function calculateNodeSize(sdfg_state, node) {
+            let ctx = document.getElementById("myCanvas").getContext('2d');
+            let labelsize = ctx.measureText(node.attributes.label).width;
+            let inconnsize = 0;
+            let outconnsize = 0;
+            node.attributes.in_connectors.forEach(function(conn) {
+                // add 10px of margin around each connector
+                inconnsize += ctx.measureText(conn).width + 10;
+            });
+            node.attributes.out_connectors.forEach(function(conn) {
+                // add 10px of margin around each connector
+                outconnsize += ctx.measureText(conn).width + 10;
+            });
+            let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
+            let maxheight = 2*LINEHEIGHT;
+            if (node.attributes.in_connectors.length + node.attributes.out_connectors.length > 0) {
+                maxheight += 4*LINEHEIGHT;
+            }
+
+            let size = { width: maxwidth, height: maxheight }
+
+            // add something to the size based on the shape of the node
+            if (node.attributes.type == "ArrayNode") {
+                size.width += size.height;
+            }
+            else if (node.attributes.type == "MapEntry") {
+                size.width += 2.0 * size.height;
+            }
+            else if (node.attributes.type == "MapExit") {
+                size.width += 2.0 * size.height;
+            }
+            else if (node.attributes.type == "Tasklet") {
+                size.width += 2.0 * (size.height / 3.0);
+            }
+            else if (node.attributes.type == "Reduce") {
+                size.width *= 2;
+                size.height = size.width / 3.0;
+            }
+            else {
+            }
+
+            return size
+        }
+
+
+
+        function calculateBoundingBox(g) {
+            // iterate over all objects, calculate the size of the bounding box
+            let bb = {};
+            bb.width = 0;
+            bb.height = 0;
+
+            g.nodes().forEach(function (v) {
+                let x = g.node(v).x + g.node(v).width / 2.0;
+                let y = g.node(v).y + g.node(v).height / 2.0;
+                if (x > bb.width) bb.width = x;
+                if (y > bb.height) bb.height = y;
+            });
+
+            return bb;
+        }
+
+        
+
+        function paint_state(g, drawnodestate) {
+            g.nodes().forEach(function (v) {
+                drawnodestate.draw_node(g.node(v), v);
+            });
+            g.edges().forEach(function (e) {
+                let edge = g.edge(e);
+                ObjectHelper.assert("edge invalid", edge);
+                drawnodestate.draw_edge(g.edge(e));
+            });
+        }
+
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,602 @@
+# Schema file for DaCe Preferences
+
+# Metadata fields for elements:
+#   type: any python type (dict, list, int, bool, float, str)
+#   title: short name to show in GUI
+#   description: tooltip to show in GUI
+#   required: required sub-fields (for dict fields)
+#   default: default value. Can be platform-specific (see below)
+#   default_<platformname>: default value for platform <platformname> (overrides default)
+#   template_vars: template variables to include when processing (str fields only)
+
+# Top-level element is a dictionary (record)
+type: dict
+title: General
+description: DaCe Preferences
+required:
+    #############################################
+    # Categories
+    optimizer:
+        type: dict
+        title: Optimizer
+        description: Preferences of the SDFG Optimizer
+        required:
+            autospecialize:
+                type: bool
+                default: false
+                title: Auto-specialize symbols
+                description: >
+                    Automatically specialize every SDFG to the symbol values 
+                    at call-time. Requires all symbols to be set.
+
+            interface:
+                type: bool
+                default: dace.transformation.optimizer.SDFGOptimizer
+                title: SDFG Optimizer
+                description: >
+                    SDFG optimization class to import and call automatically
+                    on compilation. Defaults to the transformation CLI, empty
+                    string or an invalid class name skips the process.
+
+            visualize:
+                type: bool
+                default: false
+                title: Visualize SDFG
+                description: Open a GraphViz window after every transformation.
+
+            savedots:
+                type: bool
+                default: false
+                title: Save dot files
+                description: Save GraphViz .dot files after every transformation.
+
+            automatic_state_fusion:
+                type: bool
+                default: true
+                title: Automatic strict transformations
+                description: >
+                    Automatically performs strict transformations 
+                    that are considered to be safe.
+
+            detect_control_flow:
+                type: bool
+                default: true 
+                title: Detect control flow from state transitions
+                description: >
+                    Attempts to infer control flow constructs "if", 
+                    "for" and "while" from state transitions, allowing 
+                    code generators to generate appropriate code. 
+
+    renderer:
+        type: dict
+        title: Renderer
+        description: Preferences of the SDFG Renderer
+        required:
+            fulledges:
+                type: bool
+                default: false
+                title: Show full edges
+                description: >
+                    If enabled, prints out the full edge labels (which may be 
+                    long due to complex indexing).
+            html5renderer:
+                type: bool
+                default: false
+                title: (EXPERIMENTAL) HTML5 Rendering Engine
+                description: >
+                    If enabled, uses an HTML5-based renderer to display SDFGs. 
+                    This allows to visualize performance data, but is still experimental. 
+
+    compiler:
+        type: dict
+        title: Compiler
+        description: Preferences of the compiler
+        required:
+            use_cache:
+                type: bool
+                default: false
+                title: Use cache
+                description: >
+                    If enabled, does not recompile code generated from SDFGs 
+                    if shared library (.so/.dll) file is present.
+
+            library_extension:
+                type: str
+                default: so
+                default_Linux: so
+                default_Windows: dll
+                default_Darwin: dylib
+                title: Library extension
+                description: File extension of shared libraries.
+
+            indentation_spaces:
+                type: int
+                default: 4
+                title: Indentation width
+                description: >
+                    Number of spaces used when indenting generated code.
+
+            build_type:
+                type: str
+                default: Release
+                title: Build configuration
+                description: >
+                    Configuration type for CMake build (can be Debug, Release,
+                    RelWithDebInfo, or MinSizeRel).
+
+            allow_shadowing:
+                type: str
+                default: false 
+                title: Allow variable shadowing
+                description: >
+                   Allowing shadowing of variables in the code (reduces
+                   exceptions to warnings when shadowing is encountered).
+                   
+            #############################################
+            # CPU compiler
+            cpu:
+                type: dict
+                title: CPU
+                description: CPU compiler preferences
+                required:
+                    executable:
+                        type: str
+                        default: g++
+                        default_Windows: cl
+                        title: Compiler executable name
+                        description: File path or name of compiler executable
+
+                    args:
+                        type: str
+                        title: Arguments
+                        description: Compiler argument flags
+                        default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
+
+                    additional_args:
+                        type: str
+                        title: Extra Arguments
+                        description: Additional arguments provided by users
+                        default: ''
+
+                    libs:
+                        type: str
+                        title: Additional libraries
+                        description: Additional linked libraries required by target
+                        default: ''
+                        
+            #############################################
+            # GPU (CUDA) compiler
+            cuda:
+                type: dict
+                title: GPU
+                description: GPU (CUDA) compiler preferences
+                required:
+                    executable:
+                        type: str
+                        default: nvcc
+                        title: Compiler executable name
+                        description: File path or name of compiler executable
+
+                    args:
+                        type: str
+                        title: Arguments
+                        description: Compiler argument flags
+                        default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+
+                    cuda_arch:
+                        type: str
+                        title: Additional CUDA architectures
+                        description: >
+                            Additional CUDA architectures (separated by commas)
+                            to compile GPU code for, excluding the current 
+                            architecture on the compiling machine.
+                        default: '35'
+                
+                    default_block_size:
+                        type: str
+                        title: Default thread-block size
+                        description: >
+                            Default thread-block size for CUDA kernels when
+                            explicit GPU block maps are not defined.
+                        default: '32,1,1'
+
+                    max_concurrent_streams:
+                        type: int
+                        title: Concurrent CUDA streams
+                        description: >
+                            Maximum number of concurrent CUDA streams to 
+                            generate. Special values: -1 only uses the 
+                            default stream, 0 uses infinite concurrent streams.
+                        default: 0
+
+                    additional_args:
+                        type: str
+                        title: Extra Arguments
+                        description: Additional arguments provided by users
+                        default: ''
+
+                    libs:
+                        type: str
+                        title: Additional libraries
+                        description: Additional linked libraries required by target
+                        default: ''
+
+            #############################################
+            # FPGA (Xilinx) compiler flags
+            xilinx:
+                type: dict
+                title: Xilinx 
+                description: FPGA (Xilinx) compiler preferences
+                required:
+
+                    mode:
+                        type: str 
+                        default: simulation 
+                        title: Compilation mode 
+                        description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware) 
+
+                    executable:
+                        type: str
+                        default: xocc
+                        title: SDAccel compiler executable path 
+                        description: File path or name of SDAccel binary (xocc) 
+
+                    platform:
+                        type: str
+                        default: xilinx_vcu1525_dynamic_5_1 
+                        title: Target platform for xocc
+                        description: Platform name of SDAccel target.
+
+                    enable_debugging:
+                        type: bool 
+                        default: false 
+                        title: Enable debugging for hardware kernels 
+                        description: >
+                            Injects debugging cores on the interfaces of the
+                            kernel, allowing fine-grained debugging of hardware
+                            runs at the cost of additional resources. This is
+                            always enabled for emulation runs.
+
+                    host_flags:
+                        type: str
+                        title: Host arguments
+                        description: Extra host compiler argument flags
+                        default: "-Wno-unknown-pragmas -Wno-unused-label"
+
+                    synthesis_flags:
+                        type: str
+                        title: Synthesis arguments 
+                        description: High-level synthesis C++ flags 
+                        default: "-std=c++11"
+
+                    build_flags:
+                        type: str
+                        title: Arguments
+                        description: Kernel build (xocc) C++ flags 
+                        default: ""
+                        
+            #############################################
+            # MPI compiler
+            mpi:
+                type: dict
+                title: MPI
+                description: MPI compiler preferences
+                required:
+                    executable:
+                        type: str
+                        default: mpicxx
+                        title: Compiler executable name
+                        description: File path or name of compiler executable
+            
+            #############################################
+            # Linker
+            linker:
+                type: dict
+                title: Linker
+                description: Linker preferences
+                required:
+                    executable:
+                        type: str
+                        default: g++
+                        default_Windows: cl
+                        title: Linker executable name
+                        description: File path or name of linker executable
+
+                    args:
+                        type: str
+                        title: Arguments
+                        description: Linker argument flags
+                        default: ''
+
+                    additional_args:
+                        type: str
+                        title: Extra Arguments
+                        description: Additional arguments provided by users
+                        default: ''
+                        template_envvars:
+                            - CUDA_PATH
+
+                    library_prefix:
+                        type: str
+                        title: Library argument prefix
+                        description: >
+                            Argument prefix to add before each added library.
+                        default: '-l'
+                        default_Windows: ''
+
+                    library_suffix:
+                        type: str
+                        title: Library argument suffix
+                        description: >
+                            Argument suffix to add after each added library.
+                        default: ''
+                        default_Windows: '.lib'
+
+    execution:
+        type: dict
+        title: Execution
+        description: Binary execution preferences        
+        required:
+            general:
+                type: dict
+                title: General
+                description: General execution preferences
+                required:
+                    host:
+                        type: str
+                        default: localhost
+                        title: Host
+                        description: Hostname to use for execution
+
+                    workdir:
+                        type: str
+                        default: '/tmp/'
+                        title: Working directory
+                        description: Working directory on the remote host
+
+                    check_args:
+                        type: bool
+                        default: true
+                        title: Check arguments 
+                        description: >
+                            Do strict verification that arguments passed when
+                            calling a DaCe program match the expected types.
+
+                    execcmd:
+                        type: str
+                        title: Command
+                        description: >
+                            Command to use to execute ${command} on ${host}
+                        default: 'ssh ${host} ${command}'
+                        template_vars:
+                            - host
+                            - command
+
+                    copycmd_r2l:
+                        type: str
+                        default: 'scp ${host}:${srcfile} ${dstfile}'
+                        title: "Remote->Local copy command"
+                        description: >
+                            Command to use to copy ${srcfile} on ${host} to 
+                            the local ${dstfile}.
+                        template_vars:
+                            - host
+                            - srcfile
+                            - dstfile
+
+                    copycmd_l2r:
+                        type: str
+                        default: "scp ${srcfile} ${host}:${dstfile}"
+                        title: "Local->Remote copy command"
+                        description: >
+                            Command to use to copy the local ${srcfile} to the
+                            remote ${dstfile}.
+                        template_vars:
+                            - host
+                            - srcfile
+                            - dstfile
+
+                    repetitions:
+                        type: int
+                        default: 5
+                        title: "Repetitions per Run"
+                        description: >
+                            Number of repetitions to run for each click of the 
+                            Run button (median value will be reported in the 
+                            performance chart).
+            mpi:
+                type: dict
+                title: MPI
+                description: MPI execution preferences
+                required:
+                    mpiexec:
+                        type: str
+                        default: 'mpirun -n ${num_procs} ${command}'
+                        title: mpirun command
+                        description: >
+                            Command to use to execute MPI job ${command} with
+                            ${num_procs} processes.
+                        template_vars:
+                            - num_procs
+                            - command
+
+                    num_procs:
+                        type: int
+                        default: 4
+                        title: Number of processes
+                        description: Number of MPI processes to use 
+    diode:
+        type: dict
+        title: DIODE
+        description: DIODE GUI preferences
+        required:
+            layout:
+                type: dict
+                title: Layout
+                description: Window layout preferences
+                required:
+                    window_width:
+                        default: 800
+                        title: Window Width
+                        type: float
+                        description: Window width (in pixels)
+
+                    window_height:
+                        default: 600
+                        title: Window Height
+                        type: float
+                        description: Window height (in pixels)
+
+                    window_maximized:
+                        default: True
+                        title: Window Maximized
+                        type: bool
+                        description: >
+                            If True, DIODE starts with a maximized window
+            
+                    toppane_height:
+                        default: 20
+                        type: float
+                        title: Top-Pane Height
+                        description: >
+                            Height of top pane in Optimizer view (in percentage)
+           
+                    pypane_width:
+                        default: 30
+                        title: Python Pane Width
+                        type: float
+                        description: >
+                            Width of the Python Editor pane (in percentage)
+            
+                    optpane_width:
+                        default: 30
+                        title: Transformation Pane Width
+                        type: float
+                        description: >
+                            Width of the Transformation pane (in percentage)
+            
+                    codepane_width:
+                        default: 30
+                        title: Generated Code Pane Width
+                        type: float
+                        description: >
+                            Width of the Generated Code pane (in percentage)
+
+                    perfpane_width:
+                        default: 30
+                        title: Performance Pane Width
+                        type: float
+                        description: >
+                            Width of the Performance graph pane (in percentage)
+
+            general:
+                type: dict
+                title: General
+                description: General DIODE Preferences
+                required:
+ 
+                    show_transfed:
+                        type: bool
+                        default: False
+                        title: (EXPERIMENTAL) Show Transformation Editor
+                        description: >
+                            Show (or hide) the experimental transformation
+                            editor.
+    
+                    show_sdfged:
+                        type: bool
+                        default: False
+                        title: (EXPERIMENTAL) Show SDFG Editor
+                        description: >
+                            Show (or hide) the experimental SDFG Editor.
+
+                    show_optgraph:
+                        type: bool
+                        default: False
+                        title: Show Optimization Graph
+                        description: >
+                            Show available transformations as a graph. This is
+                            discouraged as the optimization graph may be too
+                            large to be useful.
+
+            fonts:
+                type: dict
+                title: Fonts
+                description: Fonts used in editors
+                required:
+                    python:
+                        default: ''
+                        title: Python
+                        type: font
+                        description: Font used to render Python code.
+
+                    codegen:
+                        default: ''
+                        title: Generated Code
+                        type: font
+                        description: Font used to render generated code.
+
+                    pated:
+                        default: ''
+                        title: Transformation Editor
+                        type: font
+                        description: Font used to render pattern match code.
+        
+    instrumentation:
+        type: dict
+        title: Instrumentation
+        description: Instrumentation preferences
+        required:
+            enable_papi:
+                type: bool
+                title: Enable PAPI
+                default: false
+                description: Enable instrumentation using PAPI
+            enable_vectorization_analysis:
+                type: bool
+                title: Enable vectorization check
+                default: false
+                description: >
+                    Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
+            enable_papi_counter_sanity_check:
+                type: bool
+                title: Counter sanity check
+                default: false
+                description: >
+                    Enables a pre-run sanity check to minimize runtime failures
+            default_papi_counters:
+                type: str
+                title: Default PAPI counters
+                default: "['PAPI_TOT_INS', 'PAPI_TOT_CYC', 'PAPI_L2_TCM', 'PAPI_L3_TCM']"
+                description: >
+                    Sets the default PAPI counter list, formatted as 
+                    a Python list of strings.
+            max_scope_depth:
+                type: int
+                title: Max scope depth
+                default: 5
+                description: >
+                    Sets the maximum depth of instrumentations in
+                    map/consume scopes. Scopes that are deeper will not 
+                    be instrumented.
+            
+    #############################################
+    # General settings
+    debugprint:
+        type: bool
+        default: true 
+        title: Debug printing
+        description: Enable verbose printouts.
+    
+    profiling:
+        type: bool
+        default: false
+        title: Profiling
+        description: Enable profiling support.
+
+    treps:
+        type: int
+        default: 100
+        title: Profiling Repetitions
+        description: Number of times to run program for profiling.

@@ -1,0 +1,14 @@
+open_project ${DACE_KERNEL_NAME} 
+open_solution ${DACE_XILINX_PART_NAME}  
+add_files -cflags "${DACE_XILINX_SYNTHESIS_FLAGS} -I${DACE_RUNTIME_DIR}/include -I${DACE_HLSLIB_DIR}/include -I${CMAKE_BINARY_DIR}" "${DACE_KERNEL_FILE}" 
+set_top ${DACE_KERNEL_NAME} 
+set_part ${DACE_XILINX_PART_NAME} 
+create_clock -period ${DACE_XILINX_TARGET_CLOCK}MHz -name default
+# SDAccel default options
+config_rtl -register_reset
+config_interface -m_axi_addr64
+config_schedule -relax_ii_for_timing
+config_compile -pipeline_loops 64
+config_compile -name_max_length 256
+csynth_design
+exit

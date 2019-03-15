@@ -1,0 +1,10 @@
+[submodule "dace/external/cub"]
+	path = dace/external/cub
+	url = https://github.com/NVlabs/cub.git
+	branch = 1.8.0
+[submodule "dace/external/moodycamel"]
+	path = dace/external/moodycamel
+	url = https://github.com/cameron314/concurrentqueue.git
+[submodule "dace/external/hlslib"]
+	path = dace/external/hlslib
+	url = https://github.com/definelicht/hlslib.git

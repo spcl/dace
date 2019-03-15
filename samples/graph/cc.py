@@ -1,0 +1,96 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+import argparse
+import dace
+import math
+import numpy as np
+import networkx as nx
+
+E = dace.symbol('E')
+V = dace.symbol('V')
+
+EL = dace.ndarray([2 * E, 2], dace.uint64)
+comp = dace.ndarray([V], dace.uint64, allow_conflicts=True)
+
+
+@dace.program
+def shiloach_vishkin(EL, comp):
+    flag_hook = dace.define_local_scalar(dace.int32, allow_conflicts=True)
+
+    @dace.tasklet
+    def initflag():
+        out >> flag_hook
+        out = 1
+
+    @dace.map(_[0:V])
+    def init(v):
+        out >> comp[v]
+        out = v
+
+    while flag_hook:
+
+        @dace.tasklet
+        def resetflag():
+            out >> flag_hook
+            out = 0
+
+        @dace.map(_[0:2 * E])
+        def hook(e):
+            u << EL[e, 0]
+            v << EL[e, 1]
+            parents << comp(3)[:]
+            out >> comp(1)[:]
+            f >> flag_hook(-1)
+
+            pu = parents[u]
+            pv = parents[v]
+            ppv = parents[pv]
+
+            if pu < pv and pv == ppv:
+                out[ppv] = pu
+                f = 1
+
+        # Multi-jump version
+        @dace.map(_[0:V])
+        def shortcut(v):
+            inp << comp(-1)[0:v + 1]
+            out >> comp(-1)[v]
+
+            p = inp[v]
+            pp = inp[p]
+            while p != pp:
+                out = pp
+                p = pp
+                pp = inp[p]
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("edges", type=int, nargs="?", default=17)
+    parser.add_argument("vertices", type=int, nargs="?", default=16)
+    parser.add_argument("-seed", type=int, nargs="?", default=None)
+    args = vars(parser.parse_args())
+
+    E.set(args['edges'])
+    V.set(args['vertices'])
+
+    print('Connected Components (Shiloach-Vishkin) E=%d, V=%d' % (E.get(),
+                                                                  V.get()))
+
+    graph = nx.gnm_random_graph(V.get(), E.get(), seed=args['seed'])
+
+    comp[:] = np.arange(0, V.get(), dtype=dace.uint64.type)
+    EL[:E.get()] = np.array(
+        [[u, v] for u, v, d in nx.to_edgelist(graph)], dtype=dace.uint64.type)
+    EL[E.get():] = np.array(
+        [[v, u] for u, v, d in nx.to_edgelist(graph)], dtype=dace.uint64.type)
+
+    shiloach_vishkin(EL, comp)
+
+    cc = nx.number_connected_components(graph)
+    diff = abs(cc - len(np.unique(comp)))
+    print("Difference:", diff, '(SV:', len(np.unique(comp)), ', NX:', cc, ')')
+    print("==== Program end ====")
+    exit(0 if diff == 0 else 1)

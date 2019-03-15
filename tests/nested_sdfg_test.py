@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+import numpy as np
+
+import dace as dp
+from dace.sdfg import SDFG
+from dace.memlet import Memlet
+
+N = dp.symbol('N')
+
+
+@dp.program
+def sdfg_internal(input: dp.float32, output: dp.float32):
+    @dp.tasklet
+    def init():
+        inp << input
+        out >> output
+        out = inp
+
+    for k in range(4):
+
+        @dp.tasklet
+        def do():
+            inp << input
+            oin << output
+            out >> output
+            out = oin * inp
+
+
+# Construct SDFG
+mysdfg = SDFG('outer_sdfg')
+state = mysdfg.add_state()
+A = state.add_array('A', [N, N], dp.float32)
+B = state.add_array('B', [N, N], dp.float32)
+
+map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
+nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'},
+                              {'output'})
+
+# Add edges
+state.add_memlet_path(
+    A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
+state.add_memlet_path(
+    nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
+
+if __name__ == '__main__':
+    print('Nested SDFG test')
+    # Externals (parameters, symbols)
+
+    input = dp.ndarray([N, N], dp.float32)
+    output = dp.ndarray([N, N], dp.float32)
+    N.set(64)
+
+    input[:] = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
+    output[:] = dp.float32(0)
+
+    # Left for debugging purposes
+    nsdfg.sdfg.draw_to_file('nested_sdfg.dot')
+    mysdfg.draw_to_file()
+
+    mysdfg(A=input, B=output, N=N)
+
+    diff = np.linalg.norm(output - np.power(input, 5)) / dp.eval(N * N)
+    print("Difference:", diff)
+    print("==== Program end ====")
+    exit(0 if diff <= 1e-5 else 1)
