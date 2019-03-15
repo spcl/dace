@@ -28,6 +28,11 @@ setup(
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',
     description='Data-Centric Parallel Programming Framework',
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+    ],
     packages=find_packages(),
     package_data={
         '': [
