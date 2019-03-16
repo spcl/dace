@@ -14,4 +14,4 @@ install:
   - pip install pygobject  # DIODE Python dependencies
   - pip install .
 
-script: ./test_all.sh
+script: NOSTATUSBAR=1 xvfb-run ./test_all.sh
