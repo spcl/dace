@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.org/spcl/dace.svg?branch=master)](https://travis-ci.org/spcl/dace)
+
+
 ![D](dace.svg)aCe - Data-Centric Parallel Programming
 =====================================================
 
