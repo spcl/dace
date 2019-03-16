@@ -104,7 +104,7 @@ class Config(object):
 
         # Read configuration file
         with open(filename, 'r') as f:
-            Config._config = yaml.load(f.read())
+            Config._config = yaml.load(f.read(), Loader=yaml.FullLoader)
 
         # Add defaults from metadata
         modified = _add_defaults(Config._config,
@@ -121,7 +121,8 @@ class Config(object):
         if filename is None:
             filename = Config._metadata_filename
         with open(filename, 'r') as f:
-            Config._config_metadata = yaml.load(f.read())
+            Config._config_metadata = yaml.load(f.read(),
+                                                Loader=yaml.FullLoader)
 
     @staticmethod
     def save(path=None):
