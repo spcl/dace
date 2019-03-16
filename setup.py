@@ -21,13 +21,18 @@ hlslib_files = [
         dace_path + 'external/hlslib/include/**/*', recursive=True)
 ] + [dace_path + 'external/hlslib/LICENSE.md']
 
+with open("README.md", "r") as fp:
+    long_description = fp.read()
+
 setup(
     name='dace',
-    version='0.8.0',
+    version='0.8.1',
     url='https://github.com/spcl/dace',
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',
     description='Data-Centric Parallel Programming Framework',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: BSD License",
@@ -37,13 +42,8 @@ setup(
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
-            '../diode/main.glade', '../diode/renderer.html',
-            '../diode/renderer_util.js', '../diode/dagre.js',
-            '../diode/Chart.bundle.min.js', '../diode/datahelper.js',
-            '../diode/sdfg_renderer.js', '../diode/parallelization_button.js',
-            '../diode/memory_button.js', '../diode/windowing.js',
-            '../diode/global_vars.js', '../diode/subwindow.html',
-            '../diode/DataViewSettings.js', '../diode/DataViewSettings.html',
+            '../diode/main.glade', '../diode/*.html',
+            '../diode/*.js', '../diode/optimization_hints/*.html',
             'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
             'codegen/Xilinx_HLS.tcl.in'
         ] + runtime_files + cub_files + hlslib_files
