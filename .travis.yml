@@ -5,7 +5,13 @@ python:
   - "3.6"
   - "3.7"  
 
+# DIODE dependencies
+before_install:
+  - sudo apt-get install libgtksourceviewmm-3.0-dev libyaml-dev
+  - sudo apt-get install python3-cairo python3-gi-cairo libgirepository1.0-dev xdot libwebkitgtk-dev libwebkitgtk-3.0-dev libwebkit2gtk-4.0-dev
+
 install:
+  - pip install pygobject  # DIODE Python dependencies
   - pip install .
 
 script: ./test_all.sh
