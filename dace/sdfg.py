@@ -561,7 +561,7 @@ class SDFG(OrderedDiGraph):
                 (n.data, n.desc(self)) for n in state.nodes()
                 if isinstance(n, nd.AccessNode) and not n.desc(self).transient
             ]
-        data_args = types.deduplicate(data_args)
+        data_args = sorted(types.deduplicate(data_args))
 
         sym_args = sorted(self.undefined_symbols(False).items())
 
