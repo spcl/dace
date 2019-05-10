@@ -146,3 +146,5 @@ class SettingsWindow extends ClientSide {
         });
     }
 }
+
+export { SettingsWindow };

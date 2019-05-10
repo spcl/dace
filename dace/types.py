@@ -209,10 +209,10 @@ class typeclass(object):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return self.ctype == other.ctype
+        return other != None and self.ctype == other.ctype
 
     def __ne__(self, other):
-        return self.ctype != other.ctype
+        return other != None and self.ctype != other.ctype
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type

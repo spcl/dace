@@ -1,3 +1,6 @@
+import {ObjectHelper} from "./datahelper.js"
+import { DiodeWindow } from "./windowing.js";
+
 // Renderer utilities.
 
 // Render a button to a canvas and return an image
@@ -432,6 +435,23 @@ class Button extends Clickable {
         this.size = new Pos(0,0);
 
         this.button_image = null;
+    }
+
+    setDefaultDblClick() {
+        this.setOnDoubleClick(p => {
+            let newwin = new DiodeWindow(window);
+            newwin.setSenderData({ 
+                className: this.constructor.name,
+                dataParams: this.dataparams
+            });
+            let subwin = newwin.open("renderer_dir/subwindow.html", "_blank");
+            if(!subwin) {
+                console.log("Failed to open subwindow");
+                alert("failed to open subwindow");
+            }
+            
+            return true;
+        });
     }
 
     // Bypass the opening animation (for saving results)
@@ -1649,9 +1669,8 @@ class Bracket extends Clickable {
         this.bracket_alpha = opacity;
     }
 
-    setupEventListeners() {
+    setupEventListeners(canvas_draw_mgr=undefined) {
         let canvas = this.ctx.canvas;
-
 
         let mouseXtrans = x => x;
         let mouseYtrans = y => y;
@@ -1659,6 +1678,11 @@ class Bracket extends Clickable {
         if(window.get_zoom != undefined) {
             mouseXtrans = x => x / window.get_zoom();
             mouseYtrans = y => y / window.get_zoom();
+        }
+
+        if(canvas_draw_mgr != undefined) {
+            mouseXtrans = x => canvas_draw_mgr.mapPixelToCoordsX(x);
+            mouseYtrans = y => canvas_draw_mgr.mapPixelToCoordsY(y);
         }
 
         let mm_lis = e => {
@@ -1915,6 +1939,17 @@ class CanvasDrawManager {
 
         this.request_scale = false;
         this.scale_factor = {x: 1, y: 1};
+        this.last_scale_factor = {x: 1, y: 1};
+        
+        this.translation = {x: 0, y: 0};
+        this._destroying = false;
+
+        this.scale_origin = {x: 0, y: 0};
+    }
+
+    destroy() {
+        this._destroying = true;
+        this.clearDrawables();
     }
 
     addDrawable(obj) {
@@ -1941,6 +1976,24 @@ class CanvasDrawManager {
         this.scale_factor.y += diff;
     }
 
+    setTranslation(x, y) {
+        this.translation.x = x;
+        this.translation.y = y;
+    }
+
+    translate(x, y) {
+        this.translation.x += x;
+        this.translation.y += y;
+    }
+
+    mapPixelToCoordsX(xpos) {
+        return (xpos - this.translation.x) / this.getScale();
+    }
+
+    mapPixelToCoordsY(ypos) {
+        return (ypos - this.translation.y) / this.getScale(); 
+    }
+
     getScale() {
         ObjectHelper.assert("Uniform scale", this.scale_factor.x == this.scale_factor.y);
         return this.scale_factor.x; // We don't allow non-uniform scaling.
@@ -1948,23 +2001,55 @@ class CanvasDrawManager {
 
 
     draw() {
+        if(this._destroying) {
+            return;
+        }
         let ctx = this.ctx;
 
-        // Always clear with the old scale
-        ctx.clearRect(0, 0, ctx.canvas.width / this.scale_factor.x, ctx.canvas.height / this.scale_factor.y);
+        // Clear with default transform
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.restore();
+
+
         if(this.request_scale) {
-            ctx.setTransform(1,0,0,1,0,0);
-            ObjectHelper.logObject("zoom", this.scale_factor);
-            ctx.scale(this.scale_factor.x, this.scale_factor.y);
+            
+
+            let sosx = /*this.scale_origin.x + */this.translation.x;
+            let sosy = /*this.scale_origin.y + */this.translation.y;
+
+            this.translation.x = sosx;
+            this.translation.y = sosy;
+            
+
+            ctx.setTransform(this.scale_factor.x,0,0, this.scale_factor.y, sosx, sosy);
             this.request_scale = false;
+
+            this.last_scale_factor = this.scale_factor;
+
         }
+        else
+        {
+            // Translate here
+            ctx.setTransform(this.last_scale_factor.x,0,0, this.last_scale_factor.y, this.translation.x, this.translation.y);
+        }
+        
+        
+
         this.ref_global_state.drawSDFG();
         for(let d of this.drawables) {
             d.draw();
         }
 
+        // Translate back
+        //ctx.translate(-this.translation.x/* * this.getScale()*/, -this.translation.y /** this.getScale()*/);
         let _this = this;
      
         window.requestAnimationFrame(() => _this.draw());
     }
 }
+
+export { CanvasDrawManager, Bracket, Button, Layout, Pos, min_func, max_func, max_func_obj,
+RU_DataView, RU_DataViewBarGraph, RU_DataViewFormLayout, RU_DataViewNumberBlock, RU_DataViewSuggestedActionBlock, RU_DataViewText,
+createImageDownload, DataBlock };

@@ -1,0 +1,18 @@
+#wrapper {
+    border: none;
+  }
+  #editor {
+    display: inline-block;
+    position: absolute;
+    width:600px;
+    height:800px;
+  }
+  #sdfg {
+    vertical-align:top;
+    display: inline-block;
+    position: relative;
+    left: 600px;
+    width:400px;
+    height:800px;
+    border: 1px solid green;
+  }

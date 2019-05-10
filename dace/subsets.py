@@ -61,6 +61,50 @@ class Range(Subset):
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
+    def toJSON(self):
+        import json
+        ret = []
+
+        def a2s(obj):
+            if isinstance(obj, symbolic.SymExpr):
+                return str(obj.expr)
+            else:
+                return str(obj)
+
+        # TODO: Check if approximations should also be saved
+        for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
+            ret.append({
+                'start': a2s(start),
+                'end': a2s(end),
+                'step': a2s(step),
+                'tile': a2s(tile)
+            })
+
+        return json.dumps({'type': 'subsets.Range', 'ranges': ret})
+
+    @staticmethod
+    def fromJSON(obj, context=None):
+        import json
+        obj = json.loads(obj)
+
+        return Range.fromJSON_object(obj, context)
+
+    @staticmethod
+    def fromJSON_object(obj, context=None):
+        if obj['type'] != 'subsets.Range':
+            raise TypeError(
+                "fromJSON of class `Range` called on json with type %s (expected 'subsets.Range')"
+                % obj['type'])
+
+        ranges = obj['ranges']
+        tuples = []
+        p2s = symbolic.pystr_to_symbolic
+        for r in ranges:
+            tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']),
+                           p2s(r['tile'])))
+
+        return Range(tuples)
+
     @staticmethod
     def from_array(array):
         """ Constructs a range that covers the full array given as input. 
@@ -445,6 +489,37 @@ class Indices(Subset):
         else:
             self.indices = symbolic.pystr_to_symbolic(indices)
         self.tile_sizes = [1]
+
+    def toJSON(self):
+        import json
+
+        def a2s(obj):
+            if isinstance(obj, symbolic.SymExpr):
+                return str(obj.expr)
+            else:
+                return str(obj)
+
+        return json.dumps({
+            'type': 'subsets.Indices',
+            'indices': [*map(a2s, self.indices)]
+        })
+
+    @staticmethod
+    def fromJSON(obj, context=None):
+        import json
+        obj = json.loads(obj)
+
+        return Indices.fromJSON_object(obj, context)
+
+    @staticmethod
+    def fromJSON_object(obj, context=None):
+        if obj['type'] != 'subsets.Indices':
+            raise TypeError(
+                "fromJSON of class `Indices` called on json with type %s (expected 'subsets.Indices')"
+                % obj['type'])
+
+        #return Indices(symbolic.SymExpr(obj['indices']))
+        return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
 
     def __hash__(self):
         return hash(tuple(i for i in self.indices))

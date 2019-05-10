@@ -48,7 +48,10 @@ ORDER BY
     rs.runID, es.threadID
 '''
 
-    def __init__(self, cache_across_runs=False, use_merged_values=False):
+    def __init__(self,
+                 cache_across_runs=False,
+                 use_merged_values=False,
+                 perfdata_path="perfdata.db"):
         """ If cache_across_runs is set to true, a larger preselection (only based on the runid) is made first, THEN the supersections are filtered. """
         self.verbose = False
         self.source_table = "Values"
@@ -61,6 +64,7 @@ ORDER BY
             self.cache_for_runid = None
         else:
             self.cache_db = None
+        self.perfdata_path = perfdata_path
 
     def __del__(self):
         # We want to make sure that the temporary db is closed (if it was used)
@@ -102,8 +106,11 @@ ORDER BY
                 source="`source`.", source_table=self.source_table) % ("",
                                                                        runsel)
             if not self.cache_db_created or self.cache_for_nodeid != section_id or self.cache_for_runid != RunID:
-                self.cache_db.execute(
-                    "ATTACH DATABASE 'perfdata.db' as 'source';")
+
+                db_path = self.perfdata_path
+
+                self.cache_db.execute("ATTACH DATABASE '" + db_path +
+                                      "' as 'source';")
                 self.cache_db.execute("DROP TABLE IF EXISTS `cache_table`;")
                 self.cache_db.execute(
                     "CREATE TABLE `cache_table` AS " + cache_q + ";",
@@ -1008,9 +1015,10 @@ WHERE
 class CriticalPathAnalysis:
     """ Implements the CriticalPathAnalysis in SQL """
 
-    def __init__(self, use_merged_values=False):
+    def __init__(self, use_merged_values=False, perfdata_path='perfdata.db'):
         self.use_merged_values = use_merged_values
         self.verbose = False
+        self.perfdata_path = perfdata_path
 
     def print(self, x):
         if self.verbose:
@@ -1080,7 +1088,9 @@ ORDER BY
         repcount = mf.getRepetitionCount(c)
 
         ta = ThreadAnalysis(
-            cache_across_runs=True, use_merged_values=self.use_merged_values)
+            cache_across_runs=True,
+            use_merged_values=self.use_merged_values,
+            perfdata_path=self.perfdata_path)
 
         pair_list = []
         critical_paths = {}
@@ -1794,7 +1804,10 @@ GROUP BY
 
 """
 
-    def __init__(self, shared_input_db=None, critical_path_analysis=None):
+    def __init__(self,
+                 shared_input_db=None,
+                 critical_path_analysis=None,
+                 perfdata_path="perfdata.db"):
         """ Initializes this analysis class.
             When a shared input database is specified, joins are not executed,
             but instead taken from the input database from table `temp_merge_sel`. 
@@ -1805,6 +1818,7 @@ GROUP BY
         self.shared_input_db = shared_input_db
         self.critical_path_analysis = critical_path_analysis
         self.verbose = False
+        self.perfdata_path = perfdata_path
 
     def print(self, x):
         if self.verbose:
@@ -1816,7 +1830,7 @@ GROUP BY
         self.print("Running vectorization analysis")
 
         if self.critical_path_analysis == None:
-            cpa = CriticalPathAnalysis()
+            cpa = CriticalPathAnalysis(perfdata_path=self.perfdata_path)
             cpa_data = cpa.query_values(
                 c, section_id, 0
             )  # stateid=0 is fine here because section_id is the unified id.
@@ -2292,12 +2306,16 @@ VALUES
             return json.loads(extract)
 
         thread_analysis = ThreadAnalysis(
-            cache_across_runs=True, use_merged_values=True)
-        critical_path_analysis = CriticalPathAnalysis()
+            cache_across_runs=True,
+            use_merged_values=True,
+            perfdata_path=db_path)
+        critical_path_analysis = CriticalPathAnalysis(perfdata_path=db_path)
         memory_analysis = MemoryAnalysis(
             shared_input_db=cache_conn, from_merged=True)
         vectorization_analysis = VectorizationAnalysis(
-            shared_input_db=cache_conn, critical_path_analysis=get_cpa)
+            shared_input_db=cache_conn,
+            critical_path_analysis=get_cpa,
+            perfdata_path=db_path)
         memory_op_analysis = MemoryOpAnalysis(shared_input_db=cache_conn)
         cache_op_analysis = CacheOpAnalysis(shared_input_db=cache_conn)
 
@@ -2319,7 +2337,7 @@ VALUES
             unified_id = int(unified_id)
 
             cache_conn.execute("DROP TABLE IF EXISTS `filtered_to_nodeid`;")
-            cache_conn.execute("ATTACH DATABASE " + "'perfdata.db'" +
+            cache_conn.execute("ATTACH DATABASE " + "'" + db_path + "'" +
                                " AS 'base';")
             cache_conn.execute(
                 "CREATE TABLE `filtered_to_nodeid` AS " +
@@ -2330,7 +2348,7 @@ VALUES
             )
 
             cache_conn.execute("DROP TABLE IF EXISTS `cache_mem_query`;")
-            cache_conn.execute("ATTACH DATABASE " + "'perfdata.db'" +
+            cache_conn.execute("ATTACH DATABASE " + "'" + db_path + "'" +
                                " AS 'base';")
             cache_conn.execute(
                 "CREATE TABLE `cache_mem_query` AS " +

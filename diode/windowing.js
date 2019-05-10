@@ -1,3 +1,4 @@
+import {ObjectHelper} from "./datahelper.js"
 // Contains resources used to provide a "native" multi-window interface
 
 // Class to create the window on the parent side
@@ -253,3 +254,5 @@ class ClientSide {
         
     }
 }
+
+export {DiodeWindow, ClientSide}

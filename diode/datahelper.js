@@ -1,3 +1,5 @@
+import { max_func, min_func, max_func_obj } from "./renderer_util.js";
+
 // Similar to the same class in python
 class Entry {
     constructor(entryobj) {
@@ -377,7 +379,7 @@ class MathHelper {
 
     static majority(array) {
 
-        ObjectHelper.assert("array valid", array != undefined && array instanceof Array);
+        ObjectHelper.assert("array valid", array != undefined && array.length != undefined);
         let i = 0;
         let dict = {};
         for (let x of array) {
@@ -1039,6 +1041,9 @@ class MemoryAnalysis {
     judgement(analysis = null) {
         if (analysis == null) analysis = this.analysis_result;
 
+        return MemoryAnalysis.sjudgement(analysis);
+    }
+    static sjudgement(analysis) {
         // We say memory was slow if the achieved bandwidth is below 50% of the target bandwidth
         let bandwidth = analysis.data.expected_bandwidth;
         let m = bandwidth / analysis.data.Memory_Target_Bandwidth;
@@ -1365,6 +1370,12 @@ class CriticalPathAnalysis {
 
     judgement(analysis = null) {
         if (analysis == null) analysis = this.analysis_result;
+        
+        return CriticalPathAnalysis.sjudgement(analysis);
+    }
+
+    static sjudgement(analysis) {
+
         let e = analysis.data.efficiency;
         let max_thread_num = max_func(e, x => x.thread_num);
 
@@ -1492,3 +1503,6 @@ class ResultVerifier {
 
 
 }
+
+export {Entry, Section, SuperSection, MathHelper, ObjectHelper,
+CriticalPathAnalysis, MemoryAnalysis};

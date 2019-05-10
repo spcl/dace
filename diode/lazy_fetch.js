@@ -371,3 +371,5 @@ class LazySection {
         return await this.communicator.toSectionValid(this.supersection_id, this.unified_id).get();
     }
 }
+
+export {LazySection, LazySuperSection, Communicator};

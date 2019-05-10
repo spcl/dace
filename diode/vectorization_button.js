@@ -1,3 +1,5 @@
+import { Button, Layout, Pos, RU_DataViewText, RU_DataViewSuggestedActionBlock, RU_DataViewNumberBlock, RU_DataViewBarGraph, DataBlock } from "./renderer_util.js";
+import { MathHelper } from "./datahelper.js";
 
 
 
@@ -154,6 +156,8 @@ class VectorizationButton extends Button {
         this.setOnEnterHover(p => { this.color = "#FF0000"; this.button_subwindow_state = 'open'; })
         this.setOnLeaveHover(p => { this.color = "orange"; if (!this.is_locked_open) this.button_subwindow_state = 'collapsed'; })
         this.setOnClick((p, mb) => { this.is_locked_open = !this.is_locked_open; });
+
+        this.setDefaultDblClick();
     }
 
 
@@ -179,6 +183,11 @@ class SuperSectionVectorizationAnalysis {
 
     judgement(analysis = null) {
         if (analysis == null) analysis = this.analysis_result.data;
+
+        return SuperSectionVectorizationAnalysis.sjudgement(analysis);
+    }
+
+    static sjudgement(analysis) {
 
         // What's a good definition for vectorized operation?
         // Let's just take that the amount of vector instructions must exceed the amount of scalar operations.
@@ -365,3 +374,6 @@ function AutoSuperSectionVectorizationAnalysis(communicator, section, nodeid, st
         return new SuperSectionVectorizationAnalysis(section, nodeid, stateid, critical_path_analysis);
     }
 }
+
+
+export { VectorizationButton, AutoSuperSectionVectorizationAnalysis, SuperSectionVectorizationAnalysis};

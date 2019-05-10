@@ -1,16 +1,16 @@
 import functools
 import operator
-import re
+import re, json
 import copy as cp
 import sympy as sp
 
-import dace
+import dace, dace.types as types
 from dace.codegen import cppunparse
 from dace import symbolic
 from dace.properties import (Property, make_properties, ReferenceProperty,
                              ShapeProperty, SubsetProperty, SymbolicProperty,
                              TypeClassProperty, DebugInfoProperty,
-                             CodeProperty)
+                             CodeProperty, ListProperty)
 
 
 def validate_name(name):
@@ -105,6 +105,19 @@ class Scalar(Data):
         super(Scalar, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "Scalar":
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Scalar(dace.types.int8)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+
+        # Check validity now
+        ret.validate()
+        return ret
+
     def __repr__(self):
         return 'Scalar (dtype=%s)' % self.dtype
 
@@ -174,9 +187,12 @@ class Array(Data):
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
-    access_order = Property(dtype=tuple)
-    strides = Property(dtype=list)
-    offset = Property(dtype=list)
+    #access_order = Property(dtype=tuple)
+    access_order = ListProperty(dtype=list)
+    #strides = Property(dtype=list)
+    strides = ListProperty()
+    #offset = Property(dtype=list)
+    offset = ListProperty()
     may_alias = Property(
         dtype=bool,
         default=False,
@@ -234,6 +250,41 @@ class Array(Data):
                      self.location, self.access_order, self.strides,
                      self.offset, self.may_alias, self.toplevel,
                      self.debuginfo)
+
+    def toJSON(self, options={"no_meta": False}):
+        try:
+            attrs = json.loads(Property.all_properties_to_json(self, options))
+        except Exception as e:
+            print("Got exception: " + str(e))
+            import traceback
+            traceback.print_exc()
+
+        retdict = {"type": "Array", "attributes": attrs}
+
+        return json.dumps(retdict)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "Array":
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Array(dace.types.int8, ())
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        # TODO: FIXME:
+        # Since the strides are a list-property (normal Property()),
+        # loading from/to string (and, consequently, from/to json)
+        # leads to validation errors (contains Strings/Integers, not sympy symbols).
+        # To fix this, it needs a custom class
+        # For now, this is a workaround:
+        # TODO: This needs to be reworked! It works for a very small subset of cases
+        ret.strides = [*map(symbolic.pystr_to_symbolic, ret.strides)]
+
+        #ret.strides = [*map(lambda x: symbolic.sympy.sympify(x, locals=symbolic.sympy.abc._clash), ret.strides)]
+
+        # Check validity now
+        ret.validate()
+        return ret
 
     def validate(self):
         super(Array, self).validate()
@@ -349,8 +400,10 @@ class Stream(Data):
     """ Stream (or stream array) data descriptor. """
 
     # Properties
-    strides = Property(dtype=list)
-    offset = Property(dtype=list)
+    #strides = Property(dtype=list)
+    #offset = Property(dtype=list)
+    strides = ListProperty()
+    offset = ListProperty()
     buffer_size = Property(dtype=int, desc="Size of internal buffer.")
     veclen = Property(
         dtype=int, desc="Vector length. Memlets must adhere to this.")
@@ -390,6 +443,26 @@ class Stream(Data):
 
         super(Stream, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "Stream":
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Stream(dace.types.int8, 1, 1)
+        Property.set_properties_from_json(ret, json_obj, context=sdfg)
+        # TODO: FIXME:
+        # Since the strides are a list-property (normal Property()),
+        # loading from/to string (and, consequently, from/to json)
+        # leads to validation errors (contains Strings/Integers, not sympy symbols).
+        # To fix this, it needs a custom class
+        # For now, this is a workaround:
+        ret.strides = [*map(symbolic.pystr_to_symbolic, ret.strides)]
+
+        # Check validity now
+        ret.validate()
+        return ret
 
     def __repr__(self):
         return 'Stream (dtype=%s, shape=%s)' % (self.dtype, self.shape)

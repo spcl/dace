@@ -31,6 +31,20 @@ class PerfSettings(object):
     ]
 
     @staticmethod
+    def get_config(*key_hierarchy, config=None):
+        if config == None:
+            return Config.get(*key_hierarchy)
+        else:
+            return config.get(*key_hierarchy)
+
+    @staticmethod
+    def get_bool_config(*key_hierarchy, config=None):
+        if config == None:
+            return Config.get_bool(*key_hierarchy)
+        else:
+            return config.get_bool(*key_hierarchy)
+
+    @staticmethod
     def perf_merging_debug_output():
         return False
 
@@ -58,20 +72,25 @@ class PerfSettings(object):
             print(dbg_str)
 
     @staticmethod
-    def perf_compensate_overhead():
-        return Config.get("instrumentation", "enable_overhead_compensation")
+    def perf_compensate_overhead(config=None):
+        return PerfSettings.get_config(
+            "instrumentation", "enable_overhead_compensation", config=config)
 
     @staticmethod
-    def perf_get_thread_nums():
-        return ast.literal_eval(Config.get("instrumentation", "thread_nums"))
+    def perf_get_thread_nums(config=None):
+        return ast.literal_eval(
+            PerfSettings.get_config(
+                "instrumentation", "thread_nums", config=config))
 
     @staticmethod
-    def perf_use_multimode():
-        return Config.get_bool("instrumentation", "multimode_run")
+    def perf_use_multimode(config=None):
+        return PerfSettings.get_config(
+            "instrumentation", "multimode_run", config=config)
 
     @staticmethod
-    def perf_use_sql():
-        return Config.get_bool("instrumentation", "sql_backend_enable")
+    def perf_use_sql(config=None):
+        return PerfSettings.get_config(
+            "instrumentation", "sql_backend_enable", config=config)
 
     @staticmethod
     def get_unique_number():
@@ -80,24 +99,24 @@ class PerfSettings(object):
         return ret
 
     @staticmethod
-    def perf_multirun_num():
+    def perf_multirun_num(config=None):
         """ Amount of iterations with different PAPI configurations to run. (1 means no multirun) """
-        if not PerfSettings.perf_enable_instrumentation():
+        if not PerfSettings.perf_enable_instrumentation(config):
             return 1
-        return 1 + len(PerfSettings.perf_get_thread_nums())
+        return 1 + len(PerfSettings.perf_get_thread_nums(config))
 
     @staticmethod
-    def perf_multirun_options():
+    def perf_multirun_options(config=None):
         """ Specifies the options for "multirunning": running the same program
             multiple times with different performance counters. """
         ret = []
 
-        if PerfSettings.perf_multirun_num() == 1:
+        if PerfSettings.perf_multirun_num(config) == 1:
             return ret  # Don't specify these options by default
 
         #for i in range(0, 4):
         #    ret.append(("omp_num_threads", i + 1))
-        o = PerfSettings.perf_get_thread_nums()
+        o = PerfSettings.perf_get_thread_nums(config)
         for x in o:
             ret.append(("omp_num_threads", x))
 
@@ -108,33 +127,46 @@ class PerfSettings(object):
         return ret
 
     @staticmethod
-    def perf_default_papi_counters():
-        mode = Config.get("instrumentation", "papi_mode")
+    def perf_default_papi_counters(config=None):
+        mode = PerfSettings.get_config(
+            "instrumentation", "papi_mode", config=config)
         assert mode != None
 
         if mode == "default":  # Most general operations (Cache misses and cycle times)
-            return eval(Config.get("instrumentation", "default_papi_counters"))
+            return eval(
+                PerfSettings.get_config(
+                    "instrumentation", "default_papi_counters", config=config))
         elif mode == "vectorize":  # Vector operations (to check if a section was vectorized or not)
-            return eval(Config.get("instrumentation", "vec_papi_counters"))
+            return eval(
+                PerfSettings.get_config(
+                    "instrumentation", "vec_papi_counters", config=config))
         elif mode == "memop":  # Static memory operations (store/load counts)
-            return eval(Config.get("instrumentation", "mem_papi_counters"))
+            return eval(
+                PerfSettings.get_config(
+                    "instrumentation", "mem_papi_counters", config=config))
         elif mode == "cacheop":  # Cache operations (PAPI_CA_*)
-            return eval(Config.get("instrumentation", "cache_papi_counters"))
+            return eval(
+                PerfSettings.get_config(
+                    "instrumentation", "cache_papi_counters", config=config))
         else:
             # Use a fallback for this one
             return eval(
                 Config.get("instrumentation",
                            str(mode) + "_papi_counters"))
 
-        return eval(Config.get("instrumentation", "default_papi_counters"))
+        return eval(
+            PerfSettings.get_config(
+                "instrumentation", "default_papi_counters", config=config))
 
     @staticmethod
-    def perf_enable_timing():
-        return Config.get_bool("instrumentation", "timeit")
+    def perf_enable_timing(config=None):
+        return PerfSettings.get_config(
+            "instrumentation", "timeit", config=config)
 
     @staticmethod
-    def perf_enable_instrumentation():
-        return Config.get_bool("instrumentation", "enable_papi")
+    def perf_enable_instrumentation(config=None):
+        return PerfSettings.get_bool_config(
+            "instrumentation", "enable_papi", config=config)
 
     @staticmethod
     def perf_enable_instrumentation_for(sdfg, node=None):
@@ -146,34 +178,38 @@ class PerfSettings(object):
         return True  # TODO: Make config dependent (this is too expensive now because it's executed for every single run)
 
     @staticmethod
-    def perf_current_mode():
-        return Config.get("instrumentation", "papi_mode")
+    def perf_current_mode(config=None):
+        return PerfSettings.get_config(
+            "instrumentation", "papi_mode", config=Config)
 
     @staticmethod
     def perf_supersection_emission_debug():
         return True
 
     @staticmethod
-    def perf_enable_counter_sanity_check():
-        return Config.get_bool("instrumentation",
-                               "enable_papi_counter_sanity_check")
+    def perf_enable_counter_sanity_check(config=None):
+        return PerfSettings.get_bool_config(
+            "instrumentation",
+            "enable_papi_counter_sanity_check",
+            config=config)
 
     @staticmethod
     def perf_print_instrumentation_output():
         return False
 
     @staticmethod
-    def perf_enable_vectorization_analysis():
-        return Config.get_bool("instrumentation",
-                               "enable_vectorization_analysis")
+    def perf_enable_vectorization_analysis(config=None):
+        return PerfSettings.get_bool_config(
+            "instrumentation", "enable_vectorization_analysis", config=config)
 
     @staticmethod
-    def perf_max_scope_depth():
+    def perf_max_scope_depth(config=None):
         # This variable selects the maximum depth inside a scope. For example,
         # "map { map {}}" with max_scope_depth 0 will result in
         # "map { profile(map{}) }", while max_scope_depth >= 1 result in
         # "map { map { profile() }}"
-        return Config.get("instrumentation", "max_scope_depth")
+        return PerfSettings.get_config(
+            "instrumentation", "max_scope_depth", config=config)
 
     perf_debug_profile_innermost = False  # innermost = False implies outermost
     perf_debug_annotate_scopes = True
@@ -202,8 +238,9 @@ class PerfUtils(object):
     def get_run_options(executor, iteration):
         optdict = {}
         omp_thread_num = None
-        if (PerfSettings.perf_multirun_num() != 1):
-            opt, val = PerfSettings.perf_multirun_options()[iteration]
+        if (PerfSettings.perf_multirun_num(config=executor._config) != 1):
+            opt, val = PerfSettings.perf_multirun_options(
+                config=executor._config)[iteration]
             if opt == "omp_num_threads":
                 omp_thread_num = val
                 if executor.running_async:
@@ -214,16 +251,23 @@ class PerfUtils(object):
                 if executor.running_async:
                     # Add information about what is being run
                     executor.async_host.notify("Running baseline")
-                    optdict["DACE_instrumentation_timeit"] = "1"
-                    optdict[
-                        "DACE_instrumentation_enable_papi"] = "0"  # Disable PAPI
-                    optdict[
-                        "DACE_compiler_use_cache"] = "0"  # Force recompilation
+
+                optdict = PerfUtils.get_cleanrun_options()
+
         return (optdict, omp_thread_num)
 
     @staticmethod
+    def get_cleanrun_options():
+        optdict = {}
+        optdict[
+            "DACE_instrumentation_timeit"] = "1"  # Actually, should be "true"
+        optdict["DACE_instrumentation_enable_papi"] = "0"  # Disable PAPI
+        optdict["DACE_compiler_use_cache"] = "0"  # Force recompilation
+        return optdict
+
+    @staticmethod
     def retrieve_instrumentation_results(executor, remote_workdir):
-        if PerfSettings.perf_enable_instrumentation():
+        if PerfSettings.perf_enable_instrumentation(config=executor._config):
             if executor.running_async:
                 # Add information about what is being run
                 executor.async_host.notify("Analyzing performance data")
@@ -250,9 +294,11 @@ class PerfUtils(object):
                         )
 
                     if readall:
-                        PerfUtils.print_instrumentation_output(content)
+                        PerfUtils.print_instrumentation_output(
+                            content, config=executor._config)
                     else:
-                        PerfUtils.print_instrumentation_output(ir)
+                        PerfUtils.print_instrumentation_output(
+                            ir, config=executor._config)
 
                 os.remove("instrumentation_results.txt")
             except FileNotFoundError:
@@ -321,21 +367,24 @@ class PerfUtils(object):
                 executor.async_host.notify("Done reading remote PAPI Counters")
 
     @staticmethod
-    def gather_remote_metrics():
+    def gather_remote_metrics(config=None):
         """ Returns a dictionary of metrics collected by instrumentation. """
 
         # Run the tools/membench file on remote.
-        remote_workdir = Config.get("execution", "general", "workdir")
+        remote_workdir = PerfSettings.get_config(
+            "execution", "general", "workdir", config=config)
         from diode.remote_execution import Executor
         from string import Template
         import subprocess
         executor = Executor(None, True, None)
+        executor.setConfig(config)
 
         remote_filepath = remote_workdir + "/" + "membench.cpp"
 
         executor.copy_file_to_remote("tools/membench.cpp", remote_filepath)
 
-        libs = Config.get("compiler", "cpu", "libs").split(" ")
+        libs = PerfSettings.get_config(
+            "compiler", "cpu", "libs", config=config).split(" ")
 
         libflags = map(lambda x: "-l" + x, libs)
 
@@ -343,9 +392,12 @@ class PerfUtils(object):
 
         path_resolve_command = "python3 -m dace.codegen.instrumentation.perfsettings"
         # Get the library path
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(
+            PerfSettings.get_config(
+                "execution", "general", "execcmd", config=config))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=PerfSettings.get_config(
+                "execution", "general", "host", config=config),
             command=path_resolve_command)
 
         p = subprocess.Popen(
@@ -366,12 +418,12 @@ class PerfUtils(object):
         include_path = "\"" + remote_dace_path + "/" + "runtime/include" + "\""
 
         print("remote_workdir: " + remote_workdir)
-        compile_and_run_command = "cd " + remote_workdir + " && " + " pwd && " + Config.get(
-            "compiler", "cpu", "executable"
-        ) + " " + Config.get(
-            "compiler", "cpu", "args"
-        ) + " " + "-fopenmp" + " " + Config.get(
-            "compiler", "cpu", "additional_args"
+        compile_and_run_command = "cd " + remote_workdir + " && " + " pwd && " + PerfSettings.get_config(
+            "compiler", "cpu", "executable", config=config
+        ) + " " + PerfSettings.get_config(
+            "compiler", "cpu", "args", config=config
+        ) + " " + "-fopenmp" + " " + PerfSettings.get_config(
+            "compiler", "cpu", "additional_args", config=config
         ) + " -I" + include_path + " " + "membench.cpp -o membench" + " " + libflagstring + " && " + "./membench"
 
         # Wrap that into a custom shell because ssh will not keep context.
@@ -381,9 +433,12 @@ class PerfUtils(object):
         print("Compile command is " + compile_and_run_command)
 
         # run this command
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(
+            PerfSettings.get_config(
+                "execution", "general", "execcmd", config=config))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=PerfSettings.get_config(
+                "execution", "general", "host", config=config),
             command=compile_and_run_command)
 
         p2 = subprocess.Popen(
@@ -1383,12 +1438,13 @@ class PerfUtils(object):
         return "PAPIPerfLowLevel<" + ", ".join(counterlist) + ">"
 
     @staticmethod
-    def perf_counter_string(node):
+    def perf_counter_string(node, config=None):
         """
         Creates a performance counter typename string.
         """
 
-        mode = Config.get("instrumentation", "papi_mode")
+        mode = PerfSettings.get_config(
+            "instrumentation", "papi_mode", config=config)
         if mode == "default":  # Only allow overriding in default mode
             try:
                 assert isinstance(node.papi_counters, list)
@@ -1430,14 +1486,17 @@ class PerfUtils(object):
         return ("__perf_store.markSuperSectionStart(%d);\n" % (unified_id))
 
     @staticmethod
-    def read_available_perfcounters():
+    def read_available_perfcounters(config=None):
         from string import Template
         import subprocess
 
         papi_avail_str = "papi_avail -a"
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(
+            PerfSettings.get_config(
+                "execution", "general", "execcmd", config=config))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=PerfSettings.get_config(
+                "execution", "general", "host", config=config),
             command=papi_avail_str)
         p = subprocess.Popen(
             cmd,
@@ -1513,12 +1572,17 @@ class PerfUtils(object):
         return collapsed
 
     @staticmethod
-    def print_instrumentation_output(data: str):
+    def print_instrumentation_output(data: str, config=None):
         import json
         PerfSettings.transcriptor_print("print_instrumentation_output start")
         # Regex for Section start + bytes: # Section start \(node (?P<section_start_node>[0-9]+)\)\nbytes: (?P<section_start_bytes>[0-9]+)
         # Regex for general entries: # entry \((?P<entry_node>[0-9]+), (?P<entry_thread>[0-9]+), (?P<entry_iteration>[0-9]+), (?P<entry_flags>[0-9]+)\)\n((?P<value_key>[0-9-]+): (?P<value_val>[0-9-]+)\n)*
 
+        if config == None:
+            raise Exception("config is forbidden to be None for testing")
+        else:
+            print("Output file: " +
+                  config.get("instrumentation", "sql_database_file"))
         print_values = False
 
         multirun_results = []
@@ -1559,9 +1623,6 @@ class PerfUtils(object):
                 except Exception as e:
                     print("Error occurred in line " + str(line_num) + "!")
                     raise e
-
-                if current_section.is_valid():
-                    pass
 
                 # Reset variables
                 current_section = PerfUtils.Section()
@@ -1748,7 +1809,9 @@ class PerfUtils(object):
         PerfSettings.transcriptor_print("Multirun length: " +
                                         str(len(multirun_results)))
 
-        reps = int(Config.get("execution", "general", "repetitions"))
+        reps = int(
+            PerfSettings.get_config(
+                "execution", "general", "repetitions", config=config))
         clean_times = execution_times[-reps:]
         inst_times = execution_times[-int(2 * reps):][:reps]
 
@@ -1778,7 +1841,9 @@ class PerfUtils(object):
                 overhead_dict)
             overhead_number_string = overhead_number_string.replace("'", '"')
 
-        modestr = str(Config.get("instrumentation", "papi_mode"))
+        modestr = str(
+            PerfSettings.get_config(
+                "instrumentation", "papi_mode", config=config))
         for o, s in multirun_results:
             try:
                 PerfSettings.transcriptor_print("\tSection size: " +
@@ -1790,7 +1855,9 @@ class PerfUtils(object):
 
         if PerfSettings.perf_use_sql():
             import sqlite3
-            conn = sqlite3.Connection("perfdata.db")
+            dbpath = PerfSettings.get_config(
+                "instrumentation", "sql_database_file", config=config)
+            conn = sqlite3.Connection(dbpath)
             c = conn.cursor()
 
             c.execute(''' SELECT * FROM `Programs` LIMIT 1''')
@@ -2079,14 +2146,15 @@ class PerfPAPIInfo:
     def set_memspeed(self, speed):
         self.memspeed = speed
 
-    def load_info(self):
+    def load_info(self, config=None):
         """ Load information about the counters from remote. """
         from string import Template
         import subprocess
 
         print("Loading counter info from remote...")
 
-        if self.cached_host == Config.get("execution", "general", "host"):
+        if self.cached_host == PerfSettings.get_config(
+                "execution", "general", "host", config=config):
             return  # Do not run this every time, just the first time
         else:
             # else reset
@@ -2107,9 +2175,12 @@ class PerfPAPIInfo:
         for index, x in enumerate(derived):
             print("%d/%d Elements...\r" % (index + 1, len(derived)), end='')
             papi_avail_str = 'papi_avail -e %s | grep --color=never "Number of Native Events"' % x
-            s = Template(Config.get("execution", "general", "execcmd"))
+            s = Template(
+                PerfSettings.get_config(
+                    "execution", "general", "execcmd", config=config))
             cmd = s.substitute(
-                host=Config.get("execution", "general", "host"),
+                host=PerfSettings.get_config(
+                    "execution", "general", "host", config=config),
                 command=papi_avail_str)
             p = subprocess.Popen(
                 cmd,
@@ -2127,7 +2198,8 @@ class PerfPAPIInfo:
             else:
                 print("\nError: Expected to find a number here...")
 
-        self.cached_host = Config.get("execution", "general", "host")
+        self.cached_host = PerfSettings.get_config(
+            "execution", "general", "host", config=config)
         print("\nDone")
 
     def check_counters(self, counter_lists: list):

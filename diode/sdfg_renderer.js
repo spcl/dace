@@ -1,14 +1,17 @@
 // This class groups node-drawing to reduce redundancies and non-global state.
 class DrawNodeState {
 
-    constructor(ctx, stateid) {
+    constructor(ctx, stateid, sdfg_state = undefined) {
         this.ctx = ctx;
         this.stateid = stateid;
-
+        if(sdfg_state === undefined) {
+            sdfg_state = global_state;
+        }
+        this.sdfg_state = sdfg_state;
     }
 
     highlights() {
-        return global_state.highlights.filter(x => x['state-id'] == this.stateid).map(x => x['node-id']);
+        return this.sdfg_state.highlights.filter(x => x['state-id'] == this.stateid).map(x => x['node-id']);
     }
 
     nodeColor(nodeid) {
@@ -207,3 +210,5 @@ class DrawNodeState {
     }
 
 }
+
+export { DrawNodeState };

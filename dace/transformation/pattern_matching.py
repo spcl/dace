@@ -7,7 +7,7 @@ import timeit
 from types import GeneratorType
 import dace
 from dace import sdfg as sd
-from dace.properties import make_properties, Property
+from dace.properties import make_properties, Property, SubgraphProperty
 from dace.graph import labeling, graph as gr
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
@@ -95,7 +95,7 @@ class Transformation(object):
     # Properties
     sdfg_id = Property(dtype=int)
     state_id = Property(dtype=int)
-    subgraph = Property(dtype=dict)
+    subgraph = SubgraphProperty(dtype=dict)
     expr_index = Property(dtype=int)
 
     @staticmethod

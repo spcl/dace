@@ -70,7 +70,7 @@ class InterstateEdge(object):
     def condition_symbols(self):
         return dace.symbolic.symbols_in_ast(self.condition[0])
 
-    def toJSON(self, indent=0):
+    def toJSON(self, parent=None):
         json = str(self.label)
         # get rid of newlines (why are they there in the first place?)
         json = re.sub(r"\n", " ", json)

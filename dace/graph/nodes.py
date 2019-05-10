@@ -7,13 +7,13 @@ import itertools
 from typing import Set
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
-                             ParamsProperty, RangeProperty, DebugInfoProperty,
-                             SetProperty, make_properties, indirect_properties,
-                             DataProperty, SymbolicProperty)
+from dace.properties import (
+    Property, CodeProperty, LambdaProperty, ParamsProperty, RangeProperty,
+    DebugInfoProperty, SetProperty, make_properties, indirect_properties,
+    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, types
-import pickle
+import pickle, json
 
 # -----------------------------------------------------------------------------
 
@@ -40,18 +40,28 @@ class Node(object):
     def validate(self, sdfg, state):
         pass
 
-    def toJSON(self, indent=0):
+    def toJSON(self, parent, options={"no_meta": False}):
         labelstr = str(self)
         typestr = str(type(self).__name__)
-        inconn = "[" + ",".join(
-            ['"' + str(x) + '"' for x in self.in_connectors]) + "]"
-        outconn = "[" + ",".join(
-            ['"' + str(x) + '"' for x in self.out_connectors]) + "]"
-        json = " " * indent + "{ \"label\": \"" + labelstr
-        json += "\", \"type\": \"" + typestr + "\", \"in_connectors\": " + inconn
-        json += ", \"out_connectors\" :" + outconn
-        json += "}\n"
-        return json
+
+        scope_entry_node = parent.entry_node(self)
+        if scope_entry_node != None:
+            ens = parent.exit_nodes(parent.entry_node(self))
+            scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
+            scope_entry_node = str(parent.node_id(scope_entry_node))
+        else:
+            scope_entry_node = None
+            scope_exit_nodes = []
+
+        retdict = {
+            "type": typestr,
+            "label": labelstr,
+            "attributes": json.loads(Property.all_properties_to_json(self)),
+            "id": parent.node_id(self),
+            "scope_entry": scope_entry_node,
+            "scope_exits": scope_exit_nodes
+        }
+        return json.dumps(retdict)
 
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
@@ -170,6 +180,12 @@ class AccessNode(Node):
             raise TypeError('Data for AccessNode must be a string')
         self.data = data
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = AccessNode("Nodata")
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     def __deepcopy__(self, memo):
         node = object.__new__(AccessNode)
         node._access = self._access
@@ -264,6 +280,12 @@ class Tasklet(CodeNode):
         self.code_exit = code_exit
         self.debuginfo = debuginfo
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = Tasklet("dummylabel")
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     @property
     def name(self):
         return self._label
@@ -318,7 +340,7 @@ class NestedSDFG(CodeNode):
 
     label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = Property(dtype=graph.OrderedDiGraph, desc="The SDFG")
+    sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
     schedule = Property(
         dtype=types.ScheduleType,
         desc="SDFG schedule",
@@ -347,6 +369,18 @@ class NestedSDFG(CodeNode):
         self.schedule = schedule
         self.location = location
         self.debuginfo = debuginfo
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+
+        # We have to load the SDFG first.
+        sdfg = SDFGReferenceProperty.from_json(
+            json.dumps(json_obj['attributes']['sdfg']), context)
+        ret = NestedSDFG("nolabel", sdfg, set(), set())
+
+        Property.set_properties_from_json(ret, json_obj, context)
+
+        return ret
 
     def draw_node(self, sdfg, graph):
         return dot.draw_node(sdfg, graph, self, shape="doubleoctagon")
@@ -408,6 +442,13 @@ class MapEntry(EntryNode):
         self._map = map
         self._map_depth = 0
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        m = Map("", [], [])
+        ret = MapEntry(map=m)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     @property
     def map(self):
         return self._map
@@ -435,6 +476,13 @@ class MapExit(ExitNode):
         if map is None:
             raise ValueError("Map for MapExit can not be None.")
         self._map = map
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        m = Map("", [], [])
+        ret = MapExit(map=m)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     @property
     def map(self):
@@ -478,7 +526,7 @@ class Map(object):
     flatten = Property(dtype=bool, desc="Map loop flattening")
     fence_instrumentation = Property(
         dtype=bool, desc="Disable instrumentation in all subnodes")
-    papi_counters = Property(
+    papi_counters = ListProperty(
         dtype=list,
         desc="List of PAPI counter preset identifiers.",
         default=PerfSettings.perf_default_papi_counters())
@@ -694,7 +742,8 @@ class Reduce(Node):
     from dace.codegen.instrumentation.perfsettings import PerfSettings
 
     # Properties
-    axes = Property(dtype=tuple, allow_none=True)
+    #axes = Property(dtype=tuple, allow_none=True)
+    axes = ListProperty(dtype=list, allow_none=True)
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
@@ -703,7 +752,7 @@ class Reduce(Node):
         enum=types.ScheduleType,
         from_string=lambda x: types.ScheduleType[x])
 
-    papi_counters = Property(
+    papi_counters = ListProperty(
         dtype=list,
         desc="List of PAPI counter preset identifiers.",
         default=PerfSettings.perf_default_papi_counters())
@@ -724,6 +773,12 @@ class Reduce(Node):
 
     def draw_node(self, sdfg, state):
         return dot.draw_node(sdfg, state, self, shape="invtriangle")
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = Reduce("(lambda a, b: (a + b))", None)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     def __str__(self):
         # Autodetect reduction type

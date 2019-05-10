@@ -1,3 +1,5 @@
+var LINEHEIGHT = 10;
+
 var targetsection_ignore_error = true; // Set to true to ignore errors occurring when no valid targetsection was found
 var toplevel_use_mean = false;
 var toplevel_use_median = true;

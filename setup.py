@@ -13,7 +13,8 @@ runtime_files = [
 diode_files = [
     f[len(diode_path):]
     for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
-              glob.glob(diode_path + '**/*.html', recursive=True))
+              glob.glob(diode_path + '**/*.html', recursive=True) +
+              glob.glob(diode_path + 'db_scripts/*', recursive=True))
 ]
 cub_files = [
     f[len(dace_path):]

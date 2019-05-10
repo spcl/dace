@@ -126,6 +126,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return '%s (at state %s%s)' % (self.message, str(state.label), edgestr)
 
 
+@make_properties
 class SDFG(OrderedDiGraph):
     """ The main intermediate representation of code in DaCe.
 
@@ -138,6 +139,12 @@ class SDFG(OrderedDiGraph):
         regions in memory, tasklets, or parametric graph scopes (see
         `dace.graph.nodes` for a full list of available node types); edges in the multigraph represent data movement using memlets, as described in the `Memlet` class documentation.
     """
+
+    name = Property(dtype=str, desc="The name of the sdfg")
+    arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
+    constants_prop = Property(
+        dtype=dict, default={}, desc="Compile-time constants")
+    _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG")
 
     def __init__(self,
                  name: str,
@@ -162,14 +169,18 @@ class SDFG(OrderedDiGraph):
             @param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
         super(SDFG, self).__init__()
-        self._name = name
+        self.name = name
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        if not isinstance(arg_types, collections.OrderedDict):
-            raise TypeError
-        self._arg_types = arg_types  # OrderedDict(str, typeclass)
-        self._constants = constants  # type: Dict[str, Any]
+        #if not isinstance(arg_types, collections.OrderedDict):
+        #    raise TypeError
+
+        #self._arg_types = arg_types  # OrderedDict(str, typeclass)
+        #self._constants = constants  # type: Dict[str, Any]
+        self.arg_types = arg_types
+        self.constants_prop = constants
+
         self._propagate = propagate
         self._parent = parent
         self._parent_sdfg = None
@@ -177,6 +188,43 @@ class SDFG(OrderedDiGraph):
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
         self._arrays = {None: None}  # type: Dict[str, dt.Array]
+
+    @classmethod
+    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise Exception("Class type mismatch")
+
+        attrs = json_obj['attributes']
+        nodes = json_obj['nodes']
+        edges = json_obj['edges']
+
+        import json
+
+        ret = SDFG(
+            name=attrs['name'],
+            arg_types=json.loads(
+                json.dumps(attrs['arg_types']),
+                object_hook=properties.Property.json_loader),
+            constants=json.loads(
+                json.dumps(attrs['constants_prop']),
+                object_hook=properties.Property.json_loader),
+            parent=context_info['sdfg'])
+
+        Property.set_properties_from_json(ret, json_obj)
+
+        import copy
+        for n in nodes:
+            nci = copy.deepcopy(context_info)
+            nci['sdfg'] = ret
+
+            state = SDFGState.fromJSON_object(n, nci)
+            print("Label is " + str(state.label))
+            ret.add_node(state)
+
+        ret.validate()
+
+        return ret
 
     @property
     def arrays(self):
@@ -250,19 +298,20 @@ class SDFG(OrderedDiGraph):
         self.sourcecode = code
         self.language = lang
 
-    @property
-    def name(self):
-        """ The name of this SDFG. """
-        return self._name
+    #@property
+    #def name(self):
+    #    """ The name of this SDFG. """
+    #    return self._name
 
     @property
     def label(self):
         """ The name of this SDFG. """
-        return self._name
+        #return self._name
+        return self.name
 
-    @property
-    def arg_types(self):
-        return self._arg_types
+    #@property
+    #def arg_types(self):
+    #    return self._arg_types
 
     @property
     def constants(self):
@@ -272,20 +321,23 @@ class SDFG(OrderedDiGraph):
         if self._parent_sdfg is not None:
             result.update(self._parent_sdfg.constants)
 
-        result.update(self._constants)
+        #result.update(self._constants)
+        result.update(self.constants_prop)
         return result
 
     def add_constants(self, new_constants: Dict[str, Any]):
         """ Adds new compile-time constants to this SDFG.
             @param new_constants: Dictionary of new constants to add.
         """
-        self._constants.update(new_constants)
+        #self._constants.update(new_constants)
+        self.constants_prop.update(new_constants)
 
     def reset_constants(self, constants: Dict[str, Any]):
         """ Resets compile-time constants of this SDFG to a given dictionary.
             @param constants: Dictionary of new constants to set.
         """
-        self._constants = constants
+        #self._constants = constants
+        self.constants_prop = constants
 
     @property
     def propagate(self):
@@ -572,7 +624,7 @@ class SDFG(OrderedDiGraph):
         #    definition (or if not created from a dace.program)
         arg_list = collections.OrderedDict(self._arg_types)
         for key, val in itertools.chain(data_args, sym_args):
-            if key not in self._constants and key not in arg_list:
+            if key not in self.constants_prop and key not in arg_list:
                 arg_list[key] = val
 
         return arg_list
@@ -837,6 +889,23 @@ subgraph cluster_state_{state} {{
                 raise TypeError('Loaded file is not an SDFG (loaded '
                                 'type: %s)' % type(sdfg).__name__)
             return sdfg
+
+    def dumps(self):
+        """ Returns a serialized representation of this SDFG (uses Pickle as the default format)
+        """
+        return pickle.dumps(self)
+
+    @staticmethod
+    def from_bytes(mem: bytes):
+        """ Constructs an SDFG from the serial representation in `bytes`
+            @param mem: bytes object to load SDFG from.
+            @return: An SDFG
+        """
+        sdfg = pickle.loads(mem)
+        if not isinstance(sdfg, SDFG):
+            raise TypeError('Loaded file is not an SDFG (loaded '
+                            'type: %s)' % type(sdfg).__name__)
+        return sdfg
 
     # Dynamic SDFG creation API
     ##############################
@@ -1168,7 +1237,7 @@ subgraph cluster_state_{state} {{
         })
 
         # Update constants
-        self._constants.update(syms)
+        self.constants_prop.update(syms)
 
     def compile(self, specialize=None, optimizer=None):
         """ Compiles a runnable binary from this SDFG.
@@ -1860,7 +1929,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
-            raise TypeError("Expected Node, got " + str(type(node)))
+            raise TypeError("Expected Node, got " + str(type(node)) + " (" +
+                            str(node) + ")")
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
 
@@ -1932,57 +2002,72 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def draw_node(self, graph):
         return dot.draw_node(graph, self, shape="Msquare")
 
-    def toJSON(self, indent=0):
-        json = " " * indent + "{\n"
-        indent += 2
-        json += " " * indent + "\"type\": \"" + type(self).__name__ + "\",\n"
-        json += " " * indent + "\"collapsed\": " + str(
-            self.is_collapsed).lower() + ",\n"
-        json += " " * indent + "\"nodes\": [\n"
-        indent += 2
-        for n in self.nodes():
-            scope_entry_node_id = "null"
-            if self.entry_node(n) is not None:
-                scope_entry_node_id = str(self.node_id(self.entry_node(n)))
-            json += " " * indent + "{\n"
-            indent += 2
-            json += " " * indent + "\"id\" : \"" + str(
-                self.node_id(n)) + "\",\n"
-            json += " " * indent + "\"scope_entry\" : \"" + scope_entry_node_id + "\",\n"
-            json += " " * indent + "\"scope_exits\" : ["
-            if self.entry_node(n) is not None:
-                ens = self.exit_nodes(self.entry_node(n))
-                json += ",".join([str(self.node_id(x)) for x in ens])
-            json += "],"
-            json += " " * indent + "\"attributes\" : " + n.toJSON(indent) + "\n"
-            indent -= 2
-            if n == self.nodes()[-1]:
-                json += " " * indent + "}\n"
-            else:
-                json += " " * indent + "},\n"
-        indent -= 2
-        json += " " * indent + "],\n"
+    def toJSON(self, parent=None):
+        import json
+        ret = {
+            'type': type(self).__name__,
+            'label': self.name,
+            'id': parent.node_id(self) if parent != None else None,
+            'collapsed': self.is_collapsed,
+            'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
+            'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
+            'attributes': json.loads(Property.all_properties_to_json(self)),
+        }
 
-        json += " " * indent + "\"edges\": [\n"
-        for e in self.edges():
-            json += " " * indent + "{\n"
-            indent += 2
-            json += " " * indent + '"src": "%s",\n' % (str(
-                self.node_id(e.src)))
-            json += " " * indent + '"src_connector": "%s",\n' % (e.src_conn)
-            json += " " * indent + '"dst": "%s",\n' % (str(
-                self.node_id(e.dst)))
-            json += " " * indent + '"dst_connector": "%s",\n' % (e.dst_conn)
-            json += " " * indent + "\"attributes\" : " + e.toJSON(indent) + "\n"
-            indent -= 2
-            if e == self.edges()[-1]:
-                json += " " * indent + "}\n"
-            else:
-                json += " " * indent + "},\n"
-        indent -= 2
-        json += " " * indent + "]\n"
-        json += " " * indent + "}\n"
-        return json
+        return json.dumps(ret)
+
+    @classmethod
+    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+        """ Loads the node properties, label and type into a dict.
+            @param json_obj: The object containing information about this node.
+                             NOTE: This may not be a string!
+            @return: An SDFGState instance constructed from the passed data
+        """
+
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise Exception("Class type mismatch")
+
+        attrs = json_obj['attributes']
+        nodes = json_obj['nodes']
+        edges = json_obj['edges']
+
+        ret = SDFGState(
+            label=json_obj['label'], sdfg=context_info['sdfg'], debuginfo=None)
+
+        rec_ci = {
+            'sdfg':
+            context_info['sdfg'],
+            'sdfg_state':
+            ret,
+            'callback':
+            context_info['callback'] if 'callback' in context_info else None
+        }
+        Property.set_properties_from_json(ret, json_obj, rec_ci)
+
+        import json
+        for n in nodes:
+            #print("Pre-type: " + type(n).__name__)
+            nret = json.loads(
+                json.dumps(n),
+                object_hook=lambda x: Property.json_loader(x, rec_ci))
+            #print("Post-type: " + type(nret).__name__)
+            ret.add_node(nret)
+
+        # Connect using the edges
+        for e in edges:
+            #print("Pre-type: " + type(e).__name__)
+            eret = json.loads(
+                json.dumps(e),
+                object_hook=lambda x: Property.json_loader(x, rec_ci))
+            #print("Post-type: " + type(eret).__name__)
+
+            # There is no option to directly add this edge - why not?
+
+            ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
+                         eret.data)
+
+        return ret
 
     def scope_dict(self, node_to_children=False):
         """ Returns a dictionary that segments an SDFG state into

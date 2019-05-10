@@ -1,3 +1,5 @@
+import { Button, Layout, Pos, RU_DataViewText, RU_DataViewFormLayout, RU_DataViewNumberBlock, RU_DataViewBarGraph, DataBlock } from "./renderer_util.js";
+import { MathHelper, ObjectHelper } from "./datahelper.js";
 
 
 
@@ -236,8 +238,12 @@ class MemoryButton extends Button {
         this.setOnEnterHover(p => { this.color = "#FF0000"; this.button_subwindow_state = 'open'; })
         this.setOnLeaveHover(p => { this.color = "orange"; if (!this.is_locked_open) this.button_subwindow_state = 'collapsed'; })
         this.setOnClick((p, mb) => { this.is_locked_open = !this.is_locked_open; });
+
+        this.setDefaultDblClick();
     }
 
 
 
 }
+
+export { MemoryButton };

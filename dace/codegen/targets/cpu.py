@@ -77,8 +77,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     self._dispatcher.defined_vars.add(name, DefinedType.Stream)
             else:
-                raise TypeError("Unrecognized argument type: {}".format(
-                    type(arg_type).__name__))
+                raise TypeError(
+                    "Unrecognized argument type: {t} (value {v})".format(
+                        t=type(arg_type).__name__, v=str(arg_type)))
 
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)

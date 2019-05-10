@@ -1,3 +1,6 @@
+import { Button, Layout, Pos, max_func, max_func_obj, min_func, DataBlock,
+    RU_DataViewText, RU_DataViewSuggestedActionBlock, RU_DataViewNumberBlock, RU_DataViewBarGraph, RU_DataViewFormLayout, } from "./renderer_util.js";
+import { MathHelper, ObjectHelper } from "./datahelper.js";
 
 
 class ParallelizationButton extends Button {
@@ -262,5 +265,9 @@ class ParallelizationButton extends Button {
         this.setOnEnterHover(p => { this.color = "#00FF00"; this.button_subwindow_state = 'open'; })
         this.setOnLeaveHover(p => { this.color = "orange"; if (!this.is_locked_open) this.button_subwindow_state = 'collapsed'; })
         this.setOnClick((p, mb) => { this.is_locked_open = !this.is_locked_open; });
+
+        this.setDefaultDblClick();
     }
 }
+
+export { ParallelizationButton };

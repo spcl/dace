@@ -1,0 +1,21 @@
+{
+  "name": "diode",
+  "version": "2.0.0",
+  "description": "DaCe Integrated Optimization and Development Environment",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "concurrently \"electron .\" \"python3 ./diode_rest.py\""
+  },
+  "author": "Timo Schneider",
+  "license": "ISC",
+  "devDependencies": {},
+  "dependencies": {
+    "ace-webapp": "^0.2.0",
+    "concurrently": "^3.5.1",
+    "electron": "^2.0.18",
+    "nodejs": "0.0.0",
+    "xel": "0.0.138",
+    "xhr2": "^0.1.4"
+  }
+}
