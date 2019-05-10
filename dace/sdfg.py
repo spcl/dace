@@ -2597,8 +2597,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                   toplevel=False,
                   debuginfo=None):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_array" API is deprecated, please '
-              'use "SDFG.add_array" and "SDFGState.add_access"')
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -2637,8 +2635,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                    toplevel=False,
                    debuginfo=None):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_scalar" API is deprecated, please '
-              'use "SDFG.add_scalar" and "SDFGState.add_access"')
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]

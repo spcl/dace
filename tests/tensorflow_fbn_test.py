@@ -1,0 +1,136 @@
+import tensorflow as tf
+from tensorflow.python.ops import gen_nn_ops
+import numpy as np
+import dace
+from dace.frontend.tensorflow import TFSession
+
+dace.Config.append("compiler", "cpu", "args", value=" -faligned-new")
+num_channels = 3
+size = [8, 224, 224, num_channels]
+
+inp = tf.placeholder(tf.float32, size)
+scale = tf.placeholder(tf.float32, [num_channels])
+offset = tf.placeholder(tf.float32, [num_channels])
+populationMean = tf.placeholder(tf.float32, [num_channels])
+populationVariance = tf.placeholder(tf.float32, [num_channels])
+y, mean, var, _, var_sqrt = gen_nn_ops._fused_batch_norm(
+    inp, scale, offset, [], [], epsilon=0.01, is_training=True)
+outputs = [y, mean, var]
+# outputs = tf.nn.fused_batch_norm(
+#    inp,
+#    scale,
+#    offset,
+#    populationMean,
+#    populationVariance,
+#    epsilon=1.0,
+#    is_training=False,
+# )
+test_in = np.random.uniform(size=size).astype(np.float32)
+test_scale = np.random.uniform(size=[num_channels]).astype(np.float32)
+test_offset = np.random.uniform(size=[num_channels]).astype(np.float32)
+# test_popvar = np.random.uniform(size=[num_channels]).astype(np.float32)
+# test_popmean = np.random.uniform(size=[num_channels]).astype(np.float32)
+
+sess_tf = tf.Session()
+sess_dace = TFSession()
+
+outputs_dace = sess_dace.run(
+    outputs,
+    feed_dict={
+        inp: test_in,
+        scale: test_scale,
+        offset: test_offset,
+        # populationMean: test_popmean,
+        # populationVariance: test_popvar,
+    },
+)
+outputs_tf = sess_tf.run(
+    outputs,
+    feed_dict={
+        inp: test_in,
+        scale: test_scale,
+        offset: test_offset,
+        # populationMean: test_popmean,
+        # populationVariance: test_popvar,
+    },
+)
+
+try:
+    assert (
+        tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) <
+        1e-2 and
+        tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) <
+        1e-4 and
+        tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) <
+        1e-4)
+except:
+    print("FBN test failed")
+    print(
+        tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))
+    print(
+        tf.linalg.norm(outputs_tf[1] - outputs_dace[1]).eval(session=sess_tf))
+    print(
+        tf.linalg.norm(outputs_tf[2] - outputs_dace[2]).eval(session=sess_tf))
+
+################# FBN GRADIENT TEST ###############################
+outputGrad = tf.placeholder(tf.float32, size)
+x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(
+    outputGrad,
+    inp,
+    scale,
+    outputs[1],
+    var_sqrt,
+    epsilon=0.01,
+    is_training=True)
+gradients = [x_grad, gamma_grad, beta_grad]
+test_outputgrad = np.random.uniform(size=size).astype(np.float32)
+outputs_dace = sess_dace.run(
+    gradients,
+    feed_dict={
+        inp: test_in,
+        outputGrad: test_outputgrad,
+        scale: test_scale,
+        offset: test_offset,
+    },
+)
+# TF
+x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(
+    outputGrad,
+    inp,
+    scale,
+    outputs[1],
+    outputs[2],
+    epsilon=0.01,
+    is_training=True)
+gradients = [x_grad, gamma_grad, beta_grad]
+#writer = tf.summary.FileWriter("./", sess_tf.graph)
+outputs_tf = sess_tf.run(
+    gradients,
+    feed_dict={
+        inp: test_in,
+        outputGrad: test_outputgrad,
+        scale: test_scale,
+        offset: test_offset,
+    },
+)
+print("dace beta grad norm")
+expected_betagrad = np.sum(test_outputgrad, axis=(0, 1, 2))
+print(np.linalg.norm(outputs_dace[2] - expected_betagrad))
+print("TF beta grad norm")
+print(tf.linalg.norm(outputs_tf[2] - expected_betagrad).eval(session=sess_tf))
+try:
+    assert (
+        tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) <
+        1e-10 and
+        tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) <
+        1e-10 and
+        tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) <
+        1e-10)
+except:
+    print("FBN Gradient test failed")
+    print(
+        tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))
+    print(
+        tf.linalg.norm(outputs_tf[1] - outputs_dace[1]).eval(session=sess_tf))
+    print(
+        tf.linalg.norm(outputs_tf[2] - outputs_dace[2]).eval(session=sess_tf))
