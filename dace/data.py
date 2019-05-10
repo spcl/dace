@@ -78,7 +78,7 @@ class Data(object):
         """ Check for equivalence (shape and type) of two data descriptors. """
         raise NotImplementedError
 
-    def signature(self, with_types=True, name=None):
+    def signature(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
 
@@ -128,8 +128,8 @@ class Scalar(Data):
             return False
         return True
 
-    def signature(self, with_types=True, name=None):
-        if not with_types: return name
+    def signature(self, with_types=True, for_call=False, name=None):
+        if not with_types or for_call: return name
         return str(self.dtype.ctype) + ' ' + name
 
     def sizes(self):
@@ -322,14 +322,16 @@ class Array(Data):
                     return False
         return True
 
-    def signature(self, with_types=True, name=None):
+    def signature(self, with_types=True, for_call=False, name=None):
         arrname = name
         if self.materialize_func is not None:
-            arrname = '/* ' + arrname + ' (immaterial) */'
-            if not with_types:
+            if for_call:
                 return 'nullptr'
+            if not with_types:
+                return arrname
+            arrname = '/* ' + arrname + ' (immaterial) */'
 
-        if not with_types:
+        if not with_types or for_call:
             return arrname
         if self.may_alias:
             return str(self.dtype.ctype) + ' *' + arrname
@@ -431,8 +433,8 @@ class Stream(Data):
                     return False
         return True
 
-    def signature(self, with_types=True, name=None):
-        if not with_types: return name
+    def signature(self, with_types=True, for_call=False, name=None):
+        if not with_types or for_call: return name
         if self.storage in [
                 dace.types.StorageType.GPU_Global,
                 dace.types.StorageType.GPU_Shared,

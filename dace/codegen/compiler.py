@@ -20,7 +20,7 @@ import numpy as np
 import dace
 from dace.frontend import operations
 from dace.frontend.python import ndarray
-from dace import symbolic, types
+from dace import symbolic, types, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -174,25 +174,54 @@ class CompiledSDFG(object):
                 '("program(A=a,B=b)"), but not both')
 
         # Argument construction
-        sig = []
+        sig = self._sdfg.signature_arglist(with_types=False)
+        typedict = self._sdfg.arglist()
         if len(kwargs) > 0:
             # Construct mapping from arguments to signature
-            sig = self._sdfg.signature_arglist(with_types=False)
             arglist = []
+            argtypes = []
+            argnames = []
             for a in sig:
                 try:
                     arglist.append(kwargs[a])
+                    argtypes.append(typedict[a])
+                    argnames.append(a)
                 except KeyError:
-                    raise KeyError("Missing kernel argument \"{}\"".format(a))
+                    raise KeyError("Missing program argument \"{}\"".format(a))
         elif len(args) > 0:
             arglist = list(args)
+            argtypes = [typedict[s] for s in sig]
+            argnames = sig
+            sig = []
         else:
             arglist = []
+            argtypes = []
+            argnames = []
+            sig = []
+
+        # Type checking
+        for a, arg, atype in zip(argnames, arglist, argtypes):
+            if not isinstance(arg, np.ndarray) and isinstance(atype, dt.Array):
+                raise TypeError(
+                    'Passing an object (type %s) to an array in argument "%s"'
+                    % (type(arg).__name__, a))
+            if isinstance(arg, np.ndarray) and not isinstance(atype, dt.Array):
+                raise TypeError(
+                    'Passing an array to a scalar (type %s) in argument "%s"' %
+                    (atype.dtype.ctype, a))
+            if not isinstance(atype, dt.Array) and not isinstance(
+                    arg, atype.dtype.type):
+                print('WARNING: Casting scalar argument "%s" from %s to %s' %
+                      (a, type(arg).__name__, atype.dtype.type))
+
+        # Retain only the element datatype for upcoming checks and casts
+        argtypes = [t.dtype.type for t in argtypes]
 
         sdfg = self._sdfg
 
         # As in compilation, add symbols used in array sizes to parameters
         symparams = {}
+        symtypes = {}
         for symname in sdfg.undefined_symbols(False):
             # Ignore arguments (as they may not be symbols but constants,
             # see below)
@@ -200,6 +229,7 @@ class CompiledSDFG(object):
             try:
                 symval = symbolic.symbol(symname)
                 symparams[symname] = symval.get()
+                symtypes[symname] = symval.dtype.type
             except UnboundLocalError:
                 try:
                     symparams[symname] = kwargs[symname]
@@ -208,29 +238,35 @@ class CompiledSDFG(object):
 
         arglist.extend(
             [symparams[k] for k in sorted(symparams.keys()) if k not in sig])
+        argtypes.extend(
+            [symtypes[k] for k in sorted(symtypes.keys()) if k not in sig])
 
         # Obtain SDFG constants
         constants = sdfg.constants
 
         # Remove symbolic constants from arguments
         callparams = tuple(
-            arg for arg in arglist if not symbolic.issymbolic(arg) or (
+            (arg, atype) for arg, atype in zip(arglist, argtypes)
+            if not symbolic.issymbolic(arg) or (
                 hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
         callparams = tuple(
-            symbolic.eval(arg) if symbolic.issymbolic(arg, constants) else arg
-            for arg in callparams)
+            (atype(symbolic.eval(arg)),
+             atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
+            for arg, atype in callparams)
 
         # Replace arrays with their pointers
         newargs = tuple(
-            ctypes.c_void_p(arg.__array_interface__['data'][0]) if (isinstance(
-                arg, ndarray.ndarray) or isinstance(arg, np.ndarray)) else arg
-            for arg in callparams)
+            (ctypes.c_void_p(arg.__array_interface__['data'][0]),
+             atype) if (isinstance(arg, ndarray.ndarray)
+                        or isinstance(arg, np.ndarray)) else (arg, atype)
+            for arg, atype in callparams)
 
-        newargs = tuple(types._FFI_CTYPES[type(arg)](arg)
-                        if type(arg) in types._FFI_CTYPES else arg
-                        for arg in newargs)
+        newargs = tuple(types._FFI_CTYPES[atype](arg) if (
+            atype in types._FFI_CTYPES
+            and not isinstance(arg, ctypes.c_void_p)) else arg
+                        for arg, atype in newargs)
 
         self._lastargs = newargs
         return self._lastargs
@@ -269,10 +305,12 @@ def unique_flags(flags):
     return set(re.findall(pattern, flags))
 
 
-def generate_program_folder(code_objects: List[CodeObject], out_path):
+def generate_program_folder(sdfg, code_objects: List[CodeObject],
+                            out_path: str):
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
+        @param sdfg: The SDFG to generate the program folder for.
         @param code_objects: List of generated code objects.
         @param out_path: The folder in which the build files should be written.
         @return: Path to the program folder.
@@ -321,6 +359,9 @@ def generate_program_folder(code_objects: List[CodeObject], out_path):
 
     # Copy snapshot of configuration script
     Config.save(os.path.join(out_path, "dace.conf"))
+
+    # Save the SDFG itself
+    sdfg.save(os.path.join(out_path, "program.sdfg"))
 
     return out_path
 

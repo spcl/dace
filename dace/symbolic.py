@@ -1,5 +1,6 @@
 import ast
 import sympy
+import pickle
 
 from sympy import Sum, Product, log, floor, ceiling
 import sympy as functions
@@ -643,3 +644,45 @@ def symstr(sym):
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter().doprint(sym)
         return '(' + repstr(sstr) + ')'
+
+
+def _spickle(obj):
+    return str(obj), {
+        s.name: (s.dtype, s._assumptions)
+        for s in symlist(obj).values()
+    }
+
+
+def _sunpickle(obj):
+    s, slist = obj
+    # Create symbols
+    for sname, (stype, assumptions) in slist.items():
+        symbol(sname, stype, **assumptions)
+    return pystr_to_symbolic(s)
+
+
+class SympyAwarePickler(pickle.Pickler):
+    """ Custom Pickler class that safely saves SymPy expressions 
+        with function definitions in expressions (e.g., int_ceil).
+    """
+
+    def persistent_id(self, obj):
+        if isinstance(obj, sympy.Basic):
+            # Save sympy expression as srepr
+            return ("DaCeSympyExpression", _spickle(obj))
+        else:
+            # Pickle everything else normally
+            return None
+
+
+class SympyAwareUnpickler(pickle.Unpickler):
+    """ Custom Unpickler class that safely restores SymPy expressions 
+        with function definitions in expressions (e.g., int_ceil).
+    """
+
+    def persistent_load(self, pid):
+        type_tag, value = pid
+        if type_tag == "DaCeSympyExpression":
+            return _sunpickle(value)
+        else:
+            raise pickle.UnpicklingError("unsupported persistent object")

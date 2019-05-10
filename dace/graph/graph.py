@@ -168,6 +168,10 @@ class Graph(object):
         """Returns an iterable to Edge objects."""
         raise self._not_implemented_error()
 
+    def __getitem__(self, node):
+        """ Returns an iterable to neighboring nodes. """
+        return (e.dst for e in self.out_edges(node))
+
     def all_edges(self, *nodes):
         """Returns an iterable to incoming and outgoing Edge objects."""
         result = set()
@@ -186,12 +190,20 @@ class Graph(object):
             self.add_node(node)
 
     def node_id(self, node):
-        """Returns a numeric node ID that corresponds to the node index in the
+        """Returns a numeric ID that corresponds to the node index in the
            internal graph representation (unique)."""
         for i, n in enumerate(self.nodes()):
             if node == n:
                 return i
         raise NodeNotFoundError(node)
+
+    def edge_id(self, edge):
+        """Returns a numeric ID that corresponds to the edge index in the
+           internal graph representation (unique)."""
+        for i, e in enumerate(self.edges()):
+            if edge == e:
+                return i
+        raise EdgeNotFoundError(edge)
 
     def add_edge(self, source, destination, data):
         """Adds an edge to the graph containing the specified data.

@@ -87,8 +87,8 @@ class CPUCodeGen(TargetCodeGenerator):
             self)
 
         cpu_storage = [
-            types.StorageType.CPU_Heap, types.StorageType.CPU_Pinned,
-            types.StorageType.CPU_Stack, types.StorageType.Register
+            types.StorageType.CPU_Heap, types.StorageType.CPU_Stack,
+            types.StorageType.Register
         ]
         dispatcher.register_array_dispatcher(cpu_storage, self)
 
@@ -538,8 +538,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 node_id = PerfUtils.unified_id(dfg.node_id(dst_node), state_id)
                 # Mark a section start (this is not really a section in itself (it would be a section with 1 entry))
                 stream.write(
-                    "__perf_store.markSectionStart(%d, (long long)%s, PAPI_thread_id());\n"
-                    % (node_id, copy_size), sdfg, state_id,
+                    PerfUtils.perf_section_start_string(
+                        node_id, copy_size, copy_size), sdfg, state_id,
                     [src_node, dst_node])
                 stream.write((
                     "dace_perf::{pcs} __perf_cpy_{nodeid}_{unique_id};\n" +
@@ -550,6 +550,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     nodeid=node_id,
                     unique_id=unique_cpy_id,
                     size=copy_size), sdfg, state_id, [src_node, dst_node])
+
             #############################################################
 
             nc = True
@@ -1251,6 +1252,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result = callsite_stream
 
+        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id,
+                                                     sym2cpp)
+
         map_header = ''
 
         if PerfSettings.perf_enable_instrumentation():
@@ -1258,52 +1262,9 @@ class CPUCodeGen(TargetCodeGenerator):
             map_header += idstr  # Used to identify line numbers later
             PerfMetaInfoStatic.info.add_node(node, idstr)
 
-        if node.map.schedule == types.ScheduleType.CPU_Multicore:
-            # We have to find out if we should mark a section start here or later.
-            children = PerfUtils.all_maps(node, dfg)
-
-            for x in children:
-                if PerfUtils.map_depth(
-                        x) > PerfSettings.perf_max_scope_depth():
-                    break  # We have our relevant nodes.
-                if x.map.schedule == types.ScheduleType.CPU_Multicore:
-                    # nested SuperSections are not well-supported
-                    # We have to mark the outermost section,
-                    # which also means that we have to somehow tell the
-                    # lower nodes to not mark the section start.
-                    x.map._can_be_supersection_start = False
-
-            if PerfSettings.perf_enable_instrumentation_for(
-                    sdfg, node
-            ) and PerfUtils.map_depth(
-                    node
-            ) <= PerfSettings.perf_max_scope_depth(
-            ) and node.map._can_be_supersection_start and not dfg.is_parallel(
-            ):
-                map_header += "__perf_store.markSuperSectionStart(%d);\n" % unified_id
-            elif PerfSettings.perf_supersection_emission_debug():
-                reasons = []
-                if not node.map._can_be_supersection_start:
-                    reasons.append("CANNOT_BE_SS")
-                if dfg.is_parallel():
-                    reasons.append("CONTAINER_IS_PARALLEL")
-                if PerfUtils.map_depth(
-                        node) > PerfSettings.perf_max_scope_depth():
-                    reasons.append("EXCEED_MAX_DEPTH")
-                if not PerfSettings.perf_enable_instrumentation_for(
-                        sdfg, node):
-                    reasons.append("MISC")
-
-                map_header += "// SuperSection start not emitted. Reasons: " + ",".join(
-                    reasons) + "\n"
-
-        elif PerfSettings.perf_enable_instrumentation_for(
-                sdfg, node
-        ) and PerfUtils.map_depth(node) == PerfSettings.perf_max_scope_depth(
-        ) and node.map._can_be_supersection_start and not dfg.is_parallel():
-            # even if the schedule is sequential, we can serialize to
-            # keep buffer usage low
-            map_header += "__perf_store.markSuperSectionStart(%d);\n" % unified_id
+        # Emit supersection if possible
+        map_header += PerfUtils.perf_get_supersection_start_string(
+            node, sdfg, dfg, unified_id)
 
         if PerfUtils.instrument_entry(
                 node, dfg) and PerfSettings.perf_enable_instrumentation_for(
@@ -1328,17 +1289,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
             size = sym2cpp(size)
 
-            map_header += "__perf_store.markSectionStart(%d, (long long)%s, PAPI_thread_id());\n" % (
-                unified_id, size)
+            map_header += PerfUtils.perf_section_start_string(
+                unified_id, size, input_size)
 
         #############################################################
 
         if node.map.schedule == types.ScheduleType.CPU_Multicore:
             map_header += '#pragma omp parallel for'
-            openmp_parallel_for_defined = True
-
-            # The code below is disabled since we now use pragma omp atomic
-            # TODO(later): set up register outside loop
+            # Loop over outputs, add OpenMP reduction clauses to detected cases
+            # TODO: set up register outside loop
             #exit_node = dfg.exit_nodes(node)[0]
             reduction_stmts = []
             #for outedge in dfg.in_edges(exit_node):
@@ -1382,8 +1341,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 + '__perf_%d.enterCritical();\n') % (
                     PerfUtils.perf_counter_string(node), unified_id,
                     unified_id, unified_id, unified_id, unified_id)
-            #############################################################
-
+            perf_entry_string = PerfUtils.perf_counter_start_measurement_string(
+                node, unified_id, "%s")
             # If the integer set is constant-sized, emit const_int_range
             if constsize:
                 # Generate the loop
@@ -1477,13 +1436,9 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                         or (PerfSettings.perf_debug_profile_innermost
                             and i == len(node.map.range) - 1)
                 ) and PerfSettings.perf_enable_instrumentation_for(sdfg, node):
-                    result.write(
-                        ('dace_perf::%s __perf_%d;\n' +
-                         'auto& __vs_%d = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(), %s);\n'
-                         + '__perf_%d.enterCritical();\n') %
-                        (PerfUtils.perf_counter_string(node), unified_id,
-                         unified_id, unified_id, unified_id, var, unified_id),
-                        sdfg, state_id, node)
+                    start_string = PerfUtils.perf_counter_start_measurement_string(
+                        node, unified_id, var)
+                    result.write(start_string, sdfg, state_id, node)
                     # remember which map has the counters enabled
                     node.map._has_papi_counters = True
                 #############################################################
@@ -1558,15 +1513,16 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         if len(map_exits) > 1:
             return
 
+        perf_end_string = PerfUtils.perf_counter_end_measurement_string(
+            unified_id)
         # Map flattening
         if map_node.map.flatten:
             #############################################################
             # Instrumentation: Pre-MapExit
             if PerfSettings.perf_enable_instrumentation(
             ) and map_node.map._has_papi_counters:
-                result.write(
-                    '__perf_%d.leaveCritical(__vs_%d);\n' %
-                    (unified_id, unified_id), sdfg, state_id, node)
+                result.write(perf_end_string, sdfg, state_id, node)
+
             if PerfSettings.perf_debug_annotate_scopes:
                 result.write('// %s\n' % str(map_node), sdfg, state_id, node)
             #############################################################
@@ -1580,9 +1536,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     (PerfSettings.perf_debug_profile_innermost and i == 0) or
                     (not PerfSettings.perf_debug_profile_innermost
                      and i == len(map_node.map.range) - 1)):
-                    result.write(
-                        '__perf_%d.leaveCritical(__vs_%d);\n' %
-                        (unified_id, unified_id), sdfg, state_id, node)
+                    result.write(perf_end_string, sdfg, state_id, node)
+
                 if PerfSettings.perf_debug_annotate_scopes and i == len(
                         map_node.map.range) - 1:
                     result.write('// %s\n' % str(map_node), sdfg, state_id,
@@ -1601,6 +1556,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
     def _generate_ConsumeEntry(self, sdfg, dfg, state_id, node: nodes.MapEntry,
                                function_stream, callsite_stream):
         result = callsite_stream
+
+        unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
+
+        # Intrusively set the depth. (Better solutions are welcome)
+        PerfUtils.set_map_depth(node, dfg)
 
         constsize = all([
             not symbolic.issymbolic(v, sdfg.constants) for r in node.map.range
@@ -1638,6 +1598,25 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         else:
             condition_string = ''
 
+        if PerfUtils.instrument_entry(node, dfg):
+            # Mark the SuperSection start (if possible)
+            #TODO: Safety checks
+            result.write(
+                PerfUtils.perf_get_supersection_start_string(
+                    node, sdfg, dfg, unified_id), sdfg, state_id, node)
+
+            # Mark the section start
+            #TODO
+            size = 0
+            result.write(
+                PerfUtils.perf_section_start_string(unified_id, size, 0), sdfg,
+                state_id, node)
+
+            # Generate a thread locker (could be used for dependency injection)
+            result.write(
+                "dace_perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id,
+                sdfg, state_id, node)
+
         result.write(
             'dace::Consume<{chunksz}>::template consume{cond}({stream_in}, '
             '{num_pes}, {condition}'
@@ -1652,6 +1631,22 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             sdfg,
             state_id,
             node)
+
+        # Instrumenting this is a bit flaky: Since the consume interally creates threads, it must be instrumented like a normal map. However, it seems to spawn normal std::threads (instead of going for openMP)
+        # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
+        if PerfUtils.instrument_entry(node, dfg):
+            result.write(
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
+                 format(id=unified_id)) +
+                PerfUtils.perf_counter_start_measurement_string(
+                    node,
+                    unified_id,
+                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(
+                        id=unified_id),
+                    core_str="dace_perf::getThreadID()"),
+                sdfg,
+                state_id,
+                node)
 
         # Since consume is an alias node, we create an actual array for the
         # consumed element and modify the outgoing memlet path ("OUT_stream")
@@ -1724,6 +1719,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         scope_dict = dfg.scope_dict()
         entry_node = scope_dict[node]
 
+        unified_id = PerfUtils.unified_id(dfg.node_id(entry_node), state_id)
+
         if entry_node is None:
             raise ValueError('Exit node ' + str(node.consume.label) +
                              ' is not dominated by a scope entry node')
@@ -1740,12 +1737,19 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
                                                  None, result)
 
+        if PerfUtils.instrument_entry(entry_node, dfg):
+            result.write(
+                PerfUtils.perf_counter_end_measurement_string(unified_id),
+                sdfg, state_id, node)
         result.write('});', sdfg, state_id, node)
 
     def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
 
         unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
+
+        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id,
+                                                     sym2cpp)
 
         # Try to autodetect reduction type
         redtype = operations.detect_reduction_type(node.wcr)
@@ -1811,16 +1815,17 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if not dfg.is_parallel():
                 # Now we put a start marker, but only if we are in a serial state
                 callsite_stream.write(
-                    '__perf_store.markSuperSectionStart(%d);\n' % (unified_id))
+                    PerfUtils.perf_supersection_start_string(unified_id), sdfg,
+                    state_id, node)
 
             callsite_stream.write(
-                '__perf_store.markSectionStart(%d, (long long)%s, PAPI_thread_id());\n'
-                % (unified_id,
-                   str(sp.simplify(perf_expected_data_movement_sympy)) +
-                   (" * (sizeof(%s) + sizeof(%s))" %
-                    (sdfg.arrays[output_memlet.data].dtype.ctype,
-                     sdfg.arrays[input_memlet.data].dtype.ctype))), sdfg,
-                state_id, node)
+                PerfUtils.perf_section_start_string(
+                    unified_id,
+                    str(sp.simplify(perf_expected_data_movement_sympy)) +
+                    (" * (sizeof(%s) + sizeof(%s))" %
+                     (sdfg.arrays[output_memlet.data].dtype.ctype,
+                      sdfg.arrays[input_memlet.data].dtype.ctype)),
+                    input_size), sdfg, state_id, node)
         #############################################################
 
         # Write OpenMP loop pragma if there are output dimensions
@@ -1846,32 +1851,21 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                      and not PerfSettings.perf_debug_profile_innermost)
                         or (end_braces == output_dims - 1
                             and PerfSettings.perf_debug_profile_innermost)):
+
                     callsite_stream.write(
-                        'dace_perf::%s __perf_%d;\n' %
-                        (PerfUtils.perf_counter_string(node), unified_id),
-                        sdfg, state_id, node)
-                    callsite_stream.write(
-                        'auto& __perf_%d_vs = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(), __o%d);\n'
-                        % (unified_id, unified_id, unified_id, axis), sdfg,
+                        PerfUtils.perf_counter_start_measurement_string(
+                            node, unified_id, "__o" + str(axis)), sdfg,
                         state_id, node)
-                    callsite_stream.write(
-                        '__perf_%d.enterCritical();\n' % unified_id, sdfg,
-                        state_id, node)
-            #############################################################
+
             end_braces += 1
 
         #############################################################
         # Instrumentation: Reduce (part 2)
         if end_braces == 0 and perf_should_instrument:
+            # The outer dimensions no longer exist. We should add instrumentation anyway.
             callsite_stream.write(
-                'dace_perf::%s __perf_%d;\n' %
-                (PerfUtils.perf_counter_string(node), unified_id), sdfg,
-                state_id, node)
-            callsite_stream.write(
-                'auto& __perf_%d_vs = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(),  0);\n'
-                % (unified_id, unified_id, unified_id), sdfg, state_id, node)
-            callsite_stream.write('__perf_%d.enterCritical();\n' % unified_id,
-                                  sdfg, state_id, node)
+                PerfUtils.perf_counter_start_measurement_string(
+                    node, unified_id, 0), sdfg, state_id, node)
         #############################################################
 
         use_tmpout = False
@@ -1962,9 +1956,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 (i == len(axes)
                  and PerfSettings.perf_debug_profile_innermost)):
                 callsite_stream.write(
-                    '__perf_%d.leaveCritical(__perf_%d_vs);\n' %
-                    (unified_id, unified_id), sdfg, state_id, node)
+                    PerfUtils.perf_counter_end_measurement_string(unified_id),
+                    sdfg, state_id, node)
+
             #############################################################
+
             callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_AccessNode(self, sdfg, dfg, state_id, node, function_stream,
@@ -2278,7 +2274,8 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     if node.language != types.Language.Python:
         # If this code runs on the host and is associated with a CUDA stream,
         # set the stream to a local variable.
-        max_streams = Config.get('compiler', 'cuda', 'max_concurrent_streams')
+        max_streams = int(
+            Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if (max_streams >= 0 and not is_devicelevel(sdfg, state_dfg, node)
                 and hasattr(node, '_cuda_stream')):
             callsite_stream.write(
@@ -2577,7 +2574,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 def synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
                         callsite_stream):
     # Post-kernel stream synchronization (with host or other streams)
-    max_streams = Config.get('compiler', 'cuda', 'max_concurrent_streams')
+    max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
     if max_streams >= 0:
         cudastream = 'dace::cuda::__streams[%d]' % node._cuda_stream
         for edge in dfg.out_edges(scope_exit):

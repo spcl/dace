@@ -23,7 +23,7 @@ from dace.data import validate_name
 from dace.graph import dot, nxutil
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
-from dace.properties import make_properties, Property
+from dace.properties import make_properties, Property, CodeProperty
 
 
 def getcaller() -> Tuple[str, int]:
@@ -577,10 +577,14 @@ class SDFG(OrderedDiGraph):
 
         return arg_list
 
-    def signature_arglist(self, with_types=True):
+    def signature_arglist(self, with_types=True, for_call=False):
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
             @param with_types: If True, includes argment types in the result.
+            @param for_call: If True, returns arguments that can be used when
+                             calling the SDFG. This means that immaterial data
+                             will generate "nullptr" arguments instead of the
+                             argument names.
             @return: A list of strings. For example: `['float *A', 'int b']`.
         """
         arg_list = self.arglist()
@@ -589,20 +593,25 @@ class SDFG(OrderedDiGraph):
         for name, arg_type in arg_list.items():
             if isinstance(arg_type, dace.data.Data):
                 signature_args.append(
-                    arg_type.signature(name=name, with_types=with_types))
+                    arg_type.signature(
+                        name=name, with_types=with_types, for_call=for_call))
             else:
                 raise TypeError('Unsupported argument type')
 
         return signature_args
 
-    def signature(self, with_types=True):
+    def signature(self, with_types=True, for_call=False):
         """ Returns a C/C++ signature of this SDFG, used when generating code.
             @param with_types: If True, includes argument types (can be used
                                for a function prototype). If False, only
                                include argument names (can be used for function
                                calls).
+            @param for_call: If True, returns arguments that can be used when
+                             calling the SDFG. This means that immaterial data
+                             will generate "nullptr" arguments instead of the
+                             argument names.
         """
-        return ", ".join(self.signature_arglist(with_types))
+        return ", ".join(self.signature_arglist(with_types, for_call))
 
     def draw_to_file(self,
                      filename='sdfg.dot',
@@ -814,7 +823,7 @@ subgraph cluster_state_{state} {{
             @param filename: File name to save to.
         """
         with open(filename, 'wb') as fp:
-            pickle.dump(self, fp)
+            symbolic.SympyAwarePickler(fp).dump(self)
 
     @staticmethod
     def from_file(filename: str):
@@ -823,7 +832,7 @@ subgraph cluster_state_{state} {{
             @return: An SDFG.
         """
         with open(filename, 'rb') as fp:
-            sdfg = pickle.load(fp)
+            sdfg = symbolic.SympyAwareUnpickler(fp).load()
             if not isinstance(sdfg, SDFG):
                 raise TypeError('Loaded file is not an SDFG (loaded '
                                 'type: %s)' % type(sdfg).__name__)
@@ -1016,6 +1025,85 @@ subgraph cluster_state_{state} {{
                             'in SDFG' % name)
         self._arrays[name] = datadesc
 
+    def add_loop(self,
+                 before_state,
+                 loop_state,
+                 after_state,
+                 loop_var: str,
+                 initialize_expr: str,
+                 condition_expr: str,
+                 increment_expr: str,
+                 loop_end_state=None):
+        """ Helper function that adds a looping state machine around a 
+            given state (or sequence of states).
+            @param before_state: The state after which the loop should
+                                 begin, or None if the loop is the first
+                                 state (creates an empty state).
+            @param loop_state: The state that begins the loop. See also
+                               `loop_end_state` if the loop is multi-state.
+            @param after_state: The state that should be invoked after
+                                the loop ends, or None if the program 
+                                should terminate (creates an empty state).
+            @param loop_var: A name of an inter-state variable to use
+                             for the loop. If None, `initialize_expr`
+                             and `increment_expr` must be None.
+            @param initialize_expr: A string expression that is assigned
+                                    to `loop_var` before the loop begins.
+                                    If None, does not define an expression.
+            @param condition_expr: A string condition that occurs every
+                                   loop iteration. If None, loops forever 
+                                   (undefined behavior).
+            @param increment_expr: A string expression that is assigned to
+                                   `loop_var` after every loop iteration.
+                                    If None, does not define an expression.
+            @param loop_end_state: If the loop wraps multiple states, the
+                                   state where the loop iteration ends.
+                                   If None, sets the end state to 
+                                   `loop_state` as well.
+            @return: A 3-tuple of (`before_state`, generated loop guard state,
+                                   `after_state`).
+        """
+        from dace.frontend.python.astutils import negate_expr  # Avoid import loops
+
+        # Argument checks
+        if loop_var is None and (initialize_expr or increment_expr):
+            raise ValueError('Cannot initalize or increment an empty loop'
+                             ' variable')
+
+        # Handling empty states
+        if loop_end_state is None:
+            loop_end_state = loop_state
+        if before_state is None:
+            before_state = self.add_state()
+        if after_state is None:
+            after_state = self.add_state()
+
+        # Create guard state
+        guard = self.add_state('guard')
+
+        # Loop initialization
+        init = (None if initialize_expr is None else {
+            loop_var: initialize_expr
+        })
+        self.add_edge(before_state, guard, ed.InterstateEdge(assignments=init))
+
+        # Loop condition
+        if condition_expr:
+            cond_ast = CodeProperty.from_string(condition_expr,
+                                                types.Language.Python)
+        else:
+            cond_ast = CodeProperty.from_string('True', types.Language.Python)
+        self.add_edge(guard, loop_state, ed.InterstateEdge(cond_ast))
+        self.add_edge(guard, after_state,
+                      ed.InterstateEdge(negate_expr(cond_ast)))
+
+        # Loop incrementation
+        incr = (None if increment_expr is None else {loop_var: increment_expr})
+        self.add_edge(
+            loop_end_state, guard, ed.InterstateEdge(assignments=incr))
+
+        return before_state, guard, after_state
+
     # SDFG queries
     ##############################
 
@@ -1135,7 +1223,7 @@ subgraph cluster_state_{state} {{
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            program_objects, os.path.join(".dacecache", sdfg.name))
+            self, program_objects, os.path.join(".dacecache", sdfg.name))
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder)
@@ -1213,6 +1301,26 @@ subgraph cluster_state_{state} {{
             nodes) according to data on the memlets. """
         for state in self.nodes():
             state.fill_scope_connectors()
+
+    def predecessor_state_transitions(self, state):
+        """ Yields paths (lists of edges) that the SDFG can pass through
+            before computing the given state. """
+        from networkx import all_simple_paths
+        for path in all_simple_paths(self, self._start_state, state):
+            yield [
+                next(e for e in self.out_edges(s) if e.dst == d)
+                for s, d in zip(path[:-1], path[1:])
+            ]
+
+    def predecessor_states(self, state):
+        """ Returns a list of unique states that the SDFG can pass through
+            before computing the given state. """
+        from networkx import all_simple_paths
+        start_state = self._start_state or self.source_nodes()[0]
+        return set([
+            n for path in all_simple_paths(self, start_state, state)
+            for n in path
+        ])
 
     def validate(self) -> None:
         """ Verifies the correctness of an SDFG by applying multiple tests.
@@ -1338,54 +1446,61 @@ subgraph cluster_state_{state} {{
                     patterns=[GPUTransformLocalStorage])
             ]
         arrays = 0
-        options = [
-            match for match in opt.get_pattern_matches(
-                strict=True, states=states, patterns=[RedundantArrayCopying])
-        ]
-        while options:
-            sdfg = self.sdfg_list[options[0].sdfg_id]
-            options[0].apply(sdfg)
-            self.validate()
-            arrays += 1
-
+        if True:
             options = [
                 match for match in opt.get_pattern_matches(
                     strict=True,
                     states=states,
                     patterns=[RedundantArrayCopying])
             ]
-        options = [
-            match for match in opt.get_pattern_matches(
-                strict=True, states=states, patterns=[RedundantArrayCopying2])
-        ]
-        while options:
-            sdfg = self.sdfg_list[options[0].sdfg_id]
-            options[0].apply(sdfg)
-            self.validate()
-            arrays += 1
+            while options:
+                sdfg = self.sdfg_list[options[0].sdfg_id]
+                options[0].apply(sdfg)
+                self.validate()
+                arrays += 1
 
+                options = [
+                    match for match in opt.get_pattern_matches(
+                        strict=True,
+                        states=states,
+                        patterns=[RedundantArrayCopying])
+                ]
             options = [
                 match for match in opt.get_pattern_matches(
                     strict=True,
                     states=states,
                     patterns=[RedundantArrayCopying2])
             ]
-        options = [
-            match for match in opt.get_pattern_matches(
-                strict=True, states=states, patterns=[RedundantArrayCopying3])
-        ]
-        while options:
-            sdfg = self.sdfg_list[options[0].sdfg_id]
-            options[0].apply(sdfg)
-            self.validate()
-            arrays += 1
+            while options:
+                sdfg = self.sdfg_list[options[0].sdfg_id]
+                options[0].apply(sdfg)
+                self.validate()
+                arrays += 1
 
+                options = [
+                    match for match in opt.get_pattern_matches(
+                        strict=True,
+                        states=states,
+                        patterns=[RedundantArrayCopying2])
+                ]
             options = [
                 match for match in opt.get_pattern_matches(
                     strict=True,
                     states=states,
                     patterns=[RedundantArrayCopying3])
             ]
+            while options:
+                sdfg = self.sdfg_list[options[0].sdfg_id]
+                options[0].apply(sdfg)
+                self.validate()
+                arrays += 1
+
+                options = [
+                    match for match in opt.get_pattern_matches(
+                        strict=True,
+                        states=states,
+                        patterns=[RedundantArrayCopying3])
+                ]
 
         if Config.get_bool('debugprint') and (gpu_maps > 0 or arrays > 0):
             print(
@@ -1428,7 +1543,135 @@ subgraph cluster_state_{state} {{
         return program_code
 
 
-class ScopeSubgraphView(SubgraphView):
+class MemletTrackingView(object):
+    """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
+
+    def memlet_path(self,
+                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+        """ Given one edge, returns a list of edges representing a path
+            between its source and sink nodes. Used for memlet tracking.
+    
+            @note: Behavior is undefined when there is more than one path
+                   involving this edge.
+            @param edge: An edge within this state.
+            @return: A list of edges from a source node to a destination node.
+            """
+        result = [edge]
+
+        # Obtain the full state (to work with paths that trace beyond a scope)
+        state = self._graph
+
+        # If empty memlet, return itself as the path
+        if (edge.src_conn is None and edge.dst_conn is None
+                and edge.data.data is None):
+            return result
+
+        # Prepend incoming edges until reaching the source node
+        curedge = edge
+        while not isinstance(curedge.src,
+                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+            # Trace through scopes using OUT_# -> IN_#
+            if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
+                if curedge.src_conn is None:
+                    raise ValueError(
+                        "Source connector cannot be None for {}".format(
+                            curedge.src))
+                assert curedge.src_conn.startswith('OUT_')
+                next_edge = next(
+                    e for e in state.in_edges(curedge.src)
+                    if e.dst_conn == 'IN_' + curedge.src_conn[4:])
+                result.insert(0, next_edge)
+                curedge = next_edge
+
+        # Prepend outgoing edges until reaching the sink node
+        curedge = edge
+        while not isinstance(curedge.dst,
+                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+            # Trace through scope entry using IN_# -> OUT_#
+            if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
+                if curedge.dst_conn is None:
+                    raise ValueError(
+                        "Destination connector cannot be None for {}".format(
+                            curedge.dst))
+                if not curedge.dst_conn.startswith('IN_'):  # Map variable
+                    break
+                next_edge = next(
+                    e for e in state.out_edges(curedge.dst)
+                    if e.src_conn == 'OUT_' + curedge.dst_conn[3:])
+                result.append(next_edge)
+                curedge = next_edge
+
+        return result
+
+    def memlet_tree(self,
+                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+        """ Given one edge, returns a list of edges representing a tree
+            between its node source(s) and sink(s). Used for memlet tracking.
+    
+            @param edge: An edge within this state.
+            @return: A list of edges from source nodes to destination nodes
+                     (in arbitrary order) that pass through the given edge.
+            """
+        result = {}
+
+        # Obtain the full state (to work with paths that trace beyond a scope)
+        state = self._graph
+
+        # If empty memlet, return itself as the path
+        if (edge.src_conn is None and edge.dst_conn is None
+                and edge.data.data is None):
+            return [edge]
+
+        # Obtain original path
+        path = self.memlet_path(edge)
+        result.update({state.edge_id(e): e for e in path})
+
+        num = len(path)
+
+        # Add edges from branching memlet paths
+        for i, curedge in enumerate(path):
+            # Trace through scopes using OUT_# -> IN_#
+            if i > 0 and isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
+                if curedge.src_conn is None:
+                    raise ValueError(
+                        "Source connector cannot be None for {}".format(
+                            curedge.src))
+                assert curedge.src_conn.startswith('OUT_')
+
+                # Check for neighboring edges
+                for e in state.out_edges(curedge.src):
+                    if e == curedge: continue
+                    if e.src_conn == curedge.src_conn:
+                        extra_path = self.memlet_path(e)
+                        result.update(
+                            {state.edge_id(ee): ee
+                             for ee in extra_path})
+
+            # Trace through scopes using IN_# -> OUT_#
+            if i < num - 1 and isinstance(curedge.dst,
+                                          (nd.EntryNode, nd.ExitNode)):
+                if curedge.dst_conn is None:
+                    raise ValueError(
+                        "Destination connector cannot be None for {}".format(
+                            curedge.dst))
+
+                # Map variables are last edges in memlet paths, so this can only
+                # be an edge that enters/exits the scope
+                assert curedge.dst_conn.startswith('IN_')
+
+                # Check for neighboring edges
+                for e in state.in_edges(curedge.dst):
+                    if e == curedge: continue
+                    if e.dst_conn == curedge.dst_conn:
+                        extra_path = self.memlet_path(e)
+                        result.update(
+                            {state.edge_id(ee): ee
+                             for ee in extra_path})
+
+        return list(result.values())
+
+
+class ScopeSubgraphView(SubgraphView, MemletTrackingView):
     """ An extension to SubgraphView that enables the creation of scope
         dictionaries in subgraphs and free symbols. """
 
@@ -1541,23 +1784,10 @@ class ScopeSubgraphView(SubgraphView):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
 
-    def memlet_path(self,
-                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
-        """ Given one edge, returns a list of edges representing a path
-            between its source and sink nodes. Used for memlet tracking.
 
-            @note: Behavior is undefined when there is more than one path
-                   involving this edge!
-            @param edge: An edge within this state.
-            @return: A list of edges from a source node to a destination node.
-        """
-        return _memlet_path(self._graph, edge)
-
-
-# TODO: Use mixin for SDFGState and ScopeSubgraphView for functions like
-#       memlet path and scope dict
+# TODO: Use mixin for SDFGState and ScopeSubgraphView for scope dict
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph):
+class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -1580,6 +1810,7 @@ class SDFGState(OrderedMultiDiConnectorGraph):
         super(SDFGState, self).__init__()
         self._label = label
         self._parent = sdfg
+        self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
         self.is_collapsed = False
@@ -1694,18 +1925,6 @@ class SDFGState(OrderedMultiDiConnectorGraph):
     def data_nodes(self):
         """ Returns all data_nodes (arrays) present in this state. """
         return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
-
-    def memlet_path(self,
-                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
-        """ Given one edge, returns a list of edges representing a path
-            between its source and sink nodes. Used for memlet tracking.
-
-            @note: Behavior is undefined when there is more than one path
-                   involving this edge.
-            @param edge: An edge within this state.
-            @return: A list of edges from a source node to a destination node.
-        """
-        return _memlet_path(self, edge)
 
     def memlets_for_array(self, arrayname):
         return [e for e in self.edges() if e[3].data == arrayname]
@@ -2599,11 +2818,33 @@ class SDFGState(OrderedMultiDiConnectorGraph):
 
             # Node-specific tests
             ########################################
-            if (isinstance(node, nd.AccessNode)
-                    and node.data not in sdfg.arrays):
-                raise InvalidSDFGNodeError(
-                    'Access node must point to a valid array name in the SDFG',
-                    sdfg, state_id, nid)
+            if isinstance(node, nd.AccessNode):
+                if node.data not in sdfg.arrays:
+                    raise InvalidSDFGNodeError(
+                        'Access node must point to a valid array name in the SDFG',
+                        sdfg, state_id, nid)
+
+                # Find uninitialized transients
+                arr = sdfg.arrays[node.data]
+                if arr.transient and self.in_degree(
+                        node) == 0 and self.out_degree(node) > 0:
+                    # Find other instances of node in predecessor states
+                    states = sdfg.predecessor_states(self)
+                    input_found = False
+                    for state in states:
+                        for onode in state.nodes():
+                            if isinstance(
+                                    onode,
+                                    nd.AccessNode) and onode.data == node.data:
+                                if state.in_degree(onode) > 0:
+                                    input_found = True
+                                    break
+                        if input_found: break
+                    if not input_found and node.setzero == False:
+                        print(
+                            'WARNING: Use of uninitialized transient "%s" in state %s'
+                            % (node.data, self.label))
+
             if (isinstance(node, nd.Reduce)
                     and (len(self.in_edges(node)) != 1
                          or len(self.out_edges(node)) != 1)):
@@ -2713,6 +2954,64 @@ class SDFGState(OrderedMultiDiConnectorGraph):
                     'Memlet data does not match source or destination '
                     'data nodes)', sdfg, state_id, eid)
 
+            # Check memlet subset validity with respect to source/destination nodes
+            if e.data.data is not None and e.data.allow_oob == False:
+                subset_node = (dst_node if isinstance(dst_node, nd.AccessNode)
+                               and e.data.data == dst_node.data else src_node)
+                other_subset_node = (dst_node
+                                     if isinstance(dst_node, nd.AccessNode)
+                                     and e.data.data != dst_node.data else
+                                     src_node)
+
+                if isinstance(subset_node, nd.AccessNode):
+                    arr = sdfg.arrays[subset_node.data]
+                    # Dimensionality
+                    if (e.data.subset.dims() != len(arr.shape)):
+                        raise InvalidSDFGEdgeError(
+                            'Memlet subset does not match node dimension '
+                            '(expected %d, got %d)' % (len(arr.shape),
+                                                       e.data.subset.dims()),
+                            sdfg, state_id, eid)
+
+                    # Bounds
+                    if any(((minel + off) < 0) == True for minel, off in zip(
+                            e.data.subset.min_element(), arr.offset)):
+                        raise InvalidSDFGEdgeError(
+                            'Memlet subset negative out-of-bounds', sdfg,
+                            state_id, eid)
+                    if any(((maxel + off) >= s) == True
+                           for maxel, s, off in zip(
+                               e.data.subset.max_element(), arr.shape,
+                               arr.offset)):
+                        raise InvalidSDFGEdgeError(
+                            'Memlet subset out-of-bounds', sdfg, state_id, eid)
+                # Test other_subset as well
+                if e.data.other_subset is not None and isinstance(
+                        other_subset_node, nd.AccessNode):
+                    arr = sdfg.arrays[other_subset_node.data]
+                    # Dimensionality
+                    if (e.data.other_subset.dims() != len(arr.shape)):
+                        raise InvalidSDFGEdgeError(
+                            'Memlet other_subset does not match node dimension '
+                            '(expected %d, got %d)' % (len(
+                                arr.shape), e.data.other_subset.dims()), sdfg,
+                            state_id, eid)
+
+                    # Bounds
+                    if any(((minel + off) < 0) == True for minel, off in zip(
+                            e.data.other_subset.min_element(), arr.offset)):
+                        raise InvalidSDFGEdgeError(
+                            'Memlet other_subset negative out-of-bounds', sdfg,
+                            state_id, eid)
+                    if any(((maxel + off) >= s) == True
+                           for maxel, s, off in zip(
+                               e.data.other_subset.max_element(), arr.shape,
+                               arr.offset)):
+                        raise InvalidSDFGEdgeError(
+                            'Memlet other_subset out-of-bounds', sdfg,
+                            state_id, eid)
+            #######################################
+
             # Memlet path scope lifetime checks
             # If scope(src) == scope(dst): OK
             if (scope[src_node] == scope[dst_node]
@@ -2771,61 +3070,8 @@ def scope_contains_scope(sdict, node, other_node):
     return False
 
 
-def _memlet_path(state: ScopeSubgraphView,
-                 edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
-    """ Given one edge, returns a list of edges representing a path
-        between its source and sink nodes. Used for memlet tracking.
-
-        @note: Behavior is undefined when there is more than one path
-               involving this edge.
-        @param edge: An edge within this state.
-        @return: A list of edges from a source node to a destination node.
-        """
-    result = [edge]
-
-    # If empty memlet, return itself as the path
-    if (edge.src_conn is None and edge.dst_conn is None
-            and edge.data.data is None):
-        return result
-
-    # Prepend incoming edges until reaching the source node
-    curedge = edge
-    while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode, nd.Reduce)):
-        # Trace through scopes using OUT_# -> IN_#
-        if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
-            if curedge.src_conn is None:
-                raise ValueError(
-                    "Source connector cannot be None for {}".format(
-                        curedge.src))
-            assert curedge.src_conn.startswith('OUT_')
-            next_edge = next(
-                e for e in state.in_edges(curedge.src)
-                if e.dst_conn == 'IN_' + curedge.src_conn[4:])
-            result.insert(0, next_edge)
-            curedge = next_edge
-
-    # Prepend outgoing edges until reaching the sink node
-    curedge = edge
-    while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode, nd.Reduce)):
-        # Trace through scope entry using OUT_# -> IN_#
-        if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
-            if curedge.dst_conn is None:
-                raise ValueError(
-                    "Destination connector cannot be None for {}".format(
-                        curedge.dst))
-            if not curedge.dst_conn.startswith('IN_'):  # Map variable
-                break
-            next_edge = next(
-                e for e in state.out_edges(curedge.dst)
-                if e.src_conn == 'OUT_' + curedge.dst_conn[3:])
-            result.append(next_edge)
-            curedge = next_edge
-
-    return result
-
-
 def find_input_arraynode(graph, edge):
-    result = _memlet_path(graph, edge)[0]
+    result = graph.memlet_path(edge)[0]
     if not isinstance(result.src, nd.AccessNode):
         raise RuntimeError('Input array node not found for memlet ' +
                            str(edge.data))
@@ -2833,7 +3079,7 @@ def find_input_arraynode(graph, edge):
 
 
 def find_output_arraynode(graph, edge):
-    result = _memlet_path(graph, edge)[-1]
+    result = graph.memlet_path(edge)[-1]
     if not isinstance(result.dst, nd.AccessNode):
         raise RuntimeError('Output array node not found for memlet ' +
                            str(edge.data))

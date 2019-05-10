@@ -131,7 +131,8 @@ def is_op_commutative(wcr_str):
     try:
         aRb = wcr(a, b)
         bRa = wcr(b, a)
-    except TypeError:  # e.g., "Cannot determine truth value of relational"
+    except (TypeError, AttributeError
+            ):  # e.g., "Cannot determine truth value of relational"
         return None
 
     return aRb == bRa
@@ -157,7 +158,8 @@ def is_op_associative(wcr_str):
     try:
         aRbc = wcr(a, wcr(b, c))
         abRc = wcr(wcr(a, b), c)
-    except TypeError:  # e.g., "Cannot determine truth value of relational"
+    except (TypeError, AttributeError
+            ):  # e.g., "Cannot determine truth value of relational"
         return None
 
     return aRbc == abRc

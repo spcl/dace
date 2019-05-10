@@ -230,6 +230,10 @@ class TargetDispatcher(object):
         self._copy_dispatchers = {}  # Type: (types.StorageType src,
         #                                     types.StorageType dst,
         #                                     types.ScheduleType dst_schedule)
+        #                                     -> List[(predicate, TargetCodeGenerator)]
+        self._generic_copy_dispatchers = {}  # Type: (types.StorageType src,
+        #                                     types.StorageType dst,
+        #                                     types.ScheduleType dst_schedule)
         #                                     -> TargetCodeGenerator
         self._node_dispatchers = []  # [(predicate, dispatcher)]
         self._generic_node_dispatcher = None  # Type: TargetCodeGenerator
@@ -342,8 +346,12 @@ class TargetDispatcher(object):
         if not isinstance(func, TargetCodeGenerator): raise TypeError
         self._array_dispatchers[storage_type] = func
 
-    def register_copy_dispatcher(self, src_storage, dst_storage, dst_schedule,
-                                 func):
+    def register_copy_dispatcher(self,
+                                 src_storage,
+                                 dst_storage,
+                                 dst_schedule,
+                                 func,
+                                 predicate=None):
         """ Registers code generation of data-to-data (or data from/to 
             tasklet, if src/dst storage is StorageType.Register) copy 
             functions. Can also be target-schedule specific, or 
@@ -356,6 +364,10 @@ class TargetDispatcher(object):
                                  that triggers `func`.
             @param func: A TargetCodeGenerator object that contains an 
                          implementation of `copy_memory`.
+            @param predicate: A lambda function that accepts the SDFG, state,
+                              and source and destination nodes, and triggers 
+                              the code generator when True is returned. If
+                              None, always dispatches with this dispatcher.
             @see: TargetCodeGenerator            
         """
 
@@ -366,8 +378,15 @@ class TargetDispatcher(object):
             raise TypeError
         if not isinstance(func, TargetCodeGenerator): raise TypeError
 
-        self._copy_dispatchers[(src_storage, dst_storage, dst_schedule)] = \
-            func
+        dispatcher = (src_storage, dst_storage, dst_schedule)
+        if predicate is None:
+            self._generic_copy_dispatchers[dispatcher] = func
+            return
+
+        if dispatcher not in self._copy_dispatchers:
+            self._copy_dispatchers[dispatcher] = []
+
+        self._copy_dispatchers[dispatcher].append((predicate, func))
 
     def dispatch_state(self, sdfg, state, function_stream, callsite_stream):
         """ Dispatches a code generator for an SDFG state. """
@@ -537,20 +556,49 @@ class TargetDispatcher(object):
             dst_schedule = None
 
         if (src_storage, dst_storage, dst_schedule) in self._copy_dispatchers:
-            target = self._copy_dispatchers[(src_storage, dst_storage,
-                                             dst_schedule)]
-            self._used_targets.add(target)
-            target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge,
-                               function_stream, output_stream)
+            disp = (src_storage, dst_storage, dst_schedule)
         elif (src_storage, dst_storage, None) in self._copy_dispatchers:
-            target = self._copy_dispatchers[(src_storage, dst_storage, None)]
-            self._used_targets.add(target)
-            target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge,
-                               function_stream, output_stream)
+            disp = (src_storage, dst_storage, None)
         else:
-            raise RuntimeError('Copy dispatcher for %s->%s with schedule %s' %
-                               (str(src_storage), str(dst_storage),
-                                str(dst_schedule)) + ' not found')
+            disp = None
+
+        if disp is not None:
+            # Check if the state satisfies any predicates that delegate to a
+            # specific code generator
+            satisfied_dispatchers = [
+                dispatcher for pred, dispatcher in self._copy_dispatchers[disp]
+                if pred(sdfg, dfg, src_node, dst_node) is True
+            ]
+        else:
+            satisfied_dispatchers = []
+        num_satisfied = len(satisfied_dispatchers)
+        if num_satisfied > 1:
+            raise RuntimeError(
+                "Multiple predicates satisfied for copy: {}".format(", ".join(
+                    [type(x).__name__ for x in satisfied_dispatchers])))
+        elif num_satisfied == 1:
+            target = satisfied_dispatchers[0]
+        else:  # num_satisfied == 0
+            # Otherwise use the generic copy dispatchers
+            if (src_storage, dst_storage,
+                    dst_schedule) in self._generic_copy_dispatchers:
+                target = self._generic_copy_dispatchers[(src_storage,
+                                                         dst_storage,
+                                                         dst_schedule)]
+            elif (src_storage, dst_storage,
+                  None) in self._generic_copy_dispatchers:
+                target = self._generic_copy_dispatchers[(src_storage,
+                                                         dst_storage, None)]
+            else:
+                raise RuntimeError(
+                    'Copy dispatcher for %s->%s with schedule %s' %
+                    (str(src_storage), str(dst_storage), str(dst_schedule)) +
+                    ' not found')
+
+        # Dispatch copy
+        self._used_targets.add(target)
+        target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge,
+                           function_stream, output_stream)
 
 
 def make_absolute(path):

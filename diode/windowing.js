@@ -36,7 +36,6 @@ class DiodeWindow {
     }
 
     setSenderData(data) {
-        //this.layout_data = data;
         this.window_data = data;
     }
 
@@ -112,7 +111,6 @@ class DiodeWindow {
                 // Pass to custom function.
                 this.message_userdef(_data);
             }
-
         }
         else if(_data.type == "close") {
             console.log("Parent received close message");
@@ -204,7 +202,19 @@ class ClientSide {
             else if(classname == "MemoryButton") {
                 class_obj = MemoryButton;
             }
-
+            else if(classname == "VectorizationButton") {
+                class_obj = VectorizationButton;
+            }
+            else if(classname == "MemoryOpButton") {
+                class_obj = MemoryOpButton;
+            }
+            else if(classname == "CacheOpButton") {
+                class_obj = CacheOpButton;
+            }
+            else {
+                ObjectHelper.assert("Missing definition", false);
+            }
+            
             let new_obj = new class_obj(ctx, ...(dataparams));
 
             if(!new_obj) {
@@ -231,7 +241,6 @@ class ClientSide {
                 b.addButton(new_obj);
 
                 b.drawEx(new Pos(-20, 0), new Pos(0, 0), 0, 0, true);
-
             }
         }
         else if(this.message_userdef != null) {

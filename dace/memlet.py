@@ -30,6 +30,8 @@ class Memlet(object):
     wcr = LambdaProperty(allow_none=True)
     wcr_identity = Property(dtype=object, default=None, allow_none=True)
     wcr_conflict = Property(dtype=bool, default=True)
+    allow_oob = Property(
+        dtype=bool, default=False, desc='Bypass out-of-bounds validation')
 
     def __init__(self,
                  data,

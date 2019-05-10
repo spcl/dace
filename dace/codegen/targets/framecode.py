@@ -100,7 +100,8 @@ class DaCeCodeGenerator(object):
             '#include <dace/dace.h>\n', sdfg)
 
         # Added for instrumentation includes
-        if PerfSettings.perf_enable_instrumentation():
+        if PerfSettings.perf_enable_instrumentation(
+        ) or PerfSettings.perf_enable_timing():
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
@@ -111,11 +112,34 @@ class DaCeCodeGenerator(object):
             'void __program_%s_internal(%s)\n{\n' % (fname, params), sdfg)
 
         # Define the performance store (autocleanup on destruction)
-        if PerfSettings.perf_enable_instrumentation():
+        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation():
             callsite_stream.write(
                 'dace_perf::PAPI::init();\n' + 'dace_perf::%s __perf_store;\n'
                 % PerfUtils.perf_counter_store_string(
                     PerfSettings.perf_default_papi_counters()), sdfg)
+
+        if sdfg.parent == None and PerfSettings.perf_enable_timing():
+            callsite_stream.write("dace_perf::Timer __perf_timer;\n", sdfg)
+
+        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation():
+            if PerfSettings.perf_enable_overhead_collection():
+                # Get the measured overhead and take the minimum to compensate later.
+                callsite_stream.write("__perf_store.getMeasuredOverhead();\n",
+                                      sdfg)
+
+            if PerfSettings.perf_max_scope_depth() == -1:
+                callsite_stream.write((
+                    "dace_perf::%s __perf_global;\n" +
+                    "__perf_store.markSuperSectionStart(-1);\n" +
+                    "__perf_store.markSectionStart(-1, 0, 0, 0);\n" +
+                    "auto& __perf_global_vs = __perf_store.getNewValueSet(__perf_global, -1, 0, 0);\n"
+                    + "__perf_global.enterCritical();\n") %
+                                      PerfUtils.perf_counter_string(None),
+                                      sdfg)
+            else:
+                # We need to have a dummy SuperSection to count repetitions
+                callsite_stream.write(
+                    PerfUtils.perf_supersection_start_string(-1), sdfg)
 
     def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
@@ -127,7 +151,17 @@ class DaCeCodeGenerator(object):
         """
         fname = sdfg.name
         params = sdfg.signature()
-        paramnames = sdfg.signature(False)
+        paramnames = sdfg.signature(False, for_call=True)
+
+        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation(
+        ) and PerfSettings.perf_max_scope_depth() == -1:
+            callsite_stream.write(
+                "__perf_global.leaveCritical(__perf_global_vs);\n", sdfg)
+
+        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation(
+        ) and PerfSettings.perf_enable_timing():
+            callsite_stream.write(
+                "__perf_store.set_time(__perf_timer.collect());\n", sdfg)
 
         # Write frame code - footer
         callsite_stream.write('}\n', sdfg)
@@ -231,7 +265,9 @@ DACE_EXPORTED void __dace_exit(%s)
             # Instrumentation: Pre-state
             # We cannot have supersections starting in parallel
             parent_id = PerfUtils.unified_id(-1, sid)
-            if PerfSettings.perf_enable_instrumentation():
+            # #TODO: Check if this is safe when SDFGs are nested...
+            if PerfSettings.perf_enable_instrumentation(
+            ) and PerfSettings.perf_max_scope_depth() != -1:
                 callsite_stream.write(
                     "__perf_store.markSuperSectionStart(%d);\n" %
                     PerfUtils.unified_id(-1, sid))

@@ -1,4 +1,3 @@
-
 // Similar to the same class in python
 class Entry {
     constructor(entryobj) {
@@ -28,7 +27,7 @@ class Entry {
     getKeys() {
         return this.data.values.map(x => ObjectHelper.listKeys(x)[0]);
     }
-    getValue(papi_code) {
+    getValue(papi_code, nofail = undefined) {
         let vals = this.data.values;
         for (let it of vals) {
             let keys = Object.keys(it);
@@ -37,13 +36,16 @@ class Entry {
             }
         }
         if(papi_code == "-2147483589") {
-            // Instead of TOT_CYC, we'll allow REF_CYC with a warning
+            // Instead of TOT_CYC, we allow REF_CYC with a warning
             console.warn("Fallback used (TOT_CYC => REF_CYC)");
             return this.getValue("-2147483541");
         }
-        ObjectHelper.logObject("this", this);
-        ObjectHelper.assert("got value from key " + papi_code, false);
-        return null;
+        if(nofail == undefined) {
+            ObjectHelper.logObject("this", this);
+            ObjectHelper.logObject("keys", this.getKeys());
+            ObjectHelper.assert("got value from key " + papi_code, false);
+        }
+        return "N/A";
     }
 }
 // Similar to the same class in Python
@@ -97,7 +99,7 @@ class Section {
             return;
         }
         if(!this._entries.every(x => x instanceof Entry)) {
-            // Fix the entries...
+            // Fix the entries
             this._entries = this._entries.map(x => new Entry(x.data));
         }
     }
@@ -179,9 +181,9 @@ class Section {
         return entry_count;
     }
 
-    select_event(event) {
+    select_event(event, nofail = undefined) {
 
-        return this._entries.filter(x => x.getValue(event) != null).map(x => x.getValue(event));
+        return this._entries.filter(x => x.getValue(event, nofail) != "N/A").map(x => x.getValue(event, nofail));
     }
 
     list_events() {
@@ -190,7 +192,14 @@ class Section {
             return [];
         }
         let first = keys[0];
-        ObjectHelper.assert("same keys", keys.every(x => ObjectHelper.arraysEqual(x, first)));
+        let all_equal = keys.every(x => ObjectHelper.arraysEqual(x, first));
+        if(!all_equal)
+        {
+            ObjectHelper.logObject("first", first);
+            let first_different = keys.find(x => !ObjectHelper.arraysEqual(x, first));
+            ObjectHelper.logObject("first different", first_different);
+        }
+        ObjectHelper.assert("same keys", all_equal);
 
         return first;
     }
@@ -281,13 +290,6 @@ class SuperSection {
         return ret.filter(x => x.nodeid() == nodeid && (stateid == undefined || x.stateid() == stateid));
     }
 
-    static meanRepetitions(array) {
-        ObjectHelper.assert("correct type", array instanceof Array);
-        ObjectHelper.assert("correct type", array[0] instanceof SuperSection);
-
-        let means = array.map(x => x.toThreadMean());
-    }
-
     // Get mean of threads
     toThreadMean(nodeid) {
         ObjectHelper.assert("nodeid defined", nodeid != undefined);
@@ -307,19 +309,14 @@ class SuperSection {
             return null;
         }
 
-        // Since all sections are serial, we can linearly collapse every 
-        // section to a single entry. (the overhead of instrumentation is 
-        // ignored at this point)
-        // We use the mean of all iterations per node.
         let means = this.sections().map(x => x.sumIteration());
-        console.log("means len: " + means.length);
-        // `means` now has the means of all super-iterations 
+        // means now has the means of all super-iterations 
 
         return means;
     }
 
     get_max_thread_num() {
-        // This just returns the maximum thread number of all sections
+        // Returns the maximum thread number of all sections
         ObjectHelper.assert("sections are defined", this.sections() != undefined);
         return max_func(this.sections(), x => x.get_max_thread_num());
     }
@@ -363,10 +360,19 @@ class SuperSection {
     }
 
 }
-
 class MathHelper {
     static stdev(array) {
         return Math.sqrt(this.var(array));
+    }
+
+    static normalizedToHexByte(input) {
+        ObjectHelper.assert("Input is normalized", input >= 0.0 && input <= 255.0);
+
+        let denorm = input * 255;
+
+        let tmp = denorm.toString(16).toUpperCase();
+        ObjectHelper.assert("Correct Length", tmp.length == 1 || tmp.length == 2);
+        return tmp.length == 2 ? tmp : "0" + tmp;
     }
 
     static majority(array) {
@@ -387,8 +393,6 @@ class MathHelper {
 
             a.push([k, v]);
         }
-        //console.log(JSON.stringify(a));
-        ObjectHelper.logObject("a", a);
         ObjectHelper.assert("a sensible", a.length > 0);
         return max_func_obj(a, x => x[1], x => x[0]);
     }
@@ -442,7 +446,7 @@ class MathHelper {
             let sorted = array.map(x => new Number(x));
             sorted.sort((a, b) => a - b);
             let index = sorted.length / 2;
-            index = Math.floor(index); // Don't need this...
+            index = Math.floor(index);
             let ret = sorted[index];
 
             ret = new Number(ret);
@@ -458,6 +462,20 @@ class MathHelper {
     static sum(array) {
         ObjectHelper.assert("Input valid", array != undefined && array != null);
         return array.reduce((a, b) => Number(a) + Number(b), 0);
+    }
+    static sumArray(array_of_arrays) {
+        let base = null;
+        for(let x of array_of_arrays) {
+            if (base == null) {
+                base = x;
+            }
+            else {
+                for(let i = 0; i < base.length; ++i) {
+                    base[i] = base[i] + x[i];
+                }
+            }
+        }
+        return base;
     }
 
     // Zips all elements of a 2d array 
@@ -495,6 +513,204 @@ class MathHelper {
 
 class ObjectHelper {
 
+    static createChunks(in_array, chunksize, aggregate=undefined) {
+        ObjectHelper.assert("chunksize valid", !isNaN(chunksize) && chunksize != 0.0 && chunksize != undefined);
+        let ret = []
+        if(aggregate === undefined) aggregate = x => x;
+        for(let i = 0; i < in_array.length; i += chunksize) {
+            let tmp = in_array.slice(i, i + chunksize);
+            ret.push(aggregate(tmp));
+        }
+        return ret;
+    }
+
+    static toUnicodeSuperscript(number) {
+        number = new Number(number);
+        const valarr = ["\u2070","\u00B9", "\u00B2", "\u00B3", "\u2074", "\u2075", "\u2076", "\u2077", "\u2078", "\u2079"];
+        let valstr = "";
+
+        if(number == 0) {
+            valstr = valarr[0];
+        }
+        // Note: ~~(i / 10) is an integer division in JS
+        // (bitwise operators make sense only on ints, so JS casts the float to 
+        // an int, and then negates twice, which gives the int again)
+        for(let i = parseInt(number.toFixed(0)); i > 0; i = ~~(i / 10)) {
+            let index = Math.round(i) % 10;
+            let c = valarr[index];
+            
+            valstr = c + valstr;
+        }
+        return valstr;
+    }
+
+    static toUnicodeSubscript(number) {
+        number = new Number(number);
+        const valarr = ["\u2080","\u2081", "\u2082", "\u2083", "\u2084", "\u2085", "\u2086", "\u2087", "\u2088", "\u2089"];
+        let valstr = "";
+
+        if(number == 0) {
+            valstr = valarr[0];
+        }
+        
+        for(let i = parseInt(number.toFixed(0)); i > 0; i = ~~(i / 10)) {
+            let index = Math.round(i) % 10;
+            let c = valarr[index];
+            
+            valstr = c + valstr;
+        }
+        return valstr;
+    }
+
+    // Number to sensible String
+    static valueToSensibleString(value, mode="scientific", unit="", digits=4) {
+        // valid modes:
+        // scientific: x*10^(exp)
+        // programmer: Ki/Mi/Gi/...
+        value = new Number(value);
+        let exp = 0;
+        let base1024table = {
+            0: "",
+            1: "Ki",
+            2: "Mi",
+            3: "Gi",
+            4: "Ti",
+            5: "Pi"
+        };
+        let base1000table = {
+            0: "",
+            1: "K",
+            2: "M",
+            3: "G",
+            4: "T",
+            5: "P"
+        };
+        let ret = "";
+        if(mode == "programmer") {
+            // Go in 1024-Chunks
+            while(value >= 1024.) {
+                value = value / 1024.;
+                ++exp;
+            }
+            ret = value.toFixed(digits - 1);
+
+            ret += " " + base1024table[exp] + unit;
+        }
+        else if(mode == "scientific") {
+            // Normal Scientific notation
+            while(value >= 10.) {
+                value /= 10;
+                ++exp;
+            }
+            ret = value.toFixed(digits - 1);
+            let valstr = exp.toString();
+            // We need to replace numbers by their unicode equivalent for superscript
+            valstr = ObjectHelper.toUnicodeSuperscript(exp);
+            
+
+            ret += " \u22C5 10" + valstr;
+        }
+        else if(mode == "fraction") {
+            // Transform value into fraction (makes sense mostly for values \in [0, 1])
+
+            // Simple (and slow) algorithm: Just multiply by 10 until the numerator is (about) integer
+            const thresh = 0.00001;
+
+            let numerator = new Number(value);
+            let denominator = 1;
+            while(Math.abs(Math.round(numerator) - numerator) > thresh)
+            {
+                numerator *= 10;
+                denominator *= 10;
+            }
+            // Now it's really likely that the result is not rational (just a fraction, not normalized)
+            let gcd = (a, b) => { 
+                a = Math.abs(Math.round(a));
+                b = Math.abs(Math.round(b));
+                if (b > a) {let temp = a; a = b; b = temp;}
+                while (a >= 0 && b >= 0) {
+                    if (b == 0) return a;
+                    a %= b;
+                    if (a == 0) return b;
+                    b %= a;
+                }
+                return 1;
+            };
+
+            let gcd_val = gcd(numerator, denominator);
+            numerator /= gcd_val;
+            denominator /= gcd_val;
+
+            // We have the values - now translate them to the unicode equivalents
+            let super_n = ObjectHelper.toUnicodeSuperscript(numerator.toString());
+            let sub_d = ObjectHelper.toUnicodeSubscript(denominator.toString());
+
+            ret = super_n + "/" + sub_d;
+
+        }
+        else {
+            ObjectHelper.assert("unknown mode", false);
+        }
+
+        
+        return ret;
+    }
+
+    // Applies operations to a key recursively (i.e. find a key and apply a function to the corresponding value). This function is in-place
+    static modifyingMapRecursive(obj, key, func) {
+        if(obj == undefined || obj == null || obj instanceof String || typeof obj == "string") {
+            return;
+        }
+        if(obj instanceof Array) {
+            for(let x of obj) {
+                ObjectHelper.modifyingMapRecursive(x, key, func);
+            }
+            return;
+        }
+        let keys = ObjectHelper.listKeys(obj);
+        if(keys == undefined) {
+            return;
+        }
+        for(let k of keys) {
+            if(k == key) {
+                obj[k] = func(obj[k]);
+            }
+            else {
+                ObjectHelper.modifyingMapRecursive(obj[k], key, func);
+            }
+        }
+    }
+
+    static async valueFromPromise(obj) {
+        if (obj.then != undefined) {
+            let x = await obj;
+            return x;
+        }
+        else {
+            return obj;
+        }
+
+    }
+
+    // Same as valueFromPromise, but fully recursive (this will never return a promise)
+    static async valueFromPromiseFull(obj) {
+        if (obj.then != undefined) {
+            let x = await obj;
+            return await ObjectHelper.valueFromPromiseFull(x);
+        }
+        else {
+            return obj;
+        }
+
+    }
+
+    static async waitArray(obj_array) {
+        for(let i = 0; i < obj_array.length; ++i) {
+            obj_array[i] = await ObjectHelper.valueFromPromise(obj_array[i]);
+        }
+        return obj_array;
+    }
+
     static arraysEqual(arr1, arr2) {
         this.assert("1 is array", arr1 instanceof Array);
         this.assert("2 is array", arr2 instanceof Array);
@@ -528,7 +744,6 @@ class ObjectHelper {
         if(in_array.length == 0) return [];
 
         let keys = this.listKeys(in_array[0]);
-        //keys = keys.map(x=>x.replace(/^[_]+/, ""));
 
         let ret = {};
         // Prime by adding keys
@@ -562,12 +777,53 @@ class ObjectHelper {
         return ret;
     }
 
+    // Merges two objects into the return value. 'specials' applies the function in the value to the matching key.
+    static mergeRecursive(o1, o2, specials = {}) {
+        if(o1 == null || o1 == undefined) return o2;
+        if(o2 == null || o2 == undefined) return o1;
+        if(typeof o1 == "string") return o1;
+        if(((typeof o1 == "array") || (o1 instanceof Array)) && ((typeof o2 == "array") || (o2 instanceof Array))) {
+            if(o2.every(x => o1.includes(x))) {
+                // If every element of o2 is already in o1, why bother?
+                return o1;
+            }
+            return [...o1, ...o2];
+        }
+
+        let ret = o1;
+        let keys = ObjectHelper.listKeys(o2);
+
+        for(let k of keys) {
+            let v = o2[k];
+
+            if(specials[k] != undefined) {
+                let specfunc = specials[k];
+                ret[k] = specfunc(ret[k], v, specials);
+                continue;
+            }
+
+            let o1ref = ret[k];
+            if(o1ref == undefined) {
+                // If the key is not present in o1, just add key + value
+                ret[k] = v;
+            }
+            else {
+                ret[k] = ObjectHelper.mergeRecursive(ret[k], v);
+            }
+        }
+        return ret;
+    }
+
     // Flattens an array of arrays to a single array
     static flatten(in_array) {
         return [].concat.apply([], in_array);
     }
 
     static logObject(title, obj) {
+        if(obj == undefined) {
+            obj = title;
+            title = "(anon)";
+        }
         return console.log(title + ": " + JSON.stringify(obj));
     }
 
@@ -629,6 +885,16 @@ class ThreadAnalysis {
             // merging works for this.
             this.section = section.toSection();
         }
+        else if(section instanceof LazySuperSection) {
+            this.section = section;
+        }
+        else if(section instanceof LazySection) {
+            this.section = section;
+        }
+    }
+
+    judgement(analysis=null) {
+        return undefined;
     }
 
     analyze() {
@@ -728,115 +994,36 @@ class ThreadAnalysis {
 
 }
 
-class SuperSectionThreadAnalysis {
-    constructor(supersection, for_node, for_state) {
-        this.for_node = for_node;
-        this.for_state = for_state;
+class LazyThreadAnalysis extends ThreadAnalysis {
 
-        if(supersection instanceof Section) {
-            ObjectHelper.assert("this is undesired.", false);
-        }
-        else if(supersection instanceof SuperSection) {
-            
-            // A supersection has many subsections.
-            this.supersection = supersection;
-        }
+    constructor(communicator, section) {
+        super(section);
+        this.section = section;
+        this.communicator = communicator;
+        ObjectHelper.assert("Parameter valid", this.communicator != undefined);
+        ObjectHelper.assert("Parameter valid", this.section != undefined);
     }
 
-    analyze() {
-        let supersection = this.supersection;
-        let sections = this.supersection.getSections(this.for_node, this.for_state);
-
-        // We have to distinguish 2 cases: All sections serial or parallel
-        return;
-
-        ObjectHelper.assert("all sections serial", sections.every(x => x.isSerial()));
-
-        let b_print_analysis = false;   // Set to true to debug.
-
-        let data = {};
-
-        let max_thread_num = Number(supersection.get_max_thread_num());
-        if (b_print_analysis)
-            console.log("max_thread_num: " + max_thread_num);
-        let tot_cyc = [];
-        let tot_l3_miss = [];
-        let tot_l2_miss = [];
+    async analyze() {
         
+        let tmp = await this.communicator.runAnalysis("ThreadAnalysis", [new Number(this.section.unified_id), new Number(this.section.supersection_id)]).get();
 
+        let data = tmp;
 
-        let t = 0;
-        for (t = 0; t < max_thread_num + 1; t++) {
-            //console.log("iteration " + t);
-            let ts = supersection.select_thread(t);
-            let tc = ts.select_event('-2147483589'); // PAPI_TOT_CYC
-            //console.log(tc);
-            tot_cyc.push(MathHelper.sum(tc));
-
-            let tl3 = ts.select_event('-2147483640'); // PAPI_L3_TCM
-            tot_l3_miss.push(MathHelper.sum(tl3));
-
-            let tl2 = ts.select_event('-2147483641');   //PAPI_L2_TCM
-            tot_l2_miss.push(MathHelper.sum(tl2));
-        }
-
-        // Now we can get the balance
-        let i = 0;
-        if (b_print_analysis)
-            for (let t of tot_cyc) {
-                console.log("Thread " + i + " took " + t + " cycles");
-                i++;
-            }
-
-        data.cycles_per_thread = tot_cyc;
-
-        data.balance_stdev = (MathHelper.stdev(tot_cyc) / MathHelper.mean(tot_cyc));
-        if (b_print_analysis)
-            if (tot_cyc.length > 1 && MathHelper.mean(tot_cyc) != 0) {
-
-                console.log("stddev: " + MathHelper.stdev(tot_cyc));
-                console.log("Balance (stdev): " + data.balance_stdev);
-            }
-
-
-        // We need different means of balance calculations.
-        let max_elem = Math.max(...tot_cyc);
-        let min_elem = Math.min(...tot_cyc);
-        let max_diff = max_func(tot_cyc, x => Math.max(Math.abs(max_elem - x), Math.abs(min_elem - x)));
-        let biggest_unbalance = max_diff / MathHelper.mean(tot_cyc);
-        if (b_print_analysis)
-            console.log("max_diff: " + max_diff);
-        if (b_print_analysis)
-            console.log("Balance (max): " + biggest_unbalance);
-
-        data.balance_max = biggest_unbalance;
-
-        i = 0;
-        if (b_print_analysis)
-            for (let t of tot_l3_miss) {
-                console.log("Thread " + i + " had " + t + " L3 misses");
-                i++;
-            }
-        let sum_l3 = MathHelper.sum(tot_l3_miss);
-        if (b_print_analysis)
-            console.log("\n" + supersection.datasize + " bytes accessed\n" + sum_l3 + " L3 misses over all threads\n" + (sum_l3 * 64) + " bytes loaded from memory");
-
-        i = 0;
-        if (b_print_analysis)
-            for (let t of tot_l2_miss) {
-                console.log("Thread " + i + " had " + t + " L2 misses");
-                i++;
-            }
-
-        let sum_l2 = MathHelper.sum(tot_l2_miss);
-        if (b_print_analysis)
-            console.log("\n" + supersection.datasize + " bytes accessed\n" + sum_l2 + " L3 misses over all threads\n" + (sum_l2 * 64) + " bytes loaded from memory");
-
-
-        return new DataBlock(data, "thread");
+        let ret = new DataBlock(data, "thread");
+        this.analysis_result = ret;
+        ret.judgement = this.judgement();
+        return ret;
     }
+}
 
-
+function AutoThreadAnalysis(communicator, section) {
+    if(section instanceof Section) {
+        return new ThreadAnalysis(section);
+    }
+    else {
+        return new LazyThreadAnalysis(communicator, section);
+    }
 }
 
 class MemoryAnalysis {
@@ -985,7 +1172,8 @@ class SuperSectionMemoryAnalysis {
             this.Memory_Target_Bandwidth = 20;
         }
 
-        ObjectHelper.assert("for_node defined", this.for_node != undefined && new Number(this.for_node) != NaN);
+        if(!(stateid == 0xFFFF || stateid == 65535))
+            ObjectHelper.assert("for_node defined", this.for_node != undefined && new Number(this.for_node) != NaN);
     }
 
     judgement(analysis = null) {
@@ -1121,6 +1309,50 @@ class SuperSectionMemoryAnalysis {
     }
 }
 
+class LazySuperSectionMemoryAnalysis extends SuperSectionMemoryAnalysis {
+    constructor(communicator, section, nodeid, stateid, target_bw) {
+        super(section, nodeid, stateid, target_bw);
+        this.communicator = communicator;
+    }
+
+    async analyze() {
+
+        // We differ from the eager analysis here: We let the python/sql-side do the hard work
+        let n = undefined;
+        let s = new Number(this.for_state);
+        if(this.for_node !== undefined)
+            n = new Number(this.for_node);
+        else
+        {
+            // Global
+            s = 0;
+            n = 0x0FFFFFFFF;
+        }
+        let tmp = await this.communicator.runAnalysis("MemoryAnalysis", [(s << 16) | n, this.section.index]).get();
+
+        let data = tmp;
+
+        if(data == null) {
+            return null;
+        }
+
+        data.Memory_Target_Bandwidth = this.Memory_Target_Bandwidth;
+        let ret = new DataBlock(data, "memory");
+        this.analysis_result = ret;
+        ret.judgement = this.judgement();
+        return ret;
+    }
+}
+
+function AutoSuperSectionMemoryAnalysis(communicator, section, nodeid, stateid, target_bw) {
+
+    if(section instanceof LazySuperSection) {
+        return new LazySuperSectionMemoryAnalysis(communicator, section, nodeid, stateid, target_bw);
+    }
+    else {
+        return new SuperSectionMemoryAnalysis(section, nodeid, stateid, target_bw);
+    }
+}
 
 class CriticalPathAnalysis {
 
@@ -1147,7 +1379,6 @@ class CriticalPathAnalysis {
         else {
             ObjectHelper.assert("Undefined mode", false);
         }
-
         if (eff < 0.5) {
             return -1;
         }
@@ -1158,19 +1389,16 @@ class CriticalPathAnalysis {
     analyze() {
         let data = {};
 
-        let i = 0;
-        for (let run of this.rundata) {
-            console.log(i + run.runopts);
-            i++;
-        }
-
         // We want to compare different runs.
         let runs = this.rundata.map(x => x.data);
 
-
-        let single_threaded = new SuperSection(runs[0][0]).toThreadMean(this.section_entry_node, this.for_state);
+        
+        if(this.section_entry_node !== undefined) {
+            let single_threaded = new SuperSection(runs[0][0]).toThreadMean(this.section_entry_node, this.for_state);
+        }
 
         let filtered_to_section = runs.map(x => x.map(y => new SuperSection(y).toSection(this.section_entry_node, this.for_state)).filter(x => x != undefined && x._entries != undefined));
+        
 
        let thread_analyzed = filtered_to_section.map(x => x.map(y => { 
            return new ThreadAnalysis(y).analyze(); 
@@ -1179,7 +1407,7 @@ class CriticalPathAnalysis {
         // Now map to cycles_per_thread
         let cycles_per_thread = thread_analyzed.map(x => x.map(y => y.data.cycles_per_thread));
 
-        // From here, we have all thread analysis (including tot_cyc for 
+        // From here, we have all thread analyses (including tot_cyc for 
         // each element)
         let critical_paths = cycles_per_thread.map(x => x.map(y => max_func(y, z => z)));
 
@@ -1187,7 +1415,6 @@ class CriticalPathAnalysis {
 
         let T1 = data.critical_paths.find(x => x.thread_num == 1).value;
         data.speedup = critical_paths.map((x, index) => ({ thread_num: index + 1, value: x.map((y, yi) => T1[yi] / y) }));
-
 
         data.efficiency = data.speedup.map((x, index) => ({ thread_num: index + 1, value: x.value.map((y, yi) => y / (index + 1)) }));
 
@@ -1199,6 +1426,44 @@ class CriticalPathAnalysis {
 
 }
 
+class LazyCriticalPathAnalysis extends CriticalPathAnalysis {
+
+    constructor(communicator, entry_node, stateid) {
+        super(undefined, entry_node, stateid);
+        this.communicator = communicator;
+    }
+
+    async analyze() {
+        // We differ from the eager analysis here: We let the python/sql-side do the hard work
+        ObjectHelper.assert("Valid state", this.for_state !== undefined);
+        let p1 = undefined;
+        if(this.section_entry_node !== undefined)
+            p1 = new Number(this.section_entry_node);
+        let tmp = await this.communicator.runAnalysis("CriticalPathAnalysis", [p1, new Number(this.for_state)]).get();
+
+        let data = tmp;
+
+        let ret = new DataBlock(data, "path");
+        this.analysis_result = ret;
+        ret.judgement = this.judgement();
+        return ret;
+    }
+    
+}
+
+
+function AutoCriticalPathAnalysis(communicator, rundata, entry_node, stateid) {
+
+    if(rundata != undefined) {
+        return new CriticalPathAnalysis(rundata, entry_node, stateid);
+    }
+    else {
+        // This is a lazy analysis.
+        return new LazyCriticalPathAnalysis(communicator, entry_node, stateid)
+    }
+}
+
+
 
 // Class to check if a result is reasonable
 class ResultVerifier {
@@ -1209,7 +1474,8 @@ class ResultVerifier {
         let rundata = this.all_data.map(x => x.data);
 
         ObjectHelper.assert("Data received", rundata.length > 0);
-        ResultVerifier.assert_all_runs_same_number_of_entries(rundata);
+        if(!global_disable_verifier)
+            ResultVerifier.assert_all_runs_same_number_of_entries(rundata);
     }
 
     static assert_all_runs_same_number_of_entries(runs) {

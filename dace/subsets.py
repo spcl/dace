@@ -524,7 +524,7 @@ class Indices(Subset):
     def free_symbols(self):
         result = set()
         for dim in self.indices:
-            result.update(set(symbolic.symlist(d)))
+            result.update(set(symbolic.symlist(dim)))
         return result
 
     @staticmethod

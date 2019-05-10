@@ -8,7 +8,6 @@ class DrawNodeState {
     }
 
     highlights() {
-
         return global_state.highlights.filter(x => x['state-id'] == this.stateid).map(x => x['node-id']);
     }
 
@@ -161,7 +160,6 @@ class DrawNodeState {
     }
 
     draw_node(node, nodeid) {
-        // TODO: add all node types here, leave rectangle as fallback
         if (node.type == "ArrayNode") {
             this.drawArrayNode(node, nodeid)
         }

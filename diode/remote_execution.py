@@ -2,7 +2,6 @@ import os
 import sys
 import stat
 import dace
-import pickle
 import tempfile
 import traceback
 import subprocess
@@ -20,7 +19,7 @@ class Executor:
         self.counter = 0
         self.perfplot = perfplot
         self.headless = headless
-        self.rendered_graph = sdfg_renderer
+        self.rendered_graphs = sdfg_renderer
 
         self.running_async = async_host != None
         self.async_host = async_host
@@ -36,49 +35,21 @@ class Executor:
                 use_mpi = True
                 break
 
-        # Check validity of at least the default for now
-        if PerfSettings.perf_enable_instrumentation(
-        ) and PerfSettings.perf_enable_counter_sanity_check():
-            if self.running_async:
-                # Add information about what is being run
-                self.async_host.notify("Reading remote PAPI Counters")
-            PerfPAPIInfoStatic.info.load_info()
-            # TODO: Should iterate over all nodes to find counter overrides
-            papi_counters_valid = PerfPAPIInfoStatic.info.check_counters(
-                [PerfSettings.perf_default_papi_counters()])
-            if (not papi_counters_valid):
-                print("Stopped execution. Counter settings do not meet "
-                      "requirements")
-                if self.running_async:
-                    # Add information about what is being run
-                    self.async_host.notify(
-                        "An error occurred when reading remote PAPI counters")
-                return
-
-            if self.running_async:
-                # Add information about what is being run
-                self.async_host.notify("Done reading remote PAPI Counters")
+        # Check counter validity
+        PerfUtils.check_performance_counters(self)
 
         remote_workdir = Config.get("execution", "general", "workdir")
         remote_dace_dir = remote_workdir + "/.dacecache/%s/" % dace_progname
         self.show_output("Executing DaCe program " + dace_progname + " on " + \
                 Config.get("execution", "general", "host") + "\n")
 
-        if PerfSettings.perf_enable_instrumentation():
-            if self.running_async:
-                # Add information about what is being run
-                self.async_host.notify("Checking remote PAPI Counters")
-            PerfUtils.read_available_perfcounters()
-            if self.running_async:
-                # Add information about what is being run
-                self.async_host.notify("Done checking remote PAPI Counters")
-
         try:
             if self.running_async:
                 # Add information about what is being run
                 self.async_host.notify("Generating remote workspace")
             tmpfolder = tempfile.mkdtemp()
-            generate_program_folder(code_objects, tmpfolder)
+            generate_program_folder(dace_state.get_sdfg(), code_objects,
+                                    tmpfolder)
             self.create_remote_directory(remote_dace_dir)
             self.copy_folder_to_remote(tmpfolder, remote_dace_dir)
 
@@ -92,7 +63,7 @@ class Executor:
                 # Add information about what is being run
                 self.async_host.notify("Done compiling")
 
-            # copy the input file and the fatso (with the right name)
+            # copy the input file and the .so file (with the right name)
             # to remote_dace_dir
             so_name = "lib" + dace_progname + "." + Config.get(
                 'compiler', 'library_extension')
@@ -109,14 +80,11 @@ class Executor:
             try:
                 local_sdfg = tmpfolder + "/sdfg.out"
                 sdfg = dace_state.get_sdfg()
-                with open(local_sdfg, 'wb') as f:
-                    pickle.dump(sdfg, f, pickle.HIGHEST_PROTOCOL)
-                    remote_sdfg = remote_workdir + "/sdfg.out"
-                    self.copy_file_to_remote(local_sdfg, remote_sdfg)
+                sdfg.save(local_sdfg)
+                remote_sdfg = remote_workdir + "/sdfg.out"
+                self.copy_file_to_remote(local_sdfg, remote_sdfg)
             except:
-                print(
-                    "Could NOT pickle the SDFG! This is bad for Matlab/Tensorflow generated SDFGs!"
-                )
+                print("Could NOT save the SDFG")
 
             remote_dace_file = remote_workdir + "/" + os.path.basename(
                 dace_file)
@@ -129,23 +97,16 @@ class Executor:
             # We got the file there, now we can run with different
             # configurations.
             for iteration in range(0, PerfSettings.perf_multirun_num()):
-                omp_thread_num = None
-                if (PerfSettings.perf_multirun_num() != 1):
-                    opt, val = PerfSettings.perf_multirun_options()[iteration]
-                    if (opt == "omp_num_threads"):
-                        omp_thread_num = val
-
-                if self.running_async:
-                    # Add information about what is being run
-                    self.async_host.notify("Running option threads=" +
-                                           str(omp_thread_num))
+                optdict, omp_thread_num = PerfUtils.get_run_options(
+                    self, iteration)
 
                 self.remote_exec_dace(
                     remote_workdir,
                     remote_dace_file,
                     use_mpi,
                     fail_on_nonzero,
-                    omp_num_threads=omp_thread_num)
+                    omp_num_threads=omp_thread_num,
+                    additional_options_dict=optdict)
 
                 if self.running_async:
                     # Add information about what is being run
@@ -161,65 +122,11 @@ class Executor:
                 pass
 
             # Copy back the vectorization results
-            if PerfSettings.perf_enable_vectorization_analysis():
-                if self.running_async:
-                    self.async_host.notify("Running vectorization check")
-
-                self.copy_file_from_remote(
-                    remote_dace_dir + "/build/vecreport.txt", ".")
-                with open("vecreport.txt") as r:
-                    content = r.read()
-                    print("Vecreport:")
-                    print(content)
-
-                    # Now analyze this...
-                    for code_object in code_objects:
-                        code_object.perf_meta_info.analyze(content)
-                os.remove("vecreport.txt")
-
-                if self.running_async:
-                    self.async_host.notify("vectorization check done")
+            PerfUtils.retrieve_vectorization_report(self, code_objects,
+                                                    remote_dace_dir)
 
             # Copy back the instrumentation results
-            if PerfSettings.perf_enable_instrumentation():
-                if self.running_async:
-                    # Add information about what is being run
-                    self.async_host.notify("Analyzing performance data")
-                try:
-                    self.copy_file_from_remote(
-                        remote_workdir + "/instrumentation_results.txt", ".")
-                    self.remote_delete_file(remote_workdir +
-                                            "/instrumentation_results.txt")
-                    content = ""
-                    readall = False
-                    with open("instrumentation_results.txt") as ir:
-
-                        if readall:
-                            content = ir.read()
-
-                        if readall and PerfSettings.perf_print_instrumentation_output(
-                        ):
-                            print(
-                                "vvvvvvvvvvvvv Instrumentation Results vvvvvvvvvvvvvv"
-                            )
-                            print(content)
-                            print(
-                                "^^^^^^^^^^^^^ Instrumentation Results ^^^^^^^^^^^^^^"
-                            )
-
-                        if readall:
-                            PerfUtils.print_instrumentation_output(content)
-                        else:
-                            PerfUtils.print_instrumentation_output(ir)
-
-                    os.remove("instrumentation_results.txt")
-                except FileNotFoundError:
-                    print(
-                        "[Warning] Could not transmit instrumentation results")
-
-                if self.running_async:
-                    # Add information about what is being run
-                    self.async_host.notify("Done Analyzing performance data")
+            PerfUtils.retrieve_instrumentation_results(self, remote_workdir)
 
             if self.running_async:
                 # Add information about what is being run
@@ -228,25 +135,31 @@ class Executor:
             try:
                 self.remote_delete_file(remote_workdir + "/results.log")
             except:
-                pass
+                print(
+                    "WARNING: results.log could not be transmitted (probably not created)"
+                )
 
             self.remote_delete_file(remote_dace_file)
             self.remote_delete_dir(remote_dace_dir)
 
-            try:
-                res = self.update_performance_plot("results.log",
-                                                   str(self.counter))
-                os.remove("results.log")
-            except FileNotFoundError:
-                print("WARNING: results.log could not be read")
+            def deferred():
+                try:
+                    res = self.update_performance_plot("results.log",
+                                                       str(self.counter))
+                    os.remove("results.log")
+                except FileNotFoundError:
+                    print("WARNING: results.log could not be read")
+
+            self.async_host.run_sync(deferred)
 
             if self.running_async:
                 # Add information about what is being run
                 self.async_host.notify("Done cleaning")
 
             # Also, update the performance data.
-            self.rendered_graph.set_memspeed_target()
-            self.rendered_graph.render_performance_data()
+            self.rendered_graphs.set_memspeed_target()
+            self.rendered_graphs.render_performance_data(
+                Config.get("instrumentation", "papi_mode"))
         except Exception as e:
             print("\n\n\n")
             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
@@ -302,7 +215,8 @@ class Executor:
                          dace_file,
                          use_mpi=True,
                          fail_on_nonzero=False,
-                         omp_num_threads=None):
+                         omp_num_threads=None,
+                         additional_options_dict={}):
         run = "${command} "
         if use_mpi == True:
             run = Config.get("execution", "mpi", "mpiexec")
@@ -321,12 +235,21 @@ class Executor:
             perf_instrumentation_result_marker = "echo '# ;%s; Running in multirun config' >> %s/instrumentation_results.txt\n" % (
                 omp_num_threads_str.replace("\n", ""), remote_workdir)
 
+        # Create string from all misc options
+        miscoptstring = ""
+        miscoptresetstring = ""
+        for optkey, optval in additional_options_dict.items():
+            miscoptstring += "export " + str(optkey) + "=" + str(optval) + "\n"
+            miscoptresetstring += "unset " + str(optkey) + "\n"
+
         # Create a startscript which exports necessary env-vars
+
         start_sh = "set -x\n" + \
                    "export DACE_compiler_use_cache=1\n" + \
                    "export DACE_optimizer_interface=''\n" + \
                    "export DACE_profiling=1\n" + \
                    "export DACE_treps=" + str(repetitions) +"\n" + \
+                   miscoptstring + \
                    omp_num_threads_str + \
                    "cd " + remote_workdir + "\n" + \
                    perf_instrumentation_result_marker
@@ -338,6 +261,7 @@ class Executor:
             "unset DACE_compiler_use_cache\n" +
             "unset DACE_optimizer_interface\n" + "unset DACE_treps\n" +
             "unset DACE_profiling\n" + omp_num_threads_unset_str +
+            miscoptresetstring +
             # TODO: separate program error and system error
             "exit $RETVAL\n")
         tempdir = tempfile.mkdtemp()
@@ -445,6 +369,23 @@ class AsyncExecutor:
         self.from_thread_message_queue = queue.Queue(128)
         self.diode = diode
         self.running_thread = None
+        self.autoquit = True  # This determines if a "quit"-message stops the thread
+
+        self.sync_run_lock = threading.Lock()
+
+    def counter_issue(self):
+        self.diode.onCounterIssue()
+
+    def run_sync(self, func):
+
+        # Synchronize using a lock
+        def deferred():
+            with self.sync_run_lock:
+                func()
+            return False
+
+        from gi.repository import GObject
+        GObject.idle_add(deferred)
 
     def notify(self, message):
 
@@ -457,6 +398,7 @@ class AsyncExecutor:
             status_text = self.diode.builder.get_object("run_status_text")
             status_progress_bar = self.diode.builder.get_object("run_status")
             status_text.set_text(message)
+            return False
 
         from gi.repository import GObject
         GObject.idle_add(deferred)
@@ -476,16 +418,38 @@ class AsyncExecutor:
 
         self.running_thread = threading.Thread(target=task)
         self.running_thread.start()
+
+        self.append_run_async(dace_state, fail_on_nonzero=False)
+
+    def append_run_async(self, dace_state, fail_on_nonzero=False):
         self.to_thread_message_queue.put(("run", dace_state, fail_on_nonzero))
 
+    def add_async_task(self, task):
+        self.to_thread_message_queue.put(("execute_task", self, task))
+
+    def execute_task(self, task):
+        return task()
+
     def callMethod(self, obj, name, *args):
+        # Shortcut for executing a simple task
+        if name == "execute_task":
+            _, subargs = args
+
+            return self.execute_task(subargs)
         return getattr(obj, name)(*args)
 
     def run(self):
         while True:
             # Read a message (blocking)
             msg = self.to_thread_message_queue.get()
-            if (msg == "quit"):
+            if msg == "quit":
+                if self.to_thread_message_queue.empty() and self.autoquit:
+                    print("Quitting async execution")
+                    break
+                else:
+                    # There still is some queued work.
+                    continue
+            if msg == "forcequit":
                 break
 
             # Unwrap and call

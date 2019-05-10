@@ -303,9 +303,10 @@ class CPPUnparser:
                     self.dispatch_lhs_tuple(target.elts)
                 target = target.elts[0]
 
-            if not isinstance(target,
-                              ast.Subscript) and not self.locals.is_defined(
-                                  target.id, self._indent):
+            if not isinstance(
+                    target,
+                (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
+                    target.id, self._indent):
                 self.locals.define(target.id, t.lineno, self._indent)
                 self.write('auto ')
             self.dispatch(target)

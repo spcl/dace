@@ -138,6 +138,30 @@
                       </object>
                     </child>
                     <child>
+                      <object class="GtkMenuItem" id="loadcan_menuitem">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Load CAN</property>
+                        <property name="use_underline">True</property>
+                        <signal name="activate" handler="onLoadCan" swapped="no"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkMenuItem" id="savecan_menuitem">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Save CAN</property>
+                        <property name="use_underline">True</property>
+                        <signal name="activate" handler="onSaveCan" swapped="no"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkSeparatorMenuItem">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkImageMenuItem">
                         <property name="label">gtk-quit</property>
                         <property name="visible">True</property>
@@ -238,6 +262,15 @@
                         <property name="label">System info</property>
                         <property name="use_underline">True</property>
                         <signal name="activate" handler="onReadSystemInfo" swapped="no"/>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkMenuItem">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label">View Roofline</property>
+                        <property name="use_underline">True</property>
+                        <signal name="activate" handler="onViewRoofline" swapped="no"/>
                       </object>
                     </child>
                   </object>

@@ -66,6 +66,7 @@ class Property:
             unmapped=False,  # Don't enforce 1:1 mapping with a member variable
             allow_none=False,
             indirected=False,  # This property belongs to a different class
+            category='General',
             desc=""):
 
         self._getter = getter
@@ -89,6 +90,7 @@ class Property:
         self._allow_none = allow_none
         self._indirected = indirected
         self._desc = desc
+        self._category = category
 
     def __get__(self, obj, objtype=None):
         if obj is None:
@@ -197,6 +199,10 @@ class Property:
     @indirected.setter
     def indirected(self, val):
         self._indirected = val
+
+    @property
+    def category(self):
+        return self._category
 
 
 ###############################################################################
@@ -481,7 +487,8 @@ class SetProperty(Property):
             to_string=None,
             unmapped=False,  # Don't enforce 1:1 mapping with a member variable
             allow_none=False,
-            desc=""):
+            desc="",
+            **kwargs):
         super(SetProperty, self).__init__(
             getter=getter,
             setter=setter,
@@ -492,7 +499,8 @@ class SetProperty(Property):
             enum=None,
             unmapped=unmapped,
             allow_none=allow_none,
-            desc=desc)
+            desc=desc,
+            **kwargs)
         self._element_type = element_type
 
     @property
@@ -731,11 +739,11 @@ class DataProperty(Property):
         Needs the SDFG to be passed as an argument to `from_string` and
         `enum`. """
 
-    def __init__(self, desc='', default=None):
+    def __init__(self, desc='', default=None, **kwargs):
         # Data can be None when no data is flowing, e.g., on a memlet with a
         # map that has no external inputs
         return super().__init__(
-            dtype=str, allow_none=True, desc=desc, default=default)
+            dtype=str, allow_none=True, desc=desc, default=default, **kwargs)
 
     @staticmethod
     def enum(sdfg=None):

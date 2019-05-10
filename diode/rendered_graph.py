@@ -106,7 +106,10 @@ class RenderedGraph:
     def set_memspeed_target(self):
         pass
 
-    def render_performance_data(self):
+    def render_performance_data(self,
+                                mode="",
+                                data_source_path="fresh",
+                                forProgramID=None):
         pass
 
     def render(self, wid, cr):

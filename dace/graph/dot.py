@@ -192,7 +192,25 @@ def draw_graph(sdfg, graph, standalone=True):
             e._src = newsrc
             newsrc._out_connectors.add(e.src_conn)
 
-    nodes = [x.draw_node(sdfg, graph) for x in nodes_to_draw]
+    nodes = []
+
+    def draw_recursive(toplevel):
+        for node in sdict_children[toplevel]:
+            if node not in nodes_to_draw: continue
+            if node in sdict_children:
+                name = 's%d_%d' % (sdfg.node_id(graph), graph.node_id(node))
+                nodes.append('''
+subgraph cluster_%s {
+                label = "";
+                ''' % name)
+                nodes.append(node.draw_node(sdfg, graph))
+                draw_recursive(node)
+                nodes.append('}\n')
+            else:
+                nodes.append(node.draw_node(sdfg, graph))
+
+    draw_recursive(None)
+    #nodes = [x.draw_node(sdfg, graph) for x in nodes_to_draw]
     edges = [draw_edge(sdfg, graph, e) for e in edges_to_draw]
 
     if not standalone:

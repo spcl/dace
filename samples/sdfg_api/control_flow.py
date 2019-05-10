@@ -43,6 +43,7 @@ def endstate(state):
 state0 = sdfg.add_state('s0')
 mystate(state0, 'A', 'B')
 
+# For an easier creation of loops, see the `sdfg.add_loop` helper function.
 guard = sdfg.add_state('guard')
 
 loopstate0 = sdfg.add_state('loops0')

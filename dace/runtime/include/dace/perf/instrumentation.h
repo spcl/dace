@@ -12,6 +12,12 @@
 #include <assert.h>
 #include <iostream>
 #include <memory>
+#include <chrono>
+#include <array>
+
+#ifdef __WIN32__
+#include <processthreadsapi.h>
+#endif
 
 
 #ifdef __x86_64__ // We don't support i386 (macro: __i386__)
@@ -43,6 +49,15 @@
 
 #define NO_RUNTIME_BYTEMOVEMENT_ACCUMULATION // Define to disable byte movement recording. Defining this can reduce cache line ping pong
 
+#ifndef OVERHEAD_REPETITIONS
+#define OVERHEAD_REPETITIONS 100
+#endif
+
+#ifndef DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD
+// Define a threshhold for flushing (= don't flush at every supersection, but only if the buffer is filled to a certain percentage.)
+#define DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD 0.5f
+#endif
+
 //#define ASSIGN_COMPONENT // Assigns the component explicitly. This should not be enabled for 2 reasons: 1) PAPI_start() already does this, and 2) there might be a tiny to medium overhead when enabling twice
 namespace dace_perf
 {
@@ -61,6 +76,15 @@ void logError(const std::string& str)
 }
 
 template<int... events> class PAPIPerfLowLevel;
+template<bool, int... events> class PAPIValueSetInternal;
+template<int... events> class PAPIValueStore;
+
+template<int... events>
+using PAPIValueSet = PAPIValueSetInternal<true, events...>;
+
+template<int... events> using PAPIPerf = PAPIPerfLowLevel<events...>;
+
+
 
 constexpr size_t CACHE_LINE_SIZE = 64;
 
@@ -135,7 +159,10 @@ public:
         assert(data != nullptr);
         for(size_t i = 0; i < m_size; ++i)
         {
-            data[i] = AlignedElement<T, Alignment>();
+            // The following 2 lines should have the same effect (line 1 is copy-assigned, line 2 is using the placement operator new).
+            // The 2nd line should be more efficient
+            //data[i] = AlignedElement<T, Alignment>();
+            new (data + i) AlignedElement<T, Alignment>();
 
             #ifdef CHECK_BOUNDS
             assert((uint8_t*)&data[i] <= m_rawdat.get() + m_alloc_size);
@@ -187,6 +214,134 @@ private:
     size_t m_alloc_size;
 };
 
+class thread_lock_context_t
+{
+public:
+    thread_lock_context_t()
+        : notified(true), iteration(0)
+    {
+        
+    }
+    std::mutex mutex;
+    std::condition_variable cond_var;
+    std::atomic_bool notified;
+    std::atomic<size_t> iteration;
+
+};
+
+
+int64_t getThreadID()
+{
+    #ifdef __linux__
+    const auto thread_id = sched_getcpu();
+    #elif __WIN32__
+    // More than 64 CPUs are put into processor groups, so the normal GetCurrentProcessorNumber() does not work with > 64 Threads.
+    PROCESSOR_NUMBER pn;
+    GetCurrentProcessorNumberEx(&pn);
+    const auto thread_id = static_cast<size_t>(pn.Group) * 64 + static_cast<size_t>(pn.Number) ;
+    #else
+    #error Unsupported platform (maybe MacOS?), provide code to get hardware thread number here.
+    #endif
+    return thread_id;
+}
+
+
+class ThreadLockReleaser
+{
+public:
+    ThreadLockReleaser(thread_lock_context_t& ctx)
+        : m_ctx(ctx), m_iteration(ctx.iteration)
+    {}
+
+    ~ThreadLockReleaser()
+    {
+        // Notify the blocking threads
+
+        std::cout << "Releasing thread " << dace_perf::getThreadID() << std::endl;
+        m_ctx.notified = true;
+        m_ctx.cond_var.notify_one();
+    }
+
+    size_t getIteration() const {
+        return m_iteration;
+    }
+
+    thread_lock_context_t& m_ctx;
+    size_t m_iteration;
+};
+
+// Lock a task to a thread
+void lockThreadID(unsigned long core)
+{
+    #ifdef __linux__
+    auto threadid = pthread_self();
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(core, &cpu_set);
+    auto done = pthread_setaffinity_np(threadid, sizeof(cpu_set_t), &cpu_set);
+    if(done != 0)
+    {
+        std::cout << "Failed pthread_setaffinity_np with code " << done << std::endl;
+        exit(-1);
+    }
+    #else
+    #error Implement this lockThreadID() function to lock a task to a given thread.
+    #endif
+}
+
+// This class provides an interface to lock threads in order to prevent multiple concurrent measurements on the same core
+class ThreadLockProvider
+{
+public:
+    ThreadLockProvider()
+    {
+        //size_t thread_count = omp_get_num_threads();
+        size_t thread_count = std::thread::hardware_concurrency();
+        std::cout << "Creating locks for " << thread_count << " threads." << std::endl;
+        m_contexts.resize(thread_count);
+
+        m_global_iteration = 0;
+    }
+
+    size_t getAndIncreaseCounter() 
+    {
+        size_t old = m_global_iteration;
+
+        while(!m_global_iteration.compare_exchange_weak(old, old + 1));
+
+        return old;
+    }
+
+    ThreadLockReleaser enqueue()
+    {
+        // Parameter is implicit through std::this_thread (or equivalent)
+
+        const auto thread_id = dace_perf::getThreadID();
+
+        // Lock it
+        dace_perf::lockThreadID(thread_id);
+
+        std::cout << "Running on thread " << thread_id << std::endl;
+        
+        auto& ctx = m_contexts[thread_id];
+        std::unique_lock<std::mutex> lock(ctx.mutex);
+
+        bool old = true;
+
+        while(!ctx.notified.compare_exchange_weak(old, false))
+        {
+            old = true;
+            ctx.cond_var.wait(lock);
+        }
+        ++(ctx.iteration);
+        
+        // This instance is now blocking the thread. When the return value is destroyed, it will no longer block
+        return ThreadLockReleaser(ctx);
+    }
+private:
+    AlignedContainer<thread_lock_context_t> m_contexts;
+    std::atomic<size_t> m_global_iteration;
+};
 
 class PAPI
 {
@@ -254,6 +409,7 @@ enum class ValueSetType
 
     Copy,
     CounterOverride,
+    OverheadComp,
 };
 
 template<bool standalone, int... events>
@@ -299,9 +455,14 @@ public:
         }
         std::string ret = "# entry";
 
-        if(m_nodeid != invalid_node_id && (m_flags == ValueSetType::Default || m_flags == ValueSetType::Copy))
+        if(m_flags == ValueSetType::Default || m_flags == ValueSetType::Copy)
         {
             ret += " (" + std::to_string(m_nodeid) + ", " + std::to_string(m_coreid) + ", " + std::to_string(m_iteration) + ", " + std::to_string((int)m_flags) + ")\n";
+        }
+        else if(m_flags == ValueSetType::OverheadComp)
+        {
+            ret = "# Overhead comp\n";
+            // Values are written out below.
         }
         else if(m_flags == ValueSetType::OMP_marker_parfor_start)
         {
@@ -312,6 +473,8 @@ public:
         {
             ret = "# Section start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ")\n";
             ret += "bytes: " + std::to_string(m_values[0]) + "\n";
+            if(m_values[1] != 0) // The input data (stored in slot 1) is implicit-0, so only add it if it adds information
+                ret += "input_bytes: " + std::to_string(m_values[1]) + "\n";
             return ret;
         }
         else if(m_flags == ValueSetType::marker_supersection_start)
@@ -345,6 +508,11 @@ public:
         return m_values;
     }
 
+    std::array<int, sizeof...(events)> event_array() const
+    {
+        return {events...};
+    }
+
     const ValueSetType& flags() const { return m_flags; }
 
 private:
@@ -355,9 +523,6 @@ private:
     uint32_t m_iteration;   // The iteration (in a given loop)
     ValueSetType m_flags;   // The flags (mode) for this value set.
 };
-
-template<int... events>
-using PAPIValueSet = PAPIValueSetInternal<true, events...>;
 
 
     constexpr auto store_path = "instrumentation_results.txt";
@@ -388,6 +553,7 @@ public:
         m_moved_bytes = 0;
         m_contention_value = 0;
 
+        m_time = -1.0;
 
         logError("Value store created");
     }
@@ -397,6 +563,43 @@ public:
     
         flush();
         fclose(m_store_file);
+    }
+
+    // Does a couple of empty runs (starting and immediately stopping counters) to get a rough estimate of overheads
+    void getMeasuredOverhead()
+    {
+        auto _min = PAPIValueSetInternal<false, events...>(-1, 0, 0, ValueSetType::OverheadComp);
+        auto _max = PAPIValueSetInternal<false, events...>();
+
+        // flush values
+        for(auto& x : _min.store()) x = std::numeric_limits<long long>::max();
+        for(auto& x : _max.store()) x = std::numeric_limits<long long>::min();
+
+        auto set_min_max = [&](const auto& vs) {
+            // TODO(later): Vectorize?
+            for(size_t i = 0; i < sizeof(vs.cstore()) / sizeof(vs.cstore()[0]); ++i)
+            {
+                _min.store()[i] = std::min(_min.store()[i], vs.cstore()[i]);
+                _max.store()[i] = std::max(_max.store()[i], vs.cstore()[i]);
+            }
+        };
+
+        for(auto i = 0; i < OVERHEAD_REPETITIONS; ++i) {
+            PAPIPerf<events...> perfctr;
+            PAPIValueSetInternal<false, events...> vs;
+            perfctr.enterCritical();
+            perfctr.leaveCritical(vs);
+
+            set_min_max(vs);   
+        }
+
+        addEntry(_min);
+        
+    }
+
+    void set_time(double t)
+    {
+        this->m_time = t;
     }
 
     // Provides a thread-safe implementation to increase a counter representing the bytes moved
@@ -435,6 +638,9 @@ public:
         // We want to store information about what we actually measured
         int event_override[sizeof...(events)];
         bool override_events = false;
+        std::string resultstring;
+        constexpr size_t result_reserve_size = 1024ul * 1024ul * 16;
+        resultstring.reserve(result_reserve_size);
         for(size_t i = 0; i < m_insertion_position; ++i)
         {
             const auto& e = m_values[i];
@@ -451,15 +657,23 @@ public:
             {
                 if(override_events)
                 {
-                    fprintf(m_store_file, "%s", e.toStoreFormat(event_override).c_str());
+                    resultstring.append(e.toStoreFormat(event_override));
                     override_events = false;
                 }
                 else
                 {
-                    fprintf(m_store_file, "%s", e.toStoreFormat().c_str());
+                    resultstring.append(e.toStoreFormat());
+                }
+                if(resultstring.length() > result_reserve_size / 2)
+                {
+                    fwrite(resultstring.data(), resultstring.length(), 1, m_store_file);
+                    resultstring.clear();
+                    resultstring.reserve(result_reserve_size);
                 }
             }
         }
+        // This may write an empty string, but that does not matter
+        fwrite(resultstring.data(), resultstring.length(), 1, m_store_file);
         if(m_insertion_position > 0)
         {
 #ifndef NO_RUNTIME_BYTEMOVEMENT_ACCUMULATION
@@ -474,6 +688,12 @@ public:
             if(cont != 0)
                 fprintf(m_store_file, "# contention: %s\n", std::to_string(cont).c_str());
         }
+        // Write collected time as well.
+        if(m_time != -1.0)
+        {
+            fprintf(m_store_file, "# Timer recorded %f secs\n", m_time);
+            m_time = -1.0;
+        }
         m_values.clear();
         //m_values.reserve(store_reserve_size);
         m_values.resize(store_reserve_size);
@@ -483,16 +703,21 @@ public:
     // This is to provide a default sync point. Its effect on the output can be disregarded
     void markSuperSectionStart(uint32_t nodeid, ValueSetType flags = ValueSetType::marker_supersection_start)
     {
-        flush();
+        if(this->m_insertion_position >= static_cast<size_t>(store_reserve_size * DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD))
+            flush();
+        
         PAPIValueSetInternal<false, events...> set(nodeid, 0, 0, flags);
         addEntry(set);
     }
 
-    // This marks sections in a threadsafe way. In principle, instead of being a "barrier" syncing threads, it now just guarantees serial properties per thread (instead of as before, over all threads)
-    void markSectionStart(uint32_t nodeid, long long SizeInBytes, uint32_t threadid, uint32_t iteration = 0, ValueSetType flags = ValueSetType::marker_section_start)
+    // This marks sections in a threadsafe way. In principle, instead of being a "barrier" syncing threads, it now just guarantees serial properties per thread
+    void markSectionStart(uint32_t nodeid, long long SizeInBytes, long long InputSize, uint32_t threadid, uint32_t iteration = 0, ValueSetType flags = ValueSetType::marker_section_start)
     {
+        // Difference SizeInBytes and InputSize: InputSize is just the amount of bytes moved INTO the section, while sizeInBytes is the amount of bytes MOVED inside a section (without reuses of the same data)
         PAPIValueSetInternal<false, events...> set(nodeid, threadid, iteration, flags);
         set.store()[0] = SizeInBytes; // Use the first slot for memory information
+        set.store()[1] = InputSize; // Use the second slot for memory input information
+        static_assert(sizeof...(events) >= 2, "Must have at least 2 counters specified");
         addEntry(set);
     }
 
@@ -506,9 +731,10 @@ public:
         do {
             size_t oldpos = m_insertion_position;
             pos = oldpos + slots;
-            assert(pos <= m_values.size());
+
             if(pos >= m_values.size())
             {
+                logError("Flushing in measurement section");
                 std::cerr << "Array not big enough!" << std::endl;
 
                 // To keep it running, we just have to flush. For this, we should lock
@@ -517,12 +743,15 @@ public:
                 // However, it's hard to guarantee termination like this. (What if the main thread is done and will never call getNewSlotPosition())
                 if(m_vec_mutex.try_lock()) {
                     // We got the lock, so we can flush
+                    logError("Flushing...");
                     flush();
                     m_vec_mutex.unlock();
+                    logError("Continuing...");
                 }
                 else {
                     // We didn't get the lock, which means that somebody else is already flushing.
                     // Since we lost a lot of time already, we can just use the lock to wait instead of spinlocking.
+                    logError("Waiting for values to be written");
                     m_vec_mutex.lock();
                     m_vec_mutex.unlock();
                 }
@@ -530,7 +759,7 @@ public:
                 // We always have to try again to get the new (correct) position
                 continue;
             }
-            // We use strong exchange here because we don't want to be spinning for a long time.
+            
             r_ex = m_insertion_position.compare_exchange_weak(oldpos, pos);
             pos = oldpos;
             if(!r_ex)
@@ -616,7 +845,7 @@ public:
     
     PAPIValueSetInternal<false, events...>& getNewValueSet()
     {
-        return getNewValueSet(0, 0, 0);
+        return getNewValueSet(PAPIPerf<events...>(), 0, 0, 0);
     }
 private:
     std::recursive_mutex m_vec_mutex;
@@ -627,6 +856,8 @@ private:
     std::atomic<size_t> m_insertion_position;
     std::atomic<uint64_t> m_contention_value;
     std::atomic<byte_counter_size_t> m_moved_bytes;
+
+    double m_time;
 
     FILE* m_store_file;
 };
@@ -812,8 +1043,6 @@ private:
     int m_event_set;
 };
 
-template<int... events>
-using PAPIPerf = PAPIPerfLowLevel<events...>;
 
 // Convenience typedef
 typedef PAPIPerfLowLevel<PAPI_TOT_INS, PAPI_TOT_CYC, PAPI_L1_TCM, PAPI_L2_TCM, PAPI_L3_TCM> PAPIPerfAllMisses;
@@ -840,5 +1069,47 @@ inline double PAPI::getTimePerCycle()
 
     return double(duration_cast<std::chrono::microseconds>(std::chrono::duration<double>(stop - start)).count()) / double(vs.store()[0]) / 1e6;
 }
+
+// Small wrapper for an std timer
+class Timer {
+public:
+    Timer()
+        : m_start(std::chrono::high_resolution_clock::now()), m_finished(false)
+    {
+        
+    }
+
+    double collect()
+    {
+        const auto n = std::chrono::high_resolution_clock::now();
+        const std::chrono::duration<double> timediff = n - m_start;
+        m_finished = true;
+        return timediff.count();
+    }
+
+    ~Timer()
+    {
+        if(m_finished)
+            return;
+
+
+        auto timediff = collect();
+
+        FILE* f = fopen(store_path, "ab");
+        if(f == nullptr)
+        {
+            std::cerr << "Timer failed to open result file" << std::endl;
+        }
+        else
+        {
+            fprintf(f, "# Timer recorded %f secs\n", timediff);
+
+            fclose(f);
+        }
+    }
+private:
+    std::chrono::high_resolution_clock::time_point m_start;
+    bool m_finished;
+};
 
 };

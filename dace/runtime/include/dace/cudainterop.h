@@ -51,6 +51,9 @@ extern "C"
     cudaError_t cudaMemsetAsync(void *dst, int value,
                                 size_t count,
                                 cudaStream_t stream = 0);
+    cudaError_t cudaStreamSynchronize(cudaStream_t stream);
+    cudaError_t cudaGetLastError(void);
+    cudaError_t cudaDeviceSynchronize(void);
 }
 
 

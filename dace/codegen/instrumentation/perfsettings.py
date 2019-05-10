@@ -1,4 +1,4 @@
-from dace.graph.nodes import MapEntry, MapExit, Tasklet
+from dace.graph.nodes import EntryNode, ExitNode, MapEntry, MapExit, Tasklet
 from dace.graph.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.data import Array
@@ -10,10 +10,12 @@ from dace.types import ScheduleType
 import re
 
 import sympy as sp
+import os
+import ast
+import sqlite3
 
 # Helper function to get the module path
 if __name__ == "__main__":
-    import os
     print("path: " + os.path.dirname(__file__))
 
 
@@ -24,10 +26,52 @@ class PerfSettings(object):
     _perf_enable_instrumentation = True
     perf_enable_override_config = True
 
-    #default_papi_counters = ["PAPI_TOT_INS", "PAPI_TOT_CYC", "PAPI_L1_TCM", "PAPI_L2_TCM", "PAPI_L3_TCM"]
     default_papi_counters = [
         "PAPI_TOT_INS", "PAPI_TOT_CYC", "PAPI_L2_TCM", "PAPI_L3_TCM"
     ]
+
+    @staticmethod
+    def perf_merging_debug_output():
+        return False
+
+    @staticmethod
+    def merging_print(dbg_str):
+        if PerfSettings.perf_merging_debug_output():
+            print(dbg_str)
+
+    @staticmethod
+    def perf_canning_debug_output():
+        return False
+
+    @staticmethod
+    def canning_print(dbg_str):
+        if PerfSettings.perf_canning_debug_output():
+            print(dbg_str)
+
+    @staticmethod
+    def perf_transcriptor_debug_output():
+        return False
+
+    @staticmethod
+    def transcriptor_print(dbg_str):
+        if PerfSettings.perf_transcriptor_debug_output():
+            print(dbg_str)
+
+    @staticmethod
+    def perf_compensate_overhead():
+        return Config.get("instrumentation", "enable_overhead_compensation")
+
+    @staticmethod
+    def perf_get_thread_nums():
+        return ast.literal_eval(Config.get("instrumentation", "thread_nums"))
+
+    @staticmethod
+    def perf_use_multimode():
+        return Config.get_bool("instrumentation", "multimode_run")
+
+    @staticmethod
+    def perf_use_sql():
+        return Config.get_bool("instrumentation", "sql_backend_enable")
 
     @staticmethod
     def get_unique_number():
@@ -40,7 +84,7 @@ class PerfSettings(object):
         """ Amount of iterations with different PAPI configurations to run. (1 means no multirun) """
         if not PerfSettings.perf_enable_instrumentation():
             return 1
-        return 4
+        return 1 + len(PerfSettings.perf_get_thread_nums())
 
     @staticmethod
     def perf_multirun_options():
@@ -51,13 +95,42 @@ class PerfSettings(object):
         if PerfSettings.perf_multirun_num() == 1:
             return ret  # Don't specify these options by default
 
-        for i in range(0, 4):
-            ret.append(("omp_num_threads", i + 1))
+        #for i in range(0, 4):
+        #    ret.append(("omp_num_threads", i + 1))
+        o = PerfSettings.perf_get_thread_nums()
+        for x in o:
+            ret.append(("omp_num_threads", x))
+
+        ret.append(
+            ("cleanrun", 0)
+        )  # Add a clean run (no instrumentation) to compare performance. This should be done without OMP_NUM_THREADS
+
         return ret
 
     @staticmethod
     def perf_default_papi_counters():
+        mode = Config.get("instrumentation", "papi_mode")
+        assert mode != None
+
+        if mode == "default":  # Most general operations (Cache misses and cycle times)
+            return eval(Config.get("instrumentation", "default_papi_counters"))
+        elif mode == "vectorize":  # Vector operations (to check if a section was vectorized or not)
+            return eval(Config.get("instrumentation", "vec_papi_counters"))
+        elif mode == "memop":  # Static memory operations (store/load counts)
+            return eval(Config.get("instrumentation", "mem_papi_counters"))
+        elif mode == "cacheop":  # Cache operations (PAPI_CA_*)
+            return eval(Config.get("instrumentation", "cache_papi_counters"))
+        else:
+            # Use a fallback for this one
+            return eval(
+                Config.get("instrumentation",
+                           str(mode) + "_papi_counters"))
+
         return eval(Config.get("instrumentation", "default_papi_counters"))
+
+    @staticmethod
+    def perf_enable_timing():
+        return Config.get_bool("instrumentation", "timeit")
 
     @staticmethod
     def perf_enable_instrumentation():
@@ -67,6 +140,14 @@ class PerfSettings(object):
     def perf_enable_instrumentation_for(sdfg, node=None):
         return PerfSettings.perf_enable_instrumentation(
         ) and not sdfg.has_instrumented_parent()
+
+    @staticmethod
+    def perf_enable_overhead_collection():
+        return True  # TODO: Make config dependent (this is too expensive now because it's executed for every single run)
+
+    @staticmethod
+    def perf_current_mode():
+        return Config.get("instrumentation", "papi_mode")
 
     @staticmethod
     def perf_supersection_emission_debug():
@@ -116,6 +197,128 @@ class PerfUtils(object):
         if state_id > 0x0FFFF:
             raise ValueError("Stateid is too large to fit in 16 bits!")
         return (int(state_id) << 16) | int(node_id)
+
+    @staticmethod
+    def get_run_options(executor, iteration):
+        optdict = {}
+        omp_thread_num = None
+        if (PerfSettings.perf_multirun_num() != 1):
+            opt, val = PerfSettings.perf_multirun_options()[iteration]
+            if opt == "omp_num_threads":
+                omp_thread_num = val
+                if executor.running_async:
+                    # Add information about what is being run
+                    executor.async_host.notify("Running option threads=" +
+                                               str(omp_thread_num))
+            if opt == "cleanrun":
+                if executor.running_async:
+                    # Add information about what is being run
+                    executor.async_host.notify("Running baseline")
+                    optdict["DACE_instrumentation_timeit"] = "1"
+                    optdict[
+                        "DACE_instrumentation_enable_papi"] = "0"  # Disable PAPI
+                    optdict[
+                        "DACE_compiler_use_cache"] = "0"  # Force recompilation
+        return (optdict, omp_thread_num)
+
+    @staticmethod
+    def retrieve_instrumentation_results(executor, remote_workdir):
+        if PerfSettings.perf_enable_instrumentation():
+            if executor.running_async:
+                # Add information about what is being run
+                executor.async_host.notify("Analyzing performance data")
+            try:
+                executor.copy_file_from_remote(
+                    remote_workdir + "/instrumentation_results.txt", ".")
+                executor.remote_delete_file(remote_workdir +
+                                            "/instrumentation_results.txt")
+                content = ""
+                readall = False
+                with open("instrumentation_results.txt") as ir:
+
+                    if readall:
+                        content = ir.read()
+
+                    if readall and PerfSettings.perf_print_instrumentation_output(
+                    ):
+                        print(
+                            "vvvvvvvvvvvvv Instrumentation Results vvvvvvvvvvvvvv"
+                        )
+                        print(content)
+                        print(
+                            "^^^^^^^^^^^^^ Instrumentation Results ^^^^^^^^^^^^^^"
+                        )
+
+                    if readall:
+                        PerfUtils.print_instrumentation_output(content)
+                    else:
+                        PerfUtils.print_instrumentation_output(ir)
+
+                os.remove("instrumentation_results.txt")
+            except FileNotFoundError:
+                print("[Warning] Could not transmit instrumentation results")
+
+            if executor.running_async:
+                # Add information about what is being run
+                executor.async_host.notify("Done Analyzing performance data")
+
+    @staticmethod
+    def retrieve_vectorization_report(executor, code_objects, remote_dace_dir):
+        if PerfSettings.perf_enable_vectorization_analysis():
+            if executor.running_async:
+                executor.async_host.notify("Running vectorization check")
+
+            executor.copy_file_from_remote(
+                remote_dace_dir + "/build/vecreport.txt", ".")
+            with open("vecreport.txt") as r:
+                content = r.read()
+                print("Vecreport:")
+                print(content)
+
+                # Now analyze this...
+                for code_object in code_objects:
+                    code_object.perf_meta_info.analyze(content)
+            os.remove("vecreport.txt")
+
+            if executor.running_async:
+                executor.async_host.notify("vectorization check done")
+
+    @staticmethod
+    def check_performance_counters(executor):
+        if PerfSettings.perf_enable_instrumentation(
+        ) and PerfSettings.perf_enable_counter_sanity_check():
+            if executor.running_async:
+                executor.async_host.notify("Checking remote PAPI Counters")
+            PerfPAPIInfoStatic.info.load_info()
+
+            papi_counters_valid = PerfPAPIInfoStatic.info.check_counters(
+                [PerfSettings.perf_default_papi_counters()])
+            if (not papi_counters_valid):
+                # The program might fail
+                print(
+                    "Stopped execution because counter settings do not meet requirements"
+                )
+
+                if executor.running_async:
+                    executor.async_host.notify(
+                        "An error occurred when reading remote PAPI counters")
+
+                    executor.async_host.counter_issue()
+                else:
+                    return
+
+            if executor.running_async:
+                executor.async_host.notify(
+                    "Done checking remote PAPI Counters")
+
+    @staticmethod
+    def dump_counter_information(executor):
+        if PerfSettings.perf_enable_instrumentation():
+            if executor.running_async:
+                executor.async_host.notify("Reading remote PAPI Counters")
+            print("Counters:\n" + str(PerfUtils.read_available_perfcounters()))
+            if executor.running_async:
+                executor.async_host.notify("Done reading remote PAPI Counters")
 
     @staticmethod
     def gather_remote_metrics():
@@ -211,9 +414,21 @@ class PerfUtils(object):
         from dace.symbolic import symbols_in_sympy_expr, SymExpr
 
         # There are different rules when expanding depending on where the expand should happen
-        start_syms = symbols_in_sympy_expr(begin)
-        end_syms = symbols_in_sympy_expr(end)
-        step_syms = symbols_in_sympy_expr(step)
+
+        if isinstance(begin, int):
+            start_syms = []
+        else:
+            start_syms = symbols_in_sympy_expr(begin)
+
+        if isinstance(end, int):
+            end_syms = []
+        else:
+            end_syms = symbols_in_sympy_expr(end)
+
+        if isinstance(step, int):
+            step_syms = []
+        else:
+            step_syms = symbols_in_sympy_expr(step)
 
         def intersection(lista, listb):
             return [x for x in lista if x in listb]
@@ -223,20 +438,13 @@ class PerfUtils(object):
         step_dyn_syms = intersection(step_syms, retparams.keys())
 
         def replace_func(element, dyn_syms, retparams):
-            print("Dynamic element symbols symbols: %s (out of %s)!" %
-                  (str(element), str(dyn_syms)))
-            print("(srepr): " + sp.srepr(element))
             # Resolve all symbols using the retparams-dict
 
             for x in dyn_syms:
-                print("Replacing " + str(x))
                 target = sp.functions.Min(
                     retparams[x] * (retparams[x] - 1) / 2, 0)
-                print("\twith target " + str(target))
                 bstr = str(element)
-                #print(bstr)
                 element = sp.sympify(bstr, sp.abc._clash)
-                #print("\t(new srepr): " + sp.srepr(element))
                 element = element.subs(
                     x, target)  # Add the classic sum formula; going upwards
 
@@ -252,10 +460,8 @@ class PerfUtils(object):
 
                     tmp = newv.subs(x, target)
                     if tmp != v:
-                        print("Replacing %s with %s" % (str(newv), str(tmp)))
                         retparams[k] = tmp
 
-            print("\t New element: " + str(element))
             return element
 
         if len(start_dyn_syms) > 0:
@@ -309,7 +515,7 @@ class PerfUtils(object):
     def all_maps(mapEntry: MapEntry, dfg: SubgraphView):
         children = [
             x for x in dfg.scope_dict(True)[mapEntry]
-            if isinstance(x, MapEntry)
+            if isinstance(x, EntryNode)
         ]
 
         sub = []
@@ -319,6 +525,66 @@ class PerfUtils(object):
         children.extend(sub)
         #children.extend([PerfUtils.all_maps(x, dfg) for x in children])
         return children
+
+    @staticmethod
+    def perf_get_supersection_start_string(node, sdfg, dfg, unified_id):
+        from dace import types
+        if node.map.schedule == types.ScheduleType.CPU_Multicore:
+            # We have to find out if we should mark a section start here or later.
+            children = PerfUtils.all_maps(node, dfg)
+            #print("children: " + str(children))
+            for x in children:
+                if PerfUtils.map_depth(
+                        x) > PerfSettings.perf_max_scope_depth():
+                    break  # We have our relevant nodes.
+                if x.map.schedule == types.ScheduleType.CPU_Multicore:
+                    # Nested SuperSections are not supported
+                    # We have to mark the outermost section,
+                    # which also means that we have to somehow tell the lower nodes
+                    # to not mark the section start.
+                    x.map._can_be_supersection_start = False
+                elif x.map.schedule == types.ScheduleType.Sequential:
+                    x.map._can_be_supersection_start = False
+                else:
+                    # Any other type (FPGA, GPU) - not supported by PAPI. TODO: support
+                    x.map._can_be_supersection_start = False
+
+            if PerfSettings.perf_enable_instrumentation_for(
+                    sdfg, node
+            ) and PerfUtils.map_depth(
+                    node
+            ) <= PerfSettings.perf_max_scope_depth(
+            ) and node.map._can_be_supersection_start and not dfg.is_parallel(
+            ):
+                return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
+            elif PerfSettings.perf_supersection_emission_debug():
+                reasons = []
+                if not node.map._can_be_supersection_start:
+                    reasons.append("CANNOT_BE_SS")
+                if dfg.is_parallel():
+                    reasons.append("CONTAINER_IS_PARALLEL")
+                if PerfUtils.map_depth(
+                        node) > PerfSettings.perf_max_scope_depth():
+                    reasons.append("EXCEED_MAX_DEPTH")
+                if not PerfSettings.perf_enable_instrumentation_for(
+                        sdfg, node):
+                    reasons.append("MISC")
+
+                return "// SuperSection start not emitted. Reasons: " + ",".join(
+                    reasons) + "\n"
+            # dedent end
+        elif PerfSettings.perf_enable_instrumentation_for(sdfg, node) and (
+                PerfUtils.map_depth(
+                    node) == PerfSettings.perf_max_scope_depth() or
+            (PerfUtils.is_deepest_node(node, dfg))
+                and PerfUtils.map_depth(node) <=
+                PerfSettings.perf_max_scope_depth()
+        ) and node.map._can_be_supersection_start and not dfg.is_parallel():
+            # Also put this here if it is _REALLY_ safe to do so. (Basically, even if the schedule is sequential, we can serialize to keep buffer usage low)
+            return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
+
+        # Otherwise, do nothing (empty string)
+        return ""
 
     @staticmethod
     def map_depth(mapEntry: MapEntry):
@@ -343,7 +609,7 @@ class PerfUtils(object):
         # Iterate and get the depth for every node, breaking when the specified node has been found
         for e in dfg_sorted:
             # Set the depth for every node on the way
-            if isinstance(e, MapEntry):
+            if isinstance(e, EntryNode):
                 if not following_nodes_invalid and not e.map.schedule in PerfSettings.perf_whitelist_schedules:
                     print(
                         "Cannot instrument node %s, as it is running on a GPU (schedule %s)"
@@ -354,11 +620,16 @@ class PerfUtils(object):
                     e._map_depth = invalid_index  # Set an invalid index (this will never be instrumented)
                 else:
                     e._map_depth = max(e._map_depth, depth)
-                if e.fence_instrumentation:
-                    following_nodes_invalid = True  # After a fence there must not be any instrumentation happening
+
+                # The consume node has no concept of fencing, yet is also executed in parallel. Therefore, we needed to be defensive here.
+                try:
+                    if e.fence_instrumentation:
+                        following_nodes_invalid = True  # After a fence there must not be any instrumentation happening
+                except:
+                    pass
 
                 depth += 1
-            elif isinstance(e, MapExit):
+            elif isinstance(e, ExitNode):
                 depth -= 1
                 if depth < invalid_scope:
                     invalid_scope = -1
@@ -389,13 +660,22 @@ class PerfUtils(object):
 
     @staticmethod
     def instrument_entry(mapEntry: MapEntry, DFG: SubgraphView):
+        # Skip consume entries please
+        from dace.graph.nodes import ConsumeEntry
+        if isinstance(mapEntry, ConsumeEntry):
+            return False
         depth = PerfUtils.map_depth(mapEntry)
         cond1 = PerfSettings.perf_enable_instrumentation(
         ) and depth <= PerfSettings.perf_max_scope_depth() and (
             PerfUtils.is_deepest_node(mapEntry, DFG)
             or depth == PerfSettings.perf_max_scope_depth())
         cond2 = mapEntry.map.schedule in PerfSettings.perf_whitelist_schedules
-        cond3 = not mapEntry.fence_instrumentation
+        cond3 = True
+        try:
+            cond3 = not mapEntry.fence_instrumentation
+        except:
+            # Some nodes might not have this fencing, but then it's safe to ignore
+            cond3 = True
         if not cond2:
             print("Cannot instrument node %s, as it is running on a GPU" %
                   str(mapEntry))
@@ -408,9 +688,14 @@ class PerfUtils(object):
         parent = DFG.scope_dict()[node]
 
         if isinstance(parent, MapEntry):
+            if not parent.map.schedule in PerfSettings.perf_whitelist_schedules:
+                return False
             if parent.map._has_papi_counters or PerfUtils.map_depth(
                     parent) > PerfSettings.perf_max_scope_depth():
                 return True
+
+        if PerfSettings.perf_max_scope_depth() < 0:
+            return True
 
         return False
 
@@ -598,6 +883,51 @@ class PerfUtils(object):
                                      state_id) + [parent]
 
     @staticmethod
+    def get_memory_input_size(node, sdfg, dfg, state_id, sym2cpp):
+        from dace.graph import nodes
+        curr_state = sdfg.nodes()[state_id]
+
+        data_inputs = []
+        for edge in curr_state.in_edges(node):
+            # Accumulate over range size and get the amount of data accessed
+            num_accesses = edge.data.num_accesses
+
+            # TODO: It might be better to just take the source object size
+
+            try:
+                bytes_per_element = sdfg.arrays[edge.data.data].dtype.bytes
+                #bytes_per_element = edge.data.data.dtype.bytes
+            except:
+                print("Failed to get bytes_per_element")
+                bytes_per_element = 0
+            data_inputs.append(bytes_per_element * num_accesses)
+
+        from functools import reduce
+        import operator
+        input_size = reduce(operator.add, data_inputs, 0)
+
+        import sympy as sp
+        import dace.symbolic as symbolic
+
+        input_size = sp.sympify(input_size, sp.abc._clash)
+
+        used_symbols = symbolic.symbols_in_sympy_expr(input_size)
+        defined_symbols = sdfg.symbols_defined_at(node)
+        undefined_symbols = [
+            x for x in used_symbols if not (x in defined_symbols)
+        ]
+        if len(undefined_symbols) > 0:
+            # We cannot statically determine the size at this point
+            print("Failed to determine size because of undefined symbols (\"" +
+                  str(undefined_symbols) + "\") in \"" + str(input_size) +
+                  "\", falling back to 0")
+            input_size = 0
+
+        input_size = sym2cpp(input_size)
+
+        return input_size
+
+    @staticmethod
     def accumulate_byte_movements_v2(outermost_node, node, dfg: SubgraphView,
                                      sdfg, state_id):
 
@@ -753,6 +1083,36 @@ class PerfUtils(object):
                     for code, value in self.values.items()
                 ]))
 
+        def toSQL(self, c: sqlite3.Cursor, section_id, order):
+            # section_id must be set by the calling section and represent
+            # its DB key, order is an integer that must be monotonically
+            # increasing
+            c.execute(
+                '''INSERT INTO `Entries`
+                         (SectionID, `order`, threadID, iteration, flags)
+                         VALUES
+                         (?, ?, ?, ?, ?);
+            ''', (section_id, order, self.coreid, self.iteration, self.flags))
+            order += 1
+
+            entry_id = c.lastrowid
+
+            # Now, the values have to be inserted, based on the last entry id
+            def mapper(x):
+                k, v = x
+                return (int(k), int(v), entry_id)
+
+            vals = list(map(mapper, self.values.items()))
+            # Then execute this in bulk
+            c.executemany(
+                '''INSERT INTO `Values`
+                    (PapiCode, Value, entryID)
+                    VALUES
+                    (?, ?, ?)
+                ''', vals)
+
+            return order  # Do not commit every entry (needs write-back)
+
         def toCSVsubstring(self, delim=','):
             return delim.join([
                 self.nodeid, self.coreid, self.iteration,
@@ -765,6 +1125,7 @@ class PerfUtils(object):
             self.entries = []
             self.nodeid = nodeid
             self.datasize = 0
+            self.input_datasize = 0
             self.bytes_moved = 0
             self.was_collapsed = False
             self.threadid = threadid
@@ -864,11 +1225,37 @@ class PerfUtils(object):
             return ret
 
         def toJSON(self):
-            return '{{ "entry_node": {entry_node}, "static_movement": {datasize}, "entry_core": {core}, "entries": ['.format(
+            return '{{ "entry_node": {entry_node}, "static_movement": {datasize}, "input_size": {input_size}, "entry_core": {core}, "entries": ['.format(
                 entry_node=self.nodeid,
                 datasize=self.datasize,
+                input_size=self.input_datasize,
                 core=self.threadid) + ", ".join(
                     [x.toJSON() for x in self.entries]) + "]}"
+
+        def toSQL(self, conn: sqlite3.Connection, c: sqlite3.Cursor,
+                  supersection_id, order):
+            # section_id must be set by the calling section and represent its
+            # DB key, order is an integer that must be monotonically increasing
+            c.execute(
+                '''INSERT INTO `Sections`
+                         (ssid, `order`, nodeID, datasize, input_datasize)
+                         VALUES
+                         (?, ?, ?, ?, ?);
+            ''', (supersection_id, order, self.nodeid, self.datasize,
+                  self.input_datasize))
+            order += 1
+
+            section_id = c.lastrowid
+
+            # Add all entries
+            entry_order = 0
+            for x in self.entries:
+                x.toSQL(c, section_id, entry_order)
+                entry_order += 1
+
+            # Don't flush here yet - sqlite is slow on write
+
+            return order
 
     class SuperSection:
         """ Contains multiple Sections. 
@@ -880,7 +1267,7 @@ class PerfUtils(object):
             self.supernode = supernode
 
         def is_valid(self):
-            return len(self.sections.values()) > 0
+            return len(self.sections.values()) > 0 or self.supernode == -1
 
         def addSection(self, section):
             if int(section.threadid) in self.sections:
@@ -960,6 +1347,28 @@ class PerfUtils(object):
                 supernode=self.supernode,
                 sections=",\n".join([x.toJSON() for x in self.getSections()]))
 
+        def toSQL(self, conn: sqlite3.Connection, c: sqlite3.Cursor, run_id,
+                  order):
+            """ Create a supersection entry for a given run_id """
+            c.execute(
+                '''
+            INSERT INTO `SuperSections`
+                (runid, `order`, nodeID)
+            VALUES
+                (?, ?, ?);
+            ''', (run_id, order, self.supernode))
+
+            ssid = c.lastrowid
+            order += 1
+
+            section_order = 0
+
+            for x in self.getSections():
+                x.toSQL(conn, c, ssid, section_order)
+                section_order += 1
+
+            return order
+
     @staticmethod
     def perf_counter_store_string(counterlist: [str]):
         """ Creates a performance counter typename string. """
@@ -975,14 +1384,50 @@ class PerfUtils(object):
 
     @staticmethod
     def perf_counter_string(node):
-        """ Creates a performance counter typename string. """
-        try:
-            assert isinstance(node.papi_counters, list)
-            return PerfUtils.perf_counter_string_from_string_list(
-                node.papi_counters)
-        except Exception as e:
-            return PerfUtils.perf_counter_string_from_string_list(
-                PerfSettings.perf_default_papi_counters())
+        """
+        Creates a performance counter typename string.
+        """
+
+        mode = Config.get("instrumentation", "papi_mode")
+        if mode == "default":  # Only allow overriding in default mode
+            try:
+                assert isinstance(node.papi_counters, list)
+                return PerfUtils.perf_counter_string_from_string_list(
+                    node.papi_counters)
+            except Exception as e:
+                pass
+
+        return PerfUtils.perf_counter_string_from_string_list(
+            PerfSettings.perf_default_papi_counters())
+
+    @staticmethod
+    def perf_counter_start_measurement_string(node,
+                                              unified_id,
+                                              iteration,
+                                              core_str="PAPI_thread_id()"):
+        pcs = PerfUtils.perf_counter_string(node)
+        return (
+            'dace_perf::{counter_str} __perf_{id};\n' +
+            'auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});\n'
+            + '__perf_{id}.enterCritical();\n').format(
+                counter_str=pcs, id=unified_id, it=iteration, core=core_str)
+
+    @staticmethod
+    def perf_counter_end_measurement_string(unified_id):
+        return '__perf_{id}.leaveCritical(__vs_{id});\n'.format(id=unified_id)
+
+    @staticmethod
+    def perf_section_start_string(unified_id,
+                                  size,
+                                  in_size,
+                                  core_str="PAPI_thread_id()"):
+        return (
+            "__perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);\n"
+            % (unified_id, str(size), str(in_size), core_str))
+
+    @staticmethod
+    def perf_supersection_start_string(unified_id):
+        return ("__perf_store.markSuperSectionStart(%d);\n" % (unified_id))
 
     @staticmethod
     def read_available_perfcounters():
@@ -1070,7 +1515,7 @@ class PerfUtils(object):
     @staticmethod
     def print_instrumentation_output(data: str):
         import json
-        print("print_instrumentation_output start")
+        PerfSettings.transcriptor_print("print_instrumentation_output start")
         # Regex for Section start + bytes: # Section start \(node (?P<section_start_node>[0-9]+)\)\nbytes: (?P<section_start_bytes>[0-9]+)
         # Regex for general entries: # entry \((?P<entry_node>[0-9]+), (?P<entry_thread>[0-9]+), (?P<entry_iteration>[0-9]+), (?P<entry_flags>[0-9]+)\)\n((?P<value_key>[0-9-]+): (?P<value_val>[0-9-]+)\n)*
 
@@ -1080,11 +1525,14 @@ class PerfUtils(object):
         multirun_supersections = []
         current_multirun_line = ""
         sections = []
-        supersection_node_id = None
+
         supersections = []
         current_supersection = PerfUtils.SuperSection()
         current_section = PerfUtils.Section()
         current_entry = PerfUtils.Entry()
+
+        execution_times = [
+        ]  # List of execution times, where the last one is a clean execution (no instrumentation other than a simple timer)
 
         state = PerfUtils.ParseStates.CONTROL
         if isinstance(data, str):
@@ -1094,11 +1542,14 @@ class PerfUtils(object):
             lines = data
             is_string_input = False
 
+        overhead_values = False  # By default, we are not looking for overhead values, but real measurements
+        overhead_values_array = []
+
         line_num = 0
         for line in lines:
             line_num = line_num + 1
             if not is_string_input:
-                line = line[:-1]  # Chomp trailing newline
+                line = line[:-1]  # Remove trailing newline
 
             if "multirun" in line:
                 # Multirun result
@@ -1137,6 +1588,7 @@ class PerfUtils(object):
                 continue
             if line[0] == '#':
                 state = PerfUtils.ParseStates.CONTROL
+                overhead_values = False  # Reset the overhead flag
             if state == PerfUtils.ParseStates.CONTROL:
                 # First try: Entry
                 match = re.search(
@@ -1165,7 +1617,6 @@ class PerfUtils(object):
                     r"# Section start \(node (?P<section_start_node>[0-9]+), core (?P<section_start_core>[0-9]+)\)",
                     line)
                 if match:
-                    #print("Matched Section Start")
                     d = match.groupdict()
 
                     try:
@@ -1175,9 +1626,6 @@ class PerfUtils(object):
                         raise e
 
                     current_entry = PerfUtils.Entry()
-                    if (current_section.is_valid()):
-                        #sections.append(current_section)
-                        pass
                     current_section = PerfUtils.Section(
                         d['section_start_node'], d['section_start_core'])
                     current_supersection.addSection(current_section)
@@ -1229,6 +1677,27 @@ class PerfUtils(object):
                         print(
                             "Contention: {cont}".format(cont=d['contention']))
                     continue
+
+                # Next try: Timer
+                match = re.search(
+                    r"# Timer recorded (?P<time>[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?) secs",
+                    line)
+                if match:
+                    d = match.groupdict()
+                    time = float(d['time'])
+                    PerfSettings.transcriptor_print("Time taken is " +
+                                                    str(time))
+                    execution_times.append(time)
+                    continue
+
+                # Next try: Overhead
+                match = re.search(r"# Overhead comp", line)
+                if match:
+                    # We have to switch to overhead value mode. To keep it simple, we just set a flag
+                    overhead_values = True
+                    state = PerfUtils.ParseStates.VALUES
+                    continue
+
                 # Next try: Entry (anonymous)
                 # (Should not happen)
                 print("Error, unexpected: anonymous entry %s" % line)
@@ -1237,20 +1706,29 @@ class PerfUtils(object):
                 match = re.search(r"(?P<counter>[0-9-]+): (?P<value>[0-9-]+)",
                                   line)
                 if match:
-                    #print("Matched Value")
                     d = match.groupdict()
-                    current_entry.add(d['counter'], d['value'])
+                    if overhead_values:
+                        overhead_values_array.append((d['counter'],
+                                                      d['value']))
+                    else:
+                        current_entry.add(d['counter'], d['value'])
                 else:
-                    print("Failed to match expected values!")
+                    print("Failed to match expected values! " + str(line))
                 continue
             elif state == PerfUtils.ParseStates.SECTION_SIZE:
-                match = re.search(r"bytes: (?P<bytes>[0-9-]+)", line)
+                match = re.search(r"^bytes: (?P<bytes>[0-9-]+)", line)
                 if match:
-                    #print("Matched Section Size")
                     d = match.groupdict()
                     current_section.datasize = d['bytes']
                 else:
-                    pass
+                    match = re.search(r"^input_bytes: (?P<ibytes>[0-9-]+)",
+                                      line)
+                    if match:
+                        d = match.groupdict()
+                        current_section.input_datasize = d['ibytes']
+                        continue
+                    else:
+                        pass
                 continue
 
         try:
@@ -1259,34 +1737,128 @@ class PerfUtils(object):
             print("Error occurred in line " + str(line_num) + "!")
             raise e
 
-        if current_section.is_valid():
-            #sections.append(current_section)
-            pass
-
-        #sections = PerfUtils.collapse_sections(sections)
-        #sections.extend(PerfUtils.collapse_sections(current_supersection.getSections()))
         sections.extend(current_supersection.getSections())
         supersections.append(current_supersection)
         multirun_results.append((current_multirun_line, sections))
         multirun_supersections.append((current_multirun_line, supersections))
 
-        # We'll filter invalid supersections later...
+        PerfSettings.transcriptor_print("Execution times: " +
+                                        str(len(execution_times)) + ": " +
+                                        str(execution_times))
+        PerfSettings.transcriptor_print("Multirun length: " +
+                                        str(len(multirun_results)))
 
-        print("Multirun length: " + str(len(multirun_results)))
+        reps = int(Config.get("execution", "general", "repetitions"))
+        clean_times = execution_times[-reps:]
+        inst_times = execution_times[-int(2 * reps):][:reps]
 
+        PerfSettings.transcriptor_print("clean_times: " + str(clean_times))
+        PerfSettings.transcriptor_print("inst_times: " + str(inst_times))
+        percent_diff = []
+        for i in range(0, reps):
+            percent_diff.append(
+                ((inst_times[i] / clean_times[i]) - 1.0) * 100.)
+
+        PerfSettings.transcriptor_print("percent_diff: " + str(percent_diff))
+
+        # Reduce overhead numbers (In general, the safest way is minimum)
+        overhead_dict = {}
+        for k, v in overhead_values_array:
+            if not k in overhead_dict:
+                overhead_dict[k] = int(v)
+            overhead_dict[k] = min(int(v), overhead_dict[k])
+
+        PerfSettings.transcriptor_print("Overhead numbers: " +
+                                        str(overhead_dict))
+
+        # Gimme a JSON string for the overhead numbers...
+        overhead_number_string = ""
+        if len(overhead_values_array) > 0:
+            overhead_number_string = ', "overhead_numbers": ' + str(
+                overhead_dict)
+            overhead_number_string = overhead_number_string.replace("'", '"')
+
+        modestr = str(Config.get("instrumentation", "papi_mode"))
         for o, s in multirun_results:
-            print("\tSection size: " + str(len(s)))
-            print("\t\tSection size: " + str(s[0].datasize))
+            try:
+                PerfSettings.transcriptor_print("\tSection size: " +
+                                                str(len(s)))
+                PerfSettings.transcriptor_print("\t\tSection size: " +
+                                                str(s[0].datasize))
+            except:
+                pass
+
+        if PerfSettings.perf_use_sql():
+            import sqlite3
+            conn = sqlite3.Connection("perfdata.db")
+            c = conn.cursor()
+
+            c.execute(''' SELECT * FROM `Programs` LIMIT 1''')
+            f = c.fetchall()
+            program_id = 1
+            if len(f) == 0:
+                # No program yet
+                c.execute(
+                    '''INSERT INTO `Programs`
+                    (programHash)
+                    VALUES
+                    (?);
+        ''', ("MyProgram", ))
+                program_id = c.lastrowid  # Set the correct id
+            else:
+                pass  # Otherwise just reuse the old program ID
+
+            conn.commit()
+
+            for o, r_supersections in multirun_supersections:
+
+                # Create an entry for the run
+                c.execute(
+                    '''
+                INSERT INTO `Runs`
+                    (program, papimode, options)
+                VALUES
+                    (?, ?, ?);
+    ''', (program_id, modestr, o))
+
+                run_id = c.lastrowid
+                order = 0
+
+                # Associate and write the supersections
+                for x in r_supersections:
+                    if x.is_valid():
+                        order = x.toSQL(conn, c, run_id, order)
+
+            # Set the overhead numbers
+            for x in overhead_dict.items():
+                pc, val = x
+                c.execute(
+                    '''
+INSERT INTO `Overheads`
+    (programID, papiCode, value)
+VALUES
+    (?, ?, ?)
+;
+''', (program_id, pc, float(val)))
+
+            # Writeback and close
+            conn.commit()
+            conn.execute("PRAGMA optimize;")
+            conn.close()
+        # endif PerfSettings.perf_use_sql()
 
         try:
-            totstr = '{ "type": "PerfInfo", "payload": [' + ", ".join([
-                '{"runopts": "%s", "data": [%s]}' % (o, ", ".join(
-                    [x.toJSON() for x in r_supersections if x.is_valid()]))
-                for o, r_supersections in multirun_supersections
-            ]) + "]}"
+            totstr = '{ "type": "PerfInfo", "payload": [' + ", ".join(
+                [
+                    '{"runopts": "%s", "data": [%s]}' % (o, ", ".join(
+                        [x.toJSON() for x in r_supersections if x.is_valid()]))
+                    for o, r_supersections in multirun_supersections
+                ]
+            ) + '], "overhead_percentage": %s, "mode": "%s", "default_depth": %d %s}' % (
+                str(percent_diff), modestr,
+                PerfSettings.perf_max_scope_depth(), overhead_number_string)
 
-            #totstr = '{ "type": "PerfInfo", "payload": [' + ", ".join([x.toJSON() for x in sections]) + "]}"
-            with open("perf.json", "w") as out:
+            with open("perf_%s.json" % modestr, "w") as out:
                 out.write(totstr)
 
             # Debug CSV output
@@ -1307,6 +1879,9 @@ class PerfUtils(object):
                 json.loads(s.toJSON())
         except:
             print("[Error] JSON contains syntax errors!")
+
+        PerfSettings.transcriptor_print(
+            "\t===>Print instrumentation output end")
 
         if print_values:
             print("==== ANALYSIS ====")
@@ -1577,8 +2152,8 @@ class PerfPAPIInfo:
                     return False
             if sum_counters > self.num_hw_counters:
                 print(
-                    "check_counters failed with reason: Not enough hardware counters to support specified events"
-                )
+                    "check_counters failed with reason: Not enough hardware counters to support specified events: "
+                    + str(counter_lists))
                 return False
         return True
 

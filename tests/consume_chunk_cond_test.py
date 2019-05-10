@@ -28,10 +28,16 @@ for i in range(cons_numelems):
 # Edges
 state.add_nedge(initial_value, stream_init,
                 dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
-state.add_edge(stream, None, consume_entry, 'IN_stream',
-               dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
-state.add_edge(consume_entry, 'OUT_stream', tasklet, 's',
-               dp.Memlet.simple(stream, '0:2'))
+e = state.add_edge(stream, None, consume_entry, 'IN_stream',
+                   dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
+
+# FIXME: Due to how memlets and propagation work, force access to stream to
+# use an array instead of a scalar.
+e.data.allow_oob = True
+memlet = dp.Memlet.simple(stream, '0:2')
+memlet.allow_oob = True
+
+state.add_edge(consume_entry, 'OUT_stream', tasklet, 's', memlet)
 state.add_edge(tasklet, 'sout', consume_exit, 'IN_S',
                dp.Memlet.simple(stream_out, '0', num_accesses=-1))
 state.add_edge(consume_exit, 'OUT_S', stream_out, None,

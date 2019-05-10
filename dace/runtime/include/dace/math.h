@@ -49,13 +49,13 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& a, const T& b, const Ts&... c)
     return (a > b) ? max(a, c...) : max(b, c...);
 }
 
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T& modulus) {
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
     return value % modulus;
 }
 
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T& denominator) {
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
     return (numerator + denominator - 1) / denominator;
 }
 
@@ -71,8 +71,8 @@ static DACE_HDFI double ceiling(double /*arg*/) {
     return DBL_MAX;
 }
 
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T int_floor(const T& numerator, const T& denominator) {
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T int_floor(const T& numerator, const T2& denominator) {
     return numerator / denominator;
 }
 

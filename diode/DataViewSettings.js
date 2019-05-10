@@ -68,7 +68,6 @@ class SettingsWindow extends ClientSide {
     restoreSettings(set, parentObject) {
         "use strict";
         let retset = {};
-
         for(let k of ObjectHelper.listKeys(set)) {
             let val = set[k];
 
@@ -111,8 +110,6 @@ class SettingsWindow extends ClientSide {
 
     constructor(thiswindow) {
         super(thiswindow, data => {
-            //console.log("Settings window got " + JSON.stringify(data));
-
             if(data.type == "settings-data") {
                 
                 let form = window.document.createElement('form');

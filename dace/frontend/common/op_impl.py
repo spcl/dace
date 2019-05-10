@@ -6,6 +6,7 @@ import dace.sdfg as sd
 import dace.subsets as sbs
 from dace import symbolic
 import typing
+import numpy as np
 
 State = dace.sdfg.SDFGState
 Shape = typing.List[typing.Union[int, dace.symbol]]
@@ -13,7 +14,44 @@ Index = typing.List[typing.Union[int, str, dace.symbol]]
 Node = dace.graph.nodes.Node
 DNode = dace.graph.nodes.AccessNode
 
+
 # TODO: Most of the external operations here emit Z (complex double) ops, fix
+def _to_blastype(dtype):
+    """ Returns a BLAS character that corresponds to the input type.
+        Used in MKL/CUBLAS calls. """
+
+    if dtype == np.float16:
+        return 'H'
+    elif dtype == np.float32:
+        return 'S'
+    elif dtype == np.float64:
+        return 'D'
+    elif dtype == np.complex64:
+        return 'C'
+    elif dtype == np.complex128:
+        return 'Z'
+    else:
+        raise TypeError(
+            'Type %s not supported in BLAS operations' % dtype.__name__)
+
+
+def _to_cudatype(dtype):
+    """ Returns a CUDA typename that corresponds to the input type.
+        Used in CUBLAS calls. """
+
+    if dtype == np.float16:
+        return '__half'
+    elif dtype == np.float32:
+        return 'float'
+    elif dtype == np.float64:
+        return 'double'
+    elif dtype == np.complex64:
+        return 'cuComplex'
+    elif dtype == np.complex128:
+        return 'cuDoubleComplex'
+    else:
+        raise TypeError(
+            'Type %s not supported in BLAS operations' % dtype.__name__)
 
 
 # TODO: Refactor to use GPUTransformLocalStorage?
@@ -494,6 +532,74 @@ def matrix_multiplication(state: State,
                        dace.Memlet.simple(C_node, C_middle_range))
         state.add_edge(ij_exit, 'OUT_1', C_dst, None,
                        dace.Memlet.simple(C_node, C_outer_range))
+
+
+def matrix_transpose_cublas(state: State,
+                            A_src: Node,
+                            A_node: DNode,
+                            B_dst: Node,
+                            B_node: DNode,
+                            alpha: str = 'const_pone',
+                            label: str = None):
+    """ Adds a matrix transposition operation to an existing SDFG state,
+        using CUBLAS as the implementation.
+        @param A_src: The source node from which the memlet of matrix A is
+                      connected.
+        @param A_node: The Access Node for matrix A.
+        @param B_dst: The destination node to which the memlet of matrix B is
+                      connected.
+        @param B_node: The Access Node for matrix B.
+        @param alpha: Multiplier for input matrix.
+        @param label: Optional label for the tasklet.
+    """
+
+    sdfg = state.parent
+
+    # Validate inputs
+    A = A_node.desc(sdfg)
+    B = B_node.desc(sdfg)
+    if len(A.shape) != 2 or len(B.shape) != 2:
+        raise ValidationError('Only matrices are supported for CUBLAS '
+                              'transpose')
+    if A.shape[0] != B.shape[1] or A.shape[1] != B.shape[0]:
+        raise ValidationError('Shape mismatch for transpose')
+    if A.dtype.type != B.dtype.type:
+        raise ValidationError('Type mismatch for transpose')
+
+    # Create tasklet
+    tasklet = state.add_tasklet(
+        name=label + '_' + 'tasklet',
+        inputs={'a'},
+        outputs={'b'},
+        # cuBLAS is column-major, so we switch the arguments
+        code='''
+        cublasSetStream(handle, __dace_current_stream);
+        cublasStatus_t status = cublas{btype}geam(
+            handle,
+            CUBLAS_OP_T, CUBLAS_OP_N,
+            {cols}, {rows},
+            {alpha},
+            ({cutype}*)a, {astride},
+            const_zero,
+            ({cutype}*)b, {bstride},
+            ({cutype}*)b, {bstride}
+        );
+        '''.format(
+            btype=_to_blastype(A.dtype.type),
+            cutype=_to_cudatype(A.dtype.type),
+            rows=A.shape[1],
+            cols=A.shape[0],
+            astride=A.strides[1],
+            bstride=B.strides[1],
+            alpha=alpha),
+        language=dace.types.Language.CPP)
+
+    state.add_edge(A_src, None, tasklet, 'a',
+                   dace.Memlet.simple(A_node, '0:%s,0:%s' % A.shape))
+    state.add_edge(tasklet, 'b', B_dst, None,
+                   dace.Memlet.simple(B_node, '0:%s,0:%s' % B.shape))
+
+    gpu_transform_tasklet(sdfg, state, tasklet)
 
 
 def matrix_multiplication_cublas(state: State,

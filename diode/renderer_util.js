@@ -1,6 +1,124 @@
 // Renderer utilities.
 
+// Render a button to a canvas and return an image
+function render_button_to_graphic(button, mode="canvas_element") {
+    let button_class = button.constructor.name;
+    let c = document.createElement("canvas");
+    let ctx = c.getContext("2d");
 
+    c.width = button.button_subwindow.targetwidth;
+    c.height = button.button_subwindow.targetheight;
+
+    // Recreate the button from the type name
+    let new_obj = eval("new " + button_class + "(ctx, " + "...(button.dataparams)" + ");");
+
+    new_obj.button_subwindow_state = 'open';
+    new_obj.is_locked_open = true;
+    // Skip animation
+    new_obj.setFullyOpen();
+    let b = new Bracket(ctx);
+
+    b.setupEventListeners();
+
+    b.addButton(new_obj);
+
+    b.drawEx(new Pos(-20, 0), new Pos(0, 0), 0, 0, true);
+
+
+    let imgdat = c.toDataURL("image/jpeg");
+
+    if(mode === "canvas_element")
+        return c;
+    
+    return imgdat;
+}
+
+function createImageDownload(brackets, prefix="") {
+    // Some difficulties here: First, we have to merge the images to one big image.
+    // We default to the following convention:
+    // There are 10 columns with a width of 800px each. The first column is reserved to (textual) information about the node
+    // Any more buttons would be wrapping around to newlines.
+
+    // Every bracket begins a newline
+
+    // Assuming WebKit=Firefox, there's a maximum of 32767px in either direction, or a total of 472'907'776px (e.g., 22'528 x 20'992)
+
+    // TODO: Reevalutate this code and adjust to the case that there are more than 10 buttons (implement wrap-around, basically)
+
+    let c = document.createElement("canvas");
+    
+
+    let ctx = c.getContext("2d");
+
+    const colsize = 700;
+    const rowsize = 500;
+    let ypos = 0;
+    let maxxpos = 0;
+
+    // Cut height
+    c.height = Object.entries(brackets).length * rowsize;
+
+    // Cut width
+    let tmp = Object.entries(brackets)[0][1];
+    c.width = (1 + tmp.buttons.length) * colsize;
+
+
+    // Fill white (will appear as transparent otherwise, which is viewer-dependent)
+    ctx.save();
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.restore();
+
+    for(let bracket_entry of Object.entries(brackets)) {
+        
+        let key = bracket_entry[0];
+        let bracket = bracket_entry[1];
+
+        ctx.save();
+
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+
+        ctx.font = "60px Arial";
+
+        let unified_id = new Number(key);
+        let stateid = (unified_id >> 16) & 0xFFFF;
+        let nodeid = (unified_id) & 0xFFFF;
+
+        ctx.fillText("Affected node " + stateid.toString() + "|" + nodeid.toString(), colsize / 2.0, ypos + rowsize / 2.0);
+
+        ctx.restore();
+        
+        let xpos = colsize;
+        for(let button of bracket.buttons) {
+            // Draw the buttons accordingly
+
+            let src_canvas = render_button_to_graphic(button);
+
+            ctx.drawImage(src_canvas, xpos, ypos);
+
+            xpos += colsize;
+        }
+        maxxpos = Math.max(maxxpos, xpos);
+
+        ypos += rowsize;
+        xpos = 0;
+    }
+
+    let imgdat = c.toDataURL("image/jpeg");
+    
+    let d = document.createElement("a");
+    d.setAttribute("href", imgdat);
+    d.setAttribute("download", prefix + "buttons.jpg");
+
+    d.style.display = 'none';
+    document.body.appendChild(d);
+  
+    d.click();
+  
+    document.body.removeChild(d);
+
+}
 
 function max_func(array, func) {
     if(array == undefined) {
@@ -229,6 +347,8 @@ class SubWindow extends Clickable {
         this.subwindow_popped_out = false;
 
         this.layout = null;
+
+        this.background_color = "white"; // Set to "transparent" if no background is requested
     }
 
     setLayout(layout) {
@@ -259,8 +379,12 @@ class SubWindow extends Clickable {
         ctx.beginPath();
         ctx.strokeStyle = "black";
         ctx.lineWidth = 2;
+        let oldfill = ctx.fillStyle;
+        ctx.fillStyle = this.background_color;
         ctx.rect(this.topleft.x, this.topleft.y, this.width(), this.height());
+        ctx.fill();
         ctx.stroke();
+        ctx.fillStyle = oldfill;
 
         if (state == 'open') {
             this._sizetrans += this.subwindow_trans_change;
@@ -310,12 +434,36 @@ class Button extends Clickable {
         this.button_image = null;
     }
 
-    setButtonImage(data_url) {
+    // Bypass the opening animation (for saving results)
+    setFullyOpen() {
+        this.button_subwindow_state = "open";
+        this.button_subwindow._sizetrans = 100.0;
+        this.is_locked_open = true;
+    }
+
+    // Set a button image from data_url, and resize to the given side length (the image must be square)
+    setButtonImage(data_url, side_len = 100) {
         if(data_url == undefined) {
             return this;
         }
+        
         this.button_image = new Image();
         this.button_image.src = data_url;
+
+        // Apparently you cannot assume that the image element is ready synchronously (without onload, it could happen that an empty image is set instead)
+        this.button_image.onload = () => {
+
+            let c = document.createElement("canvas");
+            let ctx = c.getContext("2d");
+
+            c.width = side_len;
+            c.height = side_len;
+
+            ctx.drawImage(this.button_image, 0, 0, side_len, side_len);
+
+            // Now set the resized image to gain some performance.
+            this.button_image.src = c.toDataURL();
+        }
     }
 
     is_inside(pos) {
@@ -334,6 +482,8 @@ class Button extends Clickable {
         this.topleft = topleft
         this.size = size
 
+        // Draw the window first (this way, the button is not occluded)
+        this.button_subwindow.draw(topleft, this.button_subwindow_state);
         ctx.save();
 
         ctx.beginPath();
@@ -372,9 +522,6 @@ class Button extends Clickable {
         }
 
         ctx.restore();
-
-        // Draw the window
-        this.button_subwindow.draw(topleft, this.button_subwindow_state);
 
         topleft = null;
         size = null;
@@ -441,6 +588,7 @@ class Layout {
             let bottom = realtopleft.y + 20;
             if(val.is_multiview) {
                 if(left < pos.x && pos.x < right && top < pos.y && pos.y < bottom) {
+                    // Multiview switcher pressed
                     val.multiview_selector = (val.multiview_selector + 1) % val.dataviews.length;
                     return true;
                 }
@@ -448,7 +596,7 @@ class Layout {
                 }
             }
             
-            return false; // Someone else can have this event.
+            return false; // Pass the event to the next handler
             
 
         });
@@ -500,7 +648,7 @@ class Layout {
                 return true;
             }
             
-            return false; // Someone else can have this event.
+            return false; // Not reached, but leave here (in case the handling of above cases changes)
             
 
         });
@@ -661,7 +809,6 @@ class RU_DataView {
     }
 
     mouseInside(pos) {
-        // Use this to set the opacity of the information overlay.
         ObjectHelper.assert("pos valid", pos);
         ObjectHelper.assert("topleft valid", this.topleft);
         ObjectHelper.assert("size valid", this.size);
@@ -697,7 +844,6 @@ class RU_DataView {
 
             ++this.information_overlay_age;
             if(this.information_overlay_age > 1) {
-                // About 3 secs should be alright.
                 this.information_overlay_alpha -= 0.05;
                 if(this.information_overlay_alpha < 0) {
                     this.information_overlay_alpha = 0;
@@ -710,7 +856,7 @@ class RU_DataView {
         alpha *= this.information_overlay_alpha;
         let subalpha = 1.0;
         subalpha *= this.information_overlay_alpha;
-        // #TODO: Make the transparency value dependent on the mouse position
+        
         let information_sign = "\u{1F6C8}"; // This is the circled information icon.
         let base_fontsize = 18;
         ctx.save();
@@ -845,8 +991,6 @@ class RU_DataViewText extends RU_DataView {
     }
     draw(ctx, datablock, scale) {
 
-        if(this.update_data) {
-        }
         if(scale == 0.)
             return;
 
@@ -947,7 +1091,6 @@ class RU_DataViewBarGraph extends RU_DataView {
                 if(!this.enable_func()) return false;
                 if(!this.is_inside(pos))
                     return false;
-                // Actually, we want to pass this to the other object.
                 // We have to translate the event to the target.
                 let rect = parent_this.dvbg_canvas.getBoundingClientRect();
                 let event = new MouseEvent("mousemove", {
@@ -965,7 +1108,6 @@ class RU_DataViewBarGraph extends RU_DataView {
                 if(!this.enable_func()) return false;
                 if(!this.is_inside(pos))
                     return false;
-                // Actually, we just want to pass this to the other object.
                 // We have to translate the event to the target.
                 let rect = parent_this.dvbg_canvas.getBoundingClientRect();
                 let event = new MouseEvent("click", {
@@ -991,8 +1133,6 @@ class RU_DataViewBarGraph extends RU_DataView {
         let display_yAxes = yAxes.some(x => x == undefined || x.display);
 
         let display_legend = this.dvbg_chart.options.legend.display;
-
-        console.log("x: " + display_xAxes + ", y: " + display_yAxes);
 
         // Now we can append to the basedict
         basedict['graph_general_options'] = {
@@ -1025,19 +1165,17 @@ class RU_DataViewBarGraph extends RU_DataView {
     setSettingsDict(dict) {
         super.setSettingsDict(dict);
 
-        // Now do our stuff
+        // Get the desired settings
         let general_graph_options = dict['graph_general_options'].value;
         let dha = general_graph_options['display_horizonal_axis'].value;
         let dva = general_graph_options['display_vertical_axis'].value;
         let dl = general_graph_options['display_legend'].value;
 
-        // Set all axis
+        // Apply the settings
         this.dvbg_chart.options.scales.xAxes.forEach(x => x.display = dha);
         this.dvbg_chart.options.scales.yAxes.forEach(x => x.display = dva);
 
         this.dvbg_chart.options.legend.display = dl;
-
-        console.log("Set settingsDict for dvbg");
 
         this.dvbg_chart.update();
     }
@@ -1047,7 +1185,6 @@ class RU_DataViewBarGraph extends RU_DataView {
 
         ret.chartsettings = this.dvbg_chart.options;
         ret.analyze = this.analyze.toString();
-
 
         return ret;
     }
@@ -1211,16 +1348,13 @@ class RU_DataViewNumberBlock extends RU_DataView {
         ctx.textAlign="center";
         ctx.font= Math.round(16 * scale).toString() + "px sans-serif";
         
-        let textheight = ctx.measureText('M').width; // Approximating text height by width of M (which should be about square...)
+        let textheight = ctx.measureText('M').width; // Approximating text height by width of M (which should be about square)
         let x = this.topleft.x + this.size.x / 2;
         let y = this.topleft.y + textheight;
 
         if(this.opt.display_title) {
             ctx.fillText(this.title, x, y); // Set the title
         }
-
-        // This class displays a single number.
-        // `datablock` is of type DataBlock, generated by ThreadAnalysis
 
         // We'll only be interested in balance_max.
         let p = this.dvnb_cached_data;
@@ -1265,6 +1399,171 @@ class RU_DataViewNumberBlock extends RU_DataView {
         ctx.restore();
     }
 }
+
+// Class to suggest actions based on input values
+class RU_DataViewSuggestedActionBlock extends RU_DataView {
+    constructor() {
+        super();
+
+        this.opt = {
+            
+        };
+
+        let parent_this = this;
+        this.dvsa_clickable = new class extends Clickable {
+            constructor() {
+                super();
+            }
+
+            is_inside(pos) {
+                if(parent_this.topleft == null) return false;
+                return (parent_this.topleft.x < pos.x && pos.x < parent_this.topleft.x + parent_this.size.x) && (parent_this.topleft.y < pos.y && pos.y < parent_this.topleft.y + parent_this.size.y);
+            }
+
+            getButtonIndex(pos) {
+                // Wrapper to look up the index
+                let tl_x = parent_this.topleft.x;
+                let tl_y = parent_this.topleft.y;
+
+                let size_x = parent_this.size.x;
+                let size_y = parent_this.size.y;
+
+                let hp = parent_this.heightpadding;
+
+                let local_pos = {x: pos.x - tl_x, y: pos.y - tl_y};
+
+                if(local_pos.x < 0 || local_pos.x > size_x) return -1;
+                if(local_pos.y < 0 || local_pos.y > size_y) return -1;
+
+                // We can just divide through ellipseheight (approximated by a rect) + heightpadding
+                let eachheight = parent_this.textheight + parent_this.heightpadding;
+
+                let index = Math.floor(local_pos.y / eachheight);
+
+                return index;
+            }
+
+            onUpdateMove(pos) {
+                if(!this.enable_func()) return false;
+                if(!this.is_inside(pos))
+                {
+                    parent_this.dvsa_button_hovered = -1;
+                    return false;
+                }
+                
+                let index = this.getButtonIndex(pos);
+                // Pass to parent
+                parent_this.buttonHovered(index);
+
+                // No children here
+                return true;
+            }
+
+            onUpdateClick(pos) {
+                if(!this.enable_func()) return false;
+                if(!this.is_inside(pos))
+                    return false;
+                
+                return true;
+            }
+        };
+
+        this.hints = {}; // Dict of condition => hint text
+
+        this.dvsab_cached_data = [];
+
+        this.heightpadding = 20;
+
+        //this.analyze() expected return value:
+        //list of condition strings that evaluated to 'true' (those will be displayed)
+    }
+
+    buttonHovered(index) {
+        this.dvsa_button_hovered = index;
+    }
+
+    setTitle(title) {
+        this.title = title;
+        return this;
+    }
+
+    setHint(cond, text) {
+        this.hints[cond] = text;
+        return this;
+    }
+
+    setOptions(opt) {
+        this.opt = opt;
+        return this;
+    }
+
+    setStringFormatter(func) {
+        this.stringformatter = func;
+    }
+
+    linkMouse(parent) {
+        parent.addChild(this.dvsa_clickable);
+        return this;
+    }
+
+    
+    draw(ctx, datablock, scale) {
+
+        if(this.update_data)
+        {
+            this.dvsab_cached_data = this.analyze(datablock);
+            ObjectHelper.assert("Data evaluated to undefined", this.dvsab_cached_data != undefined);
+            this.update_data = false;
+        }
+
+        if(scale == 0.)
+            return; //Nothing to do if we are size 0
+        
+        ctx.save();
+
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 3;
+
+
+        ctx.font = Math.round(12 * scale).toString() + "px sans-serif";
+
+
+        let textheight = ctx.measureText("M").width; // Approximate height by width
+        this.textheight = textheight;
+
+        let xpos = this.topleft.x + this.size.x / 2.0;
+        let ypos = this.topleft.y + textheight;
+
+        let i = 0;
+        for(let x of this.dvsab_cached_data) {
+            let display_text = this.hints[x];
+
+            ctx.beginPath();
+            if(i == this.dvsa_button_hovered) {
+                ctx.strokeStyle = "red";
+            }
+            else {
+                ctx.strokeStyle = "black";
+            }
+            ctx.fillText(display_text, xpos, ypos);
+            ctx.ellipse(xpos, ypos, this.size.x / 2.0, (textheight + this.heightpadding / 2.0) / 2.0, 0.0, 0.0, 2 * Math.PI);
+            ctx.stroke();
+
+
+            ypos += (textheight + this.heightpadding) * scale;
+            ++i;
+        }
+
+        
+        this.drawOverlay(ctx, scale);
+
+        ctx.restore();
+    }
+}
+
 
 // This is a text-based "form-layout"-style dataview
 class RU_DataViewFormLayout extends RU_DataView {
@@ -1319,7 +1618,6 @@ class RU_DataViewFormLayout extends RU_DataView {
 
             i++;
         }
-
         ctx.restore();
     }
 }
@@ -1328,7 +1626,7 @@ class Bracket extends Clickable {
     constructor(ctx) {
         super();
         this.ctx = ctx;
-        this.buttons = new Array();
+        this.buttons = [];
 
         this.start = new Pos(0, 0);
         this.end = new Pos(0, 0);
@@ -1336,6 +1634,19 @@ class Bracket extends Clickable {
         this.startoffset = 0;
 
         this.listeners = [];
+
+        this.button_alpha = 1.;
+        this.bracket_alpha = 1.;
+    }
+
+    hide() {
+        this.button_alpha = 0.;
+        this.bracket_alpha = 0.;
+    }
+
+    show(opacity = 1.0) {
+        this.button_alpha = opacity;
+        this.bracket_alpha = opacity;
     }
 
     setupEventListeners() {
@@ -1360,6 +1671,7 @@ class Bracket extends Clickable {
             this.onUpdateDoubleClick(new Pos(mouseXtrans(e.offsetX), mouseYtrans(e.offsetY)), e.button);
         };
 
+        // Add all event listeners to an array (this allows for easier un-setting)
         this.listeners.push(['mousemove', mm_lis]);
         this.listeners.push(['click', c_lis]);
         this.listeners.push(['dblclick', dc_lis]);
@@ -1394,9 +1706,14 @@ class Bracket extends Clickable {
         this.draw();
     }
 
-    is_inside(pos) {
-        let max_x = this.start.x;
-        let max_y = this.end.y;
+    is_inside_buttons(pos) {
+        if(this.button_alpha == 0.) {
+            // Hidden buttons should not be clickable
+            return false;
+        }
+
+        let max_x = 0;
+        let max_y = 0;
 
         for (let b of this.buttons) {
             if(b == undefined) {
@@ -1413,7 +1730,61 @@ class Bracket extends Clickable {
             return true;
         }
 
-        return false
+        return false;
+    }
+
+    bracket_clicked() {
+        if(this.button_alpha == 0.0) {
+            this.button_alpha = 1.0;
+        }
+        else {
+            this.button_alpha = 0.0;
+        }
+    }
+
+    is_inside_bracket(pos) {
+        const tol = 5;
+        if(pos.x < this.start.x + this.startoffset - tol || pos.x > this.start.x + this.offset + tol) {
+            return false;
+        }
+        if(pos.y < this.start.y - tol || pos.y > this.end.y + tol) {
+            console.log("outside y");
+            return false;
+        }
+        
+        return true;
+    }
+
+    is_inside(pos) {
+        return this.is_inside_buttons(pos);
+    }
+
+    onUpdateClick(pos, mb) {
+        if(this.is_inside_bracket(pos, mb)) {
+            this.bracket_clicked();
+            return true;
+        }
+
+        if(this.button_alpha == 0.0) {
+            // Buttons are hidden, don't process events on them
+            return false;
+        }
+
+        return super.onUpdateClick(pos, mb);
+    }
+
+    onUpdateDoubleClick(pos, mb) {
+        if(this.is_inside_bracket(pos, mb)) {
+            this.bracket_clicked();
+            return true;
+        }
+
+        if(this.button_alpha == 0.0) {
+            // Buttons are hidden, don't process events on them
+            return false;
+        }
+
+        return super.onUpdateDoubleClick(pos, mb);
     }
 
     draw() {
@@ -1431,7 +1802,7 @@ class Bracket extends Clickable {
         ctx.save();
         ctx.beginPath();
         ctx.lineWidth = 5;
-        ctx.strokeStyle = "#0000FF";
+        ctx.strokeStyle = "rgba(0,0,255," + this.bracket_alpha.toString() + ")";
         ctx.moveTo(start.x + startoffset, start.y);
 
         ctx.lineTo(start.x + offset, start.y);
@@ -1445,7 +1816,15 @@ class Bracket extends Clickable {
 
         ctx.restore();
 
-        this.drawButtons(new Pos(start.x + offset + button_offset, start.y));
+        let oldalpha = ctx.globalAlpha;
+        ctx.globalAlpha = this.button_alpha;
+
+        if(this.button_alpha > 0.0) {
+            // only draw if it is visible to humans.
+            this.drawButtons(new Pos(start.x + offset + button_offset, start.y));
+        }
+
+        ctx.globalAlpha = oldalpha;
 
 
         if(this.animate) {
@@ -1471,9 +1850,18 @@ class Bracket extends Clickable {
 
         let size = 30;
         let b;
+        let yoffset = 0;
         for (b of this.buttons) {
             let tl = new Pos(xpos, ypos);
-            b.draw(tl, new Pos(size, size), this.ctx);
+            let tl_higher = new Pos(xpos, ypos + yoffset); // Slightly offset position to avoid collisions
+
+            let tlsel = tl;
+            if(b.button_subwindow_state == "open") {
+                // Select the offset position (so that the buttons / windows don't overlap)
+                yoffset -= size + 5;
+            }
+            tlsel = tl_higher;
+            b.draw(tlsel, new Pos(size, size), this.ctx);
             xpos += size + 10;
         }
     }
@@ -1532,6 +1920,10 @@ class CanvasDrawManager {
     addDrawable(obj) {
         this.drawables.push(obj);
         this.indices.push({"c": CanvasDrawManager.counter(), "d": obj});
+    }
+
+    removeDrawable(drawable) {
+        this.drawables = this.drawables.filter(x => x != drawable);
     }
 
     clearDrawables() {

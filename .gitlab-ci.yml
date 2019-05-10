@@ -1,0 +1,114 @@
+# Docker image. You can delete this line if you're not using Docker
+image: python:3-stretch
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+   
+setup_dace:
+  stage: build
+  tags:
+    - linux
+  script:
+    - echo "Reverting configuration to defaults"
+    - rm -f ~/.dace.conf
+    - echo "Clearing binary cache"
+    - rm -rf .dacecache tests/.dacecache
+    - echo "Installing additional dependencies"
+    - pip3 install --upgrade --user tensorflow-gpu
+    - echo "Installing DaCe"
+    - pip3 install --upgrade --user .
+
+   
+test_linux_cpu:
+  stage: test
+  tags: 
+    - intel
+    - linux
+  script: 
+    - export DACE_debugprint=1
+    - tests/gemm_test.sh
+
+test_linux_cuda:
+  stage: test
+  tags: 
+    - cuda
+    - linux
+  script: 
+    - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    - export PATH=/usr/local/cuda/bin:$PATH
+    - export CUDA_ROOT=/usr/local/cuda
+    - export DACE_debugprint=1
+    - tests/cuda_test.sh
+   
+
+test_mpihello:
+  stage: test
+  tags: 
+    - intel
+    - linux
+    - mpi
+  script: 
+    - cd tests/
+    - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../scripts/diode --optscript mpihello_test_opt.py --headless --local 
+
+
+test_mpihello2:
+  stage: test
+  tags: 
+    - intel
+    - linux
+    - mpi
+  script: 
+    - cd tests/
+    - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../scripts/diode --optscript mpihello2_test_opt.py --headless --local 
+
+
+test_filter:
+  stage: test
+  tags: 
+    - intel
+    - linux
+  script: 
+    - cd tests/
+    - xvfb-run python3 ../scripts/diode --optscript filter_test_opt.py --headless --local 
+ 
+
+test_spmv:
+  stage: test
+  tags: 
+    - intel
+    - linux
+  script: 
+    - cd tests/
+    - xvfb-run python3 ../scripts/diode --optscript spmv_test_opt.py --headless --local 
+
+
+test_simple_stencil:
+  stage: test
+  tags: 
+    - intel
+    - linux
+  script: 
+    - cd tests/
+    - xvfb-run python3 ../scripts/diode --optscript simple_stencil_test_opt.py --headless --local 
+
+test_all:on-schedule:
+  only:
+    - schedules
+  stage: test
+  tags: 
+    - intel
+    - linux
+  script:
+    - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    - export PATH=/usr/local/cuda/bin:/opt/mpich3.2.11/bin:/opt/Xilinx/SDx/2018.2/bin:$PATH
+    - export CUDA_ROOT=/usr/local/cuda
+    - NOSTATUSBAR=1 xvfb-run ./test_all.sh
+
+test_xilinx:
+  stage: test
+  tags:
+    - xilinx
+  script:
+    - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
+    - xvfb-run tests/xilinx_test.sh 0

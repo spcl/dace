@@ -6,12 +6,17 @@ import time
 import json
 import websockets
 import threading
+import queue
 
 import gi
 gi.require_version('WebKit2', '4.0')
 from gi.repository import Gdk, WebKit2, Gtk
 
 from gi.repository import GObject
+
+import sqlite3
+from diode.db_scripts.sql_to_json import MetaFetcher
+from dace.codegen.instrumentation.perfsettings import PerfSettings
 
 
 class RenderedGraphHTML5:
@@ -21,12 +26,43 @@ class RenderedGraphHTML5:
         self.drawing_area = None
         self.on_click_cb = on_click
         self.websocket = None
+        self.sdfg = None
         self.render_queue = []
         self.restore_render_queue = []  # Render queue copy
         self.command_queue = [
         ]  # Similar to render_queue, but for everything except SDFGs.
+        self.command_queue_roofline = []
+        self.comm_queue_lock_roofline = threading.Lock()
+
         self.restore_command_queue = []  # Command queue copy
         threading.Thread(target=self.run_asyncio, daemon=True).start()
+        threading.Thread(target=self.run_asyncio_roofline, daemon=True).start()
+        self.comm_queue_lock = threading.Lock()
+
+        self.db_request_queue = queue.Queue()
+        self.max_db_request_threads = 3  # Sets the amount of threads that may be committed to serve performance results.
+
+        def wrapper():
+            self.async_request_handler()
+
+        threading.Thread(target=wrapper, daemon=True).start()
+
+        # data_source determines if data should be rendered from canned data or fresh data.
+        self.data_source = "fresh"  # Normally, use results directly from the full results
+
+        self.canned_data_programid = None
+
+    def set_click_cb(self, func):
+        self.on_click_cb = func
+
+    def center_highlights(self):
+        # TODO
+        return
+
+    def save_buttons(self, default_name="recorded_"):
+        """ Request the remote to download a summary file once all data is present """
+        self.add_to_command_queue(
+            '{ "type": "save-images", "name": "%s" }' % default_name)
 
     # The following functions highlight nodes
     def get_element_by_id(self, id):
@@ -44,17 +80,87 @@ class RenderedGraphHTML5:
         self.command_queue.append('{ "type": "clear-highlights" }')
         return
 
-    # End highlight functions
+    def open_canned_data(self, can_path, forProgramID=1):
+
+        if can_path == None or can_path == "":
+            raise ValueError("Cannot open can from path " + str(can_path))
+        # Just set the data source accordingly
+        self.data_source = can_path
+
+        # Open the database
+        with sqlite3.connect(can_path) as conn:
+            c = conn.cursor()
+
+            # Read and draw the SDFG with the lowest index
+            c.execute(
+                """
+    SELECT
+        forProgramID, json
+    FROM
+        `SDFGs`
+    WHERE
+        forProgramID = ?
+            """, (forProgramID, ))
+
+            f = c.fetchall()
+            if len(f) == 0:
+                # No sdfg has been found in the CAN
+                raise ValueError(
+                    "The file specified is corrupted or contains no valid data"
+                )
+
+            # Extract the json data
+            forProgramID, sdfg_json = f[0]
+
+            # Call for a rendering (will clear other pending data)
+            self.render_sdfg(sdfg_json)
+
+            # Now request drawing of the selected programID as well
+            self.render_performance_data(
+                mode="all",
+                data_source_path=self.data_source,
+                forProgramID=forProgramID)
+
+    def run_asyncio_roofline(self):
+        self.impl_run_asyncio(port=8024, handler=self.ConnHandler_roofline)
 
     def run_asyncio(self):
+        self.impl_run_asyncio(port=8023, handler=self.ConnHandler)
+
+    def impl_run_asyncio(self, port, handler):
         try:
             loop = asyncio.SelectorEventLoop()
             asyncio.set_event_loop(loop)
             asyncio.get_event_loop().run_until_complete(
-                websockets.serve(self.ConnHandler, 'localhost', 8023))
+                websockets.serve(handler, 'localhost', port, timeout=0.0001))
             asyncio.get_event_loop().run_forever()
         except Exception as e:
             pass
+
+    async def ConnHandler_roofline(self, websocket, path):
+
+        while (True):
+            try:
+                msg = ""
+                try:
+                    msg = await asyncio.wait_for(
+                        websocket.recv(), timeout=0.01)
+                except asyncio.TimeoutError:
+                    # Timeouts are expected
+                    pass
+
+                if len(msg) > 0:
+                    m = json.loads(msg)
+                    self.message_handler_roofline(m)
+
+                # Lock to ensure correct operation (commands can be added asynchronously)
+                with self.comm_queue_lock_roofline:
+                    for cmd in self.command_queue_roofline:
+                        await websocket.send(cmd)
+                    self.command_queue_roofline.clear()
+            except websockets.ConnectionClosed:
+                print("Roofline connection closed.")
+                break
 
     async def ConnHandler(self, websocket, path):
         self.websocket = websocket
@@ -62,25 +168,44 @@ class RenderedGraphHTML5:
         print("render queue is " + str(len(self.render_queue)) +
               " elements long")
         for sdfg in self.render_queue:
-            json = sdfg.toJSON()
+            json = ""
+            # Allow directly rendering strings
+            if isinstance(sdfg, str):
+                json = sdfg
+            else:
+                json = sdfg.toJSON()
             await websocket.send(json)
 
         self.render_queue.clear()
 
         while (True):
             try:
-                msg = await websocket.recv()
-                self.message_handler(msg)
+                msg = ""
+
+                try:
+                    msg = await asyncio.wait_for(
+                        websocket.recv(), timeout=0.01)
+                except asyncio.TimeoutError:
+                    # Timeouts are expected to happen
+                    pass
+
+                if len(msg) > 0:
+                    self.message_handler(msg)
 
                 for sdfg in self.render_queue:
-                    json = sdfg.toJSON()
+                    if isinstance(sdfg, str):
+                        json = sdfg
+                    else:
+                        json = sdfg.toJSON()
                     await websocket.send(json)
                 self.render_queue.clear()
-                for cmd in self.command_queue:
-                    # The difference in the command queue: All data must
-                    # already be in JSON format
-                    await websocket.send(cmd)
-                self.command_queue.clear()
+
+                # Lock to ensure correct operation (commands can be added asynchronously)
+                with self.comm_queue_lock:
+                    for cmd in self.command_queue:
+                        # The difference in the command queue: All data must already be in JSON format
+                        await websocket.send(cmd)
+                    self.command_queue.clear()
             except websockets.ConnectionClosed:
                 # If the connection was closed, probably a refresh was
                 # requested. This also means that we have to re-queue
@@ -89,10 +214,375 @@ class RenderedGraphHTML5:
                 self.command_queue = self.restore_command_queue.copy()
                 break
 
+    def add_to_command_queue(self, x):
+        with self.comm_queue_lock as l:
+            self.command_queue.append(x)
+
+    def message_handler_roofline(self, m):
+        """ Handles roofline-specific commands """
+
+        if m["command"] == "connected" or m["command"] == "get-data":
+            # We should respond with the data for each value
+            pass
+            print("Can data requested")
+            if self.data_source == "fresh":
+                print(
+                    "[FAIL] Data source is fresh, there are no results to be compared"
+                )
+                return
+            else:
+                with sqlite3.connect(self.data_source) as conn:
+                    c = conn.cursor()
+
+                    c.execute("SELECT forProgramID FROM `SDFGs`;")
+                    ids = c.fetchall()
+
+                    print("ids are " + str(ids))
+
+                    max_thread_num = max(PerfSettings.perf_get_thread_nums())
+
+                    query = """
+SELECT
+    forUnifiedID, COUNT(forUnifiedID)
+FROM
+    `AnalysisResults`
+WHERE
+    forProgramID = ?
+    AND AnalysisName = 'VectorizationAnalysis'
+    AND runoptions LIKE ?
+GROUP BY
+    forUnifiedID
+;
+"""
+
+                    global_min = (1 << 63)
+
+                    # Get the values for each program
+                    for x in ids:
+                        pid, = x
+                        print("for pid: " + str(pid))
+                        c.execute(
+                            query,
+                            (pid, '%OMP_NUM_THREADS={thread_num}%'.format(
+                                thread_num=max_thread_num)))
+                        d = c.fetchall()
+
+                        local_min = (1 << 63)  # Local minimum
+                        for y in d:
+                            uid, count = y
+
+                            local_min = min(local_min, count)
+
+                        global_min = min(global_min, local_min)
+
+                    # Now we have the minimum in global_min, representing the repetition count
+
+                    # Now we can try to get the FLOP/C and B/C from the measurements and then get the median of all repetitions
+                    vec_query = """
+SELECT
+    json
+FROM
+    `AnalysisResults` AS ar
+WHERE
+    ar.AnalysisName = '{analysis_name}'
+    AND ar.forProgramID = :pid
+    AND ar.forUnifiedID = :uid
+    AND ar.runoptions LIKE '%OMP_NUM_THREADS={thread_num}%'
+ORDER BY
+    ar.forSuperSection ASC
+LIMIT
+    :repcount
+OFFSET
+    :offset
+;
+"""
+                    retvals = []
+                    for x in ids:
+                        # Loop over all programs (since we want to collect values for all programs to send to the graph)
+                        pid, = x
+
+                        print("running analyses for pid " + str(pid))
+
+                        c.execute(
+                            "SELECT DISTINCT forUnifiedID FROM AnalysisResults WHERE forProgramID = ?",
+                            (pid, ))
+                        uids = c.fetchall()
+
+                        offset = 0  # Start with an offset of 0
+                        sp_op_sums = None
+                        dp_op_sums = None
+
+                        proc_mem_sums = None
+                        in_mem_sums = None
+                        bytes_from_mem_sums = None
+
+                        total_critical_path = None
+                        for y in uids:
+                            uid, = y
+
+                            c.execute(
+                                """SELECT COUNT(*) FROM AnalysisResults
+                            WHERE forProgramID = ?
+                            AND forUnifiedId = ?
+                            AND AnalysisName='VectorizationAnalysis'
+                            AND runoptions LIKE '%OMP_NUM_THREADS={thread_num}%';"""
+                                .format(thread_num=max_thread_num), (pid, uid))
+
+                            nodecount, = c.fetchall()[0]
+
+                            # Get the critical path as well
+                            c.execute(
+                                """
+SELECT
+    json
+FROM
+    AnalysisResults
+WHERE
+    AnalysisName = 'CriticalPathAnalysis'
+    AND forProgramID = :pid
+    AND forUnifiedID = :uid
+    --AND runoptions LIKE '%OMP_NUM_THREADS={thread_num}%' -- This should not be necessary - CPA should already be taking all thread numbers into account
+LIMIT
+    1 -- CriticalPathAnalysis gives 1 result per unified ID.
+;
+                            """.format(thread_num=max_thread_num), {
+                                    "pid": pid,
+                                    "uid": uid
+                                })
+                            tmpfetch = c.fetchall()
+                            if len(tmpfetch) == 0:
+                                print("Error will occur shortly, ran for " +
+                                      str(pid) + ", " + str(uid))
+                            cpajson, = tmpfetch[0]
+
+                            cpa = json.loads(cpajson)
+                            crit_path = cpa["critical_paths"]
+                            sel_crit_path = None
+                            for cp in crit_path:
+                                if cp["thread_num"] == max_thread_num:
+                                    sel_crit_path = cp["value"]
+                                    break
+
+                            assert sel_crit_path != None
+
+                            def list_accum(inout, array_to_add):
+                                if inout == None:
+                                    return array_to_add
+                                else:
+                                    return list(
+                                        map(lambda x: x[0] + x[1],
+                                            zip(inout, array_to_add)))
+
+                            total_critical_path = list_accum(
+                                total_critical_path, sel_crit_path)
+
+                            # The count of values per repetition (as there could be more than one)
+                            count_per_rep = nodecount / global_min
+
+                            sp_ops_reps = []
+                            dp_ops_reps = []
+
+                            proc_mem_reps = []
+                            in_mem_reps = []
+                            bytes_from_mem_reps = []
+
+                            offset = 0
+
+                            while int(offset) < int(nodecount):
+                                sp_op_sum = 0
+                                dp_op_sum = 0
+
+                                proc_bytes_sum = 0
+                                input_bytes_sum = 0
+                                bytes_from_mem_sum = 0
+
+                                c.execute(
+                                    vec_query.format(
+                                        analysis_name="VectorizationAnalysis",
+                                        thread_num=max_thread_num), {
+                                            "pid": pid,
+                                            "uid": uid,
+                                            "repcount": count_per_rep,
+                                            "offset": offset
+                                        })
+                                data = c.fetchall()
+
+                                c.execute(
+                                    vec_query.format(
+                                        analysis_name="MemoryAnalysis",
+                                        thread_num=max_thread_num), {
+                                            "pid": pid,
+                                            "uid": uid,
+                                            "repcount": count_per_rep,
+                                            "offset": offset
+                                        })
+                                memdata = c.fetchall()
+
+                                assert len(memdata) == len(data)
+
+                                for md in memdata:
+                                    js, = md
+                                    j = json.loads(js)
+                                    total_proc_data = j["datasize"]
+                                    input_data = j["input_datasize"]
+                                    bytes_from_mem = j["bytes_from_mem"]
+
+                                    proc_bytes_sum += total_proc_data
+                                    input_bytes_sum += input_data
+                                    bytes_from_mem_sum += sum(bytes_from_mem)
+
+                                for d in data:
+                                    js, = d
+                                    j = json.loads(js)
+                                    # Pitfall: sp_flops is the amount of floating point operations executed, while sp_ops is the amount of instructions executed!
+                                    sp_ops = j['sp_flops_all']
+                                    dp_ops = j['dp_flops_all']
+
+                                    sp_op_sum += sp_ops
+                                    dp_op_sum += dp_ops
+
+                                sp_ops_reps.append(sp_op_sum)
+                                dp_ops_reps.append(dp_op_sum)
+
+                                proc_mem_reps.append(proc_bytes_sum)
+                                in_mem_reps.append(input_bytes_sum)
+                                bytes_from_mem_reps.append(bytes_from_mem_sum)
+
+                                offset += int(count_per_rep)
+
+                            # When everything has been summed up, we can push it
+                            sp_op_sums = list_accum(sp_op_sums, sp_ops_reps)
+                            dp_op_sums = list_accum(dp_op_sums, dp_ops_reps)
+
+                            proc_mem_sums = list_accum(proc_mem_sums,
+                                                       proc_mem_reps)
+                            in_mem_sums = list_accum(in_mem_sums, in_mem_reps)
+                            bytes_from_mem_sums = list_accum(
+                                bytes_from_mem_sums, bytes_from_mem_reps)
+
+                        print("Finalizing for pid " + str(pid))
+                        # Now we can select the median
+                        import statistics
+
+                        # First, zip the values together
+                        zipped = zip(total_critical_path, sp_op_sums,
+                                     dp_op_sums, proc_mem_sums, in_mem_sums,
+                                     bytes_from_mem_sums)
+
+                        zipped = list(zipped)
+
+                        # Create the FLOP/C and Byte/C numbers, respectively for all subtypes
+                        sp_flop_per_cyc_arr = map(lambda x: x[1] / x[0],
+                                                  zipped)
+                        dp_flop_per_cyc_arr = map(lambda x: x[2] / x[0],
+                                                  zipped)
+
+                        proc_mem_per_cyc_arr = map(lambda x: x[3] / x[0],
+                                                   zipped)
+                        in_mem_per_cyc_arr = map(lambda x: x[4] / x[0], zipped)
+                        bytes_from_mem_per_cyc_arr = map(
+                            lambda x: x[5] / x[0], zipped)
+
+                        medcyc = statistics.median(total_critical_path)
+                        medindex = total_critical_path.index(medcyc)
+
+                        # Select the values from medindex
+                        sp_flop_per_cyc = list(sp_flop_per_cyc_arr)[medindex]
+                        dp_flop_per_cyc = list(dp_flop_per_cyc_arr)[medindex]
+
+                        proc_mem_per_cyc = list(proc_mem_per_cyc_arr)[medindex]
+                        in_mem_per_cyc = list(in_mem_per_cyc_arr)[medindex]
+                        bytes_from_mem_per_cyc = list(
+                            bytes_from_mem_per_cyc_arr)[medindex]
+
+                        d = {}
+                        d["ProgramID"] = pid
+                        d["SP_FLOP_C"] = sp_flop_per_cyc
+                        d["DP_FLOP_C"] = dp_flop_per_cyc
+                        d["FLOP_C"] = sp_flop_per_cyc + dp_flop_per_cyc
+
+                        d["PROC_B_C"] = proc_mem_per_cyc
+                        d["INPUT_B_C"] = in_mem_per_cyc
+                        d["MEM_B_C"] = bytes_from_mem_per_cyc
+
+                        # Add the return values
+                        retvals.append(d)
+
+                    retdict = {"msg_type": "roofline-data", "data": retvals}
+                    #return retdict
+                    with self.comm_queue_lock_roofline:
+                        self.command_queue_roofline.append(json.dumps(retdict))
+
+        elif m["command"] == "select-program":
+            # We should draw the requested program from the CAN.
+            programID = m["programID"]
+
+            # Request it.
+            self.open_canned_data(self.data_source, programID)
+
+        elif m["command"] == "":
+            pass
+
+    def run_async_request(self, task):
+        """ Run a request asynchronously """
+        self.db_request_queue.put(task)
+
+    def async_request_handler(self):
+        spawned_threads = []
+        while True:
+            request_handler = self.db_request_queue.get()
+
+            transself = self
+
+            def consumer_thread():
+                request_handler()
+                # Keep running if there are others waiting, otherwise, end the thread to free some resources
+                try:
+                    while True:
+                        elem = transself.db_request_queue.get_nowait()
+                        elem()
+                except:
+                    pass
+
+            newthread = threading.Thread(target=consumer_thread, daemon=True)
+
+            if len(spawned_threads) < self.max_db_request_threads:
+                spawned_threads.append(newthread)
+                spawned_threads[-1].start()
+            else:
+                # Wait until any of the previous tasks has finished
+                while True:
+                    started = False
+                    for i, t in enumerate(spawned_threads):
+                        if not t.is_alive():
+                            # Thread is dead, replace it
+                            spawned_threads[i] = newthread
+                            spawned_threads[i].start()
+                            started = True
+                            break
+                    if started:
+                        break
+                    else:
+                        request_handler()
+                        break
+
     def message_handler(self, msg):
+
+        db_path = "perfdata.db"
+        if self.data_source != "fresh":
+            db_path = self.data_source
+
+        local_data_source = self.data_source
+
+        dbg_print = False
         m = json.loads(msg)
         if m["msg_type"] == "info":
             pass
+        elif m["msg_type"] == "roofline":
+            resp = self.message_handler_roofline(m)
+            if resp != None:
+                self.add_to_command_queue(json.dumps(resp))
+
         elif m["msg_type"] == "click":
 
             def mainthread_click_cb():
@@ -102,25 +592,262 @@ class RenderedGraphHTML5:
             GObject.idle_add(mainthread_click_cb)
 
         elif m["msg_type"] == "heartbeat":
-            pass  # Safe to ignore
+            pass  # Ignored, this unblocks the recv() call
+        elif m["msg_type"] == "fetcher":
+            if dbg_print:
+                print("Lazy fetch request received")
+
+            seqid = m["seqid"]
+            method = m["msg"]["method"]
+            params = m["msg"]["params"]
+
+            synchronous_execution = method != "Analysis"
+
+            if synchronous_execution:
+                conn = sqlite3.connect(db_path, check_same_thread=False)
+                c = conn.cursor()
+
+                # Attach a default scratch space to every connection such that we can write temporary dbs concurrently
+                c.execute("ATTACH DATABASE ':memory:' AS scratch_default;")
+
+            if method == "getSuperSectionCount":
+
+                ma = MetaFetcher(local_data_source, self.canned_data_programid)
+                d = ma.getSuperSectionCount(c, *params)
+                resp = '{ "type": "fetcher", "seqid": %d, "msg": %s }' % (
+                    int(seqid), str(d))
+                self.add_to_command_queue(resp)
+
+            elif method == "getAllSectionStateIds":
+
+                def taskrunner():
+                    conn = sqlite3.connect(db_path, check_same_thread=False)
+                    c = conn.cursor()
+
+                    # Attach a default scratch space to every connection such that we can write temporary dbs concurrently
+                    c.execute("ATTACH DATABASE ':memory:' AS scratch_default;")
+                    ma = MetaFetcher(local_data_source,
+                                     self.canned_data_programid)
+                    if dbg_print:
+                        print("params: " + str(params))
+                    d = ma.getAllSectionStateIds(c, *params)
+                    resp = '{ "type": "fetcher", "seqid": %d, "msg": %s }' % (
+                        int(seqid), str(d))
+                    self.add_to_command_queue(resp)
+
+                    conn.close()
+
+                # Run asynchronously
+                self.run_async_request(taskrunner)
+
+            elif method == "getAllSectionNodeIds":
+
+                def taskrunner():
+                    conn = sqlite3.connect(db_path, check_same_thread=False)
+                    c = conn.cursor()
+
+                    # Attach a default scratch space to every connection such that we can write temporary dbs concurrently
+                    c.execute("ATTACH DATABASE ':memory:' AS scratch_default;")
+                    ma = MetaFetcher(local_data_source,
+                                     self.canned_data_programid)
+                    if dbg_print:
+                        print("params: " + str(params))
+                    d = ma.getAllSectionNodeIds(c, *params)
+                    resp = '{ "type": "fetcher", "seqid": %d, "msg": %s }' % (
+                        int(seqid), str(d))
+                    self.add_to_command_queue(resp)
+
+                    conn.close()
+
+                # Run asynchronously
+                #threading.Thread(target=taskrunner).start()
+                self.run_async_request(taskrunner)
+            elif method == "Analysis":
+                # Any analysis, name given in params[0]
+                cname = params[0]
+                params = params[1:]
+
+                transself = self
+
+                def taskrunner():
+                    if dbg_print:
+                        print("Running analysis " + cname)
+                        print("Params: " + str(params))
+
+                    conn = sqlite3.connect(db_path, check_same_thread=False)
+                    c = conn.cursor()
+
+                    # Attach a default scratch space to every connection such that we can write temporary dbs concurrently
+                    c.execute("ATTACH DATABASE ':memory:' AS scratch_default;")
+
+                    if local_data_source == "fresh":
+
+                        def my_import(name):
+                            components = name.split('.')
+                            mod = __import__(components[0])
+                            for comp in components[1:]:
+                                mod = getattr(mod, comp)
+                            return mod
+
+                        _module = my_import("diode.db_scripts.sql_to_json")
+                        _cl = getattr(_module, cname)
+                        _instance = _cl()
+
+                        d = _instance.query_values(c, *params)
+                        respval = json.dumps(d)
+                        if d == None:
+                            # Special case of undefined
+                            d = "null"
+
+                    else:  # Canned data
+                        # This is easier as in: The results can be read from a database directly
+
+                        argparams = [*params]
+                        query_ss = True
+                        if cname == "CriticalPathAnalysis":
+                            # This has split IDs (instead of the unified id)
+                            tmp = [*params]
+
+                            if tmp[0] == None:
+                                tmp[0] = 0x0FFFF
+                            # Recreate the correct pair and remove the supersection part from the query
+                            argparams = [
+                                (int(tmp[1]) << 16) | (int(tmp[0]) & 0xFFFF)
+                            ]
+                            query_ss = False
+
+                        if argparams[0] == -1 or argparams[0] == "-1":
+                            argparams[0] = 0x0FFFFFFFF
+
+                        c.execute(
+                            """
+SELECT
+    json
+FROM
+    `AnalysisResults`
+WHERE
+    {progid_q}
+    AnalysisName = ?
+    AND forUnifiedID = ?
+    {ss_q}
+--  AND forSection = ?
+;""".format(ss_q="AND forSuperSection = ?" if query_ss else "",
+                        progid_q="forProgramID = %d AND" % self.canned_data_programid
+                        if self.canned_data_programid != None else ""), (
+                        cname,
+                        *argparams,
+                        ))
+
+                        result = c.fetchall()
+
+                        if len(result) == 0:
+                            # This can actually happen (and is validly caught at client-side)
+                            respval = "null"
+                        else:
+                            # Unpack
+                            respval, = result[0]
+
+                    resp = '{ "type": "fetcher", "seqid": %d, "msg": %s }' % (
+                        int(seqid), respval)
+
+                    conn.close()
+
+                    if dbg_print:
+                        print("Analysis result:" + str(resp))
+                    transself.add_to_command_queue(resp)
+
+                # Run asynchronously
+                self.run_async_request(taskrunner)
+            else:
+                # Arbitrary execution string
+                transself = self
+
+                def taskrunner():
+                    conn = sqlite3.connect(db_path, check_same_thread=False)
+                    c = conn.cursor()
+
+                    # Attach a default scratch space to every connection such that we can write temporary dbs concurrently
+                    c.execute("ATTACH DATABASE ':memory:' AS scratch_default;")
+
+                    ma = MetaFetcher(local_data_source,
+                                     self.canned_data_programid)
+                    if dbg_print:
+                        print("method: " + str(method))
+                        print("params: " + str(params))
+                    d = getattr(MetaFetcher, method)(ma, c, *params)
+
+                    conn.close()
+                    tstr = str(d)
+                    d = tstr.replace("'", '"')
+                    resp = '{ "type": "fetcher", "seqid": %d, "msg": %s }' % (
+                        int(seqid), str(d))
+                    self.add_to_command_queue(resp)
+
+                # Run asynchronously
+                self.run_async_request(taskrunner)
+
+            if synchronous_execution:
+                conn.close()
+
         else:
             print("Unknown/Unhandled message from renderer: " +
                   str(m["msg_type"]))
 
     def render_sdfg(self, sdfg):
+        self.sdfg = sdfg
         self.render_queue.append(sdfg)
 
         self.restore_render_queue = self.render_queue.copy()
         self.command_queue = []
         self.restore_command_queue = []
 
-    def render_performance_data(self):
+    def render_performance_data(self,
+                                mode="",
+                                data_source_path="fresh",
+                                forProgramID=None):
+        from dace.codegen.instrumentation.perfsettings import PerfSettings
+
+        self.data_source = data_source_path
+
+        # Set the program ID used for lookups
+        if forProgramID != None:
+            self.canned_data_programid = int(forProgramID)
+        elif data_source_path != "fresh":
+            pid = 1
+            with sqlite3.connect(data_source_path) as conn:
+                c = conn.cursor()
+                c.execute("SELECT MAX(forProgramID) FROM AnalysisResults;")
+                res = c.fetchall()
+                assert len(res) > 0
+                pid, = res[0]
+                print("res for pid: " + str(res))
+
+            # Use the highest ID (newest program)
+            self.canned_data_programid = int(pid)
+
+        # Uncomment to get a button image
+        #self.save_buttons()
+
         try:
-            with open("perf.json") as perfjson:
-                data = perfjson.read()
-                # This is about 5KB for a really small example. Not sure how well this scales tbh... We'll see I guess
-                self.command_queue.append(data)
+            suffix = mode
+
+            # If sql is enabled, use that
+            if PerfSettings.perf_use_sql():
+                # Don't just send data, but send a message allowing the JS client to request data
+                self.add_to_command_queue("""
+                {
+                    "type": "DataReady",
+                    "mode": "%s"
+                }
+                """ % mode)
                 self.restore_command_queue = self.command_queue.copy()
+
+            else:  # Otherwise, go legacy mode
+                with open("perf_%s.json" % suffix) as perfjson:
+                    data = perfjson.read()
+                    self.add_to_command_queue(data)
+                    self.restore_command_queue = self.command_queue.copy()
+
         except FileNotFoundError as e:
             # Well then not. Whatever floats your boat.
             pass
@@ -136,8 +863,6 @@ class RenderedGraphHTML5:
         browserholder.set_editable(False)
         scriptdir = os.path.dirname(os.path.abspath(__file__))
         renderer_html_file = os.path.join(scriptdir, "renderer.html")
-        with open(renderer_html_file, 'r') as f:
-            renderer_html = f.read()
 
         settings = browserholder.get_settings()
         settings.set_enable_write_console_messages_to_stdout(True)
@@ -145,6 +870,9 @@ class RenderedGraphHTML5:
             True)  # For popping windows out
         browserholder.set_settings(settings)
         browserholder.connect('create', RenderedGraphHTML5.new_window)
+        # Download connector
+        browserholder.get_context().connect("download-started",
+                                            RenderedGraphHTML5.download)
 
         # Add the scroll handler
         def ScrollBinder(widget, event):
@@ -184,7 +912,7 @@ class RenderedGraphHTML5:
             if scale_mode == "external":
                 webkit.set_zoom_level(webkit.get_zoom_level() + _zoom)
             elif scale_mode == "internal":
-                # We dispatch a script, yippie!
+                # We dispatch a script to handle scrolling on the JS side
                 webkit.run_javascript("window.zoom_func(" + str(_zoom) + ");")
             return True
         return False
@@ -198,6 +926,34 @@ class RenderedGraphHTML5:
                 "window._thisclient.passMessage({type: 'close'}); console.log('close requested');"
             )
         return False
+
+    @staticmethod
+    def download(context, download):
+        print("Download was requested")
+        print("destination: " + str(download.get_destination()))
+        print("download: " + str(download))
+
+        def desthandler(d, destname):
+            print("destname: " + str(destname))
+            wd = os.getcwd()
+            print("current working directory: " + wd)
+            d.set_destination("file://" + str(wd) + str("/perf_extracts/") +
+                              str(destname))
+            return False
+
+        download.connect("decide-destination", desthandler)
+
+        def finishhandler(d):
+            print("Finished")
+            print("final destination: " + str(d.get_destination()))
+
+        download.connect("finished", finishhandler)
+
+        def errorhandler(d, code):
+            print("Error: " + str(code))
+
+        download.connect("failed", errorhandler)
+        return True
 
     @staticmethod
     def new_window(view, nav_action):

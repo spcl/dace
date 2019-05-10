@@ -5,9 +5,15 @@ import os
 # Find runtime and external library files by obtaining the module path and
 # trimming the absolute path of the resulting files.
 dace_path = os.path.dirname(os.path.abspath(__file__)) + '/dace/'
+diode_path = os.path.dirname(os.path.abspath(__file__)) + '/diode/'
 runtime_files = [
     f[len(dace_path):]
     for f in glob.glob(dace_path + 'runtime/include/**/*', recursive=True)
+]
+diode_files = [
+    f[len(diode_path):]
+    for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
+              glob.glob(diode_path + '**/*.html', recursive=True))
 ]
 cub_files = [
     f[len(dace_path):]
@@ -42,11 +48,9 @@ setup(
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
-            '../diode/main.glade', '../diode/*.html',
-            '../diode/*.js', '../diode/optimization_hints/*.html',
-            'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
-            'codegen/Xilinx_HLS.tcl.in'
-        ] + runtime_files + cub_files + hlslib_files
+            '../diode/main.glade', 'external/moodycamel/*.h',
+            'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
+        ] + runtime_files + cub_files + diode_files + hlslib_files
     },
     include_package_data=True,
     install_requires=[

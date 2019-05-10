@@ -18,7 +18,8 @@ if __name__ == '__main__':
 
     print('Sum of %d elements' % N.get())
 
-    A = np.random.rand(N.get()).astype(np.float32)
+    A = dace.ndarray([N], dace.float32)
+    A[:] = np.random.rand(N.get()).astype(np.float32)
     out = np.zeros(1, dtype=np.float32)
 
     sum(A, out)

@@ -18,6 +18,7 @@ from gi.repository import Gtk, GtkSource, GObject, GLib, Gdk
 
 from diode.rendered_graphs import RenderedGraphs
 
+from diode.rendered_graph import RenderedGraph
 from diode.rendered_graph_html5 import RenderedGraphHTML5
 from diode.optgraph.optgraph import OptimizationGraph
 from diode.optgraph.DaceState import DaceState
@@ -77,7 +78,8 @@ class DIODE:
         # Initialize rendered SDFGs
         self.rendered_sdfgs = RenderedGraphs(self.builder)
         if self.config["renderer"]["html5renderer"]:
-            self.rendered_sdfgs.set_render_engine("html5")
+            self.rendered_sdfgs.set_render_engine("html5",
+                                                  self.OnButtonPressSDFG_old)
         else:
             self.rendered_sdfgs.set_render_engine("xdot")
         self.rendered_sdfgs.set_container("sdfg_notebook")
@@ -116,11 +118,14 @@ class DIODE:
             "onViewHwinfo": self.OnViewHwinfo,
             "onReadPAPICounters": self.OnReadPAPICounters,
             "onReadSystemInfo": self.OnReadSystemInfo,
+            "onViewRoofline": self.OnViewRoofline,
             "onClickRunTB": self.OnClickRunTB,
             "onStoreScript": self.OnStoreScript,
             "onLoadScript": self.OnLoadScript,
             "onLoadSDFG": self.OnLoadSDFG,
             "onSaveSDFG": self.OnStoreSDFG,
+            "onLoadCan": self.OnLoadCan,
+            "onSaveCan": self.OnSaveCan,
             "onSwitchPage": self.OnSwitchPage,
             "onScrollPythonPane": self.OnScrollPythonPane,
             "onScrollCodePane": self.OnScrollCodePane,
@@ -290,6 +295,23 @@ class DIODE:
             "The currently loaded code contains multiple top-level SDFGs, thus it is not defined which one should be run!"
         )
 
+    def onCounterIssue(self):
+
+        # This must be threadsafe
+        def message_box():
+            main_window = self.builder.get_object("main_window")
+            dialog = Gtk.MessageDialog(main_window, 0, Gtk.MessageType.WARNING,
+                                       Gtk.ButtonsType.OK, "")
+            dialog.format_secondary_text(
+                "Used counters might exceed hardware limits. Proceed with care."
+            )
+            dialog.run()
+            dialog.destroy()
+            return False
+
+        from gi.repository import GObject
+        GObject.idle_add(message_box)
+
     def save_interface_configuration(self):
         # Save window dimensions
         window = self.builder.get_object("main_window")
@@ -378,7 +400,7 @@ class DIODE:
             self.emit_script_cmd("diode.SaveSDFG(\"" + filename + "\")")
         dialog.destroy()
 
-    def OnButtonPressSDFG(self, clicked_elem):
+    def OnButtonPressSDFG_old(self, clicked_elem):
         sdfg = self.optimization_graph.get_current().get_dace_state().get_sdfg(
         )
 
@@ -618,7 +640,95 @@ class DIODE:
                 fail_on_nonzero = False
 
         dace_state = self.optimization_graph.get_current().get_dace_state()
+
+        from dace.codegen.instrumentation.perfsettings import PerfSettings
+
+        if PerfSettings.perf_use_sql():
+            from diode.db_scripts.db_setup import db_setup
+
+            # Clean database and create tables
+            db_setup()
+
         res = self.executor.run_async(dace_state, fail_on_nonzero)
+
+        if not PerfSettings.perf_use_multimode() or self.headless:
+            return res
+
+        self.executor.autoquit = False
+        # Keep the thread running
+        trans_self = self
+
+        def change_mode(modestr: str, func, new_task):
+            def code_update():
+                Config.set("instrumentation", "papi_mode", value=modestr)
+                dace_state = trans_self.optimization_graph.get_current(
+                ).get_dace_state()
+                dace_state.compile()
+                trans_self.update_generated_code()
+                func()
+                if new_task != None:
+                    trans_self.executor.add_async_task(new_task)
+                return False
+
+            from gi.repository import GObject
+            GObject.idle_add(code_update)
+
+        def quitter():
+
+            from diode.db_scripts.sql_to_json import MergeRuns, Conserver
+
+            mr = MergeRuns()
+            PerfSettings.merging_print("Merging - do not interrupt")
+            mr.mergev2("perfdata.db")
+            PerfSettings.merging_print("Merging done")
+
+            # Obtain the SDFG json
+            current_state = self.optimization_graph.get_current(
+            ).get_dace_state()
+            sdfg = current_state.get_sdfg()
+            sdfg_json = sdfg.toJSON()
+
+            conserver = Conserver()
+            conserver.conserveAll(
+                "perfdata.db",
+                "current.can",
+                sdfg_json,
+                Config.get("execution", "general", "repetitions"),
+                clear_existing=False)
+
+            # Unlock the linked analyses (those that need merged values)
+            trans_self.rendered_sdfgs.render_performance_data(
+                "all", "current.can")
+
+            trans_self.executor.autoquit = True  # Set the thread to autoquitting
+            trans_self.executor.to_thread_message_queue.put("forcequit")
+
+        def runner():
+            trans_self.executor.append_run_async(
+                trans_self.optimization_graph.get_current().get_dace_state(),
+                fail_on_nonzero)
+
+        def change_to_cache():
+            change_mode("cacheop", runner, change_to_default)
+            #self.executor.add_async_task(change_to_default)
+
+        def change_to_mem():
+            change_mode("memop", runner, change_to_cache)
+            #self.executor.add_async_task(change_to_cache)
+
+        def change_to_vec():
+            change_mode("vectorize", runner, change_to_mem)
+            #self.executor.add_async_task(change_to_mem)
+
+        def change_to_default():
+            def p():
+                pass
+
+            change_mode("default", p, quitter)
+            #self.executor.add_async_task(quitter)
+
+        trans_self.executor.add_async_task(change_to_vec)
+
         return res
 
     def ChangePatternProperties(self, nodelabel, propname, newval):
@@ -788,6 +898,75 @@ class DIODE:
         main_window = self.builder.get_object("main_window")
         dialog.set_transient_for(main_window)
         dialog.run()
+        dialog.destroy()
+
+    def OnViewRoofline(self, *args):
+        pass
+        import gi
+        gi.require_version('WebKit2', '4.0')
+        from gi.repository import Gdk, WebKit2, Gtk
+
+        from gi.repository import GObject
+
+        main_window = self.builder.get_object("main_window")
+        dialog = Gtk.Window()
+
+        webview = WebKit2.WebView()
+        webview.set_editable(False)
+        scriptdir = os.path.dirname(os.path.abspath(__file__))
+        renderer_html_file = os.path.join(scriptdir, "Roofline/index.html")
+
+        settings = webview.get_settings()
+        settings.set_enable_write_console_messages_to_stdout(True)
+        webview.set_settings(settings)
+
+        webview.load_uri("file://" + renderer_html_file)
+
+        dialog.add(webview)
+
+        webview.set_zoom_level(0.5)
+        webview.show()
+
+        dialog.show()
+
+        dialog.resize(1000, 600)
+        dialog.set_keep_above(True)
+
+    def open_canned_data(self, can_path):
+        """ Open a data CAN, proceed to draw everything as if it was an SDFG """
+
+        self.rendered_sdfgs.open_canned_data(can_path)
+        pass
+
+    def OnLoadCan(self, *args):
+        dialog = Gtk.FileChooserDialog(
+            "Please choose a file", None, Gtk.FileChooserAction.OPEN,
+            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN,
+             Gtk.ResponseType.OK))
+        main_window = self.builder.get_object("main_window")
+        dialog.set_transient_for(main_window)
+        response = dialog.run()
+
+        if response == Gtk.ResponseType.OK:
+            self.open_canned_data(dialog.get_filename())
+        dialog.destroy()
+
+    def OnSaveCan(self, *args):
+        if not os.path.isfile("current.can"):
+            print(
+                "Cannot save the recording because there's nothing to be saved"
+            )
+            return
+        dialog = Gtk.FileChooserDialog(
+            "Please choose a file", None, Gtk.FileChooserAction.SAVE,
+            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_SAVE,
+             Gtk.ResponseType.OK))
+        main_window = self.builder.get_object("main_window")
+        dialog.set_transient_for(main_window)
+        response = dialog.run()
+
+        if response == Gtk.ResponseType.OK:
+            os.rename("current.can", dialog.get_filename())
         dialog.destroy()
 
     def OnReadSystemInfo(self, *args):

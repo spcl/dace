@@ -84,7 +84,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
         gpu_storage = [
             types.StorageType.GPU_Global, types.StorageType.GPU_Shared,
-            types.StorageType.GPU_Stack
+            types.StorageType.GPU_Stack, types.StorageType.CPU_Pinned
         ]
         dispatcher.register_array_dispatcher(gpu_storage, self)
         dispatcher.register_array_dispatcher(types.StorageType.CPU_Pinned,
@@ -123,6 +123,11 @@ class CUDACodeGen(TargetCodeGenerator):
         # End of illegal copies
         # End of dispatcher registration
         ######################################
+
+    def _emit_sync(self, codestream: CodeIOStream):
+        if Config.get_bool('compiler', 'cuda', 'syncdebug'):
+            codestream.write('''DACE_CUDA_CHECK(cudaGetLastError());
+DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -348,8 +353,8 @@ void __dace_exit_cuda({params}) {{
                 fmtargs['size'] = sym2cpp(sdfg.arrays[nodedesc.sink].shape[0])
 
                 function_stream.write(
-                    'DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'.
-                    format(**fmtargs), sdfg, state_id, node)
+                    'DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
+                    .format(**fmtargs), sdfg, state_id, node)
                 self._globalcode.write(
                     """
 DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
@@ -357,14 +362,14 @@ void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type},
     result = dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
 }}""".format(**fmtargs), sdfg, state_id, node)
                 callsite_stream.write(
-                    'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({ptr}, {size}, {name});'.
-                    format(**fmtargs), sdfg, state_id, node)
+                    'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({ptr}, {size}, {name});'
+                    .format(**fmtargs), sdfg, state_id, node)
             else:
                 fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
 
                 function_stream.write(
-                    'DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'.
-                    format(**fmtargs), sdfg, state_id, node)
+                    'DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
+                    .format(**fmtargs), sdfg, state_id, node)
                 self._globalcode.write(
                     """
 DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
@@ -372,8 +377,8 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
     result = dace::AllocGPUStream<{type}, {is_pow2}>({size});
 }}""".format(**fmtargs), sdfg, state_id, node)
                 callsite_stream.write(
-                    'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({size}, {name});'.
-                    format(**fmtargs), sdfg, state_id, node)
+                    'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({size}, {name});'
+                    .format(**fmtargs), sdfg, state_id, node)
 
     def deallocate_stream(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -422,8 +427,8 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                                   in recursion to nested SDFGs).
             @return: 2-tuple of the number of streams, events to create.
         """
-        concurrent_streams = Config.get('compiler', 'cuda',
-                                        'max_concurrent_streams')
+        concurrent_streams = int(
+            Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if concurrent_streams < 0:
             return 0, 0
 
@@ -483,7 +488,7 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
         for node, graph in sdfg.all_nodes_recursive():
             if isinstance(graph, SDFGState):
                 cur_sdfg = graph.parent
-                for e in graph.out_edges(node):
+                for e in graph.all_edges(node):
                     path = graph.memlet_path(e)
                     # If leading from/to a GPU memory node, keep stream
                     if ((isinstance(path[0].src, nodes.AccessNode)
@@ -566,16 +571,18 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
 
         if (isinstance(src_node, nodes.AccessNode)
                 and isinstance(dst_node, nodes.AccessNode)
-                and not self._in_device_code
-                and (src_storage == types.StorageType.GPU_Global
-                     or dst_storage == types.StorageType.GPU_Global)):
+                and not self._in_device_code and (src_storage in [
+                    types.StorageType.GPU_Global, types.StorageType.CPU_Pinned
+                ] or dst_storage in [
+                    types.StorageType.GPU_Global, types.StorageType.CPU_Pinned
+                ])):
             src_location = 'Device' if src_storage == types.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == types.StorageType.GPU_Global else 'Host'
 
             syncwith = {}  # Dictionary of {stream: event}
             is_sync = False
-            max_streams = Config.get('compiler', 'cuda',
-                                     'max_concurrent_streams')
+            max_streams = int(
+                Config.get('compiler', 'cuda', 'max_concurrent_streams'))
 
             if hasattr(src_node, '_cuda_stream'):
                 cudastream = src_node._cuda_stream
@@ -601,6 +608,8 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                     if isinstance(e.dst, nodes.AccessNode):
                         continue
                     if not hasattr(e.dst, '_cuda_stream'):
+                        is_sync = True
+                    elif not hasattr(e, '_cuda_event'):
                         is_sync = True
                     elif e.dst._cuda_stream != cudastream:
                         syncwith[e.dst._cuda_stream] = e._cuda_event
@@ -702,6 +711,8 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                             src_stream=cudastream,
                             dst_stream=syncstream), sdfg, state_id,
                         [src_node, dst_node])
+
+            self._emit_sync(callsite_stream)
 
         # Copy within the GPU
         elif (src_storage in gpu_storage_types
@@ -1005,7 +1016,8 @@ void __dace_runkernel_{fname}({fargs})
                         if symbolic.issymbolic(numel, sdfg.constants):
                             dynsmem_size += numel
 
-        max_streams = Config.get('compiler', 'cuda', 'max_concurrent_streams')
+        max_streams = int(
+            Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
             cudastream = 'dace::cuda::__streams[%d]' % scope_entry._cuda_stream
         else:
@@ -1022,6 +1034,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 bdims=','.join(_topy(block_dims)),
                 dynsmem=_topy(dynsmem_size),
                 stream=cudastream), sdfg, state_id, node)
+        self._emit_sync(self._localcode)
 
         # Close the runkernel function
         self._localcode.write('}')
@@ -1233,7 +1246,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 # Optimize conditions if they are always true
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if i >= 3 or (dsym_end[i] < maxel) != False:
+                if i >= 3 or ((dsym_end[i] < maxel) != False and (
+                    (dsym_end[i] % self._block_dims[i]) != 0) == True):
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
@@ -1587,8 +1601,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     sdfg=sdfg.name, state=state_id, node=node_id), sdfg,
                 state_id, node)
 
-            max_streams = Config.get('compiler', 'cuda',
-                                     'max_concurrent_streams')
+            max_streams = int(
+                Config.get('compiler', 'cuda', 'max_concurrent_streams'))
             if max_streams >= 0:
                 cudastream = 'dace::cuda::__streams[%d]' % node._cuda_stream
             else:
@@ -1628,8 +1642,8 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output,
             output_dims = output_memlet.subset.data_dims()
             if (node.axes is None or len(node.axes) == input_dims):
                 callsite_stream.write(
-                    '__dace_reduce_{id}({input}, {output}, {num_items});'
-                    .format(
+                    '__dace_reduce_{id}({input}, {output}, {num_items});'.
+                    format(
                         id=idstr,
                         input=input,
                         output=output,
