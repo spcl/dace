@@ -343,6 +343,10 @@ class Array(Data):
             for d in self.shape
         ]
 
+    # OPERATORS
+    #def __add__(self, other):
+    #    return (self, None)
+
 
 @make_properties
 class Stream(Data):

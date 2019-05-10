@@ -48,8 +48,10 @@ if __name__ == '__main__':
     outdims = tuple(s.get() for s in (N, M, K, L))
     print('High-dimensional GPU kernel test', dims)
 
-    A = np.random.randint(10, size=dims).astype(np.uint64)
-    B = np.zeros(outdims, dtype=np.uint64)
+    A = dace.ndarray((N, M, K, L, X, Y, Z, W, U), dtype=dace.uint64)
+    B = dace.ndarray((N, M, K, L), dtype=dace.uint64)
+    A[:] = np.random.randint(10, size=dims).astype(np.uint64)
+    B[:] = np.zeros(outdims, dtype=np.uint64)
     B_regression = np.zeros(outdims, dtype=np.uint64)
 
     # Equivalent python code

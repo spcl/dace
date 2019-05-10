@@ -345,6 +345,7 @@ TYPECLASS_STRINGS = [
 _CONSTANT_TYPES = [
     int,
     float,
+    str,
     numpy.intc,
     numpy.intp,
     numpy.int8,
@@ -379,6 +380,11 @@ _ALLOWED_MODULES = {
 }
 
 
+def ismodule(var):
+    """ Returns True if a given object is a module. """
+    return inspect.ismodule(var)
+
+
 def ismoduleallowed(var):
     """ Helper function to determine the source module of an object, and 
         whether it is allowed in DaCe programs. """
@@ -403,7 +409,7 @@ def ismodule_and_allowed(var):
 
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
-    return isconstant(var) or ismoduleallowed(var)
+    return isconstant(var) or ismodule(var)
 
 
 class _external_function(object):

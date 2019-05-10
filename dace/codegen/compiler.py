@@ -159,19 +159,13 @@ class CompiledSDFG(object):
             self._initialized = False
         self._lib.unload()
 
-    def _construct_args(self, *args, **kwargs):
+    def _construct_args(self, **kwargs):
         """ Main function that controls argument construction for calling
             the C prototype of the SDFG. 
             
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """
-
-        if len(kwargs) > 0 and len(args) > 0:
-            raise AttributeError(
-                'Compiled SDFGs can only be called with either arguments ' +
-                '(e.g. "program(a,b,c)") or keyword arguments ' +
-                '("program(A=a,B=b)"), but not both')
 
         # Argument construction
         sig = self._sdfg.signature_arglist(with_types=False)
@@ -188,11 +182,6 @@ class CompiledSDFG(object):
                     argnames.append(a)
                 except KeyError:
                     raise KeyError("Missing program argument \"{}\"".format(a))
-        elif len(args) > 0:
-            arglist = list(args)
-            argtypes = [typedict[s] for s in sig]
-            argnames = sig
-            sig = []
         else:
             arglist = []
             argtypes = []
@@ -223,9 +212,6 @@ class CompiledSDFG(object):
         symparams = {}
         symtypes = {}
         for symname in sdfg.undefined_symbols(False):
-            # Ignore arguments (as they may not be symbols but constants,
-            # see below)
-            if symname in sdfg.arg_types: continue
             try:
                 symval = symbolic.symbol(symname)
                 symparams[symname] = symval.get()
@@ -283,8 +269,8 @@ class CompiledSDFG(object):
         if self._exit is not None:
             self._exit(*argtuple)
 
-    def __call__(self, *args, **kwargs):
-        argtuple = self._construct_args(*args, **kwargs)
+    def __call__(self, **kwargs):
+        argtuple = self._construct_args(**kwargs)
 
         # Call initializer function if necessary, then SDFG
         if self._initialized == False:

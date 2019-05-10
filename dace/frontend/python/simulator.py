@@ -186,9 +186,8 @@ class SimulatorTransformer(ast.NodeTransformer):
                 decname = astparser.rname(dec.attr)
 
             if decname in [
-                    'map', 'async_map', 'reduce', 'async_reduce', 'consume',
-                    'async_consume', 'tasklet', 'async_tasklet', 'iterate',
-                    'loop', 'conditional'
+                    'map', 'reduce', 'consume', 'tasklet', 'iterate', 'loop',
+                    'conditional'
             ]:
                 self.curchild += 1
 

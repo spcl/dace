@@ -131,7 +131,7 @@ def parse_from_function(function, *compilation_args, strict=None):
     pdp, modules = function.generate_pdp(*compilation_args)
 
     # Create an empty SDFG
-    sdfg = SDFG(pdp.name, pdp.argtypes)
+    sdfg = SDFG(pdp.name)
 
     sdfg.set_sourcecode(pdp.source, 'python')
 
@@ -156,30 +156,12 @@ def parse_from_function(function, *compilation_args, strict=None):
     for dataname, datadesc in pdp.all_arrays().items():
         sdfg.add_datadesc(dataname, datadesc)
 
-    # Step 4) Absorb next state into current, if possible
-    oldstates = list(sdfg.topological_sort(sdfg.start_state))
-    for state in oldstates:
-        if state not in sdfg.nodes():  # State already removed
-            continue
-        if sdfg.out_degree(state) == 1:
-            edge = sdfg.out_edges(state)[0]
-            nextState = edge.dst
-            if not edge.data.is_unconditional():
-                continue
-            if sdfg.in_degree(nextState) > 1:  # If other edges point to state
-                continue
-            if len(state_primitives[nextState]) > 0:  # Don't fuse full states
-                continue
-
-            outEdges = list(sdfg.out_edges(nextState))
-            for e in outEdges:
-                # Construct new edge from the current assignments, new
-                # assignments, and new conditions
-                newEdge = copy.deepcopy(edge.data)
-                newEdge.assignments.update(e.data.assignments)
-                newEdge.condition = e.data.condition
-                sdfg.add_edge(state, e.dst, newEdge)
-            sdfg.remove_node(nextState)
+    # Clear "nested" symbols created as a result of AST parsing
+    sdfg._symbols = set()
+    for symname, symtype in pdp.argtypes.items():
+        if (symname not in sdfg.arrays
+                or isinstance(sdfg.arrays[symname], data.Scalar)):
+            sdfg.add_symbol(symname, symtype.dtype, override_dtype=True)
 
     # Step 5)
     stateList = sdfg.topological_sort(sdfg.start_state)
@@ -226,6 +208,9 @@ class DaceProgram:
         self.args = args
         self.kwargs = kwargs
         self._name = f.__name__
+        self.argnames = _get_argnames(f)
+        if self.argnames is None:
+            self.argnames = []
 
     @property
     def name(self):
@@ -244,7 +229,16 @@ class DaceProgram:
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
         binaryobj = self.compile(*args, strict=strict, specialize=specialize)
-        return binaryobj(*args)
+        # Add named arguments to the call
+        kwargs = {aname: arg for aname, arg in zip(self.argnames, args)}
+        # Update arguments with symbols in data shapes
+        kwargs.update({
+            sym: symbolic.symbol(sym).get()
+            for arg in args
+            for sym in (symbolic.symlist(arg.descriptor.shape) if hasattr(
+                arg, 'descriptor') else [])
+        })
+        return binaryobj(**kwargs)
 
     def generate_pdp(self, *compilation_args):
         """ Generates the parsed AST representation of a DaCe program.
@@ -257,14 +251,9 @@ class DaceProgram:
         """
         dace_func = self.f
         args = self.args
-        argnames = _get_argnames(dace_func)
-
-        if not argnames:
-            raise SyntaxError(
-                'DaCe program must contain at least one parameter')
 
         # If exist, obtain type annotations (for compilation)
-        argtypes = _get_type_annotations(dace_func, argnames, args)
+        argtypes = _get_type_annotations(dace_func, self.argnames, args)
 
         # Parse argument types from call
         if not argtypes:
@@ -274,13 +263,13 @@ class DaceProgram:
                     'or arrays')
 
             # Parse compilation arguments
-            if len(compilation_args) != len(argnames):
+            if len(compilation_args) != len(self.argnames):
                 raise SyntaxError(
                     'Arguments must match DaCe program parameters (expecting '
-                    + str(len(argnames)) + ')')
+                    '%d)' % len(self.argnames))
             argtypes = {
                 k: _create_datadescriptor(v)
-                for k, v in zip(argnames, compilation_args)
+                for k, v in zip(self.argnames, compilation_args)
             }
         #############################################
 
@@ -292,8 +281,7 @@ class DaceProgram:
         }
         modules = {
             k: v.__name__
-            for k, v in dace_func.__globals__.items()
-            if types.ismodule_and_allowed(v)
+            for k, v in dace_func.__globals__.items() if types.ismodule(v)
         }
         modules['builtins'] = ''
 
@@ -308,13 +296,9 @@ class DaceProgram:
             {k: v
              for k, v in self.kwargs.items() if types.isallowed(v)})
 
-        argtypes_ordered = OrderedDict()
-        for param in argnames:
-            argtypes_ordered[param] = argtypes[param]
-
         # Parse AST to create the SDFG
-        pdp = astparser.parse_dace_program(dace_func, argtypes_ordered,
-                                           global_vars, modules)
+        pdp = astparser.parse_dace_program(dace_func, argtypes, global_vars,
+                                           modules)
 
         # Transform parsed DaCe code into a DaCe program (Stateful DFG)
         return pdp, modules

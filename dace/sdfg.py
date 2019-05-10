@@ -141,20 +141,14 @@ class SDFG(OrderedDiGraph):
 
     def __init__(self,
                  name: str,
-                 arg_types: Dict[str, dt.Data] = collections.OrderedDict(),
-                 constants: Dict[str, Any] = {},
+                 symbols: Set[str] = set(),
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
             @param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
-            @param arg_types: An Ordered dictionary mapping between argument
-                              names and their data descriptors. Can be used
-                              to call an SDFG with non-keyword arguments.
-            @param constants: A dictionary of compile-time constant values
-                              (or numpy `ndarray`s) to use when generating
-                              code from the SDFG. These can also be added
-                              after creation using `sdfg.add_constants`.
+            @param symbols: Additional set of symbol names that the SDFG 
+                            defines, apart from symbolic data sizes.
             @param propagate: If False, disables automatic propagation of
                               memlet subsets from scopes outwards. Saves
                               processing time but disallows certain
@@ -166,12 +160,10 @@ class SDFG(OrderedDiGraph):
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        if not isinstance(arg_types, collections.OrderedDict):
-            raise TypeError
-        self._arg_types = arg_types  # OrderedDict(str, typeclass)
-        self._constants = constants  # type: Dict[str, Any]
+        self._constants = {}  # type: Dict[str, Any]
         self._propagate = propagate
         self._parent = parent
+        self._symbols = symbols
         self._parent_sdfg = None
         self._sdfg_list = [self]
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
@@ -184,6 +176,18 @@ class SDFG(OrderedDiGraph):
             in this SDFG, with an extra `None` entry for empty memlets.
         """
         return self._arrays
+
+    def add_symbol(self, name, stype, override_dtype=False):
+        """ Adds a symbol to the SDFG.
+            @param name: Symbol name.
+            @param stype: Symbol type.
+            @param override_dtype: If True, overrides existing symbol type in
+                                   symbol registry.
+        """
+        if name in self._symbols:
+            raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
+        symbolic.symbol(name, stype, override_dtype=override_dtype)
+        self._symbols.add(name)
 
     @property
     def start_state(self):
@@ -259,10 +263,6 @@ class SDFG(OrderedDiGraph):
     def label(self):
         """ The name of this SDFG. """
         return self._name
-
-    @property
-    def arg_types(self):
-        return self._arg_types
 
     @property
     def constants(self):
@@ -396,10 +396,10 @@ class SDFG(OrderedDiGraph):
         """ Returns all scalar data arguments to the SDFG (this excludes
             symbols used to define array sizes)."""
         return [
-            (name, data) for name, data in self._arg_types.items()
-            if isinstance(data, dace.data.Scalar)
+            (name, dt.Scalar(symbolic.symbol(name).dtype))
+            for name in self._symbols
             # Exclude constant variables if requested
-            and (include_constants or (name not in self.constants))
+            if (include_constants or (name not in self.constants))
         ]
 
     def symbols_defined_at(self, node, state=None):
@@ -563,14 +563,14 @@ class SDFG(OrderedDiGraph):
             ]
         data_args = sorted(types.deduplicate(data_args))
 
-        sym_args = sorted(self.undefined_symbols(False).items())
+        sym_args = sorted(self.undefined_symbols(True).items())
 
         # Arguments are sorted as follows:
         # 1. Program arguments, as given in the dace program definition
         # 2. Other free symbols, sorted by name
         # 3. Data arguments inferred from the SDFG, if not given in the program
         #    definition (or if not created from a dace.program)
-        arg_list = collections.OrderedDict(self._arg_types)
+        arg_list = collections.OrderedDict()
         for key, val in itertools.chain(data_args, sym_args):
             if key not in self._constants and key not in arg_list:
                 arg_list[key] = val

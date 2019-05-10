@@ -24,11 +24,19 @@ class symbol(sympy.Symbol):
     @staticmethod
     def erase_symbols(symlist):
         for sym in symlist:
-            del symbol.s_values[sym]
-            del symbol.s_types[sym]
-            del symbol.s_constraints[sym]
+            symbol.erase(sym)
 
-    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+    @staticmethod
+    def erase(sym):
+        del symbol.s_values[sym]
+        del symbol.s_types[sym]
+        del symbol.s_constraints[sym]
+
+    def __new__(cls,
+                name=None,
+                dtype=DEFAULT_SYMBOL_TYPE,
+                override_dtype=False,
+                **assumptions):
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -49,7 +57,9 @@ class symbol(sympy.Symbol):
             symbol.s_constraints[name] = []
             symbol.s_types[name] = dtype
         else:
-            if dtype != DEFAULT_SYMBOL_TYPE and dtype != symbol.s_types[name]:
+            if override_dtype:
+                symbol.s_types[name] = dtype
+            elif dtype != DEFAULT_SYMBOL_TYPE and dtype != symbol.s_types[name]:
                 raise TypeError('Type mismatch for existing symbol "%s" (%s) '
                                 'and new type %s' %
                                 (name, str(symbol.s_types[name]), str(dtype)))
@@ -283,6 +293,8 @@ def eval(expr,
                 else:
                     result = result.replace(
                         atom, atom.get_or_return(uninitialized_value))
+
+    # TODO: Use symbol dtype here
 
     if isinstance(result, sympy.Integer):
         return int(sympy.N(result))
@@ -596,6 +608,7 @@ def pystr_to_symbolic(expr, symbol_map={}):
     if isinstance(expr, str) and 'not' in expr:
         expr = expr.replace('not', 'Not')
 
+    # TODO: support SymExpr over-approximated expressions
     return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
 
 

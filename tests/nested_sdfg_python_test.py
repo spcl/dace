@@ -41,7 +41,8 @@ if __name__ == '__main__':
     input = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
     output = np.zeros((N.get(), N.get()), dp.float32.type)
 
-    sdfg_with_children(input, output)
+    sdfg = sdfg_with_children.to_sdfg()
+    sdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output - np.power(input, 5)) / dp.eval(N * N)
     print("Difference:", diff)

@@ -3,6 +3,7 @@ from dace.transformation import optimizer
 from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
 
+
 @dace.program
 def prog1(A: dace.float32[32], B: dace.float32[32]):
     @dace.map
@@ -10,6 +11,7 @@ def prog1(A: dace.float32[32], B: dace.float32[32]):
         a << A[i]
         b >> B[i]
         b = a * 2.0
+
 
 @dace.program
 def prog2(A: dace.float32[32], B: dace.float32[32]):

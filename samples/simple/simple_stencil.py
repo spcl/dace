@@ -22,8 +22,8 @@ def jacobi(A, iterations):
         out >> tmp[y, x]
         out = 0.0
 
-    @dace.iterate(_[0:iterations])
-    def step(t):
+    for t in range(iterations):
+
         @dace.map(_[1:H - 1, 1:W - 1])
         def a2b(y, x):
             in_N << A[y - 1, x]

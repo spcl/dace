@@ -1,7 +1,9 @@
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
+from collections import OrderedDict
 import sympy
+from typing import Any, Dict, List, Tuple
 
 from dace import types, symbolic
 
@@ -46,9 +48,47 @@ def getkwarg(node, argname, default=None):
     return default
 
 
+def _datadesc(obj: Any):
+    from dapp import data
+    if isinstance(obj, data.Data):
+        return obj
+    elif symbolic.issymbolic(obj):
+        return data.Scalar(symbolic.symtype(obj))
+    elif isinstance(obj, types.typeclass):
+        return data.Scalar(obj)
+    return data.Scalar(types.typeclass(type(obj)))
+
+
+def get_argtypes(
+        func: ast.FunctionDef,
+        global_vars: Dict[str, Any],
+) -> List[Tuple[str, Any]]:  # Any is actually data.Data
+    arg_names = [arg.arg for arg in func.args.args]
+    param_anns = [unparse(arg.annotation) for arg in func.args.args]
+    if isinstance(func.decorator_list[0], ast.Call):
+        decorator_anns = [unparse(arg) for arg in func.decorator_list[0].args]
+    else:
+        decorator_anns = [None]
+
+    types = None
+    if all((a is not None for a in param_anns)):
+        types = param_anns
+    if all((a is not None for a in decorator_anns)):
+        if types is not None:
+            raise SyntaxError(
+                'DAPP programs can only have decorator arguments ' +
+                '(\'@dapp.program(...)\') or type annotations ' +
+                '(\'def program(arr: type, ...)\'), but not both')
+        types = decorator_anns
+    if types is None:
+        raise SyntaxError('Data-centric programs must be annotated with types')
+
+    return OrderedDict([(name, _datadesc(eval(t, global_vars)))
+                        for name, t in zip(arg_names, types)])
+
+
 def DaCeSyntaxError(visitor, node, err):
     """ Reports errors with their corresponding file/line information. """
-
     try:
         line = node.lineno
         col = node.col_offset
@@ -56,9 +96,11 @@ def DaCeSyntaxError(visitor, node, err):
         line = 0
         col = 0
 
-    return SyntaxError(err + "\n  in File " + str(visitor.filename) +
-                       ", line " + str(line) + ":" + str(col) +
-                       ", in function " + str(visitor.curnode.name))
+    return SyntaxError(
+        err + "\n  in File " + str(visitor.filename) + ", line " + str(line) +
+        ":" + str(col) + ", in function " +
+        str(visitor.curnode.name
+            if visitor.curnode is not None else visitor.program_name))
 
 
 def get_tuple(visitor, node):
@@ -252,9 +294,12 @@ class ExtNodeTransformer(ast.NodeTransformer):
         bodies in order to discern DaCe statements from others.
     """
 
-    # Default implementation of TopLevelExpr
-    def visit_TopLevelExpr(self, node):
-        return self.visit(node)
+    def visit_TopLevel(self, node):
+        clsname = type(node).__name__
+        if getattr(self, "visit_TopLevel" + clsname, False):
+            return getattr(self, "visit_TopLevel" + clsname)(node)
+        else:
+            return self.visit(node)
 
     def generic_visit(self, node):
         for field, old_value in ast.iter_fields(node):
@@ -265,7 +310,13 @@ class ExtNodeTransformer(ast.NodeTransformer):
                         if (field == 'body'
                                 or field == 'orelse') and isinstance(
                                     value, ast.Expr):
-                            value = self.visit_TopLevelExpr(value)
+                            clsname = type(value).__name__
+                            if getattr(self, "visit_TopLevel" + clsname,
+                                       False):
+                                value = getattr(
+                                    self, "visit_TopLevel" + clsname)(value)
+                            else:
+                                value = self.visit(value)
                         else:
                             value = self.visit(value)
                         if value is None:

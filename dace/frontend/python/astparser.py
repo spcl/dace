@@ -58,8 +58,9 @@ class FindLocals(ast.NodeVisitor):
 def parse_dace_program(f, argtypes, global_vars, modules):
     """ Parses a `@dace.program` function into a _ProgramNode object. 
         @param f: A Python function to parse.
-        @param argtypes: An iterable of tuples (name, type) for the given
-                         function's arguments.
+        @param argtypes: An dictionary of (name, type) for the given
+                         function's arguments, which may pertain to data
+                         nodes or symbols (scalars).
         @param global_vars: A dictionary of global variables in the closure
                             of `f`.
         @param modules: A dictionary from an imported module name to the
@@ -85,14 +86,40 @@ def parse_dace_program(f, argtypes, global_vars, modules):
     symresolver = SymbolResolver(allowed_globals)
     symresolver.visit(src_ast)
 
+    from dace.frontend.python import newast
+    src_ast = newast.ModuleResolver(modules).visit(src_ast)
+    # Convert modules to after resolution
+    for mod, modval in modules.items():
+        print(mod, modval)
+        if mod == 'builtins':
+            continue
+        newmod = global_vars[mod]
+        del global_vars[mod]
+        global_vars[modval] = newmod
+    pv = newast.ProgramVisitor(
+        f.__name__,
+        src_file,
+        src_line,
+        #astutils.get_argtypes(src_ast.body[0], global_vars),
+        argtypes,
+        global_vars)
+    sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    sdfg.draw_to_file()
+    sdfg.save("{}.sdfg".format(sdfg.label))
+    print('OK')
+    import os
+    import sys
+    sys.stdout.flush()
+    os._exit(0)
+
     # 3. Parse the DaCe program to a hierarchical dependency representation
     ast_parser = ParseDaCe(src_file, src_line, argtypes, global_vars, modules,
                            symresolver)
+
     ast_parser.visit(src_ast)
     pdp = ast_parser.program
     pdp.source = src
     pdp.filename = src_file
-    pdp.param_syms = sorted(symbolic.getsymbols(argtypes.values()).items())
     pdp.argtypes = argtypes
 
     return pdp
@@ -158,6 +185,7 @@ class ParseDaCe(ExtNodeVisitor):
     ###############################################################
     def _get_module(self, node):
         try:
+            #fullmodname = rname(node)
             fullmodname = inspect.getmodule(eval(unparse(node),
                                                  self.globals)).__name__
         except NameError:
