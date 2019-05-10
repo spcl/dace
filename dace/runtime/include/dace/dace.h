@@ -32,5 +32,8 @@
 #include "xilinx/host.h"
 #endif
 
+#ifdef DACE_INTELFPGA
+#include "intel_fpga/host.h"
+#endif
 
 #endif  // __DACE_RUNTIME_H

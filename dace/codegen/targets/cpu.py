@@ -2086,6 +2086,8 @@ def ndslice_cpp(slice, dims, rowmajor=True):
     if len(slice) == 0:  # Scalar
         return '0'
 
+    generated_index = False
+
     for i, d in enumerate(slice):
         if isinstance(d, tuple):
             raise SyntaxError(
@@ -2093,13 +2095,20 @@ def ndslice_cpp(slice, dims, rowmajor=True):
 
         # TODO(later): Use access order
 
+        if str(d) == "0":
+            continue
+
+        if generated_index:
+            result.write(" + ")
+        generated_index = True
+
         result.write(sym2cpp(d))
 
         # If not last
         if i < len(slice) - 1:
             strdims = [str(dim) for dim in dims[i + 1:]]
             result.write(
-                '*%s + ' % '*'.join(strdims))  # Multiply by leading dimensions
+                '*%s' % '*'.join(strdims))  # Multiply by leading dimensions
 
     return result.getvalue()
 

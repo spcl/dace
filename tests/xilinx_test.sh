@@ -83,6 +83,7 @@ fi
 echo "====== Target: Xilinx ======"
 
 DACE_compiler_use_cache=0
+DACE_compiler_fpga_vendor="xilinx"
 DACE_compiler_xilinx_mode="simulation"
 
 TEST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"

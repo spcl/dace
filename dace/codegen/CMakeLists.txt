@@ -17,12 +17,20 @@ set(DACE_XILINX_PART_NAME "xcvu9p-fsgd2104-2l-e" CACHE STRING "Xilinx chip to ta
 set(DACE_XILINX_TARGET_PLATFORM "xilinx_vcu1525_dynamic_5_1" CACHE STRING "SDAccel platform to target")
 set(DACE_XILINX_ENABLE_DEBUGGING OFF CACHE STRING "Inject debugging cores to kernel build (always on for simulation/emulation)")
 
+# Intel FPGA options 
+set(DACE_INTELFPGA_MODE "simulation" CACHE STRING "Type of compilation/execution [emulator/simulator/hardare].")
+set(DACE_INTELFPGA_HOST_FLAGS "" CACHE STRING "Extra flags to host compiler.")
+set(DACE_INTELFPGA_KERNEL_FLAGS "" CACHE STRING "Extra flags to kernel compiler.")
+set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
+set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
+
 # Target detection
 set(DACE_ENABLE_MPI OFF)
 set(DACE_ENABLE_CUDA OFF)
 set(DACE_ENABLE_XILINX OFF)
+set(DACE_ENABLE_INTELFPGA OFF)
 
-# Split list by target
+# Split list by file type
 foreach(DACE_FILE ${DACE_FILES})
   # Extract the target from the folder name
   get_filename_component(DACE_FILE_NAME ${DACE_FILE} NAME_WE)
@@ -38,9 +46,23 @@ foreach(DACE_FILE ${DACE_FILES})
     else()
       set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
     endif()
+  elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
+    set(DACE_ENABLE_INTELFPGA ON)
+    if(DACE_FILE_NAME MATCHES ".+_host") 
+      set(DACE_INTELFPGA_HOST_FILES ${DACE_INTELFPGA_HOST_FILES} ${DACE_FILE})
+    else()
+      set(DACE_INTELFPGA_KERNEL_FILES ${DACE_INTELFPGA_KERNEL_FILES} ${DACE_FILE})
+    endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "mpi")
     set(DACE_ENABLE_MPI ON)
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
+  elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
+    set(DACE_ENABLE_INTELFPGA ON)
+    if(DACE_FILE_NAME MATCHES ".+_host") 
+      set(DACE_INTELFPGA_HOST_FILES ${DACE_INTELFPGA_HOST_FILES} ${DACE_FILE})
+    else()
+      set(DACE_INTELFPGA_KERNEL_FILES ${DACE_INTELFPGA_KERNEL_FILES} ${DACE_FILE})
+    endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
@@ -68,15 +90,22 @@ if(DACE_ENABLE_CUDA)
   set(DACE_LIBS ${DACE_LIBS} ${CUDA_LIBRARIES})
   add_definitions(-DWITH_CUDA)
 endif()
-if(DACE_ENABLE_XILINX)
+if(DACE_ENABLE_XILINX OR DACE_ENABLE_INTELFPGA)
   set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${DACE_HLSLIB_DIR}/cmake)
+  include_directories(SYSTEM ${DACE_HLSLIB_DIR}/include)
+endif()
+if(DACE_ENABLE_XILINX)
   find_package(SDAccel REQUIRED)
-
-  include_directories(SYSTEM ${SDAccel_INCLUDE_DIRS} ${DACE_HLSLIB_DIR}/include)
+  include_directories(SYSTEM ${SDAccel_INCLUDE_DIRS})
   add_definitions(-DDACE_XILINX)
   set(DACE_LIBS ${DACE_LIBS} ${SDAccel_LIBRARIES})
-
+endif()
+if(DACE_ENABLE_INTELFPGA)
+  find_package(IntelFPGAOpenCL REQUIRED)
+  include_directories(SYSTEM ${IntelFPGAOpenCL_INCLUDE_DIRS})
+  add_definitions(-DDACE_INTELFPGA)
+  set(DACE_LIBS ${DACE_LIBS} ${IntelFPGAOpenCL_LIBRARIES})
 endif()
 
 # Create CUDA object files
@@ -273,6 +302,76 @@ if(DACE_ENABLE_XILINX)
   endif()
 
 endif() # DACE_ENABLE_XILINX
+
+# Create Intel FPGA object files
+if(DACE_ENABLE_INTELFPGA)
+
+  if((NOT (DACE_INTELFPGA_MODE STREQUAL "hardware")) OR DACE_INTELFPGA_ENABLE_DEBUGGING)
+    set(DACE_INTELFPGA_HOST_FLAGS "${DACE_INTELFPGA_HOST_FLAGS} -g")
+    set(DACE_INTELFPGA_SYNTHESIS_FLAGS "${DACE_INTELFPGA_KERNEL_FLAGS} -fast-compile -profile=all -g -fast-emulator")
+  endif()
+
+  set_source_files_properties(${DACE_INTELFPGA_KERNEL_FILES} ${DACE_INTELFPGA_HOST_FILES} PROPERTIES COMPILE_FLAGS "${DACE_INTELFPGA_HOST_FLAGS}")
+  set_source_files_properties(${DACE_INTELFPGA_KERNEL_FILES} PROPERTIES COMPILE_FLAGS "-DDACE_INTELFPGA_DEVICE_CODE ${DACE_INTELFPGA_HOST_FLAGS}")
+  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_INTELFPGA_KERNEL_FILES} ${DACE_INTELFPGA_HOST_FILES})
+
+  # Add synthesis and build commands
+  set(DACE_AOC_KERNEL_FILES)
+  foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
+
+    get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
+    string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
+    set(DACE_AOC_KERNEL_FILES ${DACE_AOC_KERNEL_FILES} ${DACE_KERNEL_FILE})
+
+  endforeach()
+
+  string(REPLACE " " ";" DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL
+         "${DACE_INTELFPGA_KERNEL_FLAGS}")
+
+  set(DACE_AOC_BUILD_FLAGS
+    -I${CMAKE_SOURCE_DIR}/include
+    -I${CMAKE_SOURCE_DIR}/../external/hlslib/intel/include
+    -I${CMAKE_SOURCE_DIR}/../runtime/include
+    -I${CMAKE_BINARY_DIR}
+    -board=${DACE_INTELFPGA_TARGET_BOARD}
+    ${DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL})
+
+  add_custom_target(
+    intelfpga_report_${DACE_PROGRAM_NAME}
+    COMMAND
+    ${IntelFPGAOpenCL_AOC}
+    ${DACE_AOC_BUILD_FLAGS}
+    ${DACE_AOC_KERNEL_FILES}
+    -rtl
+    -report)
+
+  add_custom_target(
+    intelfpga_compile_${DACE_PROGRAM_NAME}_emulator
+    COMMAND
+    ${IntelFPGAOpenCL_AOC}
+    ${DACE_AOC_BUILD_FLAGS}
+    -march=emulator
+    ${DACE_AOC_KERNEL_FILES}
+    -o ${DACE_PROGRAM_NAME}_emulator.aocx)
+
+  add_custom_target(
+    intelfpga_compile_${DACE_PROGRAM_NAME}_simulator
+    COMMAND
+    ${IntelFPGAOpenCL_AOC}
+    ${DACE_AOC_BUILD_FLAGS}
+    -march=simulator
+    ${DACE_AOC_KERNEL_FILES}
+    -o ${DACE_PROGRAM_NAME}_emulator.aocx)
+
+  add_custom_target(
+    intelfpga_compile_${DACE_PROGRAM_NAME}_hardware
+    COMMAND
+    ${IntelFPGAOpenCL_AOC}
+    ${DACE_AOC_BUILD_FLAGS}
+    ${DACE_AOC_KERNEL_FILES}
+    -o ${DACE_PROGRAM_NAME}_hardware.aocx)
+
+endif()
 
 # Create DaCe library file 
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})

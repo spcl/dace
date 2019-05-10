@@ -9,7 +9,7 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfMetaInfoStatic, PerfMetaInfo
 
 # Import all code generation targets
-from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx
+from dace.codegen.targets import cpu, cuda, immaterial, mpi, intel_fpga, xilinx
 
 
 class CodegenError(Exception):
@@ -21,10 +21,13 @@ STRING_TO_TARGET = {
     "cuda": cuda.CUDACodeGen,
     "immaterial": immaterial.ImmaterialCodeGen,
     "mpi": mpi.MPICodeGen,
+    "intel_fpga": intel_fpga.IntelFPGACodeGen,
     "xilinx": xilinx.XilinxCodeGen,
 }
 
-_TARGET_REGISTER_ORDER = ['cpu', 'cuda', 'immaterial', 'mpi', 'xilinx']
+_TARGET_REGISTER_ORDER = [
+    'cpu', 'cuda', 'immaterial', 'mpi', 'intel_fpga', 'xilinx'
+]
 
 
 def generate_code(sdfg) -> List[CodeObject]:

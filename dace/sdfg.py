@@ -395,12 +395,12 @@ class SDFG(OrderedDiGraph):
     def scalar_parameters(self, include_constants):
         """ Returns all scalar data arguments to the SDFG (this excludes
             symbols used to define array sizes)."""
-        return [
+        return collections.OrderedDict([
             (name, data) for name, data in self._arg_types.items()
             if isinstance(data, dace.data.Scalar)
             # Exclude constant variables if requested
             and (include_constants or (name not in self.constants))
-        ]
+        ])
 
     def symbols_defined_at(self, node, state=None):
         """ Returns all symbols available to a given node, including only
@@ -1034,7 +1034,7 @@ subgraph cluster_state_{state} {{
                  condition_expr: str,
                  increment_expr: str,
                  loop_end_state=None):
-        """ Helper function that adds a looping state machine around a 
+        """ Helper function that adds a looping state machine around a
             given state (or sequence of states).
             @param before_state: The state after which the loop should
                                  begin, or None if the loop is the first
@@ -1042,7 +1042,7 @@ subgraph cluster_state_{state} {{
             @param loop_state: The state that begins the loop. See also
                                `loop_end_state` if the loop is multi-state.
             @param after_state: The state that should be invoked after
-                                the loop ends, or None if the program 
+                                the loop ends, or None if the program
                                 should terminate (creates an empty state).
             @param loop_var: A name of an inter-state variable to use
                              for the loop. If None, `initialize_expr`
@@ -1051,14 +1051,14 @@ subgraph cluster_state_{state} {{
                                     to `loop_var` before the loop begins.
                                     If None, does not define an expression.
             @param condition_expr: A string condition that occurs every
-                                   loop iteration. If None, loops forever 
+                                   loop iteration. If None, loops forever
                                    (undefined behavior).
             @param increment_expr: A string expression that is assigned to
                                    `loop_var` after every loop iteration.
                                     If None, does not define an expression.
             @param loop_end_state: If the loop wraps multiple states, the
                                    state where the loop iteration ends.
-                                   If None, sets the end state to 
+                                   If None, sets the end state to
                                    `loop_state` as well.
             @return: A 3-tuple of (`before_state`, generated loop guard state,
                                    `after_state`).
@@ -1550,7 +1550,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
-    
+
             @note: Behavior is undefined when there is more than one path
                    involving this edge.
             @param edge: An edge within this state.
@@ -1607,7 +1607,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a tree
             between its node source(s) and sink(s). Used for memlet tracking.
-    
+
             @param edge: An edge within this state.
             @return: A list of edges from source nodes to destination nodes
                      (in arbitrary order) that pass through the given edge.
