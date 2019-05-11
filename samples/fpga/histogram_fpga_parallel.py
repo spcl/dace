@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from dace import SDFG, Memlet, EmptyMemlet
-from dace.types import StorageType, ScheduleType
+from dace.dtypes import StorageType, ScheduleType
 from dace.subsets import Indices
 
 W = dace.symbol("W")
@@ -28,13 +28,13 @@ def make_copy_to_fpga_state(sdfg):
         "A_device", (H, W),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     hist_host = state.add_array("hist", (num_bins, ), itype)
     hist_device = state.add_array(
         "hist_device", (num_bins, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     state.add_memlet_path(
         a_host,
@@ -56,7 +56,7 @@ def make_copy_to_host_state(sdfg):
         "hist_device", (num_bins, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     hist_host = state.add_array("hist", (num_bins, ), itype)
 
     state.add_memlet_path(
@@ -73,12 +73,12 @@ def make_compute_state(sdfg):
     state = sdfg.add_state("histogram_fpga")
 
     a = state.add_stream(
-        "A_pipe_in", dtype, storage=dace.types.StorageType.FPGA_Local)
+        "A_pipe_in", dtype, storage=dace.dtypes.StorageType.FPGA_Local)
     hist = state.add_array(
         "hist_buffer", (num_bins, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     entry, exit = state.add_map(
         "map", {
@@ -112,7 +112,7 @@ def make_init_buffer_state(sdfg):
         "hist_buffer", (num_bins, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     entry, exit = state.add_map(
         "init_map", {"i": "0:num_bins"}, schedule=ScheduleType.FPGA_Device)
@@ -136,9 +136,9 @@ def make_write_buffer_state(sdfg):
         "hist_buffer", (num_bins, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     hist_dram = state.add_stream(
-        "hist_pipe_out", itype, storage=dace.types.StorageType.FPGA_Local)
+        "hist_pipe_out", itype, storage=dace.dtypes.StorageType.FPGA_Local)
 
     state.add_memlet_path(
         hist_buffer,
@@ -220,7 +220,7 @@ def make_sdfg(specialize):
         "A_device", (H, W),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     read_entry, read_exit = state.add_map(
         "read_map", {
             "h": "0:H",
@@ -270,7 +270,7 @@ def make_sdfg(specialize):
         "hist_device", (num_bins, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     merge_entry, merge_exit = state.add_map(
         "merge", {"nb": "0:num_bins"}, schedule=ScheduleType.FPGA_Device)
     merge_reduce = state.add_reduce(

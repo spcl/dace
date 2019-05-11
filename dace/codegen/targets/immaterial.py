@@ -1,4 +1,4 @@
-from dace import data, subsets, symbolic, types
+from dace import data, subsets, symbolic, dtypes
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.cpu import cpp_array_expr, sym2cpp
@@ -22,18 +22,18 @@ class ImmaterialCodeGen(TargetCodeGenerator):
         self.emitted_materialize_funcs = set()
 
         # Register dispatchers
-        dispatcher.register_array_dispatcher(types.StorageType.Immaterial,
+        dispatcher.register_array_dispatcher(dtypes.StorageType.Immaterial,
                                              self)
 
         cpu_storage = [
-            types.StorageType.CPU_Heap, types.StorageType.CPU_Pinned,
-            types.StorageType.CPU_Stack, types.StorageType.Register
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
+            dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
         ]
         for storage_type in cpu_storage:
-            dispatcher.register_copy_dispatcher(types.StorageType.Immaterial,
+            dispatcher.register_copy_dispatcher(dtypes.StorageType.Immaterial,
                                                 storage_type, None, self)
             dispatcher.register_copy_dispatcher(
-                storage_type, types.StorageType.Immaterial, None, self)
+                storage_type, dtypes.StorageType.Immaterial, None, self)
 
     def get_generated_codeobjects(self):
         return []  # Immaterial storage generates inline code
@@ -72,7 +72,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                 arrayname = str(dst_node.desc)
 
             if isinstance(dst_node, nodes.Tasklet) or \
-                    (dst_node.desc(sdfg).storage == types.StorageType.Register):
+                    (dst_node.desc(sdfg).storage == dtypes.StorageType.Register):
                 callsite_stream.write(
                     self.memlet_definition(
                         sdfg, memlet, arrayname, direction="in"), sdfg,
@@ -99,7 +99,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
 
             function_stream.write(dst_node.desc(sdfg).materialize_func)
             if isinstance(src_node, nodes.Tasklet) or \
-                    (src_node.desc(sdfg).storage == types.StorageType.Register):
+                    (src_node.desc(sdfg).storage == dtypes.StorageType.Register):
                 callsite_stream.write(
                     self.memlet_definition(
                         sdfg, memlet, edge.src_conn, direction="out"), sdfg,

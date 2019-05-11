@@ -19,7 +19,7 @@ def add_tmp(state):
         "tmp", (2, H, W),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
 
 def make_init_state(sdfg):
@@ -92,19 +92,19 @@ def make_compute_sdfg():
         y_begin,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "t < T", language=dace.types.Language.Python)))
+                "t < T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry,
         x_begin,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y < H", language=dace.types.Language.Python)))
+                "y < H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry,
         pre_shift,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x < W", language=dace.types.Language.Python)))
+                "x < W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         y_end,
@@ -126,67 +126,67 @@ def make_compute_sdfg():
         time_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "t >= T", language=dace.types.Language.Python)))
+                "t >= T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry,
         y_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y >= H", language=dace.types.Language.Python)))
+                "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry,
         x_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x >= W", language=dace.types.Language.Python)))
+                "x >= W", language=dace.dtypes.Language.Python)))
 
     stream_in = pre_shift.add_stream(
-        "stream_in", dtype, 1, storage=dace.types.StorageType.FPGA_Global)
+        "stream_in", dtype, 1, storage=dace.dtypes.StorageType.FPGA_Global)
     stream_out = loop_body.add_stream(
-        "stream_out", dtype, 1, storage=dace.types.StorageType.FPGA_Global)
+        "stream_out", dtype, 1, storage=dace.dtypes.StorageType.FPGA_Global)
 
     rows_in = pre_shift.add_array(
         "row_buffers", (2, W),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local,
+        storage=dace.dtypes.StorageType.FPGA_Local,
         toplevel=True)
     rows_out = post_shift.add_array(
         "row_buffers", (2, W),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local,
+        storage=dace.dtypes.StorageType.FPGA_Local,
         toplevel=True)
 
     window_buffer_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         toplevel=True)
     window_buffer_out = pre_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         toplevel=True)
     window_compute_in = loop_body.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         toplevel=True)
     window_shift_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         toplevel=True)
     window_shift_out = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         toplevel=True)
 
     code = """\
@@ -288,19 +288,19 @@ def make_read_sdfg():
         y_begin,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "t < T", language=dace.types.Language.Python)))
+                "t < T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry,
         x_begin,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y < H", language=dace.types.Language.Python)))
+                "y < H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry,
         loop_body,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x < W", language=dace.types.Language.Python)))
+                "x < W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         y_end,
@@ -320,29 +320,29 @@ def make_read_sdfg():
         time_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "t >= T", language=dace.types.Language.Python)))
+                "t >= T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry,
         y_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y >= H", language=dace.types.Language.Python)))
+                "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry,
         x_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x >= W", language=dace.types.Language.Python)))
+                "x >= W", language=dace.dtypes.Language.Python)))
 
     mem_read = loop_body.add_array(
         "mem_read", (2, H, W),
         dtype,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     stream_to_kernel = loop_body.add_stream(
         "stream_to_kernel",
         dtype,
         1,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     # Read from memory
     read_memory_memlet = dace.memlet.Memlet(
@@ -393,19 +393,19 @@ def make_write_sdfg():
         y_begin,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "t < T", language=dace.types.Language.Python)))
+                "t < T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry,
         x_begin,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y < H - 2", language=dace.types.Language.Python)))
+                "y < H - 2", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry,
         loop_body,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x < W - 2", language=dace.types.Language.Python)))
+                "x < W - 2", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         y_end,
@@ -425,29 +425,29 @@ def make_write_sdfg():
         time_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "t >= T", language=dace.types.Language.Python)))
+                "t >= T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry,
         y_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y >= H - 2", language=dace.types.Language.Python)))
+                "y >= H - 2", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry,
         x_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x >= W - 2", language=dace.types.Language.Python)))
+                "x >= W - 2", language=dace.dtypes.Language.Python)))
 
     stream_from_kernel = loop_body.add_stream(
         "stream_from_kernel",
         dtype,
         1,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     mem_write = loop_body.add_array(
         "mem_write", (2, H, W),
         dtype,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     # Read from memory
     write_memory_memlet = dace.memlet.Memlet(
@@ -473,25 +473,25 @@ def make_outer_compute_state(sdfg):
         dtype,
         1,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     stream_read_out = state.add_stream(
         "stream_read",
         dtype,
         1,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     stream_write_in = state.add_stream(
         "stream_write",
         dtype,
         1,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     stream_write_out = state.add_stream(
         "stream_write",
         dtype,
         1,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     read_sdfg = make_read_sdfg()
     read_sdfg_node = state.add_nested_sdfg(read_sdfg, sdfg, {"mem_read"},
@@ -571,13 +571,13 @@ def make_sdfg(specialize):
         finalize_even,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "T % 2 == 0", language=dace.types.Language.Python)))
+                "T % 2 == 0", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         fpga_state,
         finalize_odd,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "T % 2 == 1", language=dace.types.Language.Python)))
+                "T % 2 == 1", language=dace.dtypes.Language.Python)))
 
     return sdfg
 

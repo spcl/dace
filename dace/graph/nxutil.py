@@ -9,7 +9,7 @@ from string import ascii_uppercase
 import networkx as nx
 
 import dace
-from dace import sdfg, types, symbolic
+from dace import sdfg, dtypes, symbolic
 from dace.config import Config
 from dace.graph import nodes, graph as gr
 
@@ -407,7 +407,7 @@ def fullrange(ndslice, var_size):
     """ Returns True iff the ND-slice represents the full array size. """
     for dim, (b, e, s) in zip(var_size, ndslice):
         if b != 0 or e != symbolic.pystr_to_symbolic(
-                types.symbol_name_or_value(dim)) or s != 1:
+                dtypes.symbol_name_or_value(dim)) or s != 1:
             return False
     return True
 

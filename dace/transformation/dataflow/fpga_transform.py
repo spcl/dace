@@ -3,7 +3,7 @@
 import copy
 import itertools
 
-from dace import data, types, sdfg as sd, symbolic
+from dace import data, dtypes, sdfg as sd, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -31,9 +31,9 @@ class FPGATransformMap(pattern_matching.Transformation):
 
         # Map schedules that are disallowed to transform to FPGAs
         if (candidate_map.schedule in [
-                types.ScheduleType.MPI, types.ScheduleType.GPU_Device,
-                types.ScheduleType.FPGA_Device,
-                types.ScheduleType.GPU_ThreadBlock
+                dtypes.ScheduleType.MPI, dtypes.ScheduleType.GPU_Device,
+                dtypes.ScheduleType.FPGA_Device,
+                dtypes.ScheduleType.GPU_ThreadBlock
         ]):
             return False
 
@@ -42,9 +42,9 @@ class FPGATransformMap(pattern_matching.Transformation):
         current_node = map_entry
         while current_node != None:
             if (current_node.map.schedule in [
-                    types.ScheduleType.GPU_Device,
-                    types.ScheduleType.FPGA_Device,
-                    types.ScheduleType.GPU_ThreadBlock
+                    dtypes.ScheduleType.GPU_Device,
+                    dtypes.ScheduleType.FPGA_Device,
+                    dtypes.ScheduleType.GPU_ThreadBlock
             ]):
                 return False
             current_node = sdict[current_node]
@@ -54,7 +54,7 @@ class FPGATransformMap(pattern_matching.Transformation):
         subgraph = graph.scope_subgraph(map_entry)
         for node in subgraph.nodes():
             if (isinstance(node, nodes.AccessNode)
-                    and node.desc(sdfg).storage != types.StorageType.Default):
+                    and node.desc(sdfg).storage != dtypes.StorageType.Default):
                 return False
 
         return True
@@ -68,14 +68,14 @@ class FPGATransformMap(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[FPGATransformMap._map_entry]]
-        map_entry.map._schedule = types.ScheduleType.FPGA_Device
+        map_entry.map._schedule = dtypes.ScheduleType.FPGA_Device
 
         # Find map exit nodes
         exit_nodes = graph.exit_nodes(map_entry)
 
         fpga_storage_types = [
-            types.StorageType.FPGA_Global, types.StorageType.FPGA_Local,
-            types.StorageType.CPU_Pinned
+            dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+            dtypes.StorageType.CPU_Pinned
         ]
 
         #######################################################
@@ -111,7 +111,7 @@ class FPGATransformMap(pattern_matching.Transformation):
                     array.shape,
                     materialize_func=array.materialize_func,
                     transient=True,
-                    storage=types.StorageType.FPGA_Global,
+                    storage=dtypes.StorageType.FPGA_Global,
                     allow_conflicts=array.allow_conflicts,
                     access_order=array.access_order,
                     strides=array.strides,
@@ -131,7 +131,7 @@ class FPGATransformMap(pattern_matching.Transformation):
                     array.shape,
                     materialize_func=array.materialize_func,
                     transient=True,
-                    storage=types.StorageType.FPGA_Global,
+                    storage=dtypes.StorageType.FPGA_Global,
                     allow_conflicts=array.allow_conflicts,
                     access_order=array.access_order,
                     strides=array.strides,

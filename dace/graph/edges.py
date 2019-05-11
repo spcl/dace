@@ -4,7 +4,7 @@ import enum
 import re
 
 import dace
-from dace import types
+from dace import dtypes
 from dace.graph.graph import Edge
 from dace.frontend.python import astutils
 from dace.properties import Property, CodeProperty, make_properties
@@ -43,7 +43,7 @@ class InterstateEdge(object):
         from_string=assignments_from_string,
         to_string=assignments_to_string)
     condition = CodeProperty(desc="Transition condition")
-    language = Property(enum=types.Language, default=types.Language.Python)
+    language = Property(enum=dtypes.Language, default=dtypes.Language.Python)
 
     def __init__(self, condition=None, assignments=None):
 

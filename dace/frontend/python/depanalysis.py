@@ -5,7 +5,7 @@ from collections import deque, OrderedDict
 from copy import deepcopy as dcpy
 import sympy
 
-from dace import data as dt, types, symbolic
+from dace import data as dt, dtypes, symbolic
 from dace.graph import edges as ed
 from dace.graph import nodes as nd
 from dace import subsets as sbs
@@ -413,7 +413,7 @@ def _build_dataflow_graph_recurse(sdfg, state, primitives, modules, superEntry,
                 tasklet = nd.EmptyTasklet(prim.name)
             else:
                 # Remove memlets from tasklet AST
-                if prim.language == types.Language.Python:
+                if prim.language == dtypes.Language.Python:
                     clean_code = MemletRemover().visit(prim.ast)
                     clean_code = ModuleInliner(modules).visit(clean_code)
                 else:  # Use external code from tasklet definition
@@ -772,7 +772,7 @@ def add_indirection_subgraph(sdfg, graph, src, dst, memlet):
         storage = sdfg.add_array(
             '__' + memlet.local_name + '_value',
             memlet.data.dtype,
-            storage=types.StorageType.Default,
+            storage=dtypes.StorageType.Default,
             transient=True,
             shape=memlet.bounding_box_size())
     indirectRange = sbs.Range([(0, s - 1, 1) for s in storage.shape])

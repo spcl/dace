@@ -6,7 +6,7 @@ import copy
 from functools import wraps
 import inspect
 
-from dace import data, subsets, symbolic, types
+from dace import data, subsets, symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import astnodes, astutils
 from dace.frontend.python.astutils import *
@@ -86,31 +86,31 @@ def parse_dace_program(f, argtypes, global_vars, modules):
     symresolver = SymbolResolver(allowed_globals)
     symresolver.visit(src_ast)
 
-    from dace.frontend.python import newast
-    src_ast = newast.ModuleResolver(modules).visit(src_ast)
-    # Convert modules to after resolution
-    for mod, modval in modules.items():
-        print(mod, modval)
-        if mod == 'builtins':
-            continue
-        newmod = global_vars[mod]
-        del global_vars[mod]
-        global_vars[modval] = newmod
-    pv = newast.ProgramVisitor(
-        f.__name__,
-        src_file,
-        src_line,
-        #astutils.get_argtypes(src_ast.body[0], global_vars),
-        argtypes,
-        global_vars)
-    sdfg, _, _ = pv.parse_program(src_ast.body[0])
-    sdfg.draw_to_file()
-    sdfg.save("{}.sdfg".format(sdfg.label))
-    print('OK')
-    import os
-    import sys
-    sys.stdout.flush()
-    os._exit(0)
+    #from dace.frontend.python import newast
+    #src_ast = newast.ModuleResolver(modules).visit(src_ast)
+    ## Convert modules to after resolution
+    #for mod, modval in modules.items():
+    #    print(mod, modval)
+    #    if mod == 'builtins':
+    #        continue
+    #    newmod = global_vars[mod]
+    #    del global_vars[mod]
+    #    global_vars[modval] = newmod
+    #pv = newast.ProgramVisitor(
+    #    f.__name__,
+    #    src_file,
+    #    src_line,
+    #    #astutils.get_argtypes(src_ast.body[0], global_vars),
+    #    argtypes,
+    #    global_vars)
+    #sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    #sdfg.draw_to_file()
+    #sdfg.save("{}.sdfg".format(sdfg.label))
+    #print('OK')
+    #import os
+    #import sys
+    #sys.stdout.flush()
+    #os._exit(0)
 
     # 3. Parse the DaCe program to a hierarchical dependency representation
     ast_parser = ParseDaCe(src_file, src_line, argtypes, global_vars, modules,
@@ -254,7 +254,7 @@ class ParseDaCe(ExtNodeVisitor):
 
             # External function calls
             elif func in self.globals:
-                if isinstance(self.globals[func], types._external_function):
+                if isinstance(self.globals[func], dtypes._external_function):
                     # External function needs to be recompiled with current
                     # symbols
                     src_ast, src_file, src_line, src = function_to_ast(
@@ -571,7 +571,7 @@ class ParseDaCe(ExtNodeVisitor):
                 return None
             elif (funcname.rfind('.') != -1
                   and funcname[funcname.rfind('.') +
-                               1:] in types.TYPECLASS_STRINGS):
+                               1:] in dtypes.TYPECLASS_STRINGS):
                 return node
             else:
                 raise DaCeSyntaxError(
@@ -743,10 +743,10 @@ class ParseDaCe(ExtNodeVisitor):
                         self.getarg_or_kwarg(dec, 1, 'global_code'))
 
                 if lang is None:
-                    lang = types.Language.Python
+                    lang = dtypes.Language.Python
                 else:
                     try:
-                        lang = types.Language[lang]
+                        lang = dtypes.Language[lang]
                     except KeyError:
                         raise DaCeSyntaxError(
                             self, node,
@@ -1232,10 +1232,10 @@ class ParseDaCe(ExtNodeVisitor):
                         self.getarg_or_kwarg(dec, 1, 'global_code'))
 
                 if lang is None:
-                    lang = types.Language.Python
+                    lang = dtypes.Language.Python
                 else:
                     try:
-                        lang = types.Language[lang]
+                        lang = dtypes.Language[lang]
                     except KeyError:
                         raise DaCeSyntaxError(
                             self, node,
@@ -1484,18 +1484,18 @@ class SymbolResolver(astutils.ExtNodeTransformer):
         sym = self.symbols[node.id]
         if isinstance(sym, symbolic.symbol):
             return ast.copy_location(ast.Name(id=sym.name, ctx=node.ctx), node)
-        elif isinstance(sym, types.typeclass):
+        elif isinstance(sym, dtypes.typeclass):
             # Find dace module name
             dacemodule = next(
                 k for k, v in self.symbols.items()
-                if isinstance(v, type(types)) and v.__name__ == 'dace')
+                if isinstance(v, type(dtypes)) and v.__name__ == 'dace')
 
             return ast.copy_location(
                 ast.Attribute(
                     value=ast.Name(id=dacemodule, ctx=ast.Load()),
                     attr=sym.to_string(),
                     ctx=node.ctx), node)
-        elif types.isconstant(sym):
+        elif dtypes.isconstant(sym):
             return ast.copy_location(ast.Num(n=sym, ctx=node.ctx), node)
         elif isinstance(sym, ast.Name):
             return ast.copy_location(ast.Name(id=sym.id, ctx=node.ctx), node)
@@ -1628,7 +1628,7 @@ class FunctionInliner(ExtNodeTransformer):
 
         # Obtain the function object
         f = None
-        if isinstance(self.globals[funcname], types._external_function):
+        if isinstance(self.globals[funcname], dtypes._external_function):
             f = self.globals[funcname].func
         else:
             f = self.globals[funcname]

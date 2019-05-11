@@ -2,7 +2,7 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import data, types, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import ShapeProperty

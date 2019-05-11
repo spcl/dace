@@ -5,7 +5,7 @@ from collections import OrderedDict
 import sympy
 from typing import Any, Dict, List, Tuple
 
-from dace import types, symbolic
+from dace import dtypes, symbolic
 
 
 def rname(node):
@@ -54,9 +54,9 @@ def _datadesc(obj: Any):
         return obj
     elif symbolic.issymbolic(obj):
         return data.Scalar(symbolic.symtype(obj))
-    elif isinstance(obj, types.typeclass):
+    elif isinstance(obj, dtypes.typeclass):
         return data.Scalar(obj)
-    return data.Scalar(types.typeclass(type(obj)))
+    return data.Scalar(dtypes.typeclass(type(obj)))
 
 
 def get_argtypes(
@@ -70,21 +70,21 @@ def get_argtypes(
     else:
         decorator_anns = [None]
 
-    types = None
+    dtypes = None
     if all((a is not None for a in param_anns)):
-        types = param_anns
+        dtypes = param_anns
     if all((a is not None for a in decorator_anns)):
-        if types is not None:
+        if dtypes is not None:
             raise SyntaxError(
                 'DAPP programs can only have decorator arguments ' +
                 '(\'@dapp.program(...)\') or type annotations ' +
                 '(\'def program(arr: type, ...)\'), but not both')
-        types = decorator_anns
-    if types is None:
+        dtypes = decorator_anns
+    if dtypes is None:
         raise SyntaxError('Data-centric programs must be annotated with types')
 
     return OrderedDict([(name, _datadesc(eval(t, global_vars)))
-                        for name, t in zip(arg_names, types)])
+                        for name, t in zip(arg_names, dtypes)])
 
 
 def DaCeSyntaxError(visitor, node, err):
@@ -235,11 +235,10 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         # If range is the entire array, use the array descriptor to obtain the
         # entire range
         if astrange is None:
-            return [
-                (symbolic.pystr_to_symbolic(0),
-                 symbolic.pystr_to_symbolic(types.symbol_name_or_value(s)) - 1,
-                 symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape
-            ]
+            return [(
+                symbolic.pystr_to_symbolic(0),
+                symbolic.pystr_to_symbolic(dtypes.symbol_name_or_value(s)) - 1,
+                symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
 
     result = [None] * len(astrange)
     for i, r in enumerate(astrange):
@@ -256,7 +255,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 end = symbolic.pystr_to_symbolic(unparse(end)) - 1
             else:
                 end = symbolic.pystr_to_symbolic(
-                    types.symbol_name_or_value(arrdesc.shape[i])) - 1
+                    dtypes.symbol_name_or_value(arrdesc.shape[i])) - 1
             if skip is None:
                 skip = symbolic.pystr_to_symbolic(1)
             else:

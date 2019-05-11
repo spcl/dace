@@ -22,11 +22,11 @@ from dace.codegen.targets import cpu, cuda
 from dace.codegen import cppunparse
 
 REDUCTION_TYPE_TO_HLSLIB = {
-    dace.types.ReductionType.Min: "hlslib::op::Min",
-    dace.types.ReductionType.Max: "hlslib::op::Max",
-    dace.types.ReductionType.Sum: "hlslib::op::Sum",
-    dace.types.ReductionType.Product: "hlslib::op::Product",
-    dace.types.ReductionType.Logical_And: "hlslib::op::And",
+    dace.dtypes.ReductionType.Min: "hlslib::op::Min",
+    dace.dtypes.ReductionType.Max: "hlslib::op::Max",
+    dace.dtypes.ReductionType.Sum: "hlslib::op::Sum",
+    dace.dtypes.ReductionType.Product: "hlslib::op::Product",
+    dace.dtypes.ReductionType.Logical_And: "hlslib::op::And",
 }
 
 
@@ -58,49 +58,49 @@ class XilinxCodeGen(TargetCodeGenerator):
 
         # Register additional Xilinx dispatchers
         self._dispatcher.register_map_dispatcher(
-            [dace.types.ScheduleType.FPGA_Device], self)
+            [dace.dtypes.ScheduleType.FPGA_Device], self)
 
         self._dispatcher.register_state_dispatcher(
             self,
             predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and all([
                 n.desc(sdfg).storage in [
-                    dace.types.StorageType.FPGA_Global,
-                    dace.types.StorageType.FPGA_Local,
-                    dace.types.StorageType.FPGA_Registers]
+                    dace.dtypes.StorageType.FPGA_Global,
+                    dace.dtypes.StorageType.FPGA_Local,
+                    dace.dtypes.StorageType.FPGA_Registers]
                 for n in state.data_nodes()]))
 
         self._dispatcher.register_node_dispatcher(
             self, predicate=lambda *_: self._in_device_code)
 
         xilinx_storage = [
-            dace.types.StorageType.FPGA_Global,
-            dace.types.StorageType.FPGA_Local,
-            dace.types.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.FPGA_Global,
+            dace.dtypes.StorageType.FPGA_Local,
+            dace.dtypes.StorageType.FPGA_Registers,
         ]
         self._dispatcher.register_array_dispatcher(xilinx_storage, self)
 
         # Register permitted copies
-        for storage_from in itertools.chain(xilinx_storage,
-                                            [dace.types.StorageType.Register]):
+        for storage_from in itertools.chain(
+                xilinx_storage, [dace.dtypes.StorageType.Register]):
             for storage_to in itertools.chain(
-                    xilinx_storage, [dace.types.StorageType.Register]):
-                if (storage_from == dace.types.StorageType.Register
-                        and storage_to == dace.types.StorageType.Register):
+                    xilinx_storage, [dace.dtypes.StorageType.Register]):
+                if (storage_from == dace.dtypes.StorageType.Register
+                        and storage_to == dace.dtypes.StorageType.Register):
                     continue
                 self._dispatcher.register_copy_dispatcher(
                     storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.types.StorageType.FPGA_Global,
-            dace.types.StorageType.CPU_Heap, None, self)
+            dace.dtypes.StorageType.FPGA_Global,
+            dace.dtypes.StorageType.CPU_Heap, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.types.StorageType.FPGA_Global,
-            dace.types.StorageType.CPU_Stack, None, self)
+            dace.dtypes.StorageType.FPGA_Global,
+            dace.dtypes.StorageType.CPU_Stack, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.types.StorageType.CPU_Heap,
-            dace.types.StorageType.FPGA_Global, None, self)
+            dace.dtypes.StorageType.CPU_Heap,
+            dace.dtypes.StorageType.FPGA_Global, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.types.StorageType.CPU_Stack,
-            dace.types.StorageType.FPGA_Global, None, self)
+            dace.dtypes.StorageType.CPU_Stack,
+            dace.dtypes.StorageType.FPGA_Global, None, self)
 
     @property
     def has_initializer(self):
@@ -154,7 +154,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                 data = node.desc(sdfg)
                 if node.data not in all_transients or node.data in allocated:
                     continue
-                if data.storage != dace.types.StorageType.FPGA_Global:
+                if data.storage != dace.dtypes.StorageType.FPGA_Global:
                     continue
                 allocated.add(node.data)
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
@@ -175,7 +175,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                     continue
                 # Make sure there are no global transients in the nested state
                 # that are thus not gonna be allocated
-                if data.storage == dace.types.StorageType.FPGA_Global:
+                if data.storage == dace.dtypes.StorageType.FPGA_Global:
                     raise dace.codegen.codegen.CodegenError(
                         "Cannot allocate global memory from device code.")
                 allocated.add(data)
@@ -215,7 +215,7 @@ class XilinxCodeGen(TargetCodeGenerator):
             for n, scope in subgraph.all_nodes_recursive():
                 if (isinstance(n, dace.graph.nodes.AccessNode)
                         and n.desc(sdfg).transient and n.desc(sdfg).storage ==
-                        dace.types.StorageType.FPGA_Global):
+                        dace.dtypes.StorageType.FPGA_Global):
                     if n.data in seen:
                         continue
                     seen.add(n.data)
@@ -273,7 +273,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
                                     and n.desc(scope).storage ==
-                                    dace.types.StorageType.FPGA_Global and
+                                    dace.dtypes.StorageType.FPGA_Global and
                                     n.data not in nested_global_transients_seen
                                 ):
                                 nested_global_transients.append(n)
@@ -286,7 +286,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                 if (isinstance(data, dace.data.Array)
                         or isinstance(data, dace.data.Scalar)
                         or isinstance(data, dace.data.Stream)):
-                    if data.storage == dace.types.StorageType.FPGA_Global:
+                    if data.storage == dace.dtypes.StorageType.FPGA_Global:
                         subgraph_params[subgraph].append((is_output, dataname,
                                                           data))
                         if is_output:
@@ -295,9 +295,9 @@ class XilinxCodeGen(TargetCodeGenerator):
                         else:
                             global_data_params.append((is_output, dataname,
                                                        data))
-                    elif (data.storage == dace.types.StorageType.FPGA_Local or
-                          data.storage == dace.types.StorageType.FPGA_Registers
-                          ):
+                    elif (data.storage == dace.dtypes.StorageType.FPGA_Local
+                          or data.storage ==
+                          dace.dtypes.StorageType.FPGA_Registers):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -313,12 +313,12 @@ class XilinxCodeGen(TargetCodeGenerator):
                 else:
                     raise TypeError("Unsupported data type: {}".format(
                         type(data).__name__))
-            subgraph_params[subgraph] = dace.types.deduplicate(
+            subgraph_params[subgraph] = dace.dtypes.deduplicate(
                 subgraph_params[subgraph])
 
         # Deduplicate
-        global_data_params = dace.types.deduplicate(global_data_params)
-        top_level_local_data = dace.types.deduplicate(top_level_local_data)
+        global_data_params = dace.dtypes.deduplicate(global_data_params)
+        top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
         top_level_local_data = [data_to_node[n] for n in top_level_local_data]
 
         # Get scalar parameters
@@ -792,13 +792,13 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{""".format(
             argname
             for out, argname, arg in params
             if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.types.StorageType.FPGA_Global and not out
+            and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
         }
         out_args = {
             argname
             for out, argname, arg in params
             if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.types.StorageType.FPGA_Global and out
+            and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
         if len(in_args) > 0 or len(out_args) > 0:
             # Add ArrayInterface objects to wrap input and output pointers to
@@ -982,7 +982,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         elif isinstance(nodedesc, dace.data.Array):
 
-            if nodedesc.storage == dace.types.StorageType.FPGA_Global:
+            if nodedesc.storage == dace.dtypes.StorageType.FPGA_Global:
 
                 if self._in_device_code:
 
@@ -1007,8 +1007,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
-            elif (nodedesc.storage == dace.types.StorageType.FPGA_Local or
-                  nodedesc.storage == dace.types.StorageType.FPGA_Registers):
+            elif (nodedesc.storage == dace.dtypes.StorageType.FPGA_Local or
+                  nodedesc.storage == dace.dtypes.StorageType.FPGA_Registers):
 
                 if not self._in_device_code:
                     raise dace.codegen.codegen.CodegenError(
@@ -1046,7 +1046,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                         nodedesc.dtype.ctype, veclen, dataname, arrsize_vec))
                     self._dispatcher.defined_vars.add(dataname,
                                                       DefinedType.Pointer)
-                    if nodedesc.storage == dace.types.StorageType.FPGA_Registers:
+                    if nodedesc.storage == dace.dtypes.StorageType.FPGA_Registers:
                         result.write("#pragma HLS ARRAY_PARTITION variable={} "
                                      "complete\n".format(dataname))
                     elif len(nodedesc.shape) > 1:
@@ -1082,13 +1082,14 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         u, v, memlet = edge.src, edge.dst, edge.data
 
         cpu_storage_types = [
-            dace.types.StorageType.CPU_Heap, dace.types.StorageType.CPU_Stack,
-            dace.types.StorageType.CPU_Pinned
+            dace.dtypes.StorageType.CPU_Heap,
+            dace.dtypes.StorageType.CPU_Stack,
+            dace.dtypes.StorageType.CPU_Pinned
         ]
         fpga_storage_types = [
-            dace.types.StorageType.FPGA_Global,
-            dace.types.StorageType.FPGA_Local,
-            dace.types.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.FPGA_Global,
+            dace.dtypes.StorageType.FPGA_Local,
+            dace.dtypes.StorageType.FPGA_Registers,
         ]
 
         # Determine directionality
@@ -1105,13 +1106,13 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                         and isinstance(dst_node, nodes.AccessNode))
 
         host_to_device = (data_to_data and src_storage in cpu_storage_types and
-                          dst_storage == dace.types.StorageType.FPGA_Global)
-        device_to_host = (data_to_data
-                          and src_storage == dace.types.StorageType.FPGA_Global
+                          dst_storage == dace.dtypes.StorageType.FPGA_Global)
+        device_to_host = (data_to_data and
+                          src_storage == dace.dtypes.StorageType.FPGA_Global
                           and dst_storage in cpu_storage_types)
         device_to_device = (
-            data_to_data and src_storage == dace.types.StorageType.FPGA_Global
-            and dst_storage == dace.types.StorageType.FPGA_Global)
+            data_to_data and src_storage == dace.dtypes.StorageType.FPGA_Global
+            and dst_storage == dace.dtypes.StorageType.FPGA_Global)
 
         if (host_to_device or device_to_host) and self._in_device_code:
             raise RuntimeError(
@@ -1165,11 +1166,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
-              and (((src_storage == dace.types.StorageType.FPGA_Local
-                     or src_storage == dace.types.StorageType.FPGA_Registers)
+              and (((src_storage == dace.dtypes.StorageType.FPGA_Local
+                     or src_storage == dace.dtypes.StorageType.FPGA_Registers)
                     and dst_storage not in fpga_storage_types) or
-                   ((dst_storage == dace.types.StorageType.FPGA_Local
-                     or dst_storage == dace.types.StorageType.FPGA_Registers)
+                   ((dst_storage == dace.dtypes.StorageType.FPGA_Local
+                     or dst_storage == dace.dtypes.StorageType.FPGA_Registers)
                     and src_storage not in fpga_storage_types))):
             raise NotImplementedError(
                 "Copies between host memory and FPGA "
@@ -1190,9 +1191,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
             # TODO: detect in which cases we shouldn't unroll
             register_to_register = (src_node.desc(
-                sdfg).storage == dace.types.StorageType.FPGA_Registers
+                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
                                     or dst_node.desc(sdfg).storage ==
-                                    dace.types.StorageType.FPGA_Registers)
+                                    dace.dtypes.StorageType.FPGA_Registers)
 
             # Loop intro
             num_loops = 0
@@ -1247,7 +1248,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             for node in [src_node, dst_node]:
                 if (isinstance(node.desc(sdfg), dace.data.Array)
                         and node.desc(sdfg).storage in [
-                            dace.types.StorageType.FPGA_Local,
+                            dace.dtypes.StorageType.FPGA_Local,
                             dace.StorageType.FPGA_Registers
                         ]):
                     callsite_stream.write(
@@ -1302,8 +1303,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dace.types.ScheduleType.Default,
-                    dace.types.ScheduleType.FPGA_Device
+                    dace.dtypes.ScheduleType.Default,
+                    dace.dtypes.ScheduleType.FPGA_Device
             ]:
                 # raise dace.codegen.codegen.CodegenError(
                 #     "Cannot produce FPGA code for {} node with schedule {}: ".
@@ -1325,7 +1326,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     function_stream, callsite_stream):
 
         if isinstance(src_node, nodes.Tasklet):
-            src_storage = dace.types.StorageType.Register
+            src_storage = dace.dtypes.StorageType.Register
             try:
                 src_parent = dfg.scope_dict()[src_node]
             except KeyError:
@@ -1336,7 +1337,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             src_storage = src_node.desc(sdfg).storage
 
         if isinstance(dst_node, nodes.Tasklet):
-            dst_storage = dace.types.StorageType.Register
+            dst_storage = dace.dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
 
@@ -1455,7 +1456,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             if ((isinstance(src_data, dace.data.Stream)
                  and src_data.is_stream_array()) or
                 (isinstance(src_data, dace.data.Array) and
-                 src_data.storage == dace.types.StorageType.FPGA_Registers)):
+                 src_data.storage == dace.dtypes.StorageType.FPGA_Registers)):
                 # Unroll reads from registers and stream arrays
                 unroll_dim.append(True)
             else:
@@ -1517,7 +1518,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         # Determine reduction type
         reduction_type = operations.detect_reduction_type(node.wcr)
-        if reduction_type == dace.types.ReductionType.Custom:
+        if reduction_type == dace.dtypes.ReductionType.Custom:
             raise NotImplementedError("Custom reduction for FPGA is NYI")
 
         # Input and output variables
@@ -1671,8 +1672,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.types.StorageType.FPGA_Local
-                 or datadesc.storage == dace.types.StorageType.FPGA_Registers)
+                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
+                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and edge.data.wcr is None):
                 callsite_stream.write(
                     "#pragma HLS DEPENDENCE variable=__{} false".format(

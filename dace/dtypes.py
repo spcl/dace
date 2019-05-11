@@ -310,10 +310,10 @@ class struct(typeclass):
 
     def emit_definition(self):
         return '''struct {name} {{
-{types}
+{typ}
 }};'''.format(
             name=self.name,
-            types='\n'.join([
+            typ='\n'.join([
                 '    %s %s;' % (t.ctype, tname)
                 for tname, t in sorted(self._data.items())
             ]))

@@ -1,5 +1,5 @@
 """ Contains classes that implement the vectorization transformation. """
-from dace import data, types, symbolic
+from dace import data, dtypes, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties

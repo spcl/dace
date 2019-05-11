@@ -3,7 +3,7 @@
 from collections import deque, OrderedDict
 import itertools
 import networkx as nx
-from dace.types import deduplicate
+from dace.dtypes import deduplicate
 
 
 class NodeNotFoundError(Exception):

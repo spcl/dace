@@ -1,7 +1,7 @@
 import ctypes
 import numpy as np
 
-from dace import symbolic, types
+from dace import symbolic, dtypes
 from dace.config import Config
 from dace.frontend import operations
 from dace.properties import Property, make_properties
@@ -19,7 +19,7 @@ class CodeObject(object):
     language = Property(
         dtype=str,
         desc="Language used for this code (same " +
-        "as its file extension)")  # dtype=types.Language?
+        "as its file extension)")  # dtype=dtypes.Language?
     target = Property(dtype=type, desc="Target to use for compilation")
     title = Property(dtype=str, desc="Title of code for GUI")
     extra_compiler_kwargs = Property(

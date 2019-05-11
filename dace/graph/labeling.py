@@ -9,7 +9,7 @@ import sympy
 import unittest
 import math
 
-from dace import data, subsets, symbolic, types
+from dace import data, subsets, symbolic, dtypes
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedMultiDiGraph
@@ -404,7 +404,7 @@ class ConstantSMemlet(SeparableMemletPattern):
         if isinstance(dexpr, tuple) and len(dexpr) == 3:
             # Try to match a constant expression for the range
             for rngelem in dexpr:
-                if types.isconstant(rngelem):
+                if dtypes.isconstant(rngelem):
                     continue
 
                 matches = rngelem.match(cst)
@@ -415,7 +415,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 
         else:  # Single element case
             # Try to match a constant expression
-            if not types.isconstant(dexpr):
+            if not dtypes.isconstant(dexpr):
                 matches = dexpr.match(cst)
                 if matches is None or len(matches) != 1:
                     return False
@@ -525,7 +525,7 @@ class ConstantRangeMemlet(MemletPattern):
         constant_range = True
         for dim in node_range:
             for rngelem in dim:  # For (begin, end, skip)
-                if not types.isconstant(rngelem) and not isinstance(
+                if not dtypes.isconstant(rngelem) and not isinstance(
                         rngelem, sympy.Number):
                     constant_range = False
                     break

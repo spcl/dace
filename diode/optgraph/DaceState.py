@@ -8,7 +8,7 @@ import tempfile
 import traceback
 from six import StringIO
 
-from dace import types
+from dace import dtypes
 from dace.transformation import optimizer
 from dace.sdfg import SDFG
 from dace.frontend.python import parser

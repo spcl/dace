@@ -4,7 +4,7 @@ import copy
 import itertools
 
 import dace
-from dace import data, types, sdfg as sd, subsets, symbolic
+from dace import data, dtypes, sdfg as sd, subsets, symbolic
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 

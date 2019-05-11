@@ -64,8 +64,8 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
     exit_nodes = [tasklet_node]
 
     gpu_storage_types = [
-        dace.types.StorageType.GPU_Global, dace.types.StorageType.GPU_Shared,
-        dace.types.StorageType.GPU_Stack
+        dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared,
+        dace.dtypes.StorageType.GPU_Stack
     ]
 
     #######################################################
@@ -137,7 +137,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                     shape=[1],
                     dtype=array.dtype,
                     transient=True,
-                    storage=dace.types.StorageType.GPU_Global)
+                    storage=dace.dtypes.StorageType.GPU_Global)
             else:
                 cloned_array = sdfg.add_array(
                     name=cloned_name,
@@ -145,7 +145,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                     dtype=array.dtype,
                     materialize_func=array.materialize_func,
                     transient=True,
-                    storage=dace.types.StorageType.GPU_Global,
+                    storage=dace.dtypes.StorageType.GPU_Global,
                     allow_conflicts=array.allow_conflicts,
                     access_order=tuple(
                         [array.access_order[d] for d in actual_dims]),
@@ -201,7 +201,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                     shape=[1],
                     dtype=array.dtype,
                     transient=True,
-                    storage=dace.types.StorageType.GPU_Global)
+                    storage=dace.dtypes.StorageType.GPU_Global)
             else:
                 cloned_array = sdfg.add_array(
                     name=cloned_name,
@@ -209,7 +209,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                     dtype=array.dtype,
                     materialize_func=array.materialize_func,
                     transient=True,
-                    storage=dace.types.StorageType.GPU_Global,
+                    storage=dace.dtypes.StorageType.GPU_Global,
                     allow_conflicts=array.allow_conflicts,
                     access_order=tuple(
                         [array.access_order[d] for d in actual_dims]),
@@ -458,7 +458,7 @@ def matrix_multiplication(state: State,
     k_entry, k_exit = state.add_map(
         name=label + '_' + 'k_map',
         ndrange=dict(ik=N_range),
-        schedule=dace.types.ScheduleType.Sequential)
+        schedule=dace.dtypes.ScheduleType.Sequential)
     k_entry.in_connectors = {'IN_1', 'IN_2'}
     k_entry.out_connectors = {'OUT_1', 'OUT_2'}
     k_exit.in_connectors = {'IN_1'}
@@ -592,7 +592,7 @@ def matrix_transpose_cublas(state: State,
             astride=A.strides[1],
             bstride=B.strides[1],
             alpha=alpha),
-        language=dace.types.Language.CPP)
+        language=dace.dtypes.Language.CPP)
 
     state.add_edge(A_src, None, tasklet, 'a',
                    dace.Memlet.simple(A_node, '0:%s,0:%s' % A.shape))
@@ -676,7 +676,7 @@ def matrix_multiplication_cublas(state: State,
             (cuDoubleComplex*)c, bsize
         );
         ''',  # cuBLAS is column-major, so we switch the arguments
-        language=dace.types.Language.CPP)
+        language=dace.dtypes.Language.CPP)
 
     state.add_edge(A_src, None, tasklet, 'a',
                    dace.Memlet.simple(A_node, A_outer_range))
@@ -770,7 +770,7 @@ def matrix_multiplication_cublas_v2(state: State,
         '''.format(
             alpha=alpha,
             beta=beta),  # cuBLAS is column-major, so we switch the arguments
-        language=dace.types.Language.CPP)
+        language=dace.dtypes.Language.CPP)
 
     state.add_edge(A_src, None, tasklet, 'a',
                    dace.Memlet.simple(A_node, A_outer_range))
@@ -857,7 +857,7 @@ def matrix_multiplication_mkl(state: State,
             (MKL_Complex16*)c, &{m}
         );
         '''.format(m=M, n=N, k=K),
-        language=dace.types.Language.CPP)
+        language=dace.dtypes.Language.CPP)
 
     state.add_edge(A_src, None, tasklet, 'a',
                    dace.Memlet.simple(A_node, A_outer_range))
@@ -869,14 +869,14 @@ def matrix_multiplication_mkl(state: State,
 
 def matrix_multiplication_s(A_label: str,
                             A_shape: Shape,
-                            A_type: dace.types.typeclass,
+                            A_type: dace.dtypes.typeclass,
                             B_label: str,
                             B_shape: Shape,
-                            B_type: dace.types.typeclass,
+                            B_type: dace.dtypes.typeclass,
                             create_C: bool = True,
                             C_label: str = None,
                             C_shape: Shape = None,
-                            C_type: dace.types.typeclass = None,
+                            C_type: dace.dtypes.typeclass = None,
                             is_A_transient: bool = False,
                             is_B_transient: bool = False,
                             is_C_transient: bool = False,
@@ -929,7 +929,7 @@ def matrix_multiplication_s(A_label: str,
     k_entry, k_exit = state.add_map(
         name=label + '_' + 'k_map',
         ndrange=dict(ik=N_range),
-        schedule=dace.types.ScheduleType.Sequential)
+        schedule=dace.dtypes.ScheduleType.Sequential)
     k_entry.in_connectors = {'IN_1', 'IN_2'}
     k_entry.out_connectors = {'OUT_1', 'OUT_2'}
     k_exit.in_connectors = {'IN_1'}
@@ -1142,14 +1142,14 @@ def scalar_array_multiplication(state: State,
 
 def scalar_array_multiplication_s(alpha_label: str,
                                   alpha_shape: Shape,
-                                  alpha_type: dace.types.typeclass,
+                                  alpha_type: dace.dtypes.typeclass,
                                   A_label: str,
                                   A_shape: Shape,
-                                  A_type: dace.types.typeclass,
+                                  A_type: dace.dtypes.typeclass,
                                   create_B: bool = True,
                                   B_label: str = None,
                                   B_shape: Shape = None,
-                                  B_type: dace.types.typeclass = None,
+                                  B_type: dace.dtypes.typeclass = None,
                                   is_alpha_transient: bool = False,
                                   is_A_transient: bool = False,
                                   is_B_transient: bool = False,
@@ -1307,7 +1307,7 @@ def unary_array_op(state: State,
                    B_dst: Node,
                    B_node: DNode,
                    code: str,
-                   lang=dace.types.Language.Python,
+                   lang=dace.dtypes.Language.Python,
                    accumulate: bool = False,
                    A_index: Index = None,
                    B_index: Index = None,
@@ -1425,7 +1425,7 @@ def matrix_transpose(state: State,
                      A_index: Index = None,
                      B_index: Index = None,
                      code: str = None,
-                     lang=dace.types.Language.Python,
+                     lang=dace.dtypes.Language.Python,
                      label: str = None):
     """ Adds a matrix transpose operation to an existing state. """
 
@@ -1471,7 +1471,7 @@ def matrix_transpose_double(state: State,
                             B_index: Index = None,
                             C_index: Index = None,
                             code: str = None,
-                            lang=dace.types.Language.Python,
+                            lang=dace.dtypes.Language.Python,
                             label: str = None):
     """ Adds a matrix transpose operation, which transposes to two different
         matrices, to an existing state. """
@@ -1520,11 +1520,11 @@ c = a
 
 def matrix_transpose_s(A_label: str,
                        A_shape: Shape,
-                       A_type: dace.types.typeclass,
+                       A_type: dace.dtypes.typeclass,
                        create_B: bool = True,
                        B_label: str = None,
                        B_shape: Shape = None,
-                       B_type: dace.types.typeclass = None,
+                       B_type: dace.dtypes.typeclass = None,
                        is_alpha_transient: bool = False,
                        is_A_transient: bool = False,
                        is_B_transient: bool = False,
@@ -1693,9 +1693,9 @@ def matrix_pointwise_op(state: State,
 
     # Create map/tasklet
     if reduce:
-        schedule = dace.types.ScheduleType.Sequential
+        schedule = dace.dtypes.ScheduleType.Sequential
     else:
-        schedule = dace.types.ScheduleType.Default
+        schedule = dace.dtypes.ScheduleType.Default
     map_entry, map_exit = state.add_map(
         name=label + '_map', ndrange=map_ranges, schedule=schedule)
     map_entry.in_connectors = {'IN_1', 'IN_2'}
@@ -1763,7 +1763,7 @@ def csr2dense_cusparse(state: State, val: DNode, rowptr: DNode, colind: DNode,
         {m}
     );
         '''.format(m=str(d_shape[0]), n=str(d_shape[1])),
-        language=dace.types.Language.CPP)
+        language=dace.dtypes.Language.CPP)
     state.add_edge(val, None, tasklet, 'val',
                    dace.Memlet.from_array(val.data, val.desc(sdfg)))
     state.add_edge(rowptr, None, tasklet, 'rowptr',
@@ -1829,7 +1829,7 @@ def matrix_inversion_cusolver(state, arg, mat_inv, mat_index, label):
         );
         //cudaDeviceSynchronize();
         '''.format(n=m_shape[-1]),
-        language=dace.types.Language.CPP)
+        language=dace.dtypes.Language.CPP)
     state.add_edge(arg, None, inv_task, 'a',
                    dace.Memlet.from_array(arg.data, arg.desc(sdfg)))
     state.add_edge(inv_task, 'b', mat_inv, None,

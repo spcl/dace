@@ -170,7 +170,7 @@ class TFSession:
             dace.graph.edges.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 <" + str(iterations - 1),
-                    dace.types.Language.Python),
+                    dace.dtypes.Language.Python),
                 assignments={'__dacet1': '__dacet1+1'}))
         sdfg.add_edge(reinitState, s1, dace.graph.edges.InterstateEdge())
         sdfg.add_edge(
@@ -179,7 +179,7 @@ class TFSession:
             dace.graph.edges.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 >= " +
-                    str(iterations - 1), dace.types.Language.Python)))
+                    str(iterations - 1), dace.dtypes.Language.Python)))
 
         try:
             iter(initializer)
@@ -1822,7 +1822,7 @@ else:
         tasklet = state.add_tasklet(
             mapLabel + "_denominator", {'j0', 'j1'}, {'out'},
             "out = dace::math::exp(j0-j1);",
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(temp2Node, [inputParams[1]], [inputDims[1]], "0")
         inList = [inputNodes[0], temp1Node]
         self.add_in_memlets(inList, mapEntry, tasklet, inputDims, inputParams)
@@ -1839,7 +1839,7 @@ else:
         tasklet = state.add_tasklet(
             mapLabel + "_softmax", {'j0', 'j1', 'j2'}, {'out'},
             "out = (dace::math::exp(j0-j1))/j2;",
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         inList = [inputNodes[0], temp1Node, temp2Node]
         paramsList = inputParams + [inputParams[1]]
         dimsList = inputDims + [inputDims[1]]
@@ -1853,7 +1853,7 @@ else:
         tasklet = state.add_tasklet(
             mapLabel + "_loss", {'j0', 'j1'}, {'out'},
             "if (int(j1) == i1) {\n\tout=-(dace::math::log(j0));}\nelse{\n\tout=0;}",
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(outputList[0], [inputParams[1]], [inputDims[1]], "0")
         self.add_in_memlets([temp3Node, inputNodes[1]], mapEntry, tasklet,
                             inputDims, inputParams)
@@ -1977,7 +1977,7 @@ else:
         tasklet = state.add_tasklet(
             label, {'j0', 'j1', 'j2'}, {'out'},
             taskletCode,
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(preOut, [shortParams], [shortDims], "0")
         inList = [inputNodes[1]]
         inList.append(paddedInput)
@@ -2065,7 +2065,7 @@ else:
         tasklet = state.add_tasklet(
             _string_builder(node.name), {'j0', 'j1'}, {'out'},
             "out = j0/(pow(" + bias + "+" + alpha + "*j1," + beta + "));",
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         self.add_in_memlets((inputNodes + [sqrsum]), mapEntry, tasklet,
                             [shortDims, shortDims], [shortParams, shortParams])
         self.add_out_memlets(outputList, mapExit, tasklet, [shortDims],
@@ -2278,7 +2278,7 @@ else:
         tasklet = state.add_tasklet(
             mapLabel + "_denominator", {'j0', 'j1'}, {'out'},
             "out = dace::math::exp(j0-j1);",
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(temp2Node, [inputParams[1]], [inputDims[1]], "0")
         inList = [inputNodes[0], temp1Node]
         self.add_in_memlets(inList, mapEntry, tasklet, inputDims, inputParams)
@@ -2291,7 +2291,7 @@ else:
         tasklet = state.add_tasklet(
             mapLabel + "_softmax", {'j0', 'j1', 'out'}, {'out'},
             "out = (dace::math::exp(j0-j1))/j2;",
-            language=dace.types.Language.CPP)
+            language=dace.dtypes.Language.CPP)
         inList = [inputList[0], temp1Node, temp2Node]
         paramsList = inputParams + [inputParams[1]]
         dimsList = inputDims + [inputDims[1]]
