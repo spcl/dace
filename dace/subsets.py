@@ -67,7 +67,10 @@ class Range(Subset):
 
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
-                return str(obj.expr)
+                return {
+                    'main': str(obj.expr),
+                    'approx': str(obj.approx)
+                }
             else:
                 return str(obj)
 
@@ -98,7 +101,13 @@ class Range(Subset):
 
         ranges = obj['ranges']
         tuples = []
-        p2s = symbolic.pystr_to_symbolic
+        def p2s(x):
+            pts = symbolic.pystr_to_symbolic
+            if isinstance(x, str):
+                return pts(x)
+            else:
+                return symbolic.SymExpr(pts(x['main']), pts(x['approx']))
+                
         for r in ranges:
             tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']),
                            p2s(r['tile'])))
