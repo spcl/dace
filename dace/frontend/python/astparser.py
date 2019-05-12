@@ -86,31 +86,31 @@ def parse_dace_program(f, argtypes, global_vars, modules):
     symresolver = SymbolResolver(allowed_globals)
     symresolver.visit(src_ast)
 
-    #from dace.frontend.python import newast
-    #src_ast = newast.ModuleResolver(modules).visit(src_ast)
-    ## Convert modules to after resolution
-    #for mod, modval in modules.items():
-    #    print(mod, modval)
-    #    if mod == 'builtins':
-    #        continue
-    #    newmod = global_vars[mod]
-    #    del global_vars[mod]
-    #    global_vars[modval] = newmod
-    #pv = newast.ProgramVisitor(
-    #    f.__name__,
-    #    src_file,
-    #    src_line,
-    #    #astutils.get_argtypes(src_ast.body[0], global_vars),
-    #    argtypes,
-    #    global_vars)
-    #sdfg, _, _ = pv.parse_program(src_ast.body[0])
-    #sdfg.draw_to_file()
-    #sdfg.save("{}.sdfg".format(sdfg.label))
-    #print('OK')
-    #import os
-    #import sys
-    #sys.stdout.flush()
-    #os._exit(0)
+    from dace.frontend.python import newast
+    src_ast = newast.ModuleResolver(modules).visit(src_ast)
+    # Convert modules to after resolution
+    for mod, modval in modules.items():
+        print(mod, modval)
+        if mod == 'builtins':
+            continue
+        newmod = global_vars[mod]
+        del global_vars[mod]
+        global_vars[modval] = newmod
+    pv = newast.ProgramVisitor(
+        f.__name__,
+        src_file,
+        src_line,
+        #astutils.get_argtypes(src_ast.body[0], global_vars),
+        argtypes,
+        global_vars)
+    sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    sdfg.draw_to_file()
+    sdfg.save("{}.sdfg".format(sdfg.label))
+    print('OK')
+    import os
+    import sys
+    sys.stdout.flush()
+    os._exit(0)
 
     # 3. Parse the DaCe program to a hierarchical dependency representation
     ast_parser = ParseDaCe(src_file, src_line, argtypes, global_vars, modules,
