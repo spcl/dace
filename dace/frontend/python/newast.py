@@ -816,6 +816,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
+        print(ast.dump(node))
+
         state = self.sdfg.add_state("AugAssignState")
         if self.last_state:
             self.sdfg.add_edge(self.last_state, state, dace.InterstateEdge())
