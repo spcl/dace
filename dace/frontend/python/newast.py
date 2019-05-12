@@ -720,6 +720,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_tasklet(new_name, node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
+
+        print(ast.dump(node))
         
         state = self.sdfg.add_state("AugAssignState")
         if self.last_state:
