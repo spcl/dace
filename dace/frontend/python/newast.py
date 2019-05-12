@@ -4,6 +4,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Tuple, Union
 
 import dace
+from dace.frontend.common import op_impl
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
 from dace import SDFG, SDFGState, data, dtypes
@@ -601,7 +602,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if self.last_state:
                 self.sdfg.add_edge(self.last_state, state,
                                    dace.InterstateEdge())
-                self.last_state = state
+            self.last_state = state
             me, mx = state.add_map(
                 name='Map',
                 ndrange={k: ':'.join(v)
@@ -657,7 +658,7 @@ class ProgramVisitor(ExtNodeVisitor):
         state = self.sdfg.add_state("TaskletState")
         if self.last_state:
             self.sdfg.add_edge(self.last_state, state, dace.InterstateEdge())
-            self.last_state = state
+        self.last_state = state
         write_node = state.add_write(target)
         tasklet_node = state.add_tasklet(
             name="Tasklet",
@@ -719,8 +720,51 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_tasklet(new_name, node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
-        print('hi', ast.dump(node))
-        pass
+        
+        state = self.sdfg.add_state("AugAssignState")
+        if self.last_state:
+            self.sdfg.add_edge(
+                self.last_state, state, dace.InterstateEdge()
+            )
+        self.last_state = state
+
+        if isinstance(node.target, ast.Name):
+            output_node = state.add_write(node.target.id)
+        else:
+            raise NotImplementedError
+        
+        if isinstance(node.value, ast.Name):
+            input_node = state.add_read(node.value.id)
+            constant = 1
+        elif isinstance(node.value, ast.BinOp):
+            if isinstance(node.value.left, ast.Name):
+                input_node = state.add_read(node.value.left.id)
+            elif isinstance(node.value.right, ast.Name):
+                input_node = state.add_read(node.value.right.id)
+            else:
+                raise NotImplementedError
+            if isinstance(node.value.left, ast.Num):
+                constant = node.value.left.n
+            elif isinstance(node.value.right, ast.Num):
+                constant = node.value.right.n
+            else:
+                raise NotImplementedError
+        
+        if isinstance(node.op, ast.Add):
+            pass
+        elif isinstance(node.op, ast.Sub):
+            constant = - constant
+        else:
+            raise NotImplementedError
+        
+        op_impl.constant_array_multiplication(
+            state,
+            constant,
+            input_node, input_node,
+            output_node, output_node,
+            accumulate=True,
+            label="AugAssign"
+        )
 
     def _get_keyword_value(self, keywords: List[ast.keyword], arg: str):
         """Finds a keyword in list and returns its value
