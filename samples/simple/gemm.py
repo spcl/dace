@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-import gc
 import argparse
 import dace
 import numpy as np
