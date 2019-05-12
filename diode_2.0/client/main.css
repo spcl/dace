@@ -296,6 +296,72 @@ ul.tree_view.collapsed_sublist ul {
     background: grey;
 }
 
+/* Transformation history */
+.transformation_history_base {
+    width: 100%;
+    max-width: 250px;
+    box-sizing: border-box;
+    border: 1px solid darkslategray;
+}
+.transformation_history_list {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid darkslategray;
+}
+.transformation_history_list_element {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid darkslategray;
+}
+.transformation_history_list_element_control {
+    
+}
+.transformation_history_list_element_title {
+    padding-left: 10px;
+}
+
+.revert-button {
+    cursor: pointer;
+}
+.revert-button:hover {
+    color: red;
+}
+
+/* Available Transformation */
+.at_container {
+    padding-left: 10px;
+    padding-right: 10px;
+    box-sizing: border-box;
+    font-size: 1.25rem;
+
+    user-select: none;
+}
+
+.at_element {
+    max-width: 500px;
+}
+
+.at_group_header span::before {
+    content: "\25E2";
+    color: black;
+    display: inline-block;
+    margin-right: 5px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+}
+.at_group_header.at_collapse span::before {
+    transform: rotate(-45deg)
+}
+
+.at_group_header ~ .at_element {
+    padding-left: 30px;
+    max-width: 470px;
+}
+
+.at_group_header.at_collapse ~ .at_element {
+    display: none;
+}
+
 /* DIODE uploader */
 .upload_flexbox {
     display: flex;
@@ -485,4 +551,7 @@ table.diode_property_table tr:nth-child(even) {
 }
 .gmat-new_folder::after {
     content: "create_new_folder"
+}
+.gmat-undo::after {
+    content: "undo"
 }

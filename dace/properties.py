@@ -1252,7 +1252,6 @@ class ShapeProperty(Property):
         d = json.loads(s)
         if d == None:
             return None
-        print("s: " + s)
         return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
 
     def __set__(self, obj, val):

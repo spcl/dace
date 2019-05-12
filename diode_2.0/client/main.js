@@ -12,6 +12,8 @@ import {
     DIODE_Context_PropWindow,
     DIODE_Context_Runqueue,
     DIODE_Context_StartPage,
+    DIODE_Context_TransformationHistory,
+    DIODE_Context_AvailableTransformations,
 } from "./diode.js"
 
 function find_object_cycles(obj) {
@@ -278,6 +280,11 @@ function start_DIODE() {
                 { text: 'Run', id: 'run', icon: 'material-icons-outlined gmat-play' }, 
                 { text: 'Discard changes and compile source', id: 'compile-clean', icon: 'material-icons-outlined gmat-clear' }, 
             ]},
+            { type: 'menu',  id: 'transformation-menu', caption: 'Transformations', items: [
+                { text: 'History', id: 'history' },
+                { text: 'Available Transformations', id: 'available' }, 
+                
+            ]},
             { type: 'menu',   id: 'group-menu', caption: 'Group', icon: 'material-icons-outlined gmat-apps', items: [
                 { text: 'Group by SDFGs', id: 'group-sdfgs' }, 
                 { text: 'Group default', id: 'group-diode1' }
@@ -321,6 +328,20 @@ function start_DIODE() {
             }
             if(event.target == "group-menu:group-diode1") {
                 diode.groupLikeDIODE1();
+            }
+            if(event.target == "transformation-menu:history") {
+                diode.addContentItem({
+                    type: 'component',
+                    componentName: 'TransformationHistoryComponent',
+                    componentState: {}
+                });
+            }
+            if(event.target == "transformation-menu:available") {
+                diode.addContentItem({
+                    type: 'component',
+                    componentName: 'AvailableTransformationsComponent',
+                    componentState: {}
+                });
             }
             if(event.target == "compile-menu:compile") {
                 // "Normal" recompilation
@@ -430,6 +451,21 @@ function start_DIODE() {
         let diode_context = new DIODE_Context_OptGraph(diode, container, componentState);
         diode_context.setupEvents(diode.getCurrentProject());
         diode_context.createOptGraph();
+        
+    });
+    goldenlayout.registerComponent( 'TransformationHistoryComponent', function( container, componentState ){
+        // Wrap the component in a context 
+        let diode_context = new DIODE_Context_TransformationHistory(diode, container, componentState);
+        diode_context.setupEvents(diode.getCurrentProject());
+        let hist = diode_context.project().getTransformationHistory();
+        diode_context.create(hist);
+        
+    });
+    goldenlayout.registerComponent( 'AvailableTransformationsComponent', function( container, componentState ){
+        // Wrap the component in a context 
+        let diode_context = new DIODE_Context_AvailableTransformations(diode, container, componentState);
+        diode_context.setupEvents(diode.getCurrentProject());
+        diode_context.create();
         
     });
     goldenlayout.registerComponent( 'CodeInComponent', function( container, componentState ){
