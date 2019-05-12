@@ -7,7 +7,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.graph import nodes
-from dace import types, config
+from dace import dtypes, config
 
 from dace.frontend.python import ndarray
 from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfUtils
@@ -45,7 +45,7 @@ class DaCeCodeGenerator(object):
                 if isinstance(cstval, ndarray.ndarray):
                     dtype = cstval.descriptor.dtype
                 else:
-                    dtype = types.typeclass(cstval.dtype.type)
+                    dtype = dtypes.typeclass(cstval.dtype.type)
                 const_str = "constexpr " + dtype.ctype + \
                     " " + cstname + "[" + str(cstval.size) + "] = {"
                 it = np.nditer(cstval, order='C')
@@ -66,15 +66,15 @@ class DaCeCodeGenerator(object):
         """
         #########################################################
         # Custom types
-        types = set()
+        dtypes = set()
         # Types of this SDFG
         for sdfg, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
-                types.add(arr.dtype)
+                dtypes.add(arr.dtype)
 
         # Emit unique definitions
         global_stream.write('\n')
-        for typ in types:
+        for typ in dtypes:
             if hasattr(typ, 'emit_definition'):
                 global_stream.write(typ.emit_definition(), sdfg)
         global_stream.write('\n')
@@ -602,7 +602,7 @@ DACE_EXPORTED void __dace_exit(%s)
 
     def generate_code(self,
                       sdfg: SDFG,
-                      schedule: types.ScheduleType,
+                      schedule: dtypes.ScheduleType,
                       sdfg_id: str = ""
                       ) -> (str, str, Set[TargetCodeGenerator]):
         """ Generate frame code for a given SDFG, calling registered targets'
@@ -663,8 +663,8 @@ DACE_EXPORTED void __dace_exit(%s)
                     with_types=True, name=isvarName)), sdfg)
 
         # Initialize parameter arrays
-        for argnode in types.deduplicate(sdfg.input_arrays() +
-                                         sdfg.output_arrays()):
+        for argnode in dtypes.deduplicate(sdfg.input_arrays() +
+                                          sdfg.output_arrays()):
             # Ignore transient arrays
             if argnode.desc(sdfg).transient: continue
             self._dispatcher.dispatch_initialize(
@@ -937,21 +937,21 @@ def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
             for node in reverse_scope_dict[parent_node]:
                 # Set default schedule type
                 if isinstance(node, nodes.MapEntry):
-                    if node.map.schedule == types.ScheduleType.Default:
+                    if node.map.schedule == dtypes.ScheduleType.Default:
                         node.map._schedule = \
-                            types.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
                 elif isinstance(node, nodes.ConsumeEntry):
-                    if node.consume.schedule == types.ScheduleType.Default:
+                    if node.consume.schedule == dtypes.ScheduleType.Default:
                         node.consume._schedule = \
-                            types.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
                 elif getattr(node, 'schedule', False):
-                    if node.schedule == types.ScheduleType.Default:
+                    if node.schedule == dtypes.ScheduleType.Default:
                         node._schedule = \
-                            types.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
 
         ## End of recursive function
 
@@ -961,12 +961,12 @@ def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
         # Set default storage type
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
-                if node.desc(sdfg).storage == types.StorageType.Default:
+                if node.desc(sdfg).storage == dtypes.StorageType.Default:
                     if scope_dict[node] is None:
                         parent_schedule = toplevel_schedule
                     else:
                         parent_schedule = scope_dict[node].map.schedule
 
                     node.desc(sdfg).storage = (
-                        types.SCOPEDEFAULT_STORAGE[parent_schedule])
+                        dtypes.SCOPEDEFAULT_STORAGE[parent_schedule])
         ### End of storage type loop

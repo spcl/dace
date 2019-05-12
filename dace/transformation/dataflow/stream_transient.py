@@ -2,7 +2,7 @@
     and transient nodes. """
 import copy
 import networkx as nx
-from dace import data, types, symbolic, subsets
+from dace import data, dtypes, symbolic, subsets
 from dace.properties import Property, make_properties, DataProperty
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching

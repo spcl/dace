@@ -4,7 +4,7 @@ import copy
 import itertools
 
 import dace
-from dace import data, memlet, types, sdfg as sd, subsets, symbolic
+from dace import data, memlet, dtypes, sdfg as sd, subsets, symbolic
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -13,18 +13,18 @@ def fpga_update(state, depth):
     scope_dict = state.scope_dict()
     for node in state.nodes():
         if (isinstance(node, nodes.AccessNode)
-                and node.desc(sdfg).storage == types.StorageType.Default):
+                and node.desc(sdfg).storage == dtypes.StorageType.Default):
             nodedesc = node.desc(sdfg)
             if depth >= 2:
-                nodedesc.storage = types.StorageType.FPGA_Local
+                nodedesc.storage = dtypes.StorageType.FPGA_Local
             else:
                 if scope_dict[node]:
-                    nodedesc.storage = types.StorageType.FPGA_Local
+                    nodedesc.storage = dtypes.StorageType.FPGA_Local
                 else:
-                    nodedesc.storage = types.StorageType.FPGA_Global
+                    nodedesc.storage = dtypes.StorageType.FPGA_Global
         if (hasattr(node, "schedule")
-                and node.schedule == dace.types.ScheduleType.Default):
-            node.schedule = dace.types.ScheduleType.FPGA_Device
+                and node.schedule == dace.dtypes.ScheduleType.Default):
+            node.schedule = dace.dtypes.ScheduleType.FPGA_Device
         if isinstance(node, nodes.NestedSDFG):
             for s in node.sdfg:
                 fpga_update(s, depth + 1)
@@ -46,7 +46,7 @@ class FPGATransformState(pattern_matching.Transformation):
         for node in state.nodes():
 
             if (isinstance(node, nodes.AccessNode)
-                    and node.desc(sdfg).storage != types.StorageType.Default):
+                    and node.desc(sdfg).storage != dtypes.StorageType.Default):
                 return False
 
             if not isinstance(node, nodes.MapEntry):
@@ -59,22 +59,23 @@ class FPGATransformState(pattern_matching.Transformation):
             if candidate_map.range.dims() > 3: return False
 
             # Map schedules that are disallowed to transform to FPGAs
-            if (candidate_map.schedule == types.ScheduleType.MPI
-                    or candidate_map.schedule == types.ScheduleType.GPU_Device
-                    or candidate_map.schedule == types.ScheduleType.FPGA_Device
+            if (candidate_map.schedule == dtypes.ScheduleType.MPI
+                    or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
+                    or
+                    candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
                     or candidate_map.schedule ==
-                    types.ScheduleType.GPU_ThreadBlock):
+                    dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for FPGA schedules
             sdict = state.scope_dict()
             current_node = map_entry
             while current_node != None:
-                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
-                        types.ScheduleType.FPGA_Device
+                        dtypes.ScheduleType.FPGA_Device
                         or current_node.map.schedule ==
-                        types.ScheduleType.GPU_ThreadBlock):
+                        dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -117,7 +118,7 @@ class FPGATransformState(pattern_matching.Transformation):
                         array.shape,
                         materialize_func=array.materialize_func,
                         transient=True,
-                        storage=types.StorageType.FPGA_Global,
+                        storage=dtypes.StorageType.FPGA_Global,
                         allow_conflicts=array.allow_conflicts,
                         access_order=array.access_order,
                         strides=array.strides,
@@ -163,7 +164,7 @@ class FPGATransformState(pattern_matching.Transformation):
                         array.shape,
                         materialize_func=array.materialize_func,
                         transient=True,
-                        storage=types.StorageType.FPGA_Global,
+                        storage=dtypes.StorageType.FPGA_Global,
                         allow_conflicts=array.allow_conflicts,
                         access_order=array.access_order,
                         strides=array.strides,

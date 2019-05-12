@@ -31,11 +31,11 @@ class Data(object):
     shape = ShapeProperty()
     transient = Property(dtype=bool)
     storage = Property(
-        dtype=dace.types.StorageType,
+        dtype=dace.dtypes.StorageType,
         desc="Storage location",
-        enum=dace.types.StorageType,
-        default=dace.types.StorageType.Default,
-        from_string=lambda x: types.StorageType[x])
+        enum=dace.dtypes.StorageType,
+        default=dace.dtypes.StorageType.Default,
+        from_string=lambda x: dtypes.StorageType[x])
     location = Property(
         dtype=str,  # Dict[str, symbolic]
         desc='Full storage location identifier (e.g., rank, GPU ID)',
@@ -95,7 +95,7 @@ class Scalar(Data):
     def __init__(self,
                  dtype,
                  transient=False,
-                 storage=dace.types.StorageType.Default,
+                 storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
                  location='',
                  toplevel=False,
@@ -157,11 +157,11 @@ def set_materialize_func(obj, val):
         immaterial.
     """
     if val is not None:
-        if (obj.storage != dace.types.StorageType.Default
-                and obj.storage != dace.types.StorageType.Immaterial):
+        if (obj.storage != dace.dtypes.StorageType.Default
+                and obj.storage != dace.dtypes.StorageType.Immaterial):
             raise ValueError("Immaterial array must have immaterial storage, "
                              "but has: {}".format(storage))
-        obj.storage = dace.types.StorageType.Immaterial
+        obj.storage = dace.dtypes.StorageType.Immaterial
     obj._materialize_func = val
 
 
@@ -189,7 +189,7 @@ class Array(Data):
                  materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
-                 storage=dace.types.StorageType.Default,
+                 storage=dace.dtypes.StorageType.Default,
                  location='',
                  access_order=None,
                  strides=None,
@@ -365,7 +365,7 @@ class Stream(Data):
                  buffer_size,
                  shape=None,
                  transient=False,
-                 storage=dace.types.StorageType.Default,
+                 storage=dace.dtypes.StorageType.Default,
                  location='',
                  strides=None,
                  offset=None,
@@ -440,9 +440,9 @@ class Stream(Data):
     def signature(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
         if self.storage in [
-                dace.types.StorageType.GPU_Global,
-                dace.types.StorageType.GPU_Shared,
-                dace.types.StorageType.GPU_Stack
+                dace.dtypes.StorageType.GPU_Global,
+                dace.dtypes.StorageType.GPU_Shared,
+                dace.dtypes.StorageType.GPU_Stack
         ]:
             return 'dace::GPUStream<%s, %s> %s' % (
                 str(self.dtype.ctype), 'true'

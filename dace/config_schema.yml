@@ -183,6 +183,7 @@ required:
                         title: Arguments
                         description: Compiler argument flags
                         default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: '-std=c++14 -O3'
 
                     cuda_arch:
                         type: str
@@ -369,7 +370,7 @@ required:
                         title: Check arguments 
                         description: >
                             Do strict verification that arguments passed when
-                            calling a DaCe program match the expected types.
+                            calling a DaCe program match the expected dtypes.
 
                     execcmd:
                         type: str

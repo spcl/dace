@@ -3,7 +3,7 @@
 import copy
 from typing import Dict
 import dace
-from dace import types, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import pattern_matching as pm
@@ -51,10 +51,10 @@ class MapExpansion(pm.Transformation):
             nodes.Map(
                 current_map.label + '_' + str(param), [param],
                 subsets.Range([param_range]),
-                schedule=types.ScheduleType.Sequential) for param, param_range
+                schedule=dtypes.ScheduleType.Sequential) for param, param_range
             in zip(current_map.params, current_map.range)
         ]
-        maps[0]._schedule = types.ScheduleType.Default
+        maps[0]._schedule = dtypes.ScheduleType.Default
 
         # Create new map entries
         entries = [nodes.MapEntry(new_map) for new_map in maps]

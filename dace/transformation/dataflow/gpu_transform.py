@@ -3,7 +3,7 @@
 import copy
 import itertools
 
-from dace import data, types, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
@@ -39,19 +39,19 @@ class GPUTransformMap(pattern_matching.Transformation):
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule == types.ScheduleType.MPI
-                    or candidate_map.schedule == types.ScheduleType.GPU_Device
+            if (candidate_map.schedule == dtypes.ScheduleType.MPI
+                    or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule ==
-                    types.ScheduleType.GPU_ThreadBlock):
+                    dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry
             while current_node != None:
-                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
-                        types.ScheduleType.GPU_ThreadBlock):
+                        dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -60,9 +60,9 @@ class GPUTransformMap(pattern_matching.Transformation):
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
                 if (isinstance(node, nodes.AccessNode) and
-                        node.desc(sdfg).storage != types.StorageType.Default
-                        and
-                        node.desc(sdfg).storage != types.StorageType.Register):
+                        node.desc(sdfg).storage != dtypes.StorageType.Default
+                        and node.desc(sdfg).storage !=
+                        dtypes.StorageType.Register):
                     return False
 
             return True
@@ -70,18 +70,18 @@ class GPUTransformMap(pattern_matching.Transformation):
             reduce = graph.nodes()[candidate[GPUTransformMap._reduce]]
 
             # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule == types.ScheduleType.MPI
-                    or reduce.schedule == types.ScheduleType.GPU_Device
-                    or reduce.schedule == types.ScheduleType.GPU_ThreadBlock):
+            if (reduce.schedule == dtypes.ScheduleType.MPI
+                    or reduce.schedule == dtypes.ScheduleType.GPU_Device
+                    or reduce.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
             while current_node != None:
-                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
-                        types.ScheduleType.GPU_ThreadBlock):
+                        dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -107,12 +107,12 @@ class GPUTransformMap(pattern_matching.Transformation):
             exit_nodes = [cnode]
 
         # Change schedule
-        node_schedprop._schedule = types.ScheduleType.GPU_Device
+        node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
 
         gpu_storage_types = [
-            types.StorageType.GPU_Global,
-            types.StorageType.GPU_Shared,
-            types.StorageType.GPU_Stack  #, types.StorageType.CPU_Pinned
+            dtypes.StorageType.GPU_Global,
+            dtypes.StorageType.GPU_Shared,
+            dtypes.StorageType.GPU_Stack  #, dtypes.StorageType.CPU_Pinned
         ]
 
         #######################################################
@@ -148,7 +148,7 @@ class GPUTransformMap(pattern_matching.Transformation):
                     array.dtype,
                     materialize_func=array.materialize_func,
                     transient=True,
-                    storage=types.StorageType.GPU_Global,
+                    storage=dtypes.StorageType.GPU_Global,
                     allow_conflicts=array.allow_conflicts,
                     access_order=array.access_order,
                     strides=array.strides,
@@ -168,7 +168,7 @@ class GPUTransformMap(pattern_matching.Transformation):
                     array.dtype,
                     materialize_func=array.materialize_func,
                     transient=True,
-                    storage=types.StorageType.GPU_Global,
+                    storage=dtypes.StorageType.GPU_Global,
                     allow_conflicts=array.allow_conflicts,
                     access_order=array.access_order,
                     strides=array.strides,

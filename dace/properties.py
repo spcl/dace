@@ -11,7 +11,7 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 from dace.symbolic import pystr_to_symbolic
-from dace.types import DebugInfo
+from dace.dtypes import DebugInfo
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -599,7 +599,7 @@ class CodeProperty(Property):
         if language is None:
             raise TypeError("Must pass language as second argument to "
                             "from_string method of CodeProperty")
-        if language == dace.types.Language.Python:
+        if language == dace.dtypes.Language.Python:
             block = CodeBlock(ast.parse(string).body)
             block.as_string = string
             return block
@@ -643,7 +643,7 @@ class CodeProperty(Property):
                 val = self.from_string(val, language)
         else:
             try:
-                if language is not dace.types.Language.Python:
+                if language is not dace.dtypes.Language.Python:
                     raise TypeError("Only strings accepted for other "
                                     "languages than Python.")
             except AttributeError:
@@ -840,12 +840,12 @@ class TypeClassProperty(Property):
 
     @property
     def dtype(self):
-        return dace.types.typeclass
+        return dace.dtypes.typeclass
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate("dace.types.{}".format(s))
-        if dtype is None or not isinstance(dtype, dace.types.typeclass):
+        dtype = pydoc.locate("dace.dtypes.{}".format(s))
+        if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
             raise ValueError("Not a valid data type: {}".format(s))
         return dtype
 

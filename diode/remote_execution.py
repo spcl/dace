@@ -5,7 +5,7 @@ import dace
 import tempfile
 import traceback
 import subprocess
-import dace.types
+import dace.dtypes
 from string import Template
 from dace.codegen.compiler import generate_program_folder
 from dace.config import Config

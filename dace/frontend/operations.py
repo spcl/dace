@@ -8,7 +8,7 @@ import sympy
 import os
 import sys
 
-from dace import types
+from dace import dtypes
 from dace.config import Config
 
 
@@ -64,7 +64,7 @@ def detect_reduction_type(wcr_str):
         built-in reductions that frameworks such as MPI can provide.
 
         @param wcr_str: A Python string representation of the lambda function.
-        @return: types.ReductionType if detected, types.ReductionType.Custom
+        @return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
                  if not detected, or None if no reduction is found.
     """
     if wcr_str == '' or wcr_str is None:
@@ -86,30 +86,30 @@ def detect_reduction_type(wcr_str):
     if result == sympy.Max(a, b) or (isinstance(wcr_ast, ast.Call)
                                      and isinstance(wcr_ast.func, ast.Name)
                                      and wcr_ast.func.id == 'max'):
-        return types.ReductionType.Max
+        return dtypes.ReductionType.Max
     elif result == sympy.Min(a, b) or (isinstance(wcr_ast, ast.Call)
                                        and isinstance(wcr_ast.func, ast.Name)
                                        and wcr_ast.func.id == 'min'):
-        return types.ReductionType.Min
+        return dtypes.ReductionType.Min
     elif result == a + b:
-        return types.ReductionType.Sum
+        return dtypes.ReductionType.Sum
     elif result == a * b:
-        return types.ReductionType.Product
+        return dtypes.ReductionType.Product
     elif result == a & b:
-        return types.ReductionType.Bitwise_And
+        return dtypes.ReductionType.Bitwise_And
     elif result == a | b:
-        return types.ReductionType.Bitwise_Or
+        return dtypes.ReductionType.Bitwise_Or
     elif result == a ^ b:
-        return types.ReductionType.Bitwise_Xor
+        return dtypes.ReductionType.Bitwise_Xor
     elif isinstance(wcr_ast, ast.BoolOp) and isinstance(wcr_ast.op, ast.And):
-        return types.ReductionType.Logical_And
+        return dtypes.ReductionType.Logical_And
     elif isinstance(wcr_ast, ast.BoolOp) and isinstance(wcr_ast.op, ast.Or):
-        return types.ReductionType.Logical_Or
+        return dtypes.ReductionType.Logical_Or
     elif (isinstance(wcr_ast, ast.Compare)
           and isinstance(wcr_ast.ops[0], ast.NotEq)):
-        return types.ReductionType.Logical_Xor
+        return dtypes.ReductionType.Logical_Xor
 
-    return types.ReductionType.Custom
+    return dtypes.ReductionType.Custom
 
 
 def is_op_commutative(wcr_str):

@@ -13,8 +13,8 @@ import sys
 W = dace.symbol('W')
 H = dace.symbol('H')
 nnz = dace.symbol('nnz')
-itype = dace.types.uint32
-dtype = dace.types.float32
+itype = dace.dtypes.uint32
+dtype = dace.dtypes.float32
 
 
 def make_pre_state(sdfg):
@@ -26,28 +26,28 @@ def make_pre_state(sdfg):
         "A_row_device", (H + 1, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     a_col_host = state.add_array("A_col", (nnz, ), itype)
     a_col_device = state.add_array(
         "A_col_device", (nnz, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     a_val_host = state.add_array("A_val", (nnz, ), dtype)
     a_val_device = state.add_array(
         "A_val_device", (nnz, ),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     x_host = state.add_array("x", (W, ), dtype)
     x_device = state.add_array(
         "x_device", (W, ),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     state.add_memlet_path(
         a_row_host,
@@ -78,7 +78,7 @@ def make_post_state(sdfg):
         "b_device", (H, ),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     b_host = state.add_array("b", (H, ), dtype)
 
     state.add_memlet_path(
@@ -96,7 +96,7 @@ def make_nested_sdfg(parent):
         "b_buffer",
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     set_zero_tasklet = set_zero_state.add_tasklet("set_zero", {}, {"b_out"},
                                                   "b_out = 0")
     set_zero_state.add_memlet_path(
@@ -110,9 +110,9 @@ def make_nested_sdfg(parent):
         "b_buffer",
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     write_back_b = write_back_state.add_scalar(
-        "b_write", dtype, storage=dace.types.StorageType.FPGA_Registers)
+        "b_write", dtype, storage=dace.dtypes.StorageType.FPGA_Registers)
     write_back_state.add_memlet_path(
         write_back_b_buffer,
         write_back_b,
@@ -133,7 +133,7 @@ def make_nested_sdfg(parent):
     x_in = state.add_scalar(
         "x_in",
         dtype,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         transient=True)
 
     compute_tasklet = state.add_tasklet("compute", {"a", "x_val_in"}, {"out"},
@@ -143,21 +143,21 @@ def make_nested_sdfg(parent):
         "b_buffer",
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     rowptr = state.add_scalar(
-        "row_begin", itype, storage=dace.types.StorageType.FPGA_Registers)
+        "row_begin", itype, storage=dace.dtypes.StorageType.FPGA_Registers)
     rowend = state.add_scalar(
-        "row_end", itype, storage=dace.types.StorageType.FPGA_Registers)
+        "row_end", itype, storage=dace.dtypes.StorageType.FPGA_Registers)
     a_val = state.add_array(
         "A_val_read", (nnz, ),
         dtype,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     a_col = state.add_array(
         "A_col_read", (nnz, ),
         itype,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     x = state.add_array(
-        "x_read", (W, ), dtype, storage=dace.types.StorageType.FPGA_Global)
+        "x_read", (W, ), dtype, storage=dace.dtypes.StorageType.FPGA_Global)
 
     compute_entry._in_connectors.add("rowptr")
     state.add_memlet_path(
@@ -225,41 +225,41 @@ def make_main_state(sdfg):
         "A_row_device", (H + 1, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     a_col = state.add_array(
         "A_col_device", (nnz, ),
         itype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     a_val = state.add_array(
         "A_val_device", (nnz, ),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     x = state.add_array(
         "x_device", (W, ),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     b = state.add_array(
         "b_device", (H, ),
         dtype,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     row_entry, row_exit = state.add_map(
         "compute_row", {"i": "0:H"},
-        schedule=dace.types.ScheduleType.FPGA_Device)
+        schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
     rowptr = state.add_scalar(
         "rowptr",
         itype,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         transient=True)
     rowend = state.add_scalar(
         "rowend",
         itype,
-        storage=dace.types.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         transient=True)
 
     nested_sdfg = make_nested_sdfg(sdfg)

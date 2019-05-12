@@ -5,7 +5,7 @@ from dace.data import Array
 
 from dace.config import Config
 
-from dace.types import ScheduleType
+from dace.dtypes import ScheduleType
 
 import re
 
@@ -528,8 +528,8 @@ class PerfUtils(object):
 
     @staticmethod
     def perf_get_supersection_start_string(node, sdfg, dfg, unified_id):
-        from dace import types
-        if node.map.schedule == types.ScheduleType.CPU_Multicore:
+        from dace import dtypes
+        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             # We have to find out if we should mark a section start here or later.
             children = PerfUtils.all_maps(node, dfg)
             #print("children: " + str(children))
@@ -537,13 +537,13 @@ class PerfUtils(object):
                 if PerfUtils.map_depth(
                         x) > PerfSettings.perf_max_scope_depth():
                     break  # We have our relevant nodes.
-                if x.map.schedule == types.ScheduleType.CPU_Multicore:
+                if x.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                     # Nested SuperSections are not supported
                     # We have to mark the outermost section,
                     # which also means that we have to somehow tell the lower nodes
                     # to not mark the section start.
                     x.map._can_be_supersection_start = False
-                elif x.map.schedule == types.ScheduleType.Sequential:
+                elif x.map.schedule == dtypes.ScheduleType.Sequential:
                     x.map._can_be_supersection_start = False
                 else:
                     # Any other type (FPGA, GPU) - not supported by PAPI. TODO: support

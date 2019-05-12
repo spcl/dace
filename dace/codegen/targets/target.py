@@ -1,7 +1,7 @@
 import os
 import shutil  # which
 import dace
-from dace import types
+from dace import dtypes
 from dace.graph import nodes, nxutil
 
 
@@ -162,7 +162,7 @@ class IllegalCopy(TargetCodeGenerator):
                         str(dst_node) + ')')
 
 
-class DefinedType(dace.types.AutoNumber):
+class DefinedType(dace.dtypes.AutoNumber):
     """ Data types for `DefinedMemlets`.
         @see: DefinedMemlets
     """
@@ -224,16 +224,16 @@ class TargetDispatcher(object):
         self._used_targets = set()
 
         self._array_dispatchers = {
-        }  # Type: types.StorageType -> TargetCodeGenerator
+        }  # Type: dtypes.StorageType -> TargetCodeGenerator
         self._map_dispatchers = {
-        }  # Type: types.ScheduleType -> TargetCodeGenerator
-        self._copy_dispatchers = {}  # Type: (types.StorageType src,
-        #                                     types.StorageType dst,
-        #                                     types.ScheduleType dst_schedule)
+        }  # Type: dtypes.ScheduleType -> TargetCodeGenerator
+        self._copy_dispatchers = {}  # Type: (dtypes.StorageType src,
+        #                                     dtypes.StorageType dst,
+        #                                     dtypes.ScheduleType dst_schedule)
         #                                     -> List[(predicate, TargetCodeGenerator)]
-        self._generic_copy_dispatchers = {}  # Type: (types.StorageType src,
-        #                                     types.StorageType dst,
-        #                                     types.ScheduleType dst_schedule)
+        self._generic_copy_dispatchers = {}  # Type: (dtypes.StorageType src,
+        #                                     dtypes.StorageType dst,
+        #                                     dtypes.ScheduleType dst_schedule)
         #                                     -> TargetCodeGenerator
         self._node_dispatchers = []  # [(predicate, dispatcher)]
         self._generic_node_dispatcher = None  # Type: TargetCodeGenerator
@@ -321,7 +321,7 @@ class TargetDispatcher(object):
                 self.register_map_dispatcher(stype, func)
             return
 
-        if not isinstance(schedule_type, types.ScheduleType): raise TypeError
+        if not isinstance(schedule_type, dtypes.ScheduleType): raise TypeError
         if not isinstance(func, TargetCodeGenerator): raise TypeError
         if schedule_type in self._map_dispatchers:
             raise ValueError('Schedule already mapped to ' +
@@ -342,7 +342,7 @@ class TargetDispatcher(object):
                 self.register_array_dispatcher(stype, func)
             return
 
-        if not isinstance(storage_type, types.StorageType): raise TypeError
+        if not isinstance(storage_type, dtypes.StorageType): raise TypeError
         if not isinstance(func, TargetCodeGenerator): raise TypeError
         self._array_dispatchers[storage_type] = func
 
@@ -371,10 +371,10 @@ class TargetDispatcher(object):
             @see: TargetCodeGenerator            
         """
 
-        if not isinstance(src_storage, types.StorageType): raise TypeError
-        if not isinstance(dst_storage, types.StorageType): raise TypeError
+        if not isinstance(src_storage, dtypes.StorageType): raise TypeError
+        if not isinstance(dst_storage, dtypes.StorageType): raise TypeError
         if (dst_schedule is not None
-                and not isinstance(dst_schedule, types.ScheduleType)):
+                and not isinstance(dst_schedule, dtypes.ScheduleType)):
             raise TypeError
         if not isinstance(func, TargetCodeGenerator): raise TypeError
 
@@ -498,7 +498,7 @@ class TargetDispatcher(object):
 
         nodedesc = node.desc(sdfg)
         storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   types.StorageType.Register)
+                   dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
         self._array_dispatchers[storage].allocate_array(
@@ -510,7 +510,7 @@ class TargetDispatcher(object):
 
         nodedesc = node.desc(sdfg)
         storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   types.StorageType.Register)
+                   dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
         self._array_dispatchers[storage].initialize_array(
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -521,7 +521,7 @@ class TargetDispatcher(object):
 
         nodedesc = node.desc(sdfg)
         storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   types.StorageType.Register)
+                   dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
         self._array_dispatchers[storage].deallocate_array(
@@ -533,12 +533,12 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for a memory copy operation. """
 
         if isinstance(src_node, nodes.CodeNode):
-            src_storage = types.StorageType.Register
+            src_storage = dtypes.StorageType.Register
         else:
             src_storage = src_node.desc(sdfg).storage
 
         if isinstance(dst_node, nodes.CodeNode):
-            dst_storage = types.StorageType.Register
+            dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
 

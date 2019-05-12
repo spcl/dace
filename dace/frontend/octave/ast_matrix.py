@@ -84,7 +84,7 @@ class AST_Matrix(AST_Node):
     def get_basetype(self):
         # This should be double, unless we have a complex inside, for now just
         # return double.
-        return dace.types.float64
+        return dace.dtypes.float64
 
     def is_constant(self):
         for r in self.rows:

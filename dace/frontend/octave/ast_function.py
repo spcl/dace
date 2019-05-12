@@ -107,7 +107,7 @@ class AST_BuiltInFunCall(AST_Node):
 
     def get_basetype(self):
         # For now assume it is always double
-        return dace.types.float64
+        return dace.dtypes.float64
 
     def get_dims(self):
         from .ast_matrix import AST_Matrix
@@ -140,7 +140,7 @@ class AST_BuiltInFunCall(AST_Node):
         if self.funname.get_name() in ["sqrt"]:
             dims = self.get_dims()
             name = self.get_name_in_sdfg(sdfg)
-            basetype = dace.types.float64
+            basetype = dace.dtypes.float64
             sdfg.add_transient(name, dims, basetype, debuginfo=self.context)
             print("The result of expr " + str(self) + " will be stored in " +
                   str(name))
@@ -189,7 +189,7 @@ class AST_BuiltInFunCall(AST_Node):
         if self.funname.get_name() in ["zeros", "rand"]:
             dims = self.get_dims()
             name = self.get_name_in_sdfg(sdfg)
-            basetype = dace.types.float64
+            basetype = dace.dtypes.float64
             sdfg.add_transient(name, dims, basetype, debuginfo=self.context)
             print("The result of expr " + str(self) + " will be stored in " +
                   str(name))

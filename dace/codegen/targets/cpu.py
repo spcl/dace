@@ -10,7 +10,7 @@ from dace.codegen import cppunparse
 import dace
 from dace.config import Config
 from dace.frontend import operations
-from dace import data, subsets, symbolic, types, memlet as mmlt
+from dace import data, subsets, symbolic, dtypes, memlet as mmlt
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets import framecode
@@ -25,15 +25,15 @@ from dace.properties import LambdaProperty
 from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfUtils, PerfMetaInfo, PerfMetaInfoStatic
 
 _REDUCTION_TYPE_TO_OPENMP = {
-    types.ReductionType.Max: 'max',
-    types.ReductionType.Min: 'min',
-    types.ReductionType.Sum: '+',
-    types.ReductionType.Product: '*',
-    types.ReductionType.Bitwise_And: '&',
-    types.ReductionType.Logical_And: '&&',
-    types.ReductionType.Bitwise_Or: '|',
-    types.ReductionType.Logical_Or: '||',
-    types.ReductionType.Bitwise_Xor: '^',
+    dtypes.ReductionType.Max: 'max',
+    dtypes.ReductionType.Min: 'min',
+    dtypes.ReductionType.Sum: '+',
+    dtypes.ReductionType.Product: '*',
+    dtypes.ReductionType.Bitwise_And: '&',
+    dtypes.ReductionType.Logical_And: '&&',
+    dtypes.ReductionType.Bitwise_Or: '|',
+    dtypes.ReductionType.Logical_Or: '||',
+    dtypes.ReductionType.Bitwise_Xor: '^',
 }
 
 
@@ -66,7 +66,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
             if (isinstance(arg_type, dace.data.Scalar)
-                    or isinstance(arg_type, dace.types.typeclass)):
+                    or isinstance(arg_type, dace.dtypes.typeclass)):
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar)
             elif isinstance(arg_type, dace.data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
@@ -82,13 +82,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
-        dispatcher.register_map_dispatcher(
-            [types.ScheduleType.CPU_Multicore, types.ScheduleType.Sequential],
-            self)
+        dispatcher.register_map_dispatcher([
+            dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential
+        ], self)
 
         cpu_storage = [
-            types.StorageType.CPU_Heap, types.StorageType.CPU_Stack,
-            types.StorageType.Register
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.Register
         ]
         dispatcher.register_array_dispatcher(cpu_storage, self)
 
@@ -196,7 +196,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 array_expr = self.copy_expr(sdfg, nodedesc.sink, edges[0].data)
                 threadlocal = ''
                 threadlocal_stores = [
-                    types.StorageType.CPU_Stack, types.StorageType.Register
+                    dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
                 ]
                 if (sdfg.arrays[nodedesc.sink].storage in threadlocal_stores
                         or nodedesc.storage in threadlocal_stores):
@@ -223,8 +223,8 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream)
 
-        elif (nodedesc.storage == types.StorageType.CPU_Heap
-              or nodedesc.storage == types.StorageType.Immaterial
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or nodedesc.storage == dtypes.StorageType.Immaterial
               ):  # TODO: immaterial arrays should not allocate memory
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
@@ -235,8 +235,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 callsite_stream.write('memset(%s, 0, sizeof(%s)*%s);' %
                                       (name, nodedesc.dtype.ctype, arrsize))
             return
-        elif (nodedesc.storage == types.StorageType.CPU_Stack
-              or nodedesc.storage == types.StorageType.Register):
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Stack
+              or nodedesc.storage == dtypes.StorageType.Register):
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
@@ -317,7 +317,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif isinstance(nodedesc, data.Stream):
             return
-        elif nodedesc.storage == types.StorageType.CPU_Heap:
+        elif nodedesc.storage == dtypes.StorageType.CPU_Heap:
             callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
                                   node)
         else:
@@ -326,7 +326,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
         if isinstance(src_node, nodes.Tasklet):
-            src_storage = types.StorageType.Register
+            src_storage = dtypes.StorageType.Register
             try:
                 src_parent = dfg.scope_dict()[src_node]
             except KeyError:
@@ -337,7 +337,7 @@ class CPUCodeGen(TargetCodeGenerator):
             src_storage = src_node.desc(sdfg).storage
 
         if isinstance(dst_node, nodes.Tasklet):
-            dst_storage = types.StorageType.Register
+            dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
 
@@ -370,8 +370,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # From cuda.py
         cpu_storage_types = [
-            types.StorageType.CPU_Heap, types.StorageType.CPU_Stack,
-            types.StorageType.CPU_Pinned, types.StorageType.Register
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_Pinned, dtypes.StorageType.Register
         ]
 
         perf_cpu_only = (src_storage in cpu_storage_types) and (
@@ -1294,7 +1294,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         #############################################################
 
-        if node.map.schedule == types.ScheduleType.CPU_Multicore:
+        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             map_header += '#pragma omp parallel for'
             # Loop over outputs, add OpenMP reduction clauses to detected cases
             # TODO: set up register outside loop
@@ -1304,7 +1304,7 @@ class CPUCodeGen(TargetCodeGenerator):
             #    if (isinstance(outedge.src, nodes.CodeNode)
             #            and outedge.data.wcr is not None):
             #        redt = operations.detect_reduction_type(outedge.data.wcr)
-            #        if redt != types.ReductionType.Custom:
+            #        if redt != dtypes.ReductionType.Custom:
             #            reduction_stmts.append('reduction({typ}:{var})'.format(
             #                typ=_REDUCTION_TYPE_TO_OPENMP[redt],
             #                var=outedge.src_conn))
@@ -1314,7 +1314,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # TODO: Explicit map unroller
         if node.map.unroll:
-            if node.map.schedule == types.ScheduleType.CPU_Multicore:
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                 raise ValueError('An Multicore CPU map cannot be unrolled (' +
                                  node.map.label + ')')
 
@@ -1656,17 +1656,17 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 node.consume.label + '_element',
                 input_streamdesc.dtype,
                 transient=True,
-                storage=types.StorageType.Register)
+                storage=dtypes.StorageType.Register)
             ce_node = nodes.AccessNode(node.consume.label + '_element',
-                                       types.AccessType.ReadOnly)
+                                       dtypes.AccessType.ReadOnly)
         else:
             consumed_element = sdfg.add_array(
                 node.consume.label + '_elements', [node.consume.chunksize],
                 input_streamdesc.dtype,
                 transient=True,
-                storage=types.StorageType.Register)
+                storage=dtypes.StorageType.Register)
             ce_node = nodes.AccessNode(node.consume.label + '_elements',
-                                       types.AccessType.ReadOnly)
+                                       dtypes.AccessType.ReadOnly)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])
@@ -1761,7 +1761,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             node, dfg) and PerfSettings.perf_enable_instrumentation_for(
                 sdfg, node)
 
-        if node.schedule == types.ScheduleType.CPU_Multicore:
+        if node.schedule == dtypes.ScheduleType.CPU_Multicore:
             if PerfSettings.perf_enable_vectorization_analysis():
                 idstr = "// (Node %d)\n" % dfg.node_id(node)
                 loop_header += idstr
@@ -1871,8 +1871,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         use_tmpout = False
         if len(axes) == input_dims:
             # Add OpenMP reduction clause if reducing all axes
-            if (redtype != types.ReductionType.Custom
-                    and node.schedule == types.ScheduleType.CPU_Multicore):
+            if (redtype != dtypes.ReductionType.Custom
+                    and node.schedule == dtypes.ScheduleType.CPU_Multicore):
                 loop_header += ' reduction(%s: __tmpout)' % (
                     _REDUCTION_TYPE_TO_OPENMP[redtype])
 
@@ -1912,7 +1912,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         invar = cpp_array_expr(
             sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
-        if redtype != types.ReductionType.Custom:
+        if redtype != dtypes.ReductionType.Custom:
             callsite_stream.write(
                 'dace::wcr_fixed<%s, %s>::reduce_atomic(&%s, %s);' %
                 (credtype, output_type, outvar, invar), sdfg, state_id,
@@ -2170,7 +2170,7 @@ def write_and_resolve_expr(memlet, nc, outname, inname, indices=None):
     custom_reduction = ''
 
     # Special call for detected reduction types
-    if redtype != types.ReductionType.Custom:
+    if redtype != dtypes.ReductionType.Custom:
         credtype = ('dace::ReductionType::' +
                     str(redtype)[str(redtype).find('.') + 1:])
         reduction_tmpl = '<%s>' % credtype
@@ -2205,8 +2205,8 @@ def is_write_conflicted(dfg, edge, datanode=None):
         if datanode is None: return True
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1: return True
-        if (isinstance(in_edges[0].src, nodes.ExitNode) and
-                in_edges[0].src.map.schedule == types.ScheduleType.Sequential):
+        if (isinstance(in_edges[0].src, nodes.ExitNode) and in_edges[0]
+                .src.map.schedule == dtypes.ScheduleType.Sequential):
             return False
         return True
 
@@ -2217,11 +2217,11 @@ def is_write_conflicted(dfg, edge, datanode=None):
     path = dfg.memlet_path(edge)
     for e in path:
         if (isinstance(e.dst, nodes.ExitNode)
-                and e.dst.map.schedule != types.ScheduleType.Sequential):
+                and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
             return True
         # Should never happen (no such thing as write-conflicting reads)
         if (isinstance(e.src, nodes.EntryNode)
-                and e.src.map.schedule != types.ScheduleType.Sequential):
+                and e.src.map.schedule != dtypes.ScheduleType.Sequential):
             return True
 
     return False
@@ -2261,7 +2261,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
 
     # Not [], "" or None
     if node.code_global:
-        if node.language is not types.Language.CPP:
+        if node.language is not dtypes.Language.CPP:
             raise ValueError(
                 "Global code only supported for C++ tasklets: got {}".format(
                     node.language))
@@ -2271,7 +2271,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         function_stream.write("\n", sdfg, state_id, node)
 
     # If raw C++ code, return the code directly
-    if node.language != types.Language.Python:
+    if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a CUDA stream,
         # set the stream to a local variable.
         max_streams = int(
@@ -2282,7 +2282,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                 'cudaStream_t __dace_current_stream = dace::cuda::__streams[%d];'
                 % node._cuda_stream, sdfg, state_id, node)
 
-        if node.language != types.Language.CPP:
+        if node.language != dtypes.Language.CPP:
             raise ValueError(
                 "Only Python or C++ code supported in CPU codegen, got: {}".
                 format(node.language))
@@ -2546,8 +2546,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         attrname = rname(node)
         module_name = attrname[:attrname.rfind('.')]
         func_name = attrname[attrname.rfind('.') + 1:]
-        if module_name in types._ALLOWED_MODULES:
-            cppmodname = types._ALLOWED_MODULES[module_name]
+        if module_name in dtypes._ALLOWED_MODULES:
+            cppmodname = dtypes._ALLOWED_MODULES[module_name]
             return ast.copy_location(
                 ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
         return self.generic_visit(node)

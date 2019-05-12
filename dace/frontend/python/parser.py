@@ -8,7 +8,7 @@ import copy
 import sys
 import numpy
 
-from dace import data, symbolic, types
+from dace import data, symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import astparser, astutils, depanalysis
 from dace.sdfg import SDFG
@@ -27,12 +27,12 @@ def _create_datadescriptor(obj):
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
             return data.Array(
-                dtype=types.typeclass(obj.dtype.type), shape=obj.shape)
+                dtype=dtypes.typeclass(obj.dtype.type), shape=obj.shape)
         if symbolic.issymbolic(obj):
             return data.Scalar(symbolic.symtype(obj))
-        if isinstance(obj, types.typeclass):
+        if isinstance(obj, dtypes.typeclass):
             return data.Scalar(obj)
-        return data.Scalar(types.typeclass(type(obj)))
+        return data.Scalar(dtypes.typeclass(type(obj)))
 
 
 def _get_type_annotations(f, f_argnames, decorator_args):
@@ -118,7 +118,7 @@ def parse_from_function(function, *compilation_args, strict=None):
         that corresponds to it.
         @param function: DaceProgram object (obtained from the `@dace.program`
                          decorator).
-        @param compilation_args: Various compilation arguments e.g. types.
+        @param compilation_args: Various compilation arguments e.g. dtypes.
         @param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
         @return: The generated SDFG object.
@@ -242,7 +242,7 @@ class DaceProgram:
 
     def generate_pdp(self, *compilation_args):
         """ Generates the parsed AST representation of a DaCe program.
-            @param compilation_args: Various compilation arguments e.g., types.
+            @param compilation_args: Various compilation arguments e.g., dtypes.
             @return: A 2-tuple of (program, modules), where `program` is a 
                      `dace.astnodes._ProgramNode` representing the parsed DaCe 
                      program, and `modules` is a dictionary mapping imported 
@@ -277,11 +277,11 @@ class DaceProgram:
         # (for inferring types and values in the DaCe program)
         global_vars = {
             k: v
-            for k, v in dace_func.__globals__.items() if types.isallowed(v)
+            for k, v in dace_func.__globals__.items() if dtypes.isallowed(v)
         }
         modules = {
             k: v.__name__
-            for k, v in dace_func.__globals__.items() if types.ismodule(v)
+            for k, v in dace_func.__globals__.items() if dtypes.ismodule(v)
         }
         modules['builtins'] = ''
 
@@ -294,7 +294,7 @@ class DaceProgram:
         # Add keyword arguments as additional globals
         global_vars.update(
             {k: v
-             for k, v in self.kwargs.items() if types.isallowed(v)})
+             for k, v in self.kwargs.items() if dtypes.isallowed(v)})
 
         # Parse AST to create the SDFG
         pdp = astparser.parse_dace_program(dace_func, argtypes, global_vars,

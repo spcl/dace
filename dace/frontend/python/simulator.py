@@ -10,7 +10,7 @@ import numpy
 import sys
 import numpy
 
-from dace import data, symbolic, types
+from dace import data, symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import astparser, astnodes, astutils, ndloop, ndarray
 from dace.frontend.python.astutils import unparse

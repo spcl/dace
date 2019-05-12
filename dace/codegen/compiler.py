@@ -20,7 +20,7 @@ import numpy as np
 import dace
 from dace.frontend import operations
 from dace.frontend.python import ndarray
-from dace import symbolic, types, data as dt
+from dace import symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -249,8 +249,8 @@ class CompiledSDFG(object):
                         or isinstance(arg, np.ndarray)) else (arg, atype)
             for arg, atype in callparams)
 
-        newargs = tuple(types._FFI_CTYPES[atype](arg) if (
-            atype in types._FFI_CTYPES
+        newargs = tuple(dtypes._FFI_CTYPES[atype](arg) if (
+            atype in dtypes._FFI_CTYPES
             and not isinstance(arg, ctypes.c_void_p)) else arg
                         for arg, atype in newargs)
 

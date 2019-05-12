@@ -7,9 +7,9 @@ import sympy as functions
 from sympy.abc import _clash
 from sympy.printing.str import StrPrinter
 
-from dace import types
+from dace import dtypes
 
-DEFAULT_SYMBOL_TYPE = types.int32
+DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
 class symbol(sympy.Symbol):
@@ -44,7 +44,7 @@ class symbol(sympy.Symbol):
         elif name.startswith('__DACE'):
             raise NameError('Symbols cannot start with __DACE')
 
-        if not isinstance(dtype, types.typeclass):
+        if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
         if 'integer' in assumptions or 'int' not in str(dtype):
@@ -402,7 +402,7 @@ def symbols_in_ast(tree):
             to_visit += list(val.__dict__.items())
         if isinstance(val, list):
             to_visit += [(key, v) for v in val]
-    return types.deduplicate(symbols)
+    return dtypes.deduplicate(symbols)
 
 
 def getsymbols(compilation_args):
@@ -449,6 +449,8 @@ def sympy_to_dace(exprs, symbol_map={}):
     except TypeError:
         oneelem = True
         exprs = [exprs]
+
+    exprs = list(exprs)
 
     for i, expr in enumerate(exprs):
         if isinstance(expr, sympy.Basic):
@@ -650,7 +652,7 @@ def symstr(sym):
 
         if isinstance(sym,
                       symbol) or isinstance(sym, sympy.Symbol) or isinstance(
-                          sym, sympy.Number) or types.isconstant(sym):
+                          sym, sympy.Number) or dtypes.isconstant(sym):
             return repstr(sstr)
         else:
             return '(' + repstr(sstr) + ')'

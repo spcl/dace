@@ -1,4 +1,4 @@
-from dace import data, symbolic, types
+from dace import data, symbolic, dtypes
 import re
 import sympy as sp
 from functools import reduce

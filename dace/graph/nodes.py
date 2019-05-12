@@ -12,7 +12,7 @@ from dace.properties import (Property, CodeProperty, LambdaProperty,
                              SetProperty, make_properties, indirect_properties,
                              DataProperty, SymbolicProperty)
 from dace.frontend.operations import detect_reduction_type
-from dace import data, subsets as sbs, types
+from dace import data, subsets as sbs, dtypes
 import pickle
 
 # -----------------------------------------------------------------------------
@@ -152,14 +152,16 @@ class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
     access = Property(
-        enum=types.AccessType,
+        enum=dtypes.AccessType,
         desc="Type of access to this array",
-        default=types.AccessType.ReadWrite)
+        default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo2 = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
-    def __init__(self, data, access=types.AccessType.ReadWrite,
+    def __init__(self,
+                 data,
+                 access=dtypes.AccessType.ReadWrite,
                  debuginfo=None):
         super(AccessNode, self).__init__()
 
@@ -228,7 +230,7 @@ class Tasklet(CodeNode):
     """
 
     label = Property(dtype=str, desc="Name of the tasklet")
-    language = Property(enum=types.Language, default=types.Language.Python)
+    language = Property(enum=dtypes.Language, default=dtypes.Language.Python)
     code = CodeProperty(desc="Tasklet code")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -246,7 +248,7 @@ class Tasklet(CodeNode):
                  inputs=set(),
                  outputs=set(),
                  code="",
-                 language=types.Language.Python,
+                 language=dtypes.Language.Python,
                  code_global="",
                  code_init="",
                  code_exit="",
@@ -320,10 +322,10 @@ class NestedSDFG(CodeNode):
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = Property(dtype=graph.OrderedDiGraph, desc="The SDFG")
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     location = Property(dtype=str, desc="SDFG execution location descriptor")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
@@ -336,7 +338,7 @@ class NestedSDFG(CodeNode):
                  sdfg,
                  inputs: Set[str],
                  outputs: Set[str],
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  location="-1",
                  debuginfo=None):
         super(NestedSDFG, self).__init__(inputs, outputs)
@@ -469,10 +471,10 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters")
     #   order = OrderProperty(desc="Order of map dimensions", unmapped=True)
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="Map schedule",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
@@ -496,7 +498,7 @@ class Map(object):
                  label,
                  params,
                  ndrange,
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  unroll=False,
                  is_async=False,
                  flatten=False,
@@ -620,12 +622,12 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements")
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    language = Property(enum=types.Language, default=types.Language.Python)
+    language = Property(enum=dtypes.Language, default=dtypes.Language.Python)
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="Consume schedule",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     chunksize = Property(
         dtype=int,
         desc="Maximal size of elements to consume at a time",
@@ -646,7 +648,7 @@ class Consume(object):
                  label,
                  pe_tuple,
                  condition,
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  chunksize=1,
                  debuginfo=None):
         super(Consume, self).__init__()
@@ -698,10 +700,10 @@ class Reduce(Node):
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="Reduction execution policy",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
 
     papi_counters = Property(
         dtype=list,
@@ -713,7 +715,7 @@ class Reduce(Node):
                  wcr,
                  axes,
                  wcr_identity=None,
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  debuginfo=None):
         super(Reduce, self).__init__()
         self.wcr = wcr  # type: ast._Lambda
@@ -728,7 +730,7 @@ class Reduce(Node):
     def __str__(self):
         # Autodetect reduction type
         redtype = detect_reduction_type(self.wcr)
-        if redtype == types.ReductionType.Custom:
+        if redtype == dtypes.ReductionType.Custom:
             wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
         else:
             wcrstr = str(redtype)
@@ -740,7 +742,7 @@ class Reduce(Node):
     def __label__(self, sdfg, state):
         # Autodetect reduction type
         redtype = detect_reduction_type(self.wcr)
-        if redtype == types.ReductionType.Custom:
+        if redtype == dtypes.ReductionType.Custom:
             wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
         else:
             wcrstr = str(redtype)

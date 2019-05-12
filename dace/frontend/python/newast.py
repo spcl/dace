@@ -7,7 +7,7 @@ import dace
 from dace.frontend.common import op_impl
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
-from dace import SDFG, SDFGState, data, types
+from dace import SDFG, SDFGState, data, dtypes
 from dace.graph import nodes
 from dace.symbolic import pystr_to_symbolic
 
@@ -238,7 +238,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  sdfg: SDFG,
                  state: SDFGState,
                  filename: str,
-                 lang=types.Language.Python,
+                 lang=dtypes.Language.Python,
                  location: str = '-1'):
         """ Creates an AST parser for tasklets. 
             @param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
@@ -275,10 +275,10 @@ class TaskletTransformer(ExtNodeTransformer):
         self.visit(tasklet_ast)
 
         # Location identifier
-        locinfo = types.DebugInfo(tasklet_ast.lineno, tasklet_ast.col_offset,
-                                  tasklet_ast.body[-1].lineno,
-                                  tasklet_ast.body[-1].col_offset,
-                                  self.filename)
+        locinfo = dtypes.DebugInfo(tasklet_ast.lineno, tasklet_ast.col_offset,
+                                   tasklet_ast.body[-1].lineno,
+                                   tasklet_ast.body[-1].col_offset,
+                                   self.filename)
 
         # Determine tasklet name (either declared as a function or use line #)
         name = getattr(tasklet_ast, 'name', 'tasklet_%d' % tasklet_ast.lineno)
@@ -317,7 +317,7 @@ class TaskletTransformer(ExtNodeTransformer):
                 'for tasklet')
         self.extcode = node.s
         # TODO(later): Syntax for other languages?
-        self.lang = types.Language.CPP
+        self.lang = dtypes.Language.CPP
 
         return node
 

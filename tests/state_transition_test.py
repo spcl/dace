@@ -18,10 +18,10 @@ if __name__ == "__main__":
     end = sdfg.add_state("end")
 
     left_cond = dace.properties.CodeProperty.from_string(
-        "0 < 1", language=dace.types.Language.Python)
+        "0 < 1", language=dace.dtypes.Language.Python)
 
     right_cond = dace.properties.CodeProperty.from_string(
-        "0 >= 1", language=dace.types.Language.Python)
+        "0 >= 1", language=dace.dtypes.Language.Python)
 
     sdfg.add_edge(start, left, dace.InterstateEdge(condition=left_cond))
     sdfg.add_edge(start, right, dace.InterstateEdge(condition=right_cond))
@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     for_entry = dace.InterstateEdge(
         condition=dace.properties.CodeProperty.from_string(
-            "i < 16", language=dace.types.Language.Python))
+            "i < 16", language=dace.dtypes.Language.Python))
     sdfg.add_edge(s1_for_enter, s1_for_body, for_entry)
 
     for_continue = dace.InterstateEdge(assignments={"i": "i + 1"})
@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     for_exit = dace.InterstateEdge(
         condition=dace.properties.CodeProperty.from_string(
-            "i >= 16", language=dace.types.Language.Python))
+            "i >= 16", language=dace.dtypes.Language.Python))
     sdfg.add_edge(s1_for_enter, s2, for_exit)
 
     s3_while_enter = sdfg.add_state("s3_while_enter")
@@ -78,7 +78,7 @@ if __name__ == "__main__":
 
     while_entry = dace.InterstateEdge(
         condition=dace.properties.CodeProperty.from_string(
-            "i < 128", language=dace.types.Language.Python))
+            "i < 128", language=dace.dtypes.Language.Python))
     sdfg.add_edge(s3_while_enter, s3_while_body, while_entry)
 
     while_continue = dace.InterstateEdge()
@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
     while_exit = dace.InterstateEdge(
         condition=dace.properties.CodeProperty.from_string(
-            "i >= 128", language=dace.types.Language.Python))
+            "i >= 128", language=dace.dtypes.Language.Python))
     sdfg.add_edge(s3_while_enter, s4, while_exit)
 
     sdfg.draw_to_file("sdfg.dot")
@@ -106,9 +106,9 @@ if __name__ == "__main__":
     s9 = sdfg.add_state("s9")
 
     if_cond = dace.properties.CodeProperty.from_string(
-        "i < 512", language=dace.types.Language.Python)
+        "i < 512", language=dace.dtypes.Language.Python)
     nested_if_cond = dace.properties.CodeProperty.from_string(
-        "i < 256", language=dace.types.Language.Python)
+        "i < 256", language=dace.dtypes.Language.Python)
 
     sdfg.add_edge(s4, s5_then, dace.InterstateEdge(condition=if_cond))
     sdfg.add_edge(
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     if re.search(else_pattern, code) is None:
         raise RuntimeError("Else not detected in state transitions")
 
-    x_output = dace.ndarray([1], dace.types.int32)
+    x_output = dace.ndarray([1], dace.dtypes.int32)
     x_output[0] = 0
     sdfg(x=x_output)
     x_output = x_output[0]

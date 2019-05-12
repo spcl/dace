@@ -28,7 +28,7 @@ class AST_RangeExpression(AST_Node):
             return [1, 1]
 
     def get_basetype(self):
-        return dace.types.float64
+        return dace.dtypes.float64
 
     def replace_child(self, old, new):
         if old == self.lhs:

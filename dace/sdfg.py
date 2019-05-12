@@ -14,7 +14,7 @@ import numpy as np
 import sympy as sp
 
 import dace
-from dace import data as dt, memlet as mm, subsets as sbs, types, properties, symbolic
+from dace import data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic
 from dace.config import Config
 from dace.frontend.python import ndarray
 from dace.graph import edges as ed, nodes as nd, labeling
@@ -35,7 +35,7 @@ def getcaller() -> Tuple[str, int]:
     return (caller.filename, caller.lineno)
 
 
-def getdebuginfo(old_dinfo=None) -> types.DebugInfo:
+def getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     """ Returns a DebugInfo object for the position that called this function.
         @param old_dinfo: Another DebugInfo object that will override the
                           return value of this function
@@ -45,7 +45,8 @@ def getdebuginfo(old_dinfo=None) -> types.DebugInfo:
         return old_dinfo
 
     caller = getframeinfo(stack()[2][0])
-    return types.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
+                            caller.filename)
 
 
 class InvalidSDFGError(Exception):
@@ -554,14 +555,14 @@ class SDFG(OrderedDiGraph):
 
     def arglist(self):
         """ Returns a list of argument names required to call this SDFG.
-            The return type is a dictionary of names to types. """
+            The return type is a dictionary of names to dtypes. """
         data_args = []
         for state in self.nodes():
             data_args += [
                 (n.data, n.desc(self)) for n in state.nodes()
                 if isinstance(n, nd.AccessNode) and not n.desc(self).transient
             ]
-        data_args = sorted(types.deduplicate(data_args))
+        data_args = sorted(dtypes.deduplicate(data_args))
 
         sym_args = sorted(self.undefined_symbols(True).items())
 
@@ -794,7 +795,7 @@ subgraph cluster_state_{state} {{
                         (node.data in seen and seen[node.data] != state)):
                         shared.append(node.data)
                     seen[node.data] = state
-        return types.deduplicate(shared)
+        return dtypes.deduplicate(shared)
 
     def input_arrays(self):
         """ Returns a list of input arrays that need to be fed into the SDFG.
@@ -866,7 +867,7 @@ subgraph cluster_state_{state} {{
                   name: str,
                   shape,
                   dtype,
-                  storage=types.StorageType.Default,
+                  storage=dtypes.StorageType.Default,
                   materialize_func=None,
                   transient=False,
                   strides=None,
@@ -895,8 +896,8 @@ subgraph cluster_state_{state} {{
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
 
-        if isinstance(dtype, type) and dtype in types._CONSTANT_TYPES[:-1]:
-            dtype = types.typeclass(dtype)
+        if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+            dtype = dtypes.typeclass(dtype)
 
         desc = dt.Array(
             dtype,
@@ -920,7 +921,7 @@ subgraph cluster_state_{state} {{
                    veclen=1,
                    buffer_size=1,
                    shape=(1, ),
-                   storage=types.StorageType.Default,
+                   storage=dtypes.StorageType.Default,
                    transient=False,
                    strides=None,
                    offset=None,
@@ -936,8 +937,8 @@ subgraph cluster_state_{state} {{
             raise NameError('Array or Stream with name "%s" already exists '
                             'in SDFG' % name)
 
-        if isinstance(dtype, type) and dtype in types._CONSTANT_TYPES[:-1]:
-            dtype = types.typeclass(dtype)
+        if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+            dtype = dtypes.typeclass(dtype)
 
         desc = dt.Stream(
             dtype,
@@ -957,7 +958,7 @@ subgraph cluster_state_{state} {{
     def add_scalar(self,
                    name: str,
                    dtype,
-                   storage=types.StorageType.Default,
+                   storage=dtypes.StorageType.Default,
                    transient=False,
                    toplevel=False,
                    debuginfo=None):
@@ -970,8 +971,8 @@ subgraph cluster_state_{state} {{
             raise NameError('Array or Stream with name "%s" already exists '
                             'in SDFG' % name)
 
-        if isinstance(dtype, type) and dtype in types._CONSTANT_TYPES[:-1]:
-            dtype = types.typeclass(dtype)
+        if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+            dtype = dtypes.typeclass(dtype)
 
         desc = dt.Scalar(
             dtype,
@@ -987,7 +988,7 @@ subgraph cluster_state_{state} {{
                       name,
                       shape,
                       dtype,
-                      storage=types.StorageType.Default,
+                      storage=dtypes.StorageType.Default,
                       materialize_func=None,
                       strides=None,
                       offset=None,
@@ -1090,9 +1091,9 @@ subgraph cluster_state_{state} {{
         # Loop condition
         if condition_expr:
             cond_ast = CodeProperty.from_string(condition_expr,
-                                                types.Language.Python)
+                                                dtypes.Language.Python)
         else:
-            cond_ast = CodeProperty.from_string('True', types.Language.Python)
+            cond_ast = CodeProperty.from_string('True', dtypes.Language.Python)
         self.add_edge(guard, loop_state, ed.InterstateEdge(cond_ast))
         self.add_edge(guard, after_state,
                       ed.InterstateEdge(negate_expr(cond_ast)))
@@ -1278,14 +1279,14 @@ subgraph cluster_state_{state} {{
                                         "expected array type, got {}".format(
                                             arg, type(passed)))
                 elif (isinstance(expected, dace.data.Scalar)
-                      or isinstance(expected, dace.types.typeclass)):
-                    if (not dace.types.isconstant(passed)
+                      or isinstance(expected, dace.dtypes.typeclass)):
+                    if (not dace.dtypes.isconstant(passed)
                             and not isinstance(passed, dace.symbolic.symbol)):
                         raise TypeError("Type mismatch for argument {}: "
                                         "expected scalar type, got {}".format(
                                             arg, type(passed)))
                 elif isinstance(expected, dace.data.Stream):
-                    if not isinstance(passed, dace.types.stream):
+                    if not isinstance(passed, dace.dtypes.stream):
                         raise TypeError("Type mismatch for argument {}: "
                                         "expected stream type, got {}".format(
                                             arg, type(passed)))
@@ -2065,7 +2066,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         debuginfo = getdebuginfo(debuginfo)
         node = nd.AccessNode(
             array_or_stream_name,
-            types.AccessType.ReadOnly,
+            dtypes.AccessType.ReadOnly,
             debuginfo=debuginfo)
         self.add_node(node)
         return node
@@ -2079,7 +2080,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         debuginfo = getdebuginfo(debuginfo)
         node = nd.AccessNode(
             array_or_stream_name,
-            types.AccessType.WriteOnly,
+            dtypes.AccessType.WriteOnly,
             debuginfo=debuginfo)
         self.add_node(node)
         return node
@@ -2093,7 +2094,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         debuginfo = getdebuginfo(debuginfo)
         node = nd.AccessNode(
             array_or_stream_name,
-            types.AccessType.ReadWrite,
+            dtypes.AccessType.ReadWrite,
             debuginfo=debuginfo)
         self.add_node(node)
         return node
@@ -2103,7 +2104,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     inputs: Set[str],
                     outputs: Set[str],
                     code: str,
-                    language: types.Language = types.Language.Python,
+                    language: dtypes.Language = dtypes.Language.Python,
                     code_global: str = '',
                     code_init: str = '',
                     code_exit: str = '',
@@ -2131,7 +2132,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         inputs: Set[str],
                         outputs: Set[str],
                         name=None,
-                        schedule=types.ScheduleType.Default,
+                        schedule=dtypes.ScheduleType.Default,
                         location='-1',
                         debuginfo=None):
         """ Adds a nested SDFG to the SDFG state. """
@@ -2179,7 +2180,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_map(self,
                 name,
                 ndrange: Dict[str, str],
-                schedule=types.ScheduleType.Default,
+                schedule=dtypes.ScheduleType.Default,
                 unroll=False,
                 debuginfo=None) -> Tuple[nd.Node]:
         """ Adds a map entry and map exit.
@@ -2203,7 +2204,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     name,
                     elements: Tuple[str, str],
                     condition: str = None,
-                    schedule=types.ScheduleType.Default,
+                    schedule=dtypes.ScheduleType.Default,
                     chunksize=1,
                     debuginfo=None) -> Tuple[nd.Node]:
         """ Adds consume entry and consume exit nodes.
@@ -2245,13 +2246,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                            inputs: Dict[str, mm.Memlet],
                            code: str,
                            outputs: Dict[str, mm.Memlet],
-                           schedule=types.ScheduleType.Default,
+                           schedule=dtypes.ScheduleType.Default,
                            unroll_map=False,
                            code_global='',
                            code_init='',
                            code_exit='',
                            location='-1',
-                           language=types.Language.Python,
+                           language=dtypes.Language.Python,
                            debuginfo=None,
                            external_edges=False) -> Tuple[nd.Node]:
         """ Convenience function that adds a map entry, tasklet, map exit,
@@ -2372,7 +2373,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                    wcr,
                    axes,
                    wcr_identity=None,
-                   schedule=types.ScheduleType.Default,
+                   schedule=dtypes.ScheduleType.Default,
                    debuginfo=None):
         """ Adds a reduction node.
             @param wcr: A lambda function representing the reduction operation
@@ -2589,7 +2590,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                   name,
                   shape,
                   dtype,
-                  storage=types.StorageType.Default,
+                  storage=dtypes.StorageType.Default,
                   materialize_func=None,
                   transient=False,
                   strides=None,
@@ -2612,7 +2613,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                    veclen=1,
                    buffer_size=1,
                    shape=(1, ),
-                   storage=types.StorageType.Default,
+                   storage=dtypes.StorageType.Default,
                    transient=False,
                    strides=None,
                    offset=None,
@@ -2632,7 +2633,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_scalar(self,
                    name,
                    dtype,
-                   storage=types.StorageType.Default,
+                   storage=dtypes.StorageType.Default,
                    transient=False,
                    toplevel=False,
                    debuginfo=None):
@@ -2650,7 +2651,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                       name,
                       shape,
                       dtype,
-                      storage=types.StorageType.Default,
+                      storage=dtypes.StorageType.Default,
                       materialize_func=None,
                       strides=None,
                       offset=None,
@@ -2788,7 +2789,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     pass
                 # Another corner case: a tasklet with external code
                 elif (isinstance(node, nd.Tasklet)
-                      and node.language != types.Language.Python):
+                      and node.language != dtypes.Language.Python):
                     pass
                 else:
                     raise InvalidSDFGNodeError('Isolated node', sdfg, state_id,
@@ -3384,7 +3385,7 @@ def local_transients(sdfg, dfg, entry_node):
             # present anywhere else by keeping track of transients not in this
             # scope
             out_scope.add(node.data)
-    transients = types.deduplicate([
+    transients = dtypes.deduplicate([
         n.data for n in dfg.nodes()
         if isinstance(n, dace.graph.nodes.AccessNode) and n.data in in_scope
         and n.data not in out_scope
@@ -3416,7 +3417,7 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
         sdict = state.scope_dict()
         scope = sdict[node]
         while scope is not None:
-            if scope.schedule in types.GPU_SCHEDULES:
+            if scope.schedule in dtypes.GPU_SCHEDULES:
                 return True
             scope = sdict[scope]
         # Traverse up nested SDFGs
