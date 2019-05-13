@@ -12,37 +12,6 @@ from dace.frontend.python import astnodes, astutils
 from dace.frontend.python.astutils import *
 
 
-def function_to_ast(f):
-    """ Obtain the source code of a Python function and create an AST. 
-        @param f: Python function.
-        @return: A 4-tuple of (AST, function filename, function line-number,
-                               source code as string).
-    """
-    try:
-        src = inspect.getsource(f)
-    # TypeError: X is not a module, class, method, function, traceback, frame,
-    # or code object; OR OSError: could not get source code
-    except (TypeError, OSError):
-        raise TypeError('cannot obtain source code for dace program')
-
-    src_file = inspect.getfile(f)
-    _, src_line = inspect.findsource(f)
-    src_ast = ast.parse(_remove_outer_indentation(src))
-    ast.increment_lineno(src_ast, src_line)
-
-    return src_ast, src_file, src_line, src
-
-
-def _remove_outer_indentation(src: str):
-    """ Removes extra indentation from a source Python function.
-        @param src: Source code (possibly indented).
-        @return: Code after de-indentation.
-    """
-    lines = src.split('\n')
-    indentation = len(lines[0]) - len(lines[0].lstrip())
-    return '\n'.join([line[indentation:] for line in lines])
-
-
 class FindLocals(ast.NodeVisitor):
     """ Python AST node visitor that recovers all left-hand-side (stored)
         locals. """
@@ -53,78 +22,6 @@ class FindLocals(ast.NodeVisitor):
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Store):
             self.locals[node.id] = node
-
-
-def parse_dace_program(f, argtypes, global_vars, modules):
-    """ Parses a `@dace.program` function into a _ProgramNode object. 
-        @param f: A Python function to parse.
-        @param argtypes: An dictionary of (name, type) for the given
-                         function's arguments, which may pertain to data
-                         nodes or symbols (scalars).
-        @param global_vars: A dictionary of global variables in the closure
-                            of `f`.
-        @param modules: A dictionary from an imported module name to the
-                        module itself.
-        @return: Hierarchical tree of `astnodes._Node` objects, where the top
-                 level node is an `astnodes._ProgramNode`.
-        @rtype: astnodes._ProgramNode
-    """
-    src_ast, src_file, src_line, src = function_to_ast(f)
-
-    # Find local variables
-    local_finder = FindLocals()
-    local_finder.visit(src_ast)
-    local_vars = local_finder.locals
-
-    # 1. Inline all "dace.call"ed functions
-    inliner = FunctionInliner(global_vars, modules, local_vars)
-    inliner.visit(src_ast)
-
-    # 2. resolve all the symbols in the AST
-    allowed_globals = global_vars.copy()
-    allowed_globals.update(argtypes)
-    symresolver = SymbolResolver(allowed_globals)
-    symresolver.visit(src_ast)
-
-    from dace.frontend.python import newast
-    src_ast = newast.ModuleResolver(modules).visit(src_ast)
-    # Convert modules to after resolution
-    for mod, modval in modules.items():
-        print(mod, modval)
-        if mod == 'builtins':
-            continue
-        newmod = global_vars[mod]
-        del global_vars[mod]
-        global_vars[modval] = newmod
-    pv = newast.ProgramVisitor(
-        f.__name__,
-        src_file,
-        src_line,
-        #astutils.get_argtypes(src_ast.body[0], global_vars),
-        argtypes,
-        global_vars)
-    sdfg, _, _ = pv.parse_program(src_ast.body[0])
-    sdfg.draw_to_file('before_strict.dot')
-    sdfg.apply_strict_transformations()
-    sdfg.draw_to_file()
-    print('PARSE OK')
-    sdfg.compile()
-    import os
-    import sys
-    sys.stdout.flush()
-    os._exit(0)
-
-    # 3. Parse the DaCe program to a hierarchical dependency representation
-    ast_parser = ParseDaCe(src_file, src_line, argtypes, global_vars, modules,
-                           symresolver)
-
-    ast_parser.visit(src_ast)
-    pdp = ast_parser.program
-    pdp.source = src
-    pdp.filename = src_file
-    pdp.argtypes = argtypes
-
-    return pdp
 
 
 class MemletRemover(ExtNodeTransformer):

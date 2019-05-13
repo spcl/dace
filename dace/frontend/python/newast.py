@@ -4,10 +4,13 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Tuple, Union
 
 import dace
+from dace.dtypes import paramdec
 from dace.frontend.common import op_impl
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
-from dace import SDFG, SDFGState, data, dtypes, Memlet, symbolic, subsets
+from dace.sdfg import SDFG, SDFGState
+from dace.memlet import Memlet
+from dace import data, dtypes, symbolic, subsets
 from dace.graph import nodes
 from dace.symbolic import pystr_to_symbolic
 from collections import namedtuple
@@ -24,6 +27,47 @@ from collections import namedtuple
 # @replaces('numpy.ndarray')
 # def fff(shape, dtype):
 #     return ArrayNode()
+
+
+
+def parse_dace_program(f, argtypes, global_vars, modules):
+    """ Parses a `@dace.program` function into a _ProgramNode object.
+        @param f: A Python function to parse.
+        @param argtypes: An dictionary of (name, type) for the given
+                         function's arguments, which may pertain to data
+                         nodes or symbols (scalars).
+        @param global_vars: A dictionary of global variables in the closure
+                            of `f`.
+        @param modules: A dictionary from an imported module name to the
+                        module itself.
+        @return: Hierarchical tree of `astnodes._Node` objects, where the top
+                 level node is an `astnodes._ProgramNode`.
+        @rtype: astnodes._ProgramNode
+    """
+    src_ast, src_file, src_line, src = astutils.function_to_ast(f)
+
+    src_ast = ModuleResolver(modules).visit(src_ast)
+    # Convert modules to after resolution
+    for mod, modval in modules.items():
+        print(mod, modval)
+        if mod == 'builtins':
+            continue
+        newmod = global_vars[mod]
+        del global_vars[mod]
+        global_vars[modval] = newmod
+
+    pv = ProgramVisitor(
+        f.__name__,
+        src_file,
+        src_line,
+        #astutils.get_argtypes(src_ast.body[0], global_vars),
+        argtypes,
+        global_vars)
+
+    sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    sdfg.set_sourcecode(src, 'python')
+
+    return sdfg
 
 
 class DaceSyntaxError(Exception):

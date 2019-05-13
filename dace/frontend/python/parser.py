@@ -10,7 +10,7 @@ import numpy
 
 from dace import data, symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import astparser, astutils, depanalysis
+from dace.frontend.python import newast
 from dace.sdfg import SDFG
 from dace.graph import labeling
 
@@ -127,59 +127,16 @@ def parse_from_function(function, *compilation_args, strict=None):
         raise TypeError(
             'Function must be of type dace.frontend.python.DaceProgram')
 
-    # Obtain parsed DaCe program
-    pdp, modules = function.generate_pdp(*compilation_args)
+    # Obtain DaCe program as SDFG
+    sdfg = function.generate_pdp(*compilation_args)
 
-    # Create an empty SDFG
-    sdfg = SDFG(pdp.name)
-
-    sdfg.set_sourcecode(pdp.source, 'python')
-
-    # Populate SDFG with states and nodes, according to the parsed DaCe program
-
-    # 1) Inherit dependencies and inject tasklets
-    # 2) Traverse program graph and recursively split into states,
-    #    annotating edges with their transition conditions.
-    # 3) Add arrays, streams, and scalars to the SDFG array store
-    # 4) Eliminate empty states with no conditional outgoing transitions
-    # 5) Label states in topological order
-    # 6) Construct dataflow graph for each state
-
-    # Step 1)
-    for primitive in pdp.children:
-        depanalysis.inherit_dependencies(primitive)
-
-    # Step 2)
-    state_primitives = depanalysis.create_states_simple(pdp, sdfg)
-
-    # Step 3)
-    for dataname, datadesc in pdp.all_arrays().items():
-        sdfg.add_datadesc(dataname, datadesc)
-
-    # Clear "nested" symbols created as a result of AST parsing
-    sdfg._symbols = set()
-    for symname, symtype in pdp.argtypes.items():
-        if (symname not in sdfg.arrays
-                or isinstance(sdfg.arrays[symname], data.Scalar)):
-            sdfg.add_symbol(symname, symtype.dtype, override_dtype=True)
-
-    # Step 5)
-    stateList = sdfg.topological_sort(sdfg.start_state)
-    for i, state in enumerate(stateList):
-        if state.label is None or state.label == "":
-            state.set_label("s" + str(i))
-
-    # Step 6)
-    for i, state in enumerate(stateList):
-        depanalysis.build_dataflow_graph(sdfg, state, state_primitives[state],
-                                         modules)
-
+    # No need at this point
     # Fill in scope entry/exit connectors
-    sdfg.fill_scope_connectors()
-
+    #sdfg.fill_scope_connectors()
     # Memlet propagation
-    if sdfg.propagate:
-        labeling.propagate_labels_sdfg(sdfg)
+    #if sdfg.propagate:
+    #    labeling.propagate_labels_sdfg(sdfg)
+    ########################
 
     # Drawing the SDFG before strict transformations
     sdfg.draw_to_file(recursive=True)
@@ -297,8 +254,5 @@ class DaceProgram:
              for k, v in self.kwargs.items() if dtypes.isallowed(v)})
 
         # Parse AST to create the SDFG
-        pdp = astparser.parse_dace_program(dace_func, argtypes, global_vars,
-                                           modules)
-
-        # Transform parsed DaCe code into a DaCe program (Stateful DFG)
-        return pdp, modules
+        return newast.parse_dace_program(dace_func, argtypes, global_vars,
+                                         modules)

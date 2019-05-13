@@ -9,8 +9,8 @@ import typing
 import numpy as np
 
 State = dace.sdfg.SDFGState
-Shape = typing.List[typing.Union[int, dace.symbol]]
-Index = typing.List[typing.Union[int, str, dace.symbol]]
+Shape = typing.List[typing.Union[int, symbolic.symbol]]
+Index = typing.List[typing.Union[int, str, symbolic.symbol]]
 Node = dace.graph.nodes.Node
 DNode = dace.graph.nodes.AccessNode
 

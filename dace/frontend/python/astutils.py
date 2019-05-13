@@ -2,10 +2,42 @@
 import ast
 import astunparse
 from collections import OrderedDict
+import inspect
 import sympy
 from typing import Any, Dict, List, Tuple
 
 from dace import dtypes, symbolic
+
+
+def _remove_outer_indentation(src: str):
+    """ Removes extra indentation from a source Python function.
+        @param src: Source code (possibly indented).
+        @return: Code after de-indentation.
+    """
+    lines = src.split('\n')
+    indentation = len(lines[0]) - len(lines[0].lstrip())
+    return '\n'.join([line[indentation:] for line in lines])
+
+
+def function_to_ast(f):
+    """ Obtain the source code of a Python function and create an AST.
+        @param f: Python function.
+        @return: A 4-tuple of (AST, function filename, function line-number,
+                               source code as string).
+    """
+    try:
+        src = inspect.getsource(f)
+    # TypeError: X is not a module, class, method, function, traceback, frame,
+    # or code object; OR OSError: could not get source code
+    except (TypeError, OSError):
+        raise TypeError('cannot obtain source code for dace program')
+
+    src_file = inspect.getfile(f)
+    _, src_line = inspect.findsource(f)
+    src_ast = ast.parse(_remove_outer_indentation(src))
+    ast.increment_lineno(src_ast, src_line)
+
+    return src_ast, src_file, src_line, src
 
 
 def rname(node):
