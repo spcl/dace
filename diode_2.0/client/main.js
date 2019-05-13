@@ -265,6 +265,7 @@ function start_DIODE() {
             { type: 'menu',   id: 'file-menu', caption: 'File', icon: 'material-icons-outlined gmat-folder', items: [
                 { text: 'Start', icon: 'material-icons-outlined gmat-new_folder', id: 'start' },
                 { text: 'New', icon: 'material-icons-outlined gmat-file', id: 'new-file' },
+                { text: 'Open', icon: 'material-icons-outlined gmat-open', id: 'open-file' },
                 { text: 'Save', icon: 'material-icons-outlined gmat-save', id: 'save' },
                 { text: "Pickle SDFG", icon: 'material-icons-outlined gmat-extension', id: 'pickle-sdfg' }
             ]},
@@ -294,6 +295,9 @@ function start_DIODE() {
         onClick: function (event) {
             if(event.target === 'file-menu:new-file') {
                 diode.newFile();
+            }
+            if(event.target === 'file-menu:open-file') {
+                diode.openUploader("code-python");
             }
             if(event.target === 'file-menu:start') {
                 let config = {

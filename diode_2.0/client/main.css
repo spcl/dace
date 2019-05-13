@@ -384,6 +384,7 @@ ul.tree_view.collapsed_sublist ul {
 
 .uploader_text {
     font-size: 3rem;
+    line-height: 3rem;
     color: gray;
 }
 
@@ -548,6 +549,9 @@ table.diode_property_table tr:nth-child(even) {
 }
 .gmat-save::after {
     content: "save"
+}
+.gmat-open::after {
+    content: "folder_open"
 }
 .gmat-new_folder::after {
     content: "create_new_folder"

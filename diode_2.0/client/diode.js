@@ -1815,19 +1815,6 @@ class DIODE_Context_CodeIn extends DIODE_Context {
         }
         this._markers = [];
         this.diode.compile(this, code);
-
-        // Make an additional request to get the matching optimizer patterns
-        // #DISCUSS: The additional request duplicates a lot of work.
-        // However, merging those two methods removes purity, as one might want to
-        // see applicable transformations without creating output code.
-        // Another option is to get only an SDFG and then sending the SDFG for future requests.
-        // This requires a JSON-Deserializer for SDFGs.
-        // It's a big design decision that should not be rushed!
-
-        // Unilateral decision so far: Integrate into compile
-        if(false) {
-            this.diode.get_pattern_matches(this, code);
-        }
     }
 
     setEditorReference(editor) {
@@ -1997,7 +1984,7 @@ class DIODE_Context_StartPage extends DIODE_Context {
 
                 // Force creation of a new "project" instance (since we are explicitly creating a new project, not a file)
                 this.diode.createNewProject();
-                this.diode.newFile();
+                //this.diode.newFile(); // We could do this, but it's not necessary - let the user create/load at his own discretion
 
 
             }));
@@ -2987,14 +2974,17 @@ class DIODE {
     openUploader(purpose="") {
         
         w2popup.open({
-            title: "Upload the pickled SDFG",
+            title: purpose == "pickle-sdfg" ? "Upload the pickled SDFG" : "Upload a code file",
             body: `
 <div class="w2ui-centered upload_flexbox">
-    <div class="diode_uploader" id='upload_box'>
-        <div class="uploader_text">
-            Drop file here
+    <label for="file-select" style="flex-grow: 1">
+        <div class="diode_uploader" id='upload_box'>
+            <div class="uploader_text">
+                Drop file here or click to select a file
+            </div>
         </div>
-    </div>
+    </label>
+    <input id="file-select" type="file" style="position:absolute;"/>
 </div>
 `,
             buttons: '',
@@ -3006,17 +2996,50 @@ class DIODE {
         }
         x = x[0];
 
+        let file_handler = (data) => {
+            if(purpose == "code-python") {
+                this.newFile(data);
+            }
+            else if(purpose == "pickle-sdfg"){
+                let b64_data = btoa(String.fromCharCode(...new Uint8Array(data)));
+                this.load_from_binary_sdfg(b64_data);
+            }
+        };
+
         setup_drag_n_drop(x, (mime, data) => {
             console.log("upload mime", mime);
 
-
-            let b64_data = btoa(String.fromCharCode(...new Uint8Array(data)));
-            this.load_from_binary_sdfg(b64_data);
+            file_handler(data);
 
             // Close the popup
             w2popup.close();
         }, null, {
-            readMode: "binary"
+            readMode: purpose == "pickle-sdfg" ? "binary" : "text"
+        });
+
+        let fuploader = $('#file-select');
+        if(fuploader.length == 0) {
+            throw "Error: Element not available";
+        }
+        fuploader = fuploader[0];
+
+        fuploader.style.opacity = 0;
+
+        fuploader.addEventListener("change", x => {
+            let file = fuploader.files[0];
+
+            let reader = new FileReader();
+            reader.onload = y => {
+                file_handler(y.target.result);
+                // Close the popup
+                w2popup.close();
+            };
+            if(purpose == "pickle-sdfg") {
+                reader.readAsBinaryString(file);
+            }
+            else {
+                reader.readAsText(file);
+            }
         });
     }
 
@@ -3087,14 +3110,14 @@ class DIODE {
         }
     }
 
-    newFile() {
+    newFile(content="") {
         let millis = this.getPseudorandom();
 
         let config = {
             title: "CodeIn",
             type: 'component',
             componentName: 'CodeInComponent',
-            componentState: { created: millis }
+            componentState: { created: millis, code_content: content }
         };
 
         this.addContentItem(config);
