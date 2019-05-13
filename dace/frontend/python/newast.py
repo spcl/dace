@@ -1,5 +1,6 @@
 import ast
 from collections import OrderedDict, namedtuple
+import copy
 from typing import Any, Dict, List, Tuple, Union, Callable
 
 import dace
@@ -24,18 +25,49 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
     return name
 
 
+def until(val, substr):
+    """ Helper function that returns the substring of a string until a certain pattern. """
+    if substr not in val:
+        return val
+    return val[:val.find(substr)]
+
+
 @oprepo.replaces('dace.reduce')
 def _reduce(sdfg: SDFG,
             state: SDFGState,
-            redfunction: Callable,
+            redfunction: Callable[[Any, Any], Any],
             input: str,
             output=None,
             axis=None,
             identity=None):
-    # TODO
-    print(output)
-    raise NotImplementedError
-    pass
+    # TODO(later): If output is None, derive the output size from the input and create a new node
+    if output is None:
+        raise NotImplementedError
+    inarr = until(input, '[')
+    outarr = until(output, '[')
+
+    # Convert axes to tuple
+    if axis is not None and not isinstance(axis, (tuple, list)):
+        axis = (axis, )
+    axis = tuple(pystr_to_symbolic(a) for a in axis)
+
+    # Compute memlets
+    input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
+                                        ast.parse(input).body[0].value, {})
+    input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset, 1)
+    output_subset = _parse_memlet_subset(sdfg.arrays[outarr],
+                                         ast.parse(output).body[0].value, {})
+    output_memlet = Memlet(outarr, output_subset.num_elements(), output_subset,
+                           1)
+
+    # Create reduce subgraph
+    inpnode = state.add_read(inarr)
+    rednode = state.add_reduce(redfunction, axis, identity)
+    outnode = state.add_write(outarr)
+    state.add_nedge(inpnode, rednode, input_memlet)
+    state.add_nedge(rednode, outnode, output_memlet)
+
+    return []
 
 
 ############################################
@@ -152,7 +184,11 @@ def _disallow_stmt(visitor, node):
 
 
 def _inner_eval_ast(defined, node, additional_syms=None):
-    code = astutils.unparse(node)
+    if isinstance(node, ast.AST):
+        code = astutils.unparse(node)
+    else:
+        return node
+
     syms = {}
     syms.update(defined)
     if additional_syms is not None:
@@ -204,14 +240,10 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     idx = 0
     for i, dim in enumerate(ast_ndslice):
         if isinstance(dim, tuple):
-            rb = _pyexpr_to_symbolic(das, dim[0])
-            re = _pyexpr_to_symbolic(das, dim[1])
-            if re is not None:
-                re -= 1
-            rs = _pyexpr_to_symbolic(das, dim[2])
-            if rb is None: rb = 0
-            if re is None: re = array.shape[indices[idx]] - 1
-            if rs is None: rs = 1
+            rb = _pyexpr_to_symbolic(das, dim[0] or 0)
+            re = _pyexpr_to_symbolic(das, dim[1]
+                                     or array.shape[indices[idx]]) - 1
+            rs = _pyexpr_to_symbolic(das, dim[2] or 1)
             ndslice[i] = (rb, re, rs)
             offsets.append(i)
             idx += 1
@@ -225,37 +257,9 @@ MemletExpr = namedtuple('MemletExpr',
                         ['name', 'accesses', 'wcr', 'wcr_identity', 'subset'])
 
 
-# Parses a memlet statement
-def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
-                node: MemletType):
-    das = defined_arrays_and_symbols
-    arrname = rname(node)
-    array = das[arrname]
-
-    # Determine number of accesses to the memlet (default is the slice size)
-    num_accesses = None
-    write_conflict_resolution = None
-    wcr_identity = None
-    # Detects expressions of the form "A(2)[...]", "A(300)", "A(1, sum)[:]"
-    if isinstance(node, ast.Call):
-        if len(node.args) < 1 or len(node.args) > 3:
-            raise DaceSyntaxError(
-                visitor, node,
-                'Number of accesses in memlet must be a number, symbolic '
-                'expression, or -1 (dynamic)')
-        num_accesses = _pyexpr_to_symbolic(das, node.args[0])
-        if len(node.args) >= 2:
-            write_conflict_resolution = node.args[1]
-    elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
-        if len(node.value.args) < 1 or len(node.value.args) > 3:
-            raise DaceSyntaxError(
-                visitor, node,
-                'Number of accesses in memlet must be a number, symbolic '
-                'expression, or -1 (dynamic)')
-        num_accesses = _pyexpr_to_symbolic(das, node.value.args[0])
-        if len(node.value.args) >= 2:
-            write_conflict_resolution = node.value.args[1]
-
+def _parse_memlet_subset(array: data.Data,
+                         node: Union[ast.Name, ast.Subscript],
+                         das: Dict[str, Any]):
     array_dependencies = {}
 
     # Get memlet range
@@ -291,6 +295,42 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
 
     else:  # Use entire range
         subset = _ndslice_to_subset(ndslice)
+
+    return subset
+
+
+# Parses a memlet statement
+def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
+                node: MemletType):
+    das = defined_arrays_and_symbols
+    arrname = rname(node)
+    array = das[arrname]
+
+    # Determine number of accesses to the memlet (default is the slice size)
+    num_accesses = None
+    write_conflict_resolution = None
+    wcr_identity = None
+    # Detects expressions of the form "A(2)[...]", "A(300)", "A(1, sum)[:]"
+    if isinstance(node, ast.Call):
+        if len(node.args) < 1 or len(node.args) > 3:
+            raise DaceSyntaxError(
+                visitor, node,
+                'Number of accesses in memlet must be a number, symbolic '
+                'expression, or -1 (dynamic)')
+        num_accesses = _pyexpr_to_symbolic(das, node.args[0])
+        if len(node.args) >= 2:
+            write_conflict_resolution = node.args[1]
+    elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
+        if len(node.value.args) < 1 or len(node.value.args) > 3:
+            raise DaceSyntaxError(
+                visitor, node,
+                'Number of accesses in memlet must be a number, symbolic '
+                'expression, or -1 (dynamic)')
+        num_accesses = _pyexpr_to_symbolic(das, node.value.args[0])
+        if len(node.value.args) >= 2:
+            write_conflict_resolution = node.value.args[1]
+
+    subset = _parse_memlet_subset(array, node, das)
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
@@ -469,7 +509,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Entry point to the program
         self.program = None
         self.sdfg = SDFG(name)
-        self.last_state = self.sdfg.add_state('init', is_start_state=True)
+        self.last_state = None  #self.sdfg.add_state('init', is_start_state=True)
         # if not self.nested:
         self.sdfg.arrays.update(arrays)
         self.inputs = {}
@@ -477,6 +517,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Keep track of variables and scopes
         self.variables = {k: k for k in arrays.keys()}  # type: Dict[str, str]
+
+        # Add symbols. TODO: more elegant way
+        for arr in arrays.values():
+            for dim in arr.shape:
+                if not hasattr(dim, 'free_symbols'): continue
+                self.variables.update(
+                    {str(k): self.globals[str(k)]
+                     for k in dim.free_symbols})
 
         # Disallow keywords
         for stmt in _DISALLOWED_STMTS:
@@ -509,7 +557,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     @property
     def defined(self):
-        return {k: self.sdfg.arrays[v] for k, v in self.variables.items()}
+        return {
+            k: self.sdfg.arrays[v]
+            for k, v in self.variables.items() if v in self.sdfg.arrays
+        }
 
     def _add_state(self, label=None):
         state = self.sdfg.add_state(label)
@@ -916,30 +967,26 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Variable broadcast
             elif isinstance(target, ast.Subscript):
-                raise NotImplementedError
-            # Tasklet creation (?)
-            # elif isinstance(target, ast.Subscript):
-            #     print(ast.dump(target))
-            #     name = target.value.id
-            #     if name not in self.global_arrays:
-            #         raise DaceSyntaxError(
-            #             self, name, "Array {} has not been defined".format(name))
-            #     if name not in self.sdfg.arrays:
-            #         postfix = 0
-            #         new_name = "{n}_{p}".format(n=name, p=postfix)
-            #         while new_name in self.global_arrays:
-            #             postfix += 1
-            #             new_name = "{n}_{p}".format(n=name, p=postfix)
-            #         rng = dace.subsets.Range(
-            #             astutils.subscript_to_slice(target, self.global_arrays)[1])
-            #         shape = rng.size()
-            #         dtype = self.global_arrays[name].dtype
-            #         self.sdfg.add_array(new_name, shape, dtype)
-            #         self.global_arrays[new_name] = self.sdfg.arrays[new_name]
-            #         self.outputs[new_name] = (name, rng)
-            #     else:
-            #         new_name = name
-            #     self._add_tasklet(new_name, node.value)
+                print(ast.dump(target))
+                if target.id not in self.variables:
+                    raise DaceSyntaxError(
+                        self, node, 'Array "%s" used before definition' % name)
+                    # postfix = 0
+                    # new_name = "{n}_{p}".format(n=name, p=postfix)
+                    # while new_name in self.global_arrays:
+                    #     postfix += 1
+                    #     new_name = "{n}_{p}".format(n=name, p=postfix)
+                    # rng = dace.subsets.Range(
+                    #     astutils.subscript_to_slice(target, self.global_arrays)[1])
+                    # shape = rng.size()
+                    # dtype = self.global_arrays[name].dtype
+                    # self.sdfg.add_array(new_name, shape, dtype)
+                    # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
+                    # self.outputs[new_name] = (name, rng)
+                else:
+                    new_name = self.variables[target.id]
+
+                self._add_tasklet(new_name, node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
@@ -1106,6 +1153,35 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (shape, dtype)
 
+    def _parse_function_arg(self, arg: ast.AST):
+        # If an attribute or a name, check if it is a defined variable
+        if isinstance(arg, (ast.Attribute, ast.Name)):
+            name = until(astutils.unparse(arg), '.')
+
+            # If an allowed global, use directly
+            if name in self.globals:
+                return _inner_eval_ast(self.globals, arg)
+
+            if name not in self.variables:
+                raise DaceSyntaxError(self, arg,
+                                      'Use of undefined variable "%s"' % name)
+            name = self.variables[name]
+            if isinstance(arg, ast.Attribute):
+                return getattr(self.sdfg.arrays[name], arg.attr)
+            else:
+                return name
+        elif isinstance(arg, ast.List):  # Recursively loop over elements
+            return [self._parse_function_arg(a) for a in arg.elts]
+        elif isinstance(arg, ast.Tuple):  # Recursively loop over elements
+            return tuple(self._parse_function_arg(a) for a in arg.elts)
+
+        # In any other case, use the string representation with variables replaced
+        argast = copy.deepcopy(arg)
+        astutils.ASTFindReplace(self.variables).visit(argast)
+
+        # Obtain a string representation
+        return astutils.unparse(argast)
+
     def visit_Call(self, node):
         default_impl = Config.get('frontend', 'implementation')
         funcname = rname(node)
@@ -1124,8 +1200,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         result = func(
             self.sdfg, self.last_state,
-            *(_pyexpr_to_symbolic(self.defined, arg) for arg in node.args), **{
-                arg.arg: _pyexpr_to_symbolic(self.defined, arg.value)
+            *(self._parse_function_arg(arg) for arg in node.args), **{
+                arg.arg: self._parse_function_arg(arg.value)
                 for arg in node.keywords
             })
         if not isinstance(result, (tuple, list)):

@@ -397,3 +397,13 @@ class ExtNodeVisitor(ast.NodeVisitor):
             elif isinstance(old_value, ast.AST):
                 self.visit(old_value)
         return node
+
+
+class ASTFindReplace(ast.NodeTransformer):
+    def __init__(self, repldict: Dict[str, str]):
+        self.repldict = repldict
+
+    def visit_Name(self, node):
+        if node.id in self.repldict:
+            node.id = self.repldict[node.id]
+        return node

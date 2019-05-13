@@ -1,13 +1,13 @@
 import numpy as np
-import dapp
+import dace
 
 #M,N,K = (dapp.symbol(name) for name in ['M', 'N', 'K'])
 M, N, K = 24, 24, 24
 
 
-@dapp.program
-def gemm(A: dapp.float32[M, K], B: dapp.float32[K, N], C: dapp.float32[M, N],
-         alpha: dapp.float32, beta: dapp.float32):
+@dace.program
+def gemm(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N],
+         alpha: dace.float32, beta: dace.float32):
     C[:] = alpha * A @ B + beta * C
 
 
