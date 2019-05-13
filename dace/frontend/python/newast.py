@@ -1,38 +1,26 @@
 import ast
-import astor
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from typing import Any, Dict, List, Tuple, Union
 
 import dace
-from dace.dtypes import paramdec
-from dace.frontend.common import op_impl
+from dace import data, dtypes, subsets
+from dace.config import Config
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
-from dace.sdfg import SDFG, SDFGState
-from dace.memlet import Memlet
-from dace import data, dtypes, symbolic, subsets
 from dace.graph import nodes
+from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
-from collections import namedtuple
 
+# A type that defines assignment information
+AssignmentInfo = Tuple[SDFG, SDFGState, Tuple[str]]
 
-class Replacements(object):
-    """ A management singleton for functions that replace existing function calls with either an SDFG or a node.
-        Used in the Python frontend to replace functions such as `numpy.ndarray` and operators such
-        as `Array.__add__`. """
-
-    _rep = {}
-
-    @staticmethod
-    def get(name, implementation='sdfg'):
-        """ Returns an implementation of a function or an operator. """
-        return Replacements._rep[(name, implementation)]
-
-
-@paramdec
-def replaces(func, name, implementation='sdfg'):
-    Replacements._rep[(name, implementation)] = func
-
+@oprepo.replaces('dace.define_local')
+@oprepo.replaces('numpy.ndarray')
+def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
+    name, _ = sdfg.add_temp_transient(shape, dtype)
+    return name
 
 ############################################
 
