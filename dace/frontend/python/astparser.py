@@ -104,10 +104,11 @@ def parse_dace_program(f, argtypes, global_vars, modules):
         argtypes,
         global_vars)
     sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    sdfg.draw_to_file('before_strict.dot')
     sdfg.apply_strict_transformations()
     sdfg.draw_to_file()
-    sdfg.save("{}.sdfg".format(sdfg.label))
-    print('OK')
+    print('PARSE OK')
+    sdfg.compile()
     import os
     import sys
     sys.stdout.flush()
