@@ -810,9 +810,29 @@ class ProgramVisitor(ExtNodeVisitor):
                                             outputs.keys())
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs)
         elif iterator == 'range':
-            # TODO: Play with self.last_state so that for loop works
+            # Add an initial loop state with a None last_state (so as to not
+            # create an interstate edge)
+            laststate = self.last_state
+            self.last_state = None
+            first_loop_state = self._add_state('for_%d' % node.lineno)
+
             # Recursive loop processing
-            raise NotImplementedError
+            for stmt in node.body:
+                self.visit_TopLevel(stmt)
+
+            # Create the next state
+            last_loop_state = self.last_state
+            self.last_state = None
+            end_loop_state = self._add_state('endfor_%d' % node.lineno)
+
+            # Add loop to SDFG
+            loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) <
+                                 0) == True) else '<'
+            self.sdfg.add_loop(
+                laststate, first_loop_state, end_loop_state, indices[0],
+                ranges[0][0],
+                '%s %s %s' % (indices[0], loop_cond, ranges[0][1]),
+                '%s + %s' % (indices[0], ranges[0][2]), last_loop_state)
 
     def visit_While(self, node: ast.While):
         pass
