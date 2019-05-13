@@ -637,7 +637,22 @@ required:
                 default: true
                 description: "Use the SQL backend to analyze values. Set to false to pass all performance data directly to the HTML5 renderer (deprecated)"
             
-            
+    #############################################
+    # Frontend settings
+
+    frontend:
+        type: dict
+        title: Frontend
+        description: Python frontend preferences
+        required:
+            implementation:
+                type: str
+                default: "sdfg"
+                title: Default operator implementation
+                description: >
+                    Sets the default operator implementation when parsing Python code into
+                    subgraphs or tasklets (can be sdfg, mkl, cublas).
+
     #############################################
     # General settings
     debugprint:

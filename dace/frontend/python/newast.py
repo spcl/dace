@@ -15,19 +15,26 @@ from dace.graph import nodes
 from dace.symbolic import pystr_to_symbolic
 from collections import namedtuple
 
-# class Replacements:
-#     _rep = {}
-#     @staticmethod
-#     def get(name):
-#         return Replacements._rep[name]
 
-# def replaces(name, func):
-#     Replacements._rep[name] = func
+class Replacements(object):
+    """ A management singleton for functions that replace existing function calls with either an SDFG or a node.
+        Used in the Python frontend to replace functions such as `numpy.ndarray` and operators such
+        as `Array.__add__`. """
 
-# @replaces('numpy.ndarray')
-# def fff(shape, dtype):
-#     return ArrayNode()
+    _rep = {}
 
+    @staticmethod
+    def get(name, implementation='sdfg'):
+        """ Returns an implementation of a function or an operator. """
+        return Replacements._rep[(name, implementation)]
+
+
+@paramdec
+def replaces(func, name, implementation='sdfg'):
+    Replacements._rep[(name, implementation)] = func
+
+
+############################################
 
 
 def parse_dace_program(f, argtypes, global_vars, modules):

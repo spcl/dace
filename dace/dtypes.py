@@ -4,8 +4,7 @@ import ctypes
 import enum
 import inspect
 import numpy
-import itertools
-import numpy.ctypeslib as npct
+from functools import wraps
 
 
 class AutoNumber(enum.Enum):
@@ -443,6 +442,30 @@ class DebugInfo:
 
 ######################################################
 # Static (utility) functions
+
+
+def paramdec(dec):
+    """ Parameterized decorator meta-decorator. Enables using `@decorator`,
+        `@decorator()`, and `@decorator(...)` with the same function. """
+
+    @wraps(dec)
+    def layer(*args, **kwargs):
+
+        # Allows the use of @decorator, @decorator(), and @decorator(...)
+        if len(kwargs) == 0 and len(args) == 1 and callable(
+                args[0]) and not isinstance(args[0], typeclass):
+            return dec(*args, **kwargs)
+
+        @wraps(dec)
+        def repl(f):
+            return dec(f, *args, **kwargs)
+
+        return repl
+
+    return layer
+
+
+#############################################
 
 
 def deduplicate(iterable):
