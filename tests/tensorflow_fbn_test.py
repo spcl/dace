@@ -113,19 +113,14 @@ outputs_tf = sess_tf.run(
         offset: test_offset,
     },
 )
-print("dace beta grad norm")
-expected_betagrad = np.sum(test_outputgrad, axis=(0, 1, 2))
-print(np.linalg.norm(outputs_dace[2] - expected_betagrad))
-print("TF beta grad norm")
-print(tf.linalg.norm(outputs_tf[2] - expected_betagrad).eval(session=sess_tf))
 try:
     assert (
         tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) <
-        1e-10 and
+        1e-3 and
         tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) <
-        1e-10 and
+        1e-4 and
         tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) <
-        1e-10)
+        1e-4 )
 except:
     print("FBN Gradient test failed")
     print(
