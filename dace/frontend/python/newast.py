@@ -1,6 +1,6 @@
 import ast
 from collections import OrderedDict, namedtuple
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union, Callable
 
 import dace
 from dace import data, dtypes, subsets
@@ -22,6 +22,20 @@ AssignmentInfo = Tuple[SDFG, SDFGState, Tuple[str]]
 def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
     name, _ = sdfg.add_temp_transient(shape, dtype)
     return name
+
+
+@oprepo.replaces('dace.reduce')
+def _reduce(sdfg: SDFG,
+            state: SDFGState,
+            redfunction: Callable,
+            input: str,
+            output=None,
+            axis=None,
+            identity=None):
+    # TODO
+    print(output)
+    raise NotImplementedError
+    pass
 
 
 ############################################
@@ -710,22 +724,22 @@ class ProgramVisitor(ExtNodeVisitor):
         if iterator not in {'range', 'parrange', 'dace.map'}:
             raise DaceSyntaxError(
                 self, node, "Iterator {} is unsupported".format(iterator))
-        if iterator == 'range':
-            raise NotImplementedError
-        elif iterator == 'parrange':
-            if len(node.args) == 1:  # parrange(stop)
+        elif iterator in ['range', 'parrange']:
+            if len(node.args) == 1:  # (par)range(stop)
                 ranges = [('0', self._parse_value(node.args[0]), '1')]
-            elif len(node.args) == 2:  # parrange(start, stop)
+            elif len(node.args) == 2:  # (par)range(start, stop)
                 ranges = [(self._parse_value(node.args[0]),
                            self._parse_value(node.args[1]), '1')]
-            elif len(node.args) == 3:  # parrange(start, stop, step)
+            elif len(node.args) == 3:  # (par)range(start, stop, step)
                 ranges = [(self._parse_value(node.args[0]),
                            self._parse_value(node.args[1]),
                            self._parse_value(node.args[2]))]
             else:
                 raise DaceSyntaxError(
-                    self, node, 'Invalid number of arguments for "parrange"')
-            iterator = 'dace.map'
+                    self, node,
+                    'Invalid number of arguments for "%s"' % iterator)
+            if iterator == 'parrange':
+                iterator = 'dace.map'
         else:
             ranges = []
             if isinstance(node.slice, ast.ExtSlice):
@@ -795,6 +809,10 @@ class ProgramVisitor(ExtNodeVisitor):
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs)
+        elif iterator == 'range':
+            # TODO: Play with self.last_state so that for loop works
+            # Recursive loop processing
+            raise NotImplementedError
 
     def visit_While(self, node: ast.While):
         pass
@@ -1115,15 +1133,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.generic_visit(node)
                 return
 
+            state = self._add_state()
             srcnode = state.add_read(rname(src))
             dstnode = state.add_write(rname(dst))
             memlet = self.parse_memlet(src, dst)
             state.add_nedge(srcnode, dstnode, memlet)
+            return
+
         # Calling reduction or other SDFGs / functions
         elif isinstance(node.value, ast.Call):
-            # TODO: Handle reduction
-            # TODO: Handle calling other SDFGs / DacePrograms
-            raise NotImplementedError("CALLING")
+            # Handles reduction and calling other SDFGs / DaCe programs
+            self._add_state('call_%d' % node.lineno)
+            self.visit_Call(node.value)
+            return
 
         self.generic_visit(node)
 
