@@ -235,6 +235,13 @@ class SymExpr(object):
             return SymExpr(self.expr**other, self.approx**other)
         return self**pystr_to_symbolic(other)
 
+    def __eq__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr == other
+        if isinstance(other, SymExpr):
+            return self.expr == other.expr and self.approx == other.approx
+        return self == pystr_to_symbolic(other)
+
 
 def symvalue(val):
     """ Returns the symbol value if it is a symbol. """
