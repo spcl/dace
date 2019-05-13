@@ -420,13 +420,13 @@ class ProgramVisitor(ExtNodeVisitor):
         outputs = {}
         for state in self.sdfg.nodes():
             inputs.update({
-                n.data: Memlet.from_array(n.data, self.sdfg.arrays[n.data])
+                n.data: state.out_edges(n)[0].data
                 for n in state.source_nodes()
                 if self.sdfg.arrays[n.data].transient == False
             })
         for state in self.sdfg.nodes():
             outputs.update({
-                n.data: Memlet.from_array(n.data, self.sdfg.arrays[n.data])
+                n.data: state.in_edges(n)[0].data
                 for n in state.sink_nodes()
                 if self.sdfg.arrays[n.data].transient == False
             })
