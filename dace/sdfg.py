@@ -1385,32 +1385,35 @@ subgraph cluster_state_{state} {{
         from dace.transformation import optimizer
         from dace.transformation.dataflow import RedundantArray
         from dace.transformation.interstate import StateFusion
+        from dace.transformation.interstate import InlineSDFG
+
+        strict_transformations = (StateFusion, RedundantArray, InlineSDFG)
 
         # Apply strict state fusions greedily.
         opt = optimizer.SDFGOptimizer(self, inplace=True)
-        fusions = 0
-        arrays = 0
+        applied = {k.__name__: 0 for k in strict_transformations}
         options = [
             match for match in opt.get_pattern_matches(strict=True)
-            if isinstance(match, (StateFusion, RedundantArray))
+            if isinstance(match, strict_transformations)
         ]
+
         while options:
             sdfg = self.sdfg_list[options[0].sdfg_id]
             options[0].apply(sdfg)
             self.validate()
-            if isinstance(options[0], StateFusion):
-                fusions += 1
-            if isinstance(options[0], RedundantArray):
-                arrays += 1
+
+            applying = type(options[0]).__name__
+            applied[applying] += 1
 
             options = [
                 match for match in opt.get_pattern_matches(strict=True)
-                if isinstance(match, (StateFusion, RedundantArray))
+                if isinstance(match, strict_transformations)
             ]
 
-        if Config.get_bool('debugprint') and (fusions > 0 or arrays > 0):
-            print('Automatically applied {} strict state fusions and removed'
-                  ' {} redundant arrays.'.format(fusions, arrays))
+        if Config.get_bool('debugprint') and any(v > 0
+                                                 for v in applied.values()):
+            print('Automatically applied {}.'.format(', '.join(
+                ['%d %s' % (v, k) for k, v in applied.items()])))
 
     def apply_gpu_transformations(self, states=None, strict=True):
         """ Applies a series of transformations on the SDFG for it to
