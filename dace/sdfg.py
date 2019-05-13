@@ -171,6 +171,9 @@ class SDFG(OrderedDiGraph):
         self._start_state = None
         self._arrays = {None: None}  # type: Dict[str, dt.Array]
 
+        # Counter to make it easy to create temp transients
+        self._temp_transients = 0
+
     @property
     def arrays(self):
         """ Returns a dictionary of data descriptors (`Data` objects) used
@@ -860,6 +863,7 @@ subgraph cluster_state_{state} {{
                 else:
                     break
         state = SDFGState(label, self)
+
         self.add_node(state, is_start_state=is_start_state)
         return state
 
@@ -999,6 +1003,38 @@ subgraph cluster_state_{state} {{
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(
+            name,
+            shape,
+            dtype,
+            storage,
+            materialize_func,
+            True,
+            strides,
+            offset,
+            toplevel=toplevel,
+            debuginfo=None,
+            allow_conflicts=allow_conflicts,
+            access_order=access_order)
+
+    def add_temp_transient(self,
+                           shape,
+                           dtype,
+                           storage=dtypes.StorageType.Default,
+                           materialize_func=None,
+                           strides=None,
+                           offset=None,
+                           toplevel=False,
+                           debuginfo=None,
+                           allow_conflicts=False,
+                           access_order=None):
+        """ Convenience function to add a transient array with a temporary name to the data
+            descriptor store. """
+        name = '__tmp%d' % self._temp_transients
+        while name in self._arrays:
+            self._temp_transients += 1
+            name = '__tmp%d' % self._temp_transients
+
+        return name, self.add_array(
             name,
             shape,
             dtype,
