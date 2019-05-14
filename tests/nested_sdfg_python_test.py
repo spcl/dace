@@ -10,27 +10,25 @@ N = dp.symbol('N')
 
 @dp.program
 def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
-    @dp.map
+    @dp.mapscope
     def elements(i: _[0:N], j: _[0:N]):
         input << A[i, j]
         output >> B[i, j]
 
-        @dp.program
-        def sdfg_internal(input: dp.float32, output: dp.float32):
+        @dp.tasklet
+        def init():
+            inp << input
+            out >> output
+            out = inp
+
+        for k in range(4):
+
             @dp.tasklet
-            def init():
+            def do():
                 inp << input
+                oin << output
                 out >> output
-                out = inp
-
-            for k in range(4):
-
-                @dp.tasklet
-                def do():
-                    inp << input
-                    oin << output
-                    out >> output
-                    out = oin * inp
+                out = oin * inp
 
 
 if __name__ == '__main__':

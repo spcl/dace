@@ -17,7 +17,7 @@ U = dace.symbol('U')
 @dace.program
 def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U],
             B: dace.uint64[N, M, K, L]):
-    @dace.map
+    @dace.mapscope
     def kernel(i: _[5:N - 5], j: _[0:M], k: _[7:K - 1], l: _[0:L]):
         @dace.map
         def block(a: _[0:X], b: _[0:Y], c: _[1:Z], d: _[2:W - 2], e: _[0:U]):

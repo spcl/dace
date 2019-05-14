@@ -15,7 +15,7 @@ nnz = dace.symbol('nnz')
 @dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz],
               dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
-    @dace.map(_[0:H])
+    @dace.mapscope(_[0:H])
     def compute_row(i):
         rowptr = dace.define_local_scalar(dace.uint32)
         rowend = dace.define_local_scalar(dace.uint32)
