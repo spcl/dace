@@ -25,6 +25,17 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
     return name
 
 
+# @oprepo.replaces('dace.define_stream')
+# def _define_stream(sdfg: SDFG, state: SDFGState, dtype=dtypes.float32, buffer_size=0):
+#     name, _ = sdfg.add_temp_transient(shape, dtype)
+#     return name
+#
+# @oprepo.replaces('dace.define_streamarray')
+# def _define_streamarray(sdfg: SDFG, state: SDFGState, dimensions, dtype=dtypes.float32, buffer_size=0):
+#     name, _ = sdfg.add_temp_transient(shape, dtype)
+#     return name
+
+
 def until(val, substr):
     """ Helper function that returns the substring of a string until a certain pattern. """
     if substr not in val:
@@ -92,7 +103,6 @@ def parse_dace_program(f, argtypes, global_vars, modules):
     src_ast = ModuleResolver(modules).visit(src_ast)
     # Convert modules to after resolution
     for mod, modval in modules.items():
-        print(mod, modval)
         if mod == 'builtins':
             continue
         newmod = global_vars[mod]
@@ -592,7 +602,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if 'args' in dir(dec) and len(dec.args) > 0:
             # If it's one argument of the form of ND range, e.g., "_[0:M, 0:N]"
             parg0 = self._parse_arg(dec.args[0])
-            if isinstance(parg0, list) and len(parg0) > 1:
+            if isinstance(parg0, list):
                 args = parg0
             else:
                 args = [self._parse_arg(arg) for arg in dec.args]
