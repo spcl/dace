@@ -2162,6 +2162,21 @@ class DIODE_Context_DIODE2Settings extends DIODE_Context {
 
             this._settings_container.append(cont);
         }
+        // DebugDev mode
+        {
+            let cont = FormBuilder.createContainer(undefined);
+            let label = FormBuilder.createLabel(undefined, "DebugDev mode", "When true, the program shows elements primarily useful for debugging and developing DaCe/DIODE2.");
+            
+            let input = FormBuilder.createToggleSwitch(undefined, x => {
+                let val = x.checked;
+                DIODE.setDebugDevMode(val);
+            }, DIODE.debugDevMode());
+
+            cont.append(label);
+            cont.append(input);
+
+            this._settings_container.append(cont);
+        }
         // UI font
         {
             let cont = FormBuilder.createContainer(undefined);
@@ -3229,6 +3244,9 @@ class DIODE {
             }
             categories[cat].push(x);
         }
+        if(!DIODE.debugDevMode()) {
+            delete categories["DebugDev"]
+        }
         for(let z of Object.entries(categories)) {
             
             // Sort within category
@@ -4239,6 +4257,22 @@ class DIODE {
         else {
             localStorage.setItem('diode2_recompile_on_prop_change', "false");
         }
+    }
+
+    static setDebugDevMode(boolean_value) {
+        if(boolean_value) {
+            localStorage.setItem('diode2_DebugDevMode', "true");
+        }
+        else {
+            localStorage.setItem('diode2_DebugDevMode', "false");
+        }
+    }
+    static debugDevMode() {
+        /*
+            The DebugDev mode determines if internal, not-crucial-for-user properties are shown.
+        */
+        let v = localStorage.getItem("diode2_DebugDevMode");
+        return v === "true";
     }
 }
 
