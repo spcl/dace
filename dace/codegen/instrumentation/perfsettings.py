@@ -184,7 +184,7 @@ class PerfSettings(object):
 
     @staticmethod
     def perf_supersection_emission_debug():
-        return True
+        return False
 
     @staticmethod
     def perf_enable_counter_sanity_check(config=None):
