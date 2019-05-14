@@ -189,6 +189,17 @@ class SDFG(OrderedDiGraph):
         self._start_state = None
         self._arrays = {None: None}  # type: Dict[str, dt.Array]
 
+    def toJSON(self):
+        import json
+        tmp = super(SDFG, self).toJSON()
+        tmp = json.loads(tmp)
+
+        # Inject the undefined symbols
+        tmp['undefined_symbols'] = self.undefined_symbols(True)
+
+        # Re-encode
+        return json.dumps(tmp, default=Property.json_dumper)
+
     @classmethod
     def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
         _type = json_obj['type']

@@ -339,12 +339,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
     render_free_variables() {
+        let sdfg_dat = this.getSDFGDataFromState();
         this.project().request(['render-free-vars'], x => {
 
         }, {
-            params: {
-
-            }
+            params: sdfg_dat
         });
     }
 
@@ -2775,20 +2774,34 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         this.on(this.project().eventString('-req-render-free-vars'), msg => {
             // #TODO: msg should contain the variables to render
 
-            this.renderDataSymbols();
+            this.renderDataSymbols(msg);
         });
     }
 
 
-    renderDataSymbols() {
+    renderDataSymbols(data) {
         // #TODO: This creates the default state (as in same as render_free_symbols() in the old DIODE)
         
         let free_symbol_table = new DiodeTables.Table();
         free_symbol_table.setHeaders("Symbol", "Type", "Dimensions", "Controls");
 
+        // Go over the undefined symbols first, then over the arrays (SDFG::arrays)
+        let all_symbols = [...Object.entries(data.sdfg.undefined_symbols), "SwitchToArrays", ...Object.entries(data.sdfg.attributes._arrays)];
         
-        for(let x = 0; x < 3; ++x) {
+        for(let x of all_symbols) {
 
+            if(x == "SwitchToArrays") {
+                // Add a delimiter
+                let col = free_symbol_table.addRow("Arrays");
+                col.childNodes.forEach(x => {
+                    x.colSpan = 4;
+                    x.style = "text-align:center;";
+                });
+                continue;
+            }
+            if(x[0] == "null" || x[1] == null) {
+                continue;
+            }
             let edit_but = document.createElement('button');
             edit_but.addEventListener('click', x => alert("edit_but clicked"));
             edit_but.innerText = "Edit";
@@ -2798,7 +2811,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
             let but_container = document.createElement('div');
             but_container.appendChild(edit_but);
             but_container.appendChild(del_but);
-            free_symbol_table.addRow("<Name>", "<Type>", "<Dim>", but_container);
+            free_symbol_table.addRow(x[0], x[1].type, x[1].attributes.dtype + "[" + x[1].attributes.shape + "]", but_container);
         }
 
         this.getHTMLContainer().innerHTML = "";

@@ -70,6 +70,18 @@ class Data(object):
                             'or symbols')
         return True
 
+    def toJSON(self, options={"no_meta": False}):
+        try:
+            attrs = json.loads(Property.all_properties_to_json(self, options))
+        except Exception as e:
+            print("Got exception: " + str(e))
+            import traceback
+            traceback.print_exc()
+
+        retdict = {"type": type(self).__name__, "attributes": attrs}
+
+        return json.dumps(retdict)
+
     def copy(self):
         raise RuntimeError(
             'Data descriptors are unique and should not be copied')
@@ -251,18 +263,6 @@ class Array(Data):
                      self.offset, self.may_alias, self.toplevel,
                      self.debuginfo)
 
-    def toJSON(self, options={"no_meta": False}):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self, options))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
-
-        retdict = {"type": "Array", "attributes": attrs}
-
-        return json.dumps(retdict)
-
     @staticmethod
     def fromJSON_object(json_obj, context=None):
         if json_obj['type'] != "Array":
@@ -271,13 +271,7 @@ class Array(Data):
         # Create dummy object
         ret = Array(dace.types.int8, ())
         Property.set_properties_from_json(ret, json_obj, context=context)
-        # TODO: FIXME:
-        # Since the strides are a list-property (normal Property()),
-        # loading from/to string (and, consequently, from/to json)
-        # leads to validation errors (contains Strings/Integers, not sympy symbols).
-        # To fix this, it needs a custom class
-        # For now, this is a workaround:
-        # TODO: This needs to be reworked! It works for a very small subset of cases
+        # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = [*map(symbolic.pystr_to_symbolic, ret.strides)]
 
         #ret.strides = [*map(lambda x: symbolic.sympy.sympify(x, locals=symbolic.sympy.abc._clash), ret.strides)]
