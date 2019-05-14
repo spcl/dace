@@ -213,7 +213,7 @@ class SdfgState {
                 state_g = this.graphcache[state.id];
             }
             else {
-                if (state.attributes.collapsed == true) {
+                if (state.attributes.is_collapsed == true) {
                     state_g = new dagre.graphlib.Graph();
                     g.setGraph({});
                     g.setDefaultEdgeLabel(function (u, v) { return {}; });
@@ -1079,7 +1079,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
     sdfg.nodes.forEach(function (state) {
         let stateinfo = {};
         stateinfo.label = state.id;
-        if (state.collapsed == true) {
+        if (state.attributes.is_collapsed == true) {
             stateinfo.width = ctx.measureText(stateinfo.label).width;
             stateinfo.height = LINEHEIGHT;
         } 

@@ -376,6 +376,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
             //#TODO: Arbitrate this - for now, we select the element with the lowest id
         }
 
+        let state_only = false;
+
         // Check if anything was clicked at all
         if(clicked_states.length == 0) {
             // Nothing was selected
@@ -384,13 +386,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
         if(clicked_nodes.length == 0) {
             // A state was selected
-            // #TODO: Get SDFG state properties and render them
-
-            return;
+            state_only = true;
         }
 
         state_id = clicked_states[0].id;
-        node_id = clicked_nodes[0].id;
+        if(!state_only)
+            node_id = clicked_nodes[0].id;
         
 
         if(omsg.msg_type == "contextmenu") {
@@ -451,81 +452,60 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
 
         // Get and render the properties from now on
+        let sdfg = this.getSDFGDataFromState().sdfg;
 
-        if(this.diode.use_new_properties()) {
-            let sdfg = this.getSDFGDataFromState().sdfg;
+        let unified_id = (parseInt(state_id) << 16) | (parseInt(node_id));
+        console.log("sdfg", sdfg);
 
-            let unified_id = (parseInt(state_id) << 16) | (parseInt(node_id));
-            console.log("sdfg", sdfg);
-
-            let states = sdfg.nodes;
-            let state = null;
-            for(let x of states) {
-                if(x.id == state_id) {
-                    state = x;
-                    break;
-                }
-            }
-
-            let nodes = state.nodes;
-            for(let n of nodes) {
-
-                if(n.id != node_id)
-                    continue;
-
-                let attr = n.attributes;
-
-                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
-
-                let proplist = [];
-                for(let k of akeys) {
-
-                    let value = attr[k];
-                    let meta = attr["_meta_" + k];
-                    if(meta == undefined) {
-                        continue;
-                    }
-
-                    let pdata = JSON.parse(JSON.stringify(meta));
-                    pdata.value = value;
-                    pdata.name = k;
-
-                    proplist.push(pdata);
-                }
-                let propobj = {
-                    node_id: node_id,
-                    state_id: state_id,
-                    data: () => ({props: proplist})
-                };
-
-                this.renderProperties(propobj);
+        let states = sdfg.nodes;
+        let state = null;
+        for(let x of states) {
+            if(x.id == state_id) {
+                state = x;
                 break;
             }
-
         }
-        else {
-            // Legacy code
-            let props = this.getSDFGPropertiesFromState();
+        let render_props = n => {
+            let attr = n.attributes;
 
-            let selprop = props.filter(x => x.node_id == node_id && x.state_id == state_id);
+            let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
 
-            if(selprop.length === 0) {
-                console.log("Could not find properties of the selected node");
-                return;
+            let proplist = [];
+            for(let k of akeys) {
+
+                let value = attr[k];
+                let meta = attr["_meta_" + k];
+                if(meta == undefined) {
+                    continue;
+                }
+
+                let pdata = JSON.parse(JSON.stringify(meta));
+                pdata.value = value;
+                pdata.name = k;
+
+                proplist.push(pdata);
             }
-            console.assert(selprop.length > 0, "Node is present");
-
-            let properties = selprop[0].params;
-
-
-            let node = {
+            let propobj = {
                 node_id: node_id,
                 state_id: state_id,
-                data: () => { return {props: properties} },
-            }
+                data: () => ({props: proplist})
+            };
 
-            // Render the properties
-            this.renderProperties(node);
+            this.renderProperties(propobj);
+        };
+        if(state_only) {
+            render_props(state);
+            return;
+        }
+
+        let nodes = state.nodes;
+        for(let n of nodes) {
+
+            if(n.id != node_id)
+                continue;
+
+            render_props(n);
+            break;
         }
     }
 
@@ -604,6 +584,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         for(let x of sdfg.nodes) {
             if(x.id == state_id) {
 
+                if(node_id == null) return [x, sdfg];
                 for(let n of x.nodes) {
 
                     if(n.id == node_id) {
@@ -4247,8 +4228,8 @@ class DIODE {
     }
 
     static recompileOnPropertyChange() {
-        // Set a tendency towards 'true' 
-        return localStorage.getItem('diode2_recompile_on_prop_change') != "false";
+        // Set a tendency towards 'false' 
+        return localStorage.getItem('diode2_recompile_on_prop_change') != "true";
     }
 
     static setRecompileOnPropertyChange(boolean_value) {
