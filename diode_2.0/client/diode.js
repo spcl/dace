@@ -157,6 +157,36 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.initialized_sdfgs = [];
 
         this._analysis_values = {};
+
+        console.log("state", state);
+    }
+
+    saveToState(dict_value) {
+        let renamed_dict = {};
+        let json_list = ['sdfg_data', 'sdfg'];
+        for(let x of Object.entries(dict_value)) {
+            renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof(x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
+        }
+        super.saveToState(renamed_dict);
+    }
+
+    resetState(dict_value) {
+        let renamed_dict = {};
+        let json_list = ['sdfg_data', 'sdfg'];
+        for(let x of Object.entries(dict_value)) {
+            renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof(x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
+        }
+        super.resetState(renamed_dict);
+    }
+
+    getState() {
+        let _state = super.getState();
+        let _transformed_state = {};
+        let json_list = ['sdfg_data', 'sdfg'];
+        for(let x of Object.entries(_state)) {
+            _transformed_state[x[0]] = (typeof(x[1]) == 'string' && json_list.includes(x[0])) ? JSON.parse(x[1]) : x[1];
+        }
+        return _transformed_state;
     }
 
     setupEvents(project) {
@@ -288,27 +318,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
     }
 
-    discardInvalidated(new_optpath) {
-        let o = this.getSDFGDataFromState();
-        let props = o['sdfg_props'];
-
-        let length = new_optpath.length;
-
-        // Only preserve elements that can be in the current path
-        props = props.filter(x => x.step <= length);
-        
-        
-        // Write back
-        o['sdfg_props'] = props;
-        let prop_obj = JSON.stringify(o);
-
-        this.saveToState({
-            sdfg_data: prop_obj
-        });
-
-        return props;
-    }
-
     message_handler_filter(msg) {
         /* 
             This function is a compatibility layer
@@ -340,6 +349,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
     render_free_variables() {
         let sdfg_dat = this.getSDFGDataFromState();
+        if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
         this.project().request(['render-free-vars'], x => {
 
         }, {
@@ -517,47 +527,21 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
     getSDFGDataFromState() {
-        let o = this.getState()['sdfg_data'];
+        let _state = this.getState();
+        let o = null;
+        if(_state.sdfg != undefined) {
+            o = _state;
+        }
+        else {
+            o = _state['sdfg_data'];
+        }
         if((typeof o) == 'string') {
             o = JSON.parse(o);
         }
+        while(typeof o.sdfg == 'string') {
+            o.sdfg = JSON.parse(o.sdfg);
+        }
         return o;
-    }
-
-    getChangedSDFGPropertiesFromState() {
-        let sprops = this.getSDFGPropertiesFromState();
-
-        sprops = JSON.parse(JSON.stringify(sprops)); // Copy the value
-        sprops.forEach(x => {
-            x.params = x.params.filter(p => p.changed === true);
-        });
-        sprops = sprops.filter(x => x.params.length > 0);
-        return sprops;
-    }
-
-    mergeSDFGPropertiesWithState(prop_elem) {
-        let o = this.getSDFGDataFromState();
-        let props = o['sdfg_props'];
-
-        let filtered = props.filter(x => x.node_id == prop_elem.node_id && x.state_id == prop_elem.state_id && (x.step === undefined || x.step === prop_elem.step));
-        console.assert(filtered.length <= 1, "The element must be present at most once!");
-        if(filtered.length === 1) {
-            filtered[0].params = prop_elem.params;
-            filtered[0].step = prop_elem.step;
-        }
-        else {
-            props.push(prop_elem);
-        }
-        
-        // Write back
-        o['sdfg_props'] = props;
-        let prop_obj = JSON.stringify(o);
-
-        this.saveToState({
-            sdfg_data: prop_obj
-        });
-
-        return props;
     }
 
     renderProperties(node) {
@@ -603,9 +587,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
         nref[0].attributes[name] = value;
 
         let old = this.getSDFGDataFromState();
-        old['sdfg'] = nref[1];
+        if(old.type == "SDFG")
+            old = nref[1];
+        else
+            old['sdfg'] = nref[1];
 
-        this.saveToState(old);
+        this.resetState(old);
     }
 
     propertyChanged(node, name, value) {
@@ -614,62 +601,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             into the state.
         */
 
-        if(this.diode.use_new_properties()) {
-            return this.propertyChanged2(node, name, value);
-        }
-        this.project().request(['optpath'], msg => {
-            //alert("got optpath: " + JSON.stringify(msg));
-            let out = msg.optpath.length;
-        
-            for(let x of node.data().props) {
-                if(x.name == name) {
-                    x.value = value;
-                    
-                    // Catching special cases
-                    if(value === true) x.value = "True";
-                    if(value === false) x.value = "False";
-                }
-            }
-
-            let fixed = {
-                state_id: node.state_id,
-                node_id: node.node_id,
-                step: out
-            };
-            fixed.params = node.data().props;
-
-            // Mark values that have been changed at any point during the project lifetime
-            fixed.params.forEach(x => {
-                if(name == x.name && (x.step === undefined || x.step === out)) {
-                    x.changed = true;
-                }
-            });
-            // Save everything back to state
-            let sprops = this.mergeSDFGPropertiesWithState(fixed);
-
-            // Only transmit changed elements
-            sprops.forEach(x => {
-                x.params = x.params.filter(p => p.changed === true);
-            });
-            sprops = sprops.filter(x => x.params.length > 0);
-
-            let f = this.diode.debounce("sdfgproperty-change", () => {
-                //alert("Property change realized");
-
-                this.diode.gatherProjectElementsAndCompile(this, {
-                    sdfg_props: sprops
-                });
-            }, 2000);
-
-            // Only recompile if set as required
-            if(DIODE.recompileOnPropertyChange()) {
-                f();
-            };
-
-        }, {
-            timeout: 10
-        });
-        
+        return this.propertyChanged2(node, name, value);        
     }
 
 
@@ -682,7 +614,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             tmp = JSON.parse(sdfg_data);
         }
 
-        if(this.diode.use_new_properties()) {
+        {
             // Load the properties from json instead of loading the old properties
             // This means deleting any property delivered
             // This is just so we don't accidentally use the old format
@@ -699,6 +631,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.saveToState({
             "sdfg_data": tmp
         });
+
+        let _dbg_state = this.getState();
 
 
         // The HTML5 Renderer originally has been written for a WebSocket interface
@@ -2782,7 +2716,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         free_symbol_table.setHeaders("Symbol", "Type", "Dimensions", "Controls");
 
         // Go over the undefined symbols first, then over the arrays (SDFG::arrays)
-        let all_symbols = [...Object.entries(data.sdfg.undefined_symbols), "SwitchToArrays", ...Object.entries(data.sdfg.attributes._arrays)];
+        let all_symbols = [...Object.entries(data.undefined_symbols), "SwitchToArrays", ...Object.entries(data.attributes._arrays)];
         
         for(let x of all_symbols) {
 
@@ -3115,7 +3049,13 @@ class DIODE {
         }
         else {
             // #TODO: To get the old DIODE layout, this needs to be smarter
-            root.contentItems[0].addChild(config);
+            if(this.goldenlayout.isSubWindow) {
+                // Subwindows don't usually have layouts, so send a request that only the main window should answer
+                this.goldenlayout.eventHub.emit('create-window-in-main', JSON.stringify(config));
+            }
+            else {
+                root.contentItems[0].addChild(config);
+            }
         }
     }
 
@@ -3779,26 +3719,27 @@ class DIODE {
 
         sdfg.sdfg_name = name;
 
-        let transthis = this;
-        let create_sdfg_func = function() {
+        let create_sdfg_func = () => {
             let new_sdfg_config = {
                 title: name,
                 type: 'component',
                 componentName: 'SDFGComponent',
                 componentState: { created: millis(), sdfg_data: sdfg, sdfg_name: name }
             };
-            transthis.goldenlayout.root.contentItems[0].addChild(new_sdfg_config);
+            //transthis.goldenlayout.root.contentItems[0].addChild(new_sdfg_config);
+            this.addContentItem(new_sdfg_config);
         };
         this.replaceOrCreate(['new-sdfg'], sdfg, create_sdfg_func);
 
-        let create_codeout_func = function() {
+        let create_codeout_func = () => {
             let new_codeout_config = {
                 title: "Output code for `" + name + "`",
                 type: 'component',
                 componentName: 'CodeOutComponent',
                 componentState: { created: millis(), code: sdfg, sdfg_name: name }
             };
-            transthis.goldenlayout.root.contentItems[0].addChild(new_codeout_config);
+            //transthis.goldenlayout.root.contentItems[0].addChild(new_codeout_config);
+            this.addContentItem(new_codeout_config);
         }
         if(sdfg.generated_code != undefined) {
             this.replaceOrCreate(['new-codeout'], sdfg, create_codeout_func);

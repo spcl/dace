@@ -423,11 +423,22 @@ function start_DIODE() {
         if(!(goldenlayout.isInitialised && goldenlayout.openPopouts.every(popout => popout.isInitialised))) {
             return;
         }
+        // Don't serialize SubWindows
+        if(goldenlayout.isSubWindow)
+            return;
         let tmp = goldenlayout.toConfig();
         //find_object_cycles(tmp);
         let state = JSON.stringify( tmp );
   	    sessionStorage.setItem( 'savedState', state );
     }, 500));
+
+    if(!goldenlayout.isSubWindow) {
+        goldenlayout.eventHub.on('create-window-in-main', x => {
+            let config = JSON.parse(x);
+
+            diode.addContentItem(config);
+        });
+    }
 
     goldenlayout.registerComponent( 'testComponent', function( container, componentState ){
         container.getElement().html( '<h2>' + componentState.label + '</h2>' );
@@ -443,6 +454,7 @@ function start_DIODE() {
     goldenlayout.registerComponent( 'SDFGComponent', function( container, componentState ){
         // Wrap the component in a context 
         let diode_context = new DIODE_Context_SDFG(diode, container, componentState);
+        //diode_context.resetState(componentState);
         $(container.getElement()).load("SDFG_view.html", function() {
             diode_context.render_sdfg(componentState["sdfg_data"]);
             //diode_context.render_sdfg();
