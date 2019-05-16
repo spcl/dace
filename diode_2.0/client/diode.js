@@ -1761,7 +1761,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
             componentName: 'TerminalComponent',
             componentState: { created: millis }
         };
-        this.diode.goldenlayout.root.contentItems[0].addChild(terminal_config);
+        this.diode.addContentItem(terminal_config);
 
         console.log("Server emitting to ", terminal_identifier);
 
@@ -3621,7 +3621,7 @@ class DIODE {
             new_container.addChild(config);
         }
 
-        this.goldenlayout.root.contentItems[0].addChild(new_container);
+        this.addContentItem(new_container);
         
         this.goldenlayout.eventHub.emit("leave-programmatic-destroy", "");
     }
@@ -3774,7 +3774,6 @@ class DIODE {
                 componentName: 'SDFGComponent',
                 componentState: { created: millis(), sdfg_data: sdfg, sdfg_name: name }
             };
-            //transthis.goldenlayout.root.contentItems[0].addChild(new_sdfg_config);
             this.addContentItem(new_sdfg_config);
         };
         this.replaceOrCreate(['new-sdfg'], JSON.stringify(sdfg), create_sdfg_func);
@@ -3786,7 +3785,6 @@ class DIODE {
                 componentName: 'CodeOutComponent',
                 componentState: { created: millis(), code: sdfg, sdfg_name: name }
             };
-            //transthis.goldenlayout.root.contentItems[0].addChild(new_codeout_config);
             this.addContentItem(new_codeout_config);
         }
         if(sdfg.generated_code != undefined) {
@@ -3811,7 +3809,7 @@ class DIODE {
                 componentName: 'AvailableTransformationsComponent',
                 componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
             };
-            this.goldenlayout.root.contentItems[0].addChild(new_optgraph_config);
+            this.addContentItem(new_optgraph_config);
         };
         this.replaceOrCreate(['new-optgraph-' + name], optgraph, create_optgraph_func);
     }
@@ -3985,7 +3983,7 @@ class DIODE {
             componentName: 'TerminalComponent',
             componentState: { created: millis }
         };
-        this.goldenlayout.root.contentItems[0].addChild(terminal_config);
+        this.addContentItem(terminal_config);
 
 
         this.gatherProjectElementsAndCompile(this, {}, { run: true, term_id: terminal_identifier });
