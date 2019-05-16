@@ -526,10 +526,10 @@ class Map(object):
     flatten = Property(dtype=bool, desc="Map loop flattening")
     fence_instrumentation = Property(
         dtype=bool, desc="Disable instrumentation in all subnodes")
-    papi_counters = ListProperty(
-        dtype=list,
-        desc="List of PAPI counter preset identifiers.",
-        default=PerfSettings.perf_default_papi_counters())
+    #papi_counters = ListProperty(
+    #    dtype=list,
+    #    desc="List of PAPI counter preset identifiers.",
+    #    default=PerfSettings.perf_default_papi_counters())
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
@@ -752,10 +752,10 @@ class Reduce(Node):
         enum=types.ScheduleType,
         from_string=lambda x: types.ScheduleType[x])
 
-    papi_counters = ListProperty(
-        dtype=list,
-        desc="List of PAPI counter preset identifiers.",
-        default=PerfSettings.perf_default_papi_counters())
+    #papi_counters = ListProperty(
+    #    dtype=list,
+    #    desc="List of PAPI counter preset identifiers.",
+    #    default=PerfSettings.perf_default_papi_counters())
     debuginfo = DebugInfoProperty()
 
     def __init__(self,

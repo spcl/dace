@@ -454,13 +454,9 @@ function start_DIODE() {
     goldenlayout.registerComponent( 'SDFGComponent', function( container, componentState ){
         // Wrap the component in a context 
         let diode_context = new DIODE_Context_SDFG(diode, container, componentState);
-        //diode_context.resetState(componentState);
-        $(container.getElement()).load("SDFG_view.html", function() {
-            diode_context.render_sdfg(componentState["sdfg_data"]);
-            //diode_context.render_sdfg();
-            diode_context.setupEvents(diode.getCurrentProject());
-        });
-        
+                
+        diode_context.render_sdfg(componentState["sdfg_data"]);
+        diode_context.setupEvents(diode.getCurrentProject());
     });
     goldenlayout.registerComponent( 'OptGraphComponent', function( container, componentState ){
         // Wrap the component in a context 
@@ -699,6 +695,8 @@ function start_DIODE() {
         diode.open_diode2_settings();
     });
     diode.addKeyShortcut('r', () => { diode.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true }); });
+
+    diode.setupEvents();
 };
 
 export {start_DIODE, REST_request, 

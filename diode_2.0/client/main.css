@@ -362,6 +362,18 @@ ul.tree_view.collapsed_sublist ul {
     display: none;
 }
 
+/* Stale data button styling */
+.stale_data_button {
+    position: absolute;
+    background: red;
+    color: white;
+    top: 10px;
+    left: calc(50% - 250px);
+    width: 500px;
+    z-index: 1000000000;
+    cursor: pointer;
+}
+
 /* DIODE uploader */
 .upload_flexbox {
     display: flex;

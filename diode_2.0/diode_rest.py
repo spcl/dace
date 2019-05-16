@@ -1190,7 +1190,7 @@ def compile(language):
     for n, s in sdfgs.items():
         compounds[n] = {
             "sdfg": json.loads(s.toJSON()),
-            "sdfg_props": sdfg_props[n],
+            #"sdfg_props": sdfg_props[n],
             "matching_opts": opts[n]['matching_opts'],
             "generated_code": [*map(lambda x: x.code, code_tuples[n])]
         }

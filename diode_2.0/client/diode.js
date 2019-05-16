@@ -168,6 +168,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
             renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof(x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
         }
         super.saveToState(renamed_dict);
+
+        console.assert(this.getState().sdfg == undefined);
     }
 
     resetState(dict_value) {
@@ -177,6 +179,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof(x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
         }
         super.resetState(renamed_dict);
+        console.assert(this.getState().sdfg == undefined);
     }
 
     getState() {
@@ -197,6 +200,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-new-sdfg'), (msg) => {
 
+            if(typeof(msg) == 'string') msg = JSON.parse(msg);
             if(msg.sdfg_name === this.getState()['sdfg_name']) {
                 // Ok
             }
@@ -205,8 +209,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 // #TODO: This means that renamed SDFGs will not work as expected.
                 return;
             }
-            eh.emit(transthis._project.eventString('new-sdfg'), 'ok');
-            transthis.render_sdfg(msg, true);
+            eh.emit(this.project().eventString('new-sdfg'), 'ok');
+            this.render_sdfg(msg, true);
         });
 
         // #TODO: When multiple sdfgs are present, the event name
@@ -257,6 +261,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             let sdfg = _state.type == 'SDFG' ? _state : _state.sdfg;
             let named = {};
             named[this.getState()['sdfg_name']] = sdfg;
+            named = JSON.stringify(named);
             eh.emit(this.project().eventString("sdfg_object"), named);
         });
     }
@@ -551,10 +556,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         */
 
         let params = node.data().props;
-        let parent = $(this.container.getElement()).children(".sdfgpropdiv");
-
-        parent[0].innerHTML = "";
-
         let transthis = this;
 
         // Render in the (single, global) property window
@@ -586,13 +587,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         nref[0].attributes[name] = value;
 
-        let old = this.getSDFGDataFromState();
+        let old = this.getState();
         if(old.type == "SDFG")
             old = nref[1];
         else
-            old['sdfg'] = nref[1];
+            old.sdfg_data.sdfg = nref[1];
 
         this.resetState(old);
+
+        this.diode.showStaleDataButton();
     }
 
     propertyChanged(node, name, value) {
@@ -618,13 +621,14 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // Load the properties from json instead of loading the old properties
             // This means deleting any property delivered
             // This is just so we don't accidentally use the old format
-            delete tmp.sdfg_props;
+            console.assert(tmp.sdfg_props === undefined);
             
         }
 
         {
             // Reset the state to avoid artifacts
             let s = this.getState();
+            console.assert(s.sdfg_data != undefined);
             delete s.sdfg_data;
             this.resetState(s);
         }
@@ -633,6 +637,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         });
 
         let _dbg_state = this.getState();
+
+        console.assert(JSON.stringify(_dbg_state.sdfg_data) == JSON.stringify(tmp));
 
 
         // The HTML5 Renderer originally has been written for a WebSocket interface
@@ -920,8 +926,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 
     propertyChanged(node, name, value) {
-        if(this.diode.use_new_properties())
-            return this.propertyChanged2(node, name, value);
+        return this.propertyChanged2(node, name, value);
     }
 
     propertyChanged2(node, name, value) {
@@ -1085,6 +1090,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
             this.project().request(['sdfg_object'], x => {
                 console.log("Got snapshot", x);
+                x.sdfg_object = JSON.parse(x.sdfg_object);
 
                 this.project().saveSnapshot(x['sdfg_object'], named);
 
@@ -1277,8 +1283,7 @@ class DIODE_Context_OptGraph extends DIODE_Context {
     }
 
     propertyChanged(node, name, value) {
-        if(this.diode.use_new_properties())
-            return this.propertyChanged2(node, name, value);
+        return this.propertyChanged2(node, name, value);
         /*
             When a property is changed, the data associated to the transformation node
             must be updated.
@@ -2881,6 +2886,8 @@ class DIODE {
         this._background_projects = [];
         this._current_project = null;
 
+        this._stale_data_button = null;
+
         this._shortcut_functions = {
             /*
             format:
@@ -2910,8 +2917,13 @@ class DIODE {
         });
     }
 
-    use_new_properties() {
-        return true;
+    setupEvents() {
+        this.goldenlayout.eventHub.on(this.project().eventString('-req-show_stale_data_button'), x => {
+            this.__impl_showStaleDataButton();
+        });
+        this.goldenlayout.eventHub.on(this.project().eventString('-req-remove_stale_data_button'), x => {
+            this.__impl_removeStaleDataButton();
+        });
     }
 
     openUploader(purpose="") {
@@ -3213,7 +3225,6 @@ class DIODE {
             }
         }
         dt.setCSSClass("diode_property_table");
-        //dt._table.cellPadding = "0";
         dt.createIn(parent);
     }
 
@@ -3375,6 +3386,42 @@ class DIODE {
 
             this.addContentItem(config);
         });
+    }
+
+    showStaleDataButton() {
+        this.project().request(['show_stale_data_button'], x=>{}, {});
+    }
+    removeStaleDataButton() {
+        this.project().request(['remove_stale_data_button'], x=>{}, {});
+    }
+
+    __impl_showStaleDataButton() {
+        /*
+            Show a hard-to-miss button hinting to recompile.
+        */
+
+        if(this._stale_data_button != null) {
+            return;
+        }
+        let stale_data_button = document.createElement("div");
+        stale_data_button.classList = "stale_data_button";
+        stale_data_button.innerHTML = "Stale project data. Click here or press <span class='key_combo'>Alt-R</span> to synchronize";
+
+        stale_data_button.addEventListener('click', x => {
+            this.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true });
+        })
+
+        document.body.appendChild(stale_data_button);
+
+        this._stale_data_button = stale_data_button;
+    }
+
+    __impl_removeStaleDataButton() {
+        if(this._stale_data_button != null) {
+            let p = this._stale_data_button.parentNode;
+            p.removeChild(this._stale_data_button);
+            this._stale_data_button = null;
+        }
     }
 
     static filterComponentTree(base, filterfunc = x => x) {
@@ -3657,9 +3704,9 @@ class DIODE {
     }
 
     createNewProject() {
-        //alert("Project created");
         this._current_project = new DIODE_Project(this);
         window.sessionStorage.setItem("diode_project", this._current_project._project_id);
+        this.setupEvents();
     }
 
     getProject() {
@@ -3668,6 +3715,7 @@ class DIODE {
         if(proj_id == null || proj_id == undefined) {
             // There was a new project ID assigned, which is stored again in the session storage
             window.sessionStorage.setItem("diode_project", this.getCurrentProject()._project_id);
+            this.setupEvents();
         }
     }
 
@@ -3729,7 +3777,7 @@ class DIODE {
             //transthis.goldenlayout.root.contentItems[0].addChild(new_sdfg_config);
             this.addContentItem(new_sdfg_config);
         };
-        this.replaceOrCreate(['new-sdfg'], sdfg, create_sdfg_func);
+        this.replaceOrCreate(['new-sdfg'], JSON.stringify(sdfg), create_sdfg_func);
 
         let create_codeout_func = () => {
             let new_codeout_config = {
@@ -3809,13 +3857,6 @@ class DIODE {
             }
             reqlist.push('input_code');
         }
-        if(!this.use_new_properties()) {
-            if(sdfg_props === undefined) reqlist.push('sdfg_props');
-            if(sdfg_props != undefined) {
-                sdfg_props = undefined;
-                reqlist.push('sdfg_props');
-            }
-        }
 
         if(optpath === undefined) reqlist.push('optpath');
         /*if(optpath != undefined) {
@@ -3854,6 +3895,7 @@ class DIODE {
 
                 if(cis) {
                     cval = values['sdfg_object'];
+                    cval = JSON.parse(cval);
                 }
                 this.compile(calling_context, cval, values['optpath'], values['sdfg_props'],
                 {
@@ -3897,6 +3939,9 @@ class DIODE {
                     this.handleErrors(calling_context, peek);
                 }
                 else {
+                    // Data is no longer stale
+                    this.removeStaleDataButton();
+
                     let o = JSON.parse(xhr.response);
                     this.multiple_SDFGs_available(xhr.response);
                     if(options.optpath_cb === undefined) {
@@ -4102,23 +4147,12 @@ class DIODE {
             if(data['sdfg_object'] != undefined) {
                 from_code = false;
                 data = data['sdfg_object'];
+                data = JSON.parse(data);
             }
             else {
                 data = data['input_code'];
             }
-            if(transthis.use_new_properties()) {
-                on_data_available(data, undefined, from_code);
-            }
-            else {
-                calling_context.project().request(['sdfg_props'], function(props) {
-                    on_data_available(data, props, from_code);
-                }, {
-                    timeout: 200,
-                    on_timeout: () => on_data_available(data, undefined, from_code),
-                    params: optpath
-                });
-            }
-
+            on_data_available(data, undefined, from_code);
             
         });
     }
