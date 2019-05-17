@@ -203,8 +203,8 @@ namespace dace {
             m_stream.push_if(element, mask);                        \
         }
         __DACE_VECPUSHIF(1)
-        __DACE_VECPUSHIF(2)
-        __DACE_VECPUSHIF(4)
+        /*__DACE_VECPUSHIF(2)
+        __DACE_VECPUSHIF(4)*/
         //__DACE_VECPUSHIF(8)
         #undef __DACE_VECPUSHIF
     };
@@ -269,6 +269,7 @@ namespace dace {
             }
         }
 
+/*
         void push_if(const dace::vec<T, 4>& element, const dace::vec<int, 4>& mask) {
             int ppcnt = 0;
             for (int v = 0; v < 4; ++v) ppcnt += (mask[v] ? 1 : 0);
@@ -292,6 +293,7 @@ namespace dace {
                 }
             }
         }
+*/
 
         void push(const T* elements, unsigned int num_elements) {
             const unsigned int offset = m_elements.fetch_add(num_elements);
@@ -370,7 +372,7 @@ namespace dace {
                 }
             }
         }
-
+/*
         void push_if(const dace::vec<T, 4>& element, const dace::vec<int, 4>& mask) {
             for (int v = 0; v < 4; ++v) {
                 if (mask[v]) {
@@ -386,7 +388,7 @@ namespace dace {
                 }
             }
         }
-
+*/
         void push(const T* elements, unsigned int num_elements) {
             std::copy(elements, elements + num_elements, m_array + m_elements);
             m_elements += num_elements;
