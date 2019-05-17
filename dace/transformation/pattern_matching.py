@@ -93,10 +93,10 @@ class Transformation(object):
     # Static and object methods
 
     # Properties
-    sdfg_id = Property(dtype=int, category="DebugDev")
-    state_id = Property(dtype=int, category="DebugDev")
-    subgraph = SubgraphProperty(dtype=dict, category="DebugDev")
-    expr_index = Property(dtype=int, category="DebugDev")
+    sdfg_id = Property(dtype=int, category="(Debug)")
+    state_id = Property(dtype=int, category="(Debug)")
+    subgraph = SubgraphProperty(dtype=dict, category="(Debug)")
+    expr_index = Property(dtype=int, category="(Debug)")
 
     @staticmethod
     def annotates_memlets():

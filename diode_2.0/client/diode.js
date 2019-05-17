@@ -898,7 +898,8 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
                     if(d === undefined) continue;
                     if(d.id_name == msg) {
                         // Call directly.
-                        d.representative.dispatchEvent(new Event('dblclick'));
+                        // (The click handler invokes the simple transformation)
+                        d.representative.dispatchEvent(new Event('click'));
                     }
                 }
             }
@@ -2153,10 +2154,10 @@ class DIODE_Context_DIODE2Settings extends DIODE_Context {
 
             this._settings_container.append(cont);
         }
-        // DebugDev mode
+        // (Debug) mode
         {
             let cont = FormBuilder.createContainer(undefined);
-            let label = FormBuilder.createLabel(undefined, "DebugDev mode", "When true, the program shows elements primarily useful for debugging and developing DaCe/DIODE2.");
+            let label = FormBuilder.createLabel(undefined, "DaCe Debug mode", "When true, the program shows elements primarily useful for debugging and developing DaCe/DIODE2.");
             
             let input = FormBuilder.createToggleSwitch(undefined, x => {
                 let val = x.checked;
@@ -2997,6 +2998,11 @@ class DIODE {
         this.goldenlayout.eventHub.on(this.project().eventString('-req-remove_stale_data_button'), x => {
             this.__impl_removeStaleDataButton();
         });
+
+        // Install the hint mechanic on the whole window
+        window.addEventListener('contextmenu', ev => {
+            console.log("contextmenu requested on", ev.target);
+        });
     }
 
     openUploader(purpose="") {
@@ -3280,7 +3286,7 @@ class DIODE {
             categories[cat].push(x);
         }
         if(!DIODE.debugDevMode()) {
-            delete categories["DebugDev"]
+            delete categories["(Debug)"]
         }
         for(let z of Object.entries(categories)) {
             
