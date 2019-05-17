@@ -1736,15 +1736,8 @@ class TFSession:
         # This is the variable which is input and output of this map at the same
         # time. We create the output version of it here
         out = node.inputs[0]
-        shape = dace.properties.ShapeProperty.from_string(str(_tensorshape(out)))
         outName = _string_builder(out.name)
-        dtype = _tensortype(out)
-        try:
-            # If successful, use the existing node
-            outputNode = state.find_node(outName)
-        except (LookupError):
-            # Get type and shape of the tensor
-            outputNode = state.add_transient(outName, shape, dtype)
+        outputNode = self.state.add_write(outName)
         dims = self.get_default_dims(out)
         params = self.get_default_params(out)
         outputList = [outputNode]
@@ -1760,7 +1753,6 @@ class TFSession:
         )
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
         self.add_out_memlets(outputList, mapExit, tasklet, outputDims, outputParams)
-        raise NotImplementedError("not sure about the output array being created")
 
     def visit_ResourceApplyGradientDescent(self, node):
         # this is actually the same as above, but the real input has no shape or type.
