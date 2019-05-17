@@ -131,7 +131,15 @@ class TFSession:
     def __exit__(self, exception_type, exception_value, traceback):
         pass
 
-    def train(self, optimizer, initializer, iterations, feed_dict, nodes=None):
+    def train(
+        self,
+        optimizer,
+        initializer,
+        iterations,
+        feed_dict,
+        nodes=None,
+        output_gradients=False,
+    ):
         """ Trains a subgraph for the specified number of iterations and 
             returns requested nodes after training.
             
@@ -143,6 +151,9 @@ class TFSession:
                               to feed in to the evaluator.
             @param nodes: (optional) A TensorFlow node or an iterable 
                           (e.g. list) of nodes to evaluate.
+            @param output_gradients: A boolean, if set, will output all the gradients passed as the
+                                     optimizer arument. This will assume optimizer contains the
+                                     list of gradient tensors that will be added to the outputs.
             @return: A 2-tuple of (varDict, values) - the first is a dictionary
                      of all variables used in the network in arbitrary order,
                      and the second is a tuple of values in the same order as
@@ -211,12 +222,11 @@ class TFSession:
         except TypeError:
             nodes = [nodes]
 
-        if not nodes == None:
-            try:
-                iter(optimizer)
-                optimizer = list(optimizer)
-            except TypeError:
-                optimizer = [optimizer]
+        try:
+            iter(optimizer)
+            optimizer = list(optimizer)
+        except TypeError:
+            optimizer = [optimizer]
 
         ###########################
         # Prepare subgraph to process
@@ -243,9 +253,12 @@ class TFSession:
         state = s1
         # As we are in a new state, all variable nodes should be revisited
         self.visitedNodes.clear()
-        # self.visit_backwards(optimizer)
         if not nodes == [None]:
             self.visit_backwards(ops)
+        optimizer = [
+            opt if isinstance(opt, tf.Operation) else opt.op for opt in optimizer
+        ]
+        self.visit_backwards(optimizer)
         ############################
 
         # Remove orphan nodes and register node types
@@ -286,6 +299,11 @@ class TFSession:
 
         ############################
         # Create output numpy arrays
+        if output_gradients:
+            for opt in optimizer:
+                if isinstance(opt, tf.Tensor):
+                    nodes.append(opt)
+                    output_names.append(opt.name)
         if not nodes == [None]:
             outputs = {
                 name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
@@ -901,6 +919,8 @@ class TFSession:
             temp = set(mapParams[a] for a in reduction_axes)
             outputParams = list(set(mapParams) - temp)
             outputParams.sort()
+        if len(outputParams) == 0:
+            outputParams = ["0"]
         self.add_out_memlets(
             [outputNode],
             mapExit,
@@ -1719,13 +1739,74 @@ class TFSession:
         shape = dace.properties.ShapeProperty.from_string(str(_tensorshape(out)))
         outName = _string_builder(out.name)
         dtype = _tensortype(out)
-        outputNode = state.add_array(outName, shape, dtype)
+        try:
+            # If successful, use the existing node
+            outputNode = state.find_node(outName)
+        except (LookupError):
+            # Get type and shape of the tensor
+            outputNode = state.add_transient(outName, shape, dtype)
         dims = self.get_default_dims(out)
         params = self.get_default_params(out)
         outputList = [outputNode]
         outputParams = [params]
         outputDims = [dims]
 
+        mapLabel = _string_builder(node.type)
+        mapParams = inputParams[0] + ["i4"]
+        mapRange = inputDims[0] + ["0:1"]
+        mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+        tasklet = state.add_tasklet(
+            mapLabel, {"j0", "j1", "j2"}, {"out"}, "out = j0-(j1*j2)"
+        )
+        self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
+        self.add_out_memlets(outputList, mapExit, tasklet, outputDims, outputParams)
+        raise NotImplementedError("not sure about the output array being created")
+
+    def visit_ResourceApplyGradientDescent(self, node):
+        # this is actually the same as above, but the real input has no shape or type.
+        # that has to be changed.
+        state = self.state
+        inputList = []
+        inputNodes = []
+        inputParams = []
+        inputDims = []
+
+        # make the input node using the gradient node, because the input node has type "resource"
+        # and no shape information.
+        inp = node.inputs[0]
+        label = _string_builder(inp.name)
+        try:
+            inputNode = state.find_node(label)
+        except (LookupError):
+            dtype = dace.typeclass(_tensortype(node.inputs[2]))
+            shape = dace.properties.ShapeProperty.from_string(
+                str(_tensorshape(node.inputs[2]))
+            )
+            inputNode = state.add_transient(name=label, shape=shape, dtype=dtype)
+        inputNodes.append(inputNode)
+        inputParams.append(self.get_default_params(node.inputs[2]))
+        inputDims.append(self.get_default_dims(node.inputs[2]))
+
+        for count, inp in enumerate(node.inputs):
+            if count == 0:
+                continue
+            else:
+                inputNode, params, dims = self.create_and_add_input_node(inp)
+                inputParams.append(params)
+                inputDims.append(dims)
+                inputList.append(inputNode.desc(self.graph))
+                inputNodes.append(inputNode)
+
+        # inputList[1] is learning rate which needs its own parameter
+        inputParams[1] = ["i4"]
+        out = node.inputs[2]
+        outName = _string_builder(node.inputs[0].name)
+        outputNode = state.add_write(outName)
+        dims = self.get_default_dims(out)
+        params = self.get_default_params(out)
+        outputList = [outputNode]
+        outputParams = [params]
+        outputDims = [dims]
         mapLabel = _string_builder(node.type)
         mapParams = inputParams[0] + ["i4"]
         mapRange = inputDims[0] + ["0:1"]
@@ -2331,73 +2412,81 @@ class TFSession:
 
     def visit_Reshape(self, node):
 
-        state = self.state
-        inputList = []
-        inputNodes = []
-
-        inp = node.inputs[0]
-        inputParams = []
-        inputDims = []
-        inputNode, params, dims = self.create_and_add_input_node(inp)
-        inputParams.append(params)
-        inputDims.append(dims)
-        inDims = max(inp.shape.ndims, 1)
-        inputList.append(inputNode.desc(self.graph))
-        inputNodes.append(inputNode)
-
-        outputDims = []
+        inputNode, params, dims = self.create_and_add_input_node(node.inputs[0])
         outputList = self.create_and_add_output_node(node)
-        dims = outputList[0].desc(self.graph).shape
-        outDims = len(dims)
-        outputDims.append(self.get_default_dims(node.outputs[0]))
+        outputParams = [self.get_default_params(node.outputs[0])]
+        outputDims = [self.get_default_dims(node.outputs[0])]
+        memlet_reshape = Memlet.simple(
+            inputNode, ",".join(dims), other_subset_str=",".join(outputDims[0])
+        )
+        self.state.add_edge(inputNode, None, outputList[0], None, memlet_reshape)
+        # state = self.state
+        # inputList = []
+        # inputNodes = []
 
-        mapLabel = _string_builder(node.type)
-        mapParams = []
-        outputParams = [[]]
-        mapRange = []
-        mapParams = inputParams[0]
-        mapRange = inputDims[0]
+        # inp = node.inputs[0]
+        # inputParams = []
+        # inputDims = []
+        # inputNode, params, dims = self.create_and_add_input_node(inp)
+        # inputParams.append(params)
+        # inputDims.append(dims)
+        # inDims = max(inp.shape.ndims, 1)
+        # inputList.append(inputNode.desc(self.graph))
+        # inputNodes.append(inputNode)
 
-        # Reshape from 4 to 2 dimensions
-        if inDims > outDims:
-            outputParams[0] = [
-                "i0",
-                "i1*"
-                + str(node.inputs[0].shape[2])
-                + "*"
-                + str(node.inputs[0].shape[3])
-                + "+i2*"
-                + str(node.inputs[0].shape[3])
-                + "+i3",
-            ]
-        # Reshape from 2 to 4 dimensions
-        elif inDims < outDims:
-            outputParams[0] = [
-                "i0",
-                "i1/("
-                + str(node.outputs[0].shape[2])
-                + "*"
-                + str(node.outputs[0].shape[3])
-                + ")",
-                "(i1%"
-                + "("
-                + str(node.outputs[0].shape[2])
-                + "*"
-                + str(node.outputs[0].shape[3])
-                + "))/"
-                + str(node.outputs[0].shape[3]),
-                "i1%" + str(node.outputs[0].shape[3]),
-            ]
-        # If they have the same dimension
-        else:
-            outputParams[0] = mapParams
-            mapRange = outputDims[0]
-            inputDims[0] = outputDims[0]
+        # outputDims = []
+        # outputList = self.create_and_add_output_node(node)
+        # dims = outputList[0].desc(self.graph).shape
+        # outDims = len(dims)
+        # outputDims.append(self.get_default_dims(node.outputs[0]))
 
-        mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
-        tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
-        self.add_out_memlets(outputList, mapExit, tasklet, outputDims, outputParams)
-        self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
+        # mapLabel = _string_builder(node.type)
+        # mapParams = []
+        # outputParams = [[]]
+        # mapRange = []
+        # mapParams = inputParams[0]
+        # mapRange = inputDims[0]
+
+        ## Reshape from 4 to 2 dimensions
+        # if inDims > outDims:
+        #    outputParams[0] = [
+        #        "i0",
+        #        "i1*"
+        #        + str(node.inputs[0].shape[2])
+        #        + "*"
+        #        + str(node.inputs[0].shape[3])
+        #        + "+i2*"
+        #        + str(node.inputs[0].shape[3])
+        #        + "+i3",
+        #    ]
+        ## Reshape from 2 to 4 dimensions
+        # elif inDims < outDims:
+        #    outputParams[0] = [
+        #        "i0",
+        #        "i1/("
+        #        + str(node.outputs[0].shape[2])
+        #        + "*"
+        #        + str(node.outputs[0].shape[3])
+        #        + ")",
+        #        "(i1%"
+        #        + "("
+        #        + str(node.outputs[0].shape[2])
+        #        + "*"
+        #        + str(node.outputs[0].shape[3])
+        #        + "))/"
+        #        + str(node.outputs[0].shape[3]),
+        #        "i1%" + str(node.outputs[0].shape[3]),
+        #    ]
+        ## If they have the same dimension
+        # else:
+        #    outputParams[0] = mapParams
+        #    mapRange = outputDims[0]
+        #    inputDims[0] = outputDims[0]
+
+        # mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+        # tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        # self.add_out_memlets(outputList, mapExit, tasklet, outputDims, outputParams)
+        # self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_MaxPoolGrad(self, node):
         # TODO: Currently only supports 2x2 maxpooling
@@ -2586,7 +2675,6 @@ else:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_Conv2DBackpropInput(self, node):
-
         inputList = []
         inputNodes = []
         mapParams = []
@@ -2606,8 +2694,6 @@ else:
 
         outputList = self.create_and_add_output_node(node)
 
-        for i in range(0, 7):
-            mapParams.append("i" + str(i))
         ndims = len(outputList[0].desc(self.graph).shape)
         for i in range(0, ndims):
             inputDims[1].append(str(0) + ":" + str(inputList[1].shape[i]))
@@ -2617,17 +2703,18 @@ else:
             )
 
         ksize = inputList[0].shape[0]
-        paddedInput, paddedDims = self.inputPadding(
-            node,
-            inputNodes[1],
-            inputList[1],
-            outputList[0].desc(self.graph).shape[1],
-            ksize,
-            strides,
-            inputDims[1],
-        )
-        inputDims[1] = paddedDims
-        inputList[1] = paddedInput
+        if str(node.get_attr("padding"))[2:-1] == "SAME":
+            paddedInput, paddedDims = self.inputPadding(
+                node,
+                inputNodes[1],
+                inputList[1],
+                outputList[0].desc(self.graph).shape[1],
+                ksize,
+                strides,
+                inputDims[1],
+            )
+            inputDims[1] = paddedDims
+            inputNodes[1] = paddedInput
         inputParams.append(["-1-i5+" + str(ksize), "-1-i6+" + str(ksize), "i3", "i4"])
         inputParams.append(
             ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i4"]
