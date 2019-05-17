@@ -308,10 +308,19 @@ ul.tree_view.collapsed_sublist ul {
     box-sizing: border-box;
     border: 1px solid darkslategray;
 }
+.transformation_history_list:empty::after {
+    content: "No revertable transformation found."
+}
 .transformation_history_list_element {
     width: 100%;
     box-sizing: border-box;
     border: 1px solid darkslategray;
+}
+
+.transformation_history_list_element.revert-hovered, .transformation_history_list_element.revert-hovered ~ * {
+    filter: blur(2px);
+    background-color: rgba(255, 0, 0, 0.5);
+
 }
 .transformation_history_list_element_control {
     

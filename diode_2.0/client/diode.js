@@ -236,8 +236,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
         });
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
-            this.propertyChanged(msg.node, msg.name, msg.value);
+            // Emit ok directly (to avoid caller timing out)
             eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok");
+            
+            if(msg.type == "symbol-properties") {
+                this.symbolPropertyChanged(msg.node, msg.name, msg.value);
+            }
+            else
+                this.propertyChanged(msg.node, msg.name, msg.value);
+            
         });
 
         this.on(this.project().eventString('-req-draw-perfinfo'), (msg) => {
@@ -358,7 +365,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.project().request(['render-free-vars'], x => {
 
         }, {
-            params: sdfg_dat
+            params: {
+                data: sdfg_dat,
+                calling_context: this.created
+            }
         });
     }
 
@@ -582,7 +592,20 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
     }
 
-    propertyChanged2(node, name, value) {
+
+    symbolPropertyChanged(node, name, value) {
+        /*
+            A data symbol was changed.
+        */
+        console.log("symbolPropertyChanged", node.data(), name, value);
+        
+    }
+
+    propertyChanged(node, name, value) {
+        /*
+            When a node-property is changed, the changed data is written back
+            into the state.
+        */
         let nref = this.getNodeReference(node.node_id, node.state_id);
 
         nref[0].attributes[name] = value;
@@ -596,15 +619,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.resetState(old);
 
         this.diode.showStaleDataButton();
-    }
-
-    propertyChanged(node, name, value) {
-        /*
-            When a node-property is changed, the changed data is written back
-            into the state.
-        */
-
-        return this.propertyChanged2(node, name, value);        
     }
 
 
@@ -776,6 +790,11 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
             revert.classList = "revert-button";
             revert.title = "revert";
             revert.innerHTML = "<i class='material-icons'>undo</i>";
+            $(revert).hover(() => {
+                elem.classList.add("revert-hovered");
+            }, () => {
+                elem.classList.remove("revert-hovered");
+            })
 
             revert.addEventListener('click', _x => {
                 // Reset to the associated checkpoint
@@ -954,7 +973,6 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
         let transthis = this;
 
-        // The default node is a (doubly-linked) tree and therefore unsuitable for sending
         let reduced_node = {};
         reduced_node.data = () => node.opt_params;
         this.diode.renderPropertiesInWindow(transthis, reduced_node, params, {
@@ -2741,14 +2759,30 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         });
 
         this.on(this.project().eventString('-req-render-free-vars'), msg => {
-            // #TODO: msg should contain the variables to render
-
-            this.renderDataSymbols(msg);
+            this.renderDataSymbols(msg.calling_context, msg.data);
         });
     }
 
 
-    renderDataSymbols(data) {
+    renderDataSymbolProperties(caller_id, symbol) {
+        /*
+            caller_id: .created of calling context (SDFG Context, mainly)
+            symbol: [sym_name, {
+                    .attributes: <attr_obj>
+                    .type: <type name>
+                }]
+        */
+        let reduced_node = {};
+        reduced_node.data = () => symbol;
+        this.diode.renderPropertiesInWindow(caller_id, reduced_node, symbol[1].attributes, {
+            backaction: () => {
+                // #TODO: Implement a quick way of getting back from here
+            },
+            type: "symbol-properties"
+        });
+    }
+
+    renderDataSymbols(calling_context, data) {
         // #TODO: This creates the default state (as in same as render_free_symbols() in the old DIODE)
         
         let free_symbol_table = new DiodeTables.Table();
@@ -2757,6 +2791,9 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         // Go over the undefined symbols first, then over the arrays (SDFG::arrays)
         let all_symbols = [...Object.entries(data.undefined_symbols), "SwitchToArrays", ...Object.entries(data.attributes._arrays)];
         
+        let caller_id = calling_context;
+        console.assert(caller_id != undefined && typeof(caller_id) == 'string');
+
         for(let x of all_symbols) {
 
             if(x == "SwitchToArrays") {
@@ -2772,10 +2809,12 @@ class DIODE_Context_PropWindow extends DIODE_Context {
                 continue;
             }
             let edit_but = document.createElement('button');
-            edit_but.addEventListener('click', x => alert("edit_but clicked"));
+            edit_but.addEventListener('click', _x => {
+                this.renderDataSymbolProperties(caller_id, x);
+            });
             edit_but.innerText = "Edit";
             let del_but = document.createElement('button');
-            del_but.addEventListener('click', x => alert("del_but clicked"));
+            del_but.addEventListener('click', _x => alert("del_but clicked"));
             del_but.innerText = "Delete";
             let but_container = document.createElement('div');
             but_container.appendChild(edit_but);
@@ -3075,6 +3114,7 @@ class DIODE {
 
     initEnums() {
         this.getEnum("ScheduleType");
+        this.getEnum("StorageType");
         this.getEnum("AccessType");
         this.getEnum("Language");
     }
@@ -3209,7 +3249,8 @@ class DIODE {
                         params: {
                             node: node,
                             name: name,
-                            value: value
+                            value: value,
+                            type: options ? options.type : options
                         }
                     })
                 },
@@ -3419,6 +3460,28 @@ class DIODE {
                 });
             }, info_obj);
         }
+        else if(x.type == 'ListProperty') {
+            // #TODO: Find a better type for this
+            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, x.value);
+        }
+        else if(x.type == "StorageType") {
+            let storage_types = this.getEnum('StorageType');
+            let qualified = x.value;
+            if(!storage_types.includes(qualified)) {
+                qualified = "StorageType." + qualified;
+            }
+            elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, storage_types, qualified);
+        }
+        else if(x.type == "typeclass") {
+            // #TODO: Find a better type for this
+            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, x.value);
+        }
         else {
             console.log("Unimplemented property type: ", x);
             alert("Unimplemented property type: " + x.type);
@@ -3430,7 +3493,7 @@ class DIODE {
 
     renderPropertiesInWindow(transthis, node, params, options) {
         let dobj = {
-            transthis: transthis.created,
+            transthis: typeof(transthis) == 'string' ? transthis : transthis.created,
             node: node,
             params: params,
             options: options

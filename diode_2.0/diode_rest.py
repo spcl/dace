@@ -14,11 +14,11 @@ import traceback, os, threading, queue, time
 
 # Enum imports
 from dace.types import AccessType
-from dace import ScheduleType, Language
+from dace import ScheduleType, Language, StorageType
 
 app = Flask(__name__)
 
-enum_list = ['AccessType', 'ScheduleType', 'Language']
+enum_list = ['AccessType', 'ScheduleType', 'Language', 'StorageType']
 
 es_ref = []
 
