@@ -341,6 +341,10 @@ ul.tree_view.collapsed_sublist ul {
     max-width: 500px;
 }
 
+.at_element div:first-child {
+    cursor: pointer;
+}
+
 .at_group_header span::before {
     content: "\25E2";
     color: black;

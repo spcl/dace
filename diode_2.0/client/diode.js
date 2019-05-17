@@ -854,7 +854,6 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             }
             eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'ok');
 
-            //this.create(sel);
             this.create(o);
         });
 
@@ -884,6 +883,12 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
                     }
                 }
             }
+        });
+
+        this.on(this.project().eventString('-req-apply-adv-transformation-' + sname), msg => {
+
+            let x = JSON.parse(msg);
+            this.applyTransformation(...x);
         });
 
 
@@ -940,7 +945,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         tmp[name] = value;
     }
 
-    renderProperties(node) {
+    renderProperties(node, pos, apply_params) {
         /*
             node: The TreeNode for which to draw the properties.
         */
@@ -952,7 +957,13 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         // The default node is a (doubly-linked) tree and therefore unsuitable for sending
         let reduced_node = {};
         reduced_node.data = () => node.opt_params;
-        this.diode.renderPropertiesInWindow(transthis, reduced_node, params);
+        this.diode.renderPropertiesInWindow(transthis, reduced_node, params, {
+            type: "transformation",
+            sdfg_name: this.getState()['for_sdfg'],
+            opt_name: node.opt_name,
+            pos: pos,
+            apply_params: apply_params,
+        });
     }
 
     
@@ -1035,6 +1046,44 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         this.saveToState(_s);
     }
 
+    applyTransformation(x, pos, _title) {
+        let _state = this.getState();
+        let optstruct = _state['optstruct'];
+        let named = {};
+        let cpy = JSON.parse(JSON.stringify(optstruct[x.opt_name][pos]));
+        named[this.getState()['for_sdfg']] = [{
+            name: _title,
+            params: {
+                props: cpy['opt_params']
+            }
+        }];
+
+        let tmp = () => {
+            // Compile after the transformation has been saved
+            this.diode.gatherProjectElementsAndCompile(this, {
+                optpath: named
+            }, {
+                sdfg_over_code: true
+            });
+        };
+
+        this.project().request(['sdfg_object'], x => {
+            console.log("Got snapshot", x);
+            x.sdfg_object = JSON.parse(x.sdfg_object);
+
+            this.project().saveSnapshot(x['sdfg_object'], named);
+
+            this.project().request(['update-tfh'], x => {
+
+                
+            }, {
+
+            });
+
+            setTimeout(tmp, 10);
+        }, {});
+    }
+
     addNode(x, pos=0, parent_override=undefined) {
 
         let _title = x.opt_name;
@@ -1062,56 +1111,41 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         title.addEventListener('mouseleave', _x => {
             this.sendClearHighlightRequest();
         });
-        title.addEventListener('click', _x => {
+        
+        // Single click show properties (disabled)
+        /*title.addEventListener('click', _x => {
 
-            this.renderProperties(x);
-        });
-        title.addEventListener('dblclick', _x => {
+            this.renderProperties(x, pos, [x, pos, _title]);
+        });*/
+        title.addEventListener(/*'dblclick'*/'click', _x => {
 
-            let _state = this.getState();
-            let optstruct = _state['optstruct'];
-            let named = {};
-            let cpy = JSON.parse(JSON.stringify(optstruct[x.opt_name][pos]));
-            named[this.getState()['for_sdfg']] = [{
-                name: _title,
-                params: {
-                    props: cpy['opt_params']
-                }
-            }];
-
-            let tmp = () => {
-                // Compile after the transformation has been saved
-                this.diode.gatherProjectElementsAndCompile(this, {
-                    optpath: named
-                }, {
-                    sdfg_over_code: true
-                });
-            };
-
-            this.project().request(['sdfg_object'], x => {
-                console.log("Got snapshot", x);
-                x.sdfg_object = JSON.parse(x.sdfg_object);
-
-                this.project().saveSnapshot(x['sdfg_object'], named);
-
-                this.project().request(['update-tfh'], x => {
-
-                    
-                }, {
-
-                });
-
-                setTimeout(tmp, 10);
-            }, {});
-
-            
-            
+            this.applyTransformation(x, pos, _title);
         });
         x.representative = title;
 
         // Add a control-div
         let ctrl = document.createElement("div");
-        ctrl.innerHTML = "<i class=''>?</i>";
+        // Advanced button
+        {
+            let adv_button = document.createElement('b');
+            adv_button.classList = "";
+            adv_button.innerText = '...';
+
+            adv_button.addEventListener('click', _x => {
+                // Clicking this should reveal the transformation properties
+                // #TODO
+                this.renderProperties(x, pos, [x, pos, _title]);
+            });
+
+            ctrl.appendChild(adv_button);
+        }
+        // Help button
+        {
+            let help_button = document.createElement('i');
+            help_button.classList = "";
+            help_button.innerText = '?';
+            ctrl.appendChild(help_button);
+        }
 
         list_elem.appendChild(title);
         list_elem.appendChild(ctrl);
@@ -2703,7 +2737,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         this.on(this.project().eventString('-req-display-properties'), (msg) => {
             eh.emit(this.project().eventString("display-properties"), 'ok');
             this.getHTMLContainer().innerHTML = "";
-            this.diode.renderProperties2(msg.transthis, msg.node, msg.params, this.getHTMLContainer());
+            this.diode.renderProperties2(msg.transthis, msg.node, msg.params, this.getHTMLContainer(), msg.options);
         });
 
         this.on(this.project().eventString('-req-render-free-vars'), msg => {
@@ -3141,7 +3175,7 @@ class DIODE {
         return JSON.parse(cached)['enum'];
     }
 
-    renderProperties2(transthis, node, params, parent) {
+    renderProperties2(transthis, node, params, parent, options=undefined) {
         /*
             Creates property visualizations like Visual Studio
         */
@@ -3177,6 +3211,14 @@ class DIODE {
                             name: name,
                             value: value
                         }
+                    })
+                },
+                applyTransformation: () => {
+                    this.project().request(['apply-adv-transformation' + target_name], x => {
+
+                    }, {
+                        timeout: 200,
+                        params: options == undefined ? undefined : options.apply_params
                     })
                 },
                 project: () => this.project()
@@ -3225,7 +3267,27 @@ class DIODE {
             }
         }
         dt.setCSSClass("diode_property_table");
+
+        if(options && options.type == "transformation") {
+            // Append a title
+            let title = document.createElement("span");
+            title.classList = "";
+            title.innerText = options.opt_name;
+            parent.appendChild(title);
+        }
         dt.createIn(parent);
+        if(options && options.type == "transformation") {
+            // Append an 'apply-transformation' button
+            let button = document.createElement('button');
+            button.innerText = "Apply advanced transformation";
+            button.addEventListener('click', _x => {
+                this.project().request(['apply-adv-transformation-' + options.sdfg_name], _y => {}, {
+                    params: JSON.stringify(options.apply_params)
+                })
+            });
+            parent.appendChild(button);
+
+        }
     }
 
     renderProperties(transthis, node, params, parent) {
@@ -3366,11 +3428,12 @@ class DIODE {
         return elem[0];
     }
 
-    renderPropertiesInWindow(transthis, node, params) {
+    renderPropertiesInWindow(transthis, node, params, options) {
         let dobj = {
             transthis: transthis.created,
             node: node,
-            params: params
+            params: params,
+            options: options
         };
         this.replaceOrCreate(['display-properties'], dobj,
          () => {
