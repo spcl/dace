@@ -106,6 +106,8 @@ class DaCeCodeGenerator(object):
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
 
+        global_stream.write(sdfg.global_code, sdfg)
+
         self.generate_fileheader(sdfg, callsite_stream)
 
         callsite_stream.write(
@@ -199,6 +201,8 @@ DACE_EXPORTED int __dace_init(%s)
                     'result |= __dace_init_%s(%s);' % (target.target_name,
                                                        paramnames), sdfg)
 
+        callsite_stream.write(sdfg.init_code, sdfg)
+
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
         callsite_stream.write(
@@ -211,6 +215,8 @@ DACE_EXPORTED void __dace_exit(%s)
 """ % params, sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
+
+        callsite_stream.write(sdfg.exit_code, sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:

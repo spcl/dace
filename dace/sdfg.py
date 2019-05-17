@@ -188,6 +188,9 @@ class SDFG(OrderedDiGraph):
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
         self._arrays = {None: None}  # type: Dict[str, dt.Array]
+        self._global_code = ''
+        self._init_code = ''
+        self._exit_code = ''
 
     def toJSON(self):
         import json
@@ -260,6 +263,33 @@ class SDFG(OrderedDiGraph):
         if state_id < 0 or state_id >= len(self.nodes()):
             raise ValueError('Invalid state ID')
         self._start_state = state_id
+
+    @property
+    def global_code(self):
+        """ Returns C++ code, generated in a global scope on the frame-code generated file. """
+        return self._global_code
+
+    def set_global_code(self, cpp_code: str):
+        """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
+        self._global_code = cpp_code
+
+    @property
+    def init_code(self):
+        """ Returns C++ code, generated in the `__dapp_init` function. """
+        return self._init_code
+
+    def set_init_code(self, cpp_code: str):
+        """ Sets C++ code, generated in the `__dapp_init` function. """
+        self._init_code = cpp_code
+
+    @property
+    def exit_code(self):
+        """ Returns C++ code, generated in the `__dapp_exit` function. """
+        return self._exit_code
+
+    def set_exit_code(self, cpp_code: str):
+        """ Sets C++ code, generated in the `__dapp_exit` function. """
+        self._exit_code = cpp_code
 
     def has_instrumented_parent(self):
         return self._instrumented_parent
