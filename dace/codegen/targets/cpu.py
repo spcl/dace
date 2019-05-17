@@ -2227,16 +2227,27 @@ def is_write_conflicted(dfg, edge, datanode=None):
     return False
 
 
+class LambdaToFunction(ast.NodeTransformer):
+    def visit_Lambda(self, node: ast.Lambda):
+        newbody = [ast.Return(value=node.body)]
+        newnode = ast.FunctionDef(
+            name='_anonymous', args=node.args, body=newbody, decorator_list=[])
+        newnode = ast.copy_location(newnode, node)
+        return ast.fix_missing_locations(newnode)
+
+
 def unparse_cr(wcr_ast):
     """ Outputs a C++ version of a conflict resolution lambda. """
 
     if isinstance(wcr_ast, ast.Lambda):
-        return cppunparse.cppunparse(wcr_ast, expr_semicolon=False)
+        # Convert the lambda expression into a function that we can parse
+        funcdef = LambdaToFunction().visit(wcr_ast)
+        return unparse_cr(funcdef)
     elif isinstance(wcr_ast, ast.FunctionDef):
         # Construct a lambda function out of a function
-        return '[] (%s) { %s }' % (
-            cppunparse.cppunparse(wcr_ast.args, expr_semicolon=False),
-            cppunparse.cppunparse(wcr_ast.body, expr_semicolon=False))
+        return '[] (%s) { %s }' % (', '.join([
+            'const auto& %s' % n.arg for n in wcr_ast.args.args
+        ]), cppunparse.cppunparse(wcr_ast.body, expr_semicolon=False))
     elif isinstance(wcr_ast, ast.Module):
         return unparse_cr(wcr_ast.body[0].value)
     elif isinstance(wcr_ast, str):
