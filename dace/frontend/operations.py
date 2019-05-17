@@ -79,7 +79,8 @@ def detect_reduction_type(wcr_str):
     b = sympy.Symbol('b')
     try:
         result = wcr(a, b)
-    except TypeError:  # e.g., "Cannot determine truth value of relational"
+    except (TypeError, AttributeError
+            ):  # e.g., "Cannot determine truth value of relational"
         result = None
 
     # Check resulting value
