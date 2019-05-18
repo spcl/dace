@@ -4099,6 +4099,10 @@ class DIODE {
                     timeout: 100,
                 });
             }
+            else {
+                console.error("Error: ", error);
+                alert(JSON.stringify(error));
+            }
         }
     }
 

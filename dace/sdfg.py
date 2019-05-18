@@ -146,6 +146,10 @@ class SDFG(OrderedDiGraph):
         dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG")
 
+    _global_code = CodeProperty(desc="C++ code, generated in a global scope on the frame-code generated file.", default="")
+    _init_code = CodeProperty(desc="C++ code, generated in the `__dapp_init` function.", default="")
+    _exit_code = CodeProperty(desc="C++ code, generated in the `__dapp_exit` function.", default="")
+
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = collections.OrderedDict(),
@@ -207,7 +211,7 @@ class SDFG(OrderedDiGraph):
     def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
         _type = json_obj['type']
         if _type != cls.__name__:
-            raise Exception("Class type mismatch")
+            raise TypeError("Class type mismatch")
 
         attrs = json_obj['attributes']
         nodes = json_obj['nodes']
@@ -233,8 +237,19 @@ class SDFG(OrderedDiGraph):
             nci['sdfg'] = ret
 
             state = SDFGState.fromJSON_object(n, nci)
-            print("Label is " + str(state.label))
             ret.add_node(state)
+
+        for e in edges:
+            print("edge: " + str(e))
+            pass
+
+        #for v in json_obj['undefined_symbols']:
+        #    for sym in ret.undefined_symbols(True):
+        #        if str(sym) == symname:
+        #            symbol = dace.symbolic.symbol(symname)
+        #            symbol.set(value)
+
+
 
         ret.validate()
 
