@@ -54,10 +54,14 @@ class Edge(object):
 
         return json.dumps(ret)
 
-    @classmethod
-    def fromJSON_object(cls, json_obj, context=None):
-        raise Exception(
-            "Abstract method called - implement in Edge-Subclasses!")
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "Edge":
+            raise TypeError("Invalid data type")
+
+        ret = Edge(json_obj['src'], json_obj['dst'], json_obj['attributes']['data'])
+
+        return ret
 
     @staticmethod
     def __len__():

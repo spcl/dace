@@ -330,7 +330,11 @@ class EmptyTasklet(Tasklet):
     def validate(self, sdfg, state):
         pass
 
-
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = EmptyTasklet("dummylabel")
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 # ------------------------------------------------------------------------------
 
 

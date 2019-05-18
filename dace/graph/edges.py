@@ -71,10 +71,24 @@ class InterstateEdge(object):
         return dace.symbolic.symbols_in_ast(self.condition[0])
 
     def toJSON(self, parent=None):
-        json = str(self.label)
-        # get rid of newlines (why are they there in the first place?)
-        json = re.sub(r"\n", " ", json)
-        return "\"" + json + "\""
+        import json
+        ret = {
+            'type': type(self).__name__,
+            'attributes': Property.all_properties_to_json(self)
+        }
+
+        return json.dumps(ret)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "InterstateEdge":
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = InterstateEdge()
+        Property.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
 
     @property
     def label(self):

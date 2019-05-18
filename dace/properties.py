@@ -402,9 +402,12 @@ class Property:
             "ConsumeEntry": dace.graph.nodes.ConsumeEntry,
             "ConsumeExit": dace.graph.nodes.ConsumeExit,
             "Tasklet": dace.graph.nodes.Tasklet,
+            "EmptyTasklet": dace.graph.nodes.EmptyTasklet,
             "NestedSDFG": dace.graph.nodes.NestedSDFG,
             "Memlet": dace.memlet.Memlet,
             "MultiConnectorEdge": dace.graph.graph.MultiConnectorEdge,
+            "InterstateEdge": dace.graph.edges.InterstateEdge,
+            "Edge": dace.graph.graph.Edge,
 
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
@@ -429,7 +432,7 @@ class Property:
                     return tmp
                 # If a type is available, the parent element must also be parsed accordingly
 
-        if "type" in obj or attr_type != None:
+        if "type" in obj:
             try:
                 t = obj['type']
             except:
@@ -1006,13 +1009,25 @@ class CodeProperty(Property):
     def from_json(l, sdfg=None):
         tmp = json.loads(l)
 
-        lang = tmp['language']
-        if lang == None:
+        try:
+            lang = tmp['language']
+        except:
             lang = None
+        
+        if lang == None:
+            lang = dace.types.Language.Python
         elif lang.endswith("Python"):
             lang = dace.types.Language.Python
+        elif lang.endswith("CPP"):
+            lang = dace.types.Language.CPP
 
-        return CodeProperty.from_string(tmp['string_data'], lang)
+        try:
+            cdata = tmp['string_data']
+        except:
+            print("tmp is " + str(tmp))
+            cdata = ""
+
+        return CodeProperty.from_string(cdata, lang)
 
     @staticmethod
     def from_string(string, language=None):
@@ -1081,6 +1096,7 @@ class CodeProperty(Property):
             # Keep as None. The "allow_none" check in the superclass
             # ensures that this is legal
             pass
+            language = dace.types.Language.Python
         elif isinstance(val, str):
             try:
                 language = getattr(obj, "_" + self.attr_name)['language']
