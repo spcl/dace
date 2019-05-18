@@ -972,9 +972,10 @@ class CodeProperty(Property):
             return json.dumps(obj)
         if isinstance(obj, str):
             return json.dumps(obj)
-        try:
-            lang = obj._language
-        except:
+
+        if isinstance(obj, dict):
+            lang = obj['language']
+        else:
             lang = "Python"  # If not specified, we just don't want the validators go haywire
         ret = {'string_data': CodeProperty.to_string(obj), 'language': lang}
         return json.dumps(ret)
@@ -999,15 +1000,24 @@ class CodeProperty(Property):
         if language == dace.types.Language.Python:
             block = CodeBlock(ast.parse(string).body)
             block.as_string = string
-            return block
+            return {
+                'code_or_block': block,
+                'language': language
+            }
         else:
             # Do nothing for now
-            return string
+            return {
+                'code_or_block': string,
+                'language': language
+            }
 
     @staticmethod
     def to_string(obj):
         if isinstance(obj, str):
             return obj
+        if isinstance(obj, dict):
+            # The object has annotated language in this case; ignore the language for this operation
+            obj = obj['code_or_block']
         # Grab the originally parsed string if any
         if obj._as_string is not None and obj._as_string != "":
             return obj._as_string
@@ -1019,32 +1029,50 @@ class CodeProperty(Property):
     def __get__(self, obj, val):
         if hasattr(type(obj), "language"):
             self._language = obj.language
-        return super(CodeProperty, self).__get__(obj, val)
+        
+        tmp = super(CodeProperty, self).__get__(obj, val)
+        try:
+            # To stay compatible, return the code only. The language has to be obtained differently
+            tmp = tmp['code_or_block']
+        except:
+            pass
+        return tmp
 
     def __set__(self, obj, val):
         # Check if the class has a language property
         if not hasattr(type(obj), "language"):
-            raise AttributeError(
-                "Class \"{}\" with a CodeProperty field must also "
-                "have a \"language\" attribute.".format(type(obj).__name__))
+        #    raise AttributeError(
+        #        "Class \"{}\" with a CodeProperty field must also "
+        #        "have a \"language\" attribute.".format(type(obj).__name__))
+            pass
+        
         # Check if the object has a language attribute
-        try:
-            language = obj.language
-        except AttributeError:
-            # Language exists as an attribute, but has not yet been set. Accept
-            # this, because __dict__ is not guaranteed to be in the order that
-            # the attributes are defined in.
-            language = None
-        self._language = language
+        #try:
+        #    language = obj.language
+        #except AttributeError:
+        #    # Language exists as an attribute, but has not yet been set. Accept
+        #    # this, because __dict__ is not guaranteed to be in the order that
+        #    # the attributes are defined in.
+        #    language = None
+        # self._language = language
+        
+        #language = val['language']
         if val is None:
             # Keep as None. The "allow_none" check in the superclass
             # ensures that this is legal
             pass
         elif isinstance(val, str):
+            language = None
             if language is not None:
                 # Store original string
                 val = self.from_string(val, language)
         else:
+            try:
+                language = val['language']
+                val = val['code_or_block']
+            except:
+                # Default to Python
+                language = dace.types.Language.Python
             try:
                 if language is not dace.types.Language.Python:
                     raise TypeError("Only strings accepted for other "
@@ -1070,7 +1098,7 @@ class CodeProperty(Property):
                         raise TypeError(
                             "Found type {} in list of AST expressions: "
                             "expected ast.AST".format(type(e).__name__))
-        super(CodeProperty, self).__set__(obj, val)
+        super(CodeProperty, self).__set__(obj, { 'code_or_block': val, 'language': language })
 
 
 class SubsetProperty(Property):
