@@ -244,7 +244,7 @@ class Tasklet(CodeNode):
     """
 
     label = Property(dtype=str, desc="Name of the tasklet")
-    language = Property(enum=types.Language, default=types.Language.Python)
+    #language = Property(enum=types.Language, default=types.Language.Python)
     code = CodeProperty(desc="Tasklet code")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -272,13 +272,20 @@ class Tasklet(CodeNode):
 
         # Properties
         self.label = label
-        self.language = language
-        self.code = code
+        # Set the language directly
+        #self.language = language
+        self.code = { 'code_or_block': code, 'language': language }
+
         self.location = location
         self.code_global = code_global
         self.code_init = code_init
         self.code_exit = code_exit
         self.debuginfo = debuginfo
+
+    @property
+    def language(self):
+        return CodeProperty.get_language(self, "code_global")
+
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
@@ -668,7 +675,7 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements")
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    language = Property(enum=types.Language, default=types.Language.Python)
+    #language = Property(enum=types.Language, default=types.Language.Python)
     schedule = Property(
         dtype=types.ScheduleType,
         desc="Consume schedule",

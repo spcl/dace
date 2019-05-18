@@ -146,9 +146,9 @@ class SDFG(OrderedDiGraph):
         dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG")
 
-    _global_code = CodeProperty(desc="C++ code, generated in a global scope on the frame-code generated file.", default="")
-    _init_code = CodeProperty(desc="C++ code, generated in the `__dapp_init` function.", default="")
-    _exit_code = CodeProperty(desc="C++ code, generated in the `__dapp_exit` function.", default="")
+    global_code = CodeProperty(desc="Code generated in a global scope on the frame-code generated file.", default="")
+    init_code = CodeProperty(desc="Code generated in the `__dapp_init` function.", default="")
+    exit_code = CodeProperty(desc="Code generated in the `__dapp_exit` function.", default="")
 
     def __init__(self,
                  name: str,
@@ -192,9 +192,9 @@ class SDFG(OrderedDiGraph):
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
         self._arrays = {None: None}  # type: Dict[str, dt.Array]
-        self._global_code = ''
-        self._init_code = ''
-        self._exit_code = ''
+        self.global_code = ''
+        self.init_code = ''
+        self.exit_code = ''
 
     def toJSON(self):
         import json
@@ -279,32 +279,32 @@ class SDFG(OrderedDiGraph):
             raise ValueError('Invalid state ID')
         self._start_state = state_id
 
-    @property
-    def global_code(self):
-        """ Returns C++ code, generated in a global scope on the frame-code generated file. """
-        return self._global_code
+    #@property
+    #def global_code(self):
+    #    """ Returns C++ code, generated in a global scope on the frame-code generated file. """
+    #    return self._global_code
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self._global_code = cpp_code
+        self.global_code = cpp_code
 
-    @property
-    def init_code(self):
-        """ Returns C++ code, generated in the `__dapp_init` function. """
-        return self._init_code
+    #@property
+    #def init_code(self):
+    #    """ Returns C++ code, generated in the `__dapp_init` function. """
+    #    return self._init_code
 
     def set_init_code(self, cpp_code: str):
         """ Sets C++ code, generated in the `__dapp_init` function. """
-        self._init_code = cpp_code
+        self.init_code = cpp_code
 
-    @property
-    def exit_code(self):
-        """ Returns C++ code, generated in the `__dapp_exit` function. """
-        return self._exit_code
+    #@property
+    #def exit_code(self):
+    #    """ Returns C++ code, generated in the `__dapp_exit` function. """
+    #    return self._exit_code
 
     def set_exit_code(self, cpp_code: str):
         """ Sets C++ code, generated in the `__dapp_exit` function. """
-        self._exit_code = cpp_code
+        self.exit_code = cpp_code
 
     def has_instrumented_parent(self):
         return self._instrumented_parent
@@ -351,8 +351,9 @@ class SDFG(OrderedDiGraph):
             @param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        self.sourcecode = code
-        self.language = lang
+        #self.sourcecode = code
+        #self.language = lang
+        self.sourcecode = { 'code_or_block': code, 'language': lang }
 
     #@property
     #def name(self):

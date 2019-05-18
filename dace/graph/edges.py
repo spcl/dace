@@ -43,7 +43,7 @@ class InterstateEdge(object):
         from_string=assignments_from_string,
         to_string=assignments_to_string)
     condition = CodeProperty(desc="Transition condition")
-    language = Property(enum=types.Language, default=types.Language.Python)
+    #language = Property(enum=types.Language, default=types.Language.Python)
 
     def __init__(self, condition=None, assignments=None):
 

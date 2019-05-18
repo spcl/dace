@@ -368,6 +368,17 @@ class Property:
                 # #TODO: Maybe log this...
 
     @staticmethod
+    def get_property_element(object_with_properties, name):
+        # Get the property object (as it may have more options than available by exposing the value)
+        ps = dict(object_with_properties.__properties__)
+        for tmp, _v in ps.items():
+            pname = tmp
+            if pname == name:
+                return _v
+        return None
+
+
+    @staticmethod
     def json_dumper(obj):
         try:
             # Try the toJSON-methods by default
@@ -967,7 +978,18 @@ class CodeProperty(Property):
         return None
 
     @staticmethod
+    def get_language(object_with_properties, prop_name):
+        tmp = getattr(object_with_properties, "_" + prop_name)
+        try:
+            # To stay compatible, return the code only. The language has to be obtained differently
+            tmp = tmp['language']
+        except:
+            pass
+        return tmp
+
+    @staticmethod
     def to_json(obj):
+        lang = dace.types.Language.Python
         if obj == None:
             return json.dumps(obj)
         if isinstance(obj, str):
@@ -1013,11 +1035,11 @@ class CodeProperty(Property):
 
     @staticmethod
     def to_string(obj):
-        if isinstance(obj, str):
-            return obj
         if isinstance(obj, dict):
             # The object has annotated language in this case; ignore the language for this operation
             obj = obj['code_or_block']
+        if isinstance(obj, str):
+            return obj
         # Grab the originally parsed string if any
         if obj._as_string is not None and obj._as_string != "":
             return obj._as_string
@@ -1027,8 +1049,6 @@ class CodeProperty(Property):
         return unparse(obj)
 
     def __get__(self, obj, val):
-        if hasattr(type(obj), "language"):
-            self._language = obj.language
         
         tmp = super(CodeProperty, self).__get__(obj, val)
         try:
@@ -1062,10 +1082,13 @@ class CodeProperty(Property):
             # ensures that this is legal
             pass
         elif isinstance(val, str):
-            language = None
+            try:
+                language = getattr(obj, "_" + self.attr_name)['language']
+            except:
+                language = dace.types.Language.Python
             if language is not None:
                 # Store original string
-                val = self.from_string(val, language)
+                val = self.from_string(val, language)['code_or_block']
         else:
             try:
                 language = val['language']
