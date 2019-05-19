@@ -277,9 +277,9 @@ class Tasklet(CodeNode):
         self.code = { 'code_or_block': code, 'language': language }
 
         self.location = location
-        self.code_global = code_global
-        self.code_init = code_init
-        self.code_exit = code_exit
+        self.code_global = { 'code_or_block': code_global, 'language': language }
+        self.code_init = { 'code_or_block': code_init, 'language': language }
+        self.code_exit = { 'code_or_block': code_exit, 'language': language }
         self.debuginfo = debuginfo
 
     @property

@@ -288,7 +288,7 @@ class SDFG(OrderedDiGraph):
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = cpp_code
+        self.global_code = { 'code_or_block': cpp_code, 'language': dace.types.Language.CPP }
 
     #@property
     #def init_code(self):
@@ -297,7 +297,7 @@ class SDFG(OrderedDiGraph):
 
     def set_init_code(self, cpp_code: str):
         """ Sets C++ code, generated in the `__dapp_init` function. """
-        self.init_code = cpp_code
+        self.init_code = { 'code_or_block': cpp_code, 'language': dace.types.Language.CPP }
 
     #@property
     #def exit_code(self):
@@ -306,7 +306,7 @@ class SDFG(OrderedDiGraph):
 
     def set_exit_code(self, cpp_code: str):
         """ Sets C++ code, generated in the `__dapp_exit` function. """
-        self.exit_code = cpp_code
+        self.exit_code = { 'code_or_block': cpp_code, 'language': dace.types.Language.CPP }
 
     def has_instrumented_parent(self):
         return self._instrumented_parent
