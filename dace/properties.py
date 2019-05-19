@@ -1074,24 +1074,7 @@ class CodeProperty(Property):
         return tmp
 
     def __set__(self, obj, val):
-        # Check if the class has a language property
-        if not hasattr(type(obj), "language"):
-        #    raise AttributeError(
-        #        "Class \"{}\" with a CodeProperty field must also "
-        #        "have a \"language\" attribute.".format(type(obj).__name__))
-            pass
         
-        # Check if the object has a language attribute
-        #try:
-        #    language = obj.language
-        #except AttributeError:
-        #    # Language exists as an attribute, but has not yet been set. Accept
-        #    # this, because __dict__ is not guaranteed to be in the order that
-        #    # the attributes are defined in.
-        #    language = None
-        # self._language = language
-        
-        #language = val['language']
         if val is None:
             # Keep as None. The "allow_none" check in the superclass
             # ensures that this is legal
@@ -1112,18 +1095,17 @@ class CodeProperty(Property):
             except:
                 # Default to Python
                 language = dace.types.Language.Python
-            if isinstance(val, str):
-                val = self.from_string(val, language)['code_or_block']
             try:
-                if language is not dace.types.Language.Python:
+                if language is not dace.types.Language.Python and not isinstance(val, str):
                     raise TypeError("Only strings accepted for other "
                                     "languages than Python, got {t} ({s}).".format(t=type(val).__name__, s=str(val)))
             except AttributeError:
                 # Don't check language if it has not been set yet. We will
                 # assume it's Python AST, since it wasn't a string
                 pass
-            
-            if isinstance(val, (ast.FunctionDef, ast.With)):
+            if isinstance(val, str):
+                val = self.from_string(val, language)['code_or_block']
+            elif isinstance(val, (ast.FunctionDef, ast.With)):
                 # TODO: the original parsing should have already stripped this
                 val = CodeBlock(val.body)
             elif isinstance(val, ast.AST):
