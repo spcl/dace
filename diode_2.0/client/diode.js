@@ -3374,6 +3374,25 @@ class DIODE {
     }
 
     getMatchingInput(transthis, x, node) {
+
+        let create_language_input = (value, onchange) => {
+            if(value == undefined) {
+                value = x.value;
+            }
+            if(onchange == undefined) {
+                onchange = (elem) => {
+                    transthis.propertyChanged(node, x.name, elem.value);
+                };
+            }
+            let language_types = this.getEnum('Language');
+            let qualified = value;
+            if(!language_types.includes(qualified)) {
+                qualified = "Language." + qualified;
+            }
+            let elem = FormBuilder.createSelectInput("prop_" + x.name, onchange, language_types, qualified);
+            return elem;
+        };
+
         let elem = document.createElement('div');
         if(x.type == "bool") {
             let val = x.value;
@@ -3398,12 +3417,20 @@ class DIODE {
             }, JSON.stringify(x.value));
         }
         else if(x.type == "CodeProperty") {
-            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+            let codeelem = null;
+            let langelem = null;
+            let onchange = (elem) => {
                 transthis.propertyChanged(node, x.name, {
-                    'string_data': elem.value,
-                    'language': x.value.language
+                    'string_data': codeelem[0].value,
+                    'language': langelem[0].value
                 });
-            }, x.value.string_data);
+            };
+            codeelem = FormBuilder.createTextInput("prop_" + x.name, onchange, x.value.string_data);
+            elem.appendChild(codeelem[0]);
+            langelem = create_language_input(x.value.language, onchange);
+            elem.appendChild(langelem[0]);
+
+            return elem;
         }
         else if(x.type == "int") {
             elem = FormBuilder.createIntInput("prop_" + x.name, (elem) => {
@@ -3431,14 +3458,7 @@ class DIODE {
             }, access_types, qualified);
         }
         else if(x.type == 'Language') {
-            let language_types = this.getEnum('Language');
-            let qualified = x.value;
-            if(!language_types.includes(qualified)) {
-                qualified = "Language." + qualified;
-            }
-            elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
-                transthis.propertyChanged(node, x.name, elem.value);
-            }, language_types, qualified);
+            elem = create_language_input();
         }
         else if(x.type == 'None') {
             // Not sure why the user would want to see this
