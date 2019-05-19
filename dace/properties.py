@@ -1115,12 +1115,14 @@ class CodeProperty(Property):
             try:
                 if language is not dace.types.Language.Python:
                     raise TypeError("Only strings accepted for other "
-                                    "languages than Python.")
+                                    "languages than Python, got {t} ({s}).".format(t=type(val).__name__, s=str(val)))
             except AttributeError:
                 # Don't check language if it has not been set yet. We will
                 # assume it's Python AST, since it wasn't a string
                 pass
-            if isinstance(val, (ast.FunctionDef, ast.With)):
+            if isinstance(val, str):
+                val = self.from_string(val, language)['code_or_block']
+            elif isinstance(val, (ast.FunctionDef, ast.With)):
                 # TODO: the original parsing should have already stripped this
                 val = CodeBlock(val.body)
             elif isinstance(val, ast.AST):
