@@ -3373,6 +3373,83 @@ class DIODE {
         }
     }
 
+    create_visual_range_representation(__start, __end, __step, __tile, mayfail=true) {
+        // NOTE: This context is eval()'d. This means that all variables must be in the forbidden namespace (__*) or they might be erroneously evaluated.
+        let __symbols = {};
+        let __e_start = null;
+        let __e_end = null;
+        let __e_step = null;
+        let __e_tile = null;
+        while(true) {
+            let __failed = false;
+            let __symbol_setter = Object.entries(__symbols).map(x => "let " + x[0] + "=" + x[1]+";").join("");
+            try {
+                // Define a couple of dace-functions that are used here
+                let Min = (...x) => Math.min(...x);
+                let int_ceil = (a, b) => Math.ceil(a / b);
+
+                __e_start = eval(__symbol_setter + __start);
+                __e_end = eval(__symbol_setter + __end) + 1; // The DaCe ranges are inclusive - we want to exclusive here.
+                __e_step = eval(__symbol_setter + __step);
+                __e_tile = eval(__symbol_setter + __tile);
+            }
+            catch(e) {
+                if(e instanceof ReferenceError) {
+                    // Expected, let the user provide inputs
+                    if(mayfail) {
+                        __failed = true;
+                        break;
+                    }
+                    else {
+                        // Prompt the user and retry
+                        let __sym_name = e.message.split(" ")[0];
+                        let ret = window.prompt("Enter a value for Symbol `" + __sym_name + "`");
+                        if(ret == null) throw e;
+                        __symbols[__sym_name] = parseInt(ret);
+                        __failed = true;
+                    }
+                }
+                else {
+                    // Unexpected error, rethrow
+                    throw e;
+                }
+            }
+            if(!__failed) {
+                break;
+            }
+        }
+
+        let __e_size = __e_end - __e_start;
+        
+        // Now create a table with the according cells for this
+        // Since this is done on a per-dimension basis, the table only has to be 1D, so we use a flexbox for this (easier)
+        let __row = document.createElement("div");
+        __row.classList = "flex_row";
+        __row.style = "justify-content: flex-start;"
+
+        let __size = 10;
+        if(__e_size > 512) __size = 5;
+        
+        for(let __i = 0; __i < __e_size; ++__i) {
+            let __cell = document.createElement('div');
+            let __colorstr = "background: white;";
+            if(Math.floor(__i / __e_step) % 2 == 0) {
+                if(__i % __e_step < __e_tile) {
+                    __colorstr = "background: SpringGreen;";
+                }
+            }
+            else {
+                if(__i % __e_step < __e_tile) {
+                    __colorstr = "background: Darkorange;";
+                }
+            }
+            __cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid black;" + __colorstr;
+            __row.appendChild(__cell);
+        }
+
+        return __row;
+    }
+
     getMatchingInput(transthis, x, node) {
 
         let create_language_input = (value, onchange) => {
@@ -3393,6 +3470,95 @@ class DIODE {
             return elem;
         };
 
+        let create_range_input = () => {
+            let elem = document.createElement("button");
+            elem.innerText = "Show";
+
+            let ranges = x.value.ranges;
+            let popup_div = document.createElement('div');
+            
+            let popup_div_body = document.createElement('div');
+
+            
+            let range_elems = [];
+            for(let r of ranges) {
+                // Add a row for every range
+                let r_row = document.createElement('div');
+                r_row.classList = "flex_row";
+                r_row.style = "flex-wrap: nowrap;";
+                if(typeof(r.start) != 'string') r.start = r.start.main;
+                if(typeof(r.end) != 'string') r.end = r.end.main;
+                if(typeof(r.step) != 'string') r.step = r.step.main;
+                if(typeof(r.tile) != 'string') r.tile = r.tile.main;
+
+                {
+                    let input_refs = [];
+                    // Generate 4 text inputs and add them to the row
+                    for(let i = 0; i < 4; ++i) {
+                        // Generate the label first
+                        let lbl = document.createElement('label');
+                        let ti = document.createElement('input');
+                        ti.style = "width:100px;";
+                        ti.type = "text";
+                        switch(i) {
+                            case 0: ti.value = r.start; lbl.textContent = "Start"; break;
+                            case 1: ti.value = r.end; lbl.textContent = "End"; break;
+                            case 2: ti.value = r.step; lbl.textContent = "Step"; break;
+                            case 3: ti.value = r.tile; lbl.textContent = "Tile"; break;
+                        }
+                        input_refs.push(ti);
+                        lbl.appendChild(ti);
+                        r_row.appendChild(lbl);
+                    }
+                    range_elems.push(input_refs);
+                    let visbut = document.createElement('div');
+                    visbut.style = "min-width: 200px; min-height: 1rem;flex-grow: 1";
+                    visbut.addEventListener('click', () => {
+                        let vis_elem = this.create_visual_range_representation(...input_refs.map(x => x.value), false);
+                        visbut.innerHTML ="";
+                        visbut.appendChild(vis_elem);
+                    });
+                    visbut.innerText = "Click here for visual representation";
+                    r_row.appendChild(visbut);
+                }
+                
+
+                popup_div_body.appendChild(r_row);
+            }
+            
+            popup_div.appendChild(popup_div_body);
+
+            let apply_but = document.createElement("button");
+            apply_but.innerText = "Apply";
+            apply_but.addEventListener("click", () => {
+                let ret = {
+                    ranges: [],
+                    type: x.value.type,
+                }
+                for(let re of range_elems) {
+                    ret.ranges.push({
+                        start: re[0].value,
+                        end: re[1].value,
+                        step: re[2].value,
+                        tile: re[3].value
+                    })
+                }
+                transthis.propertyChanged(node, x.name, ret);
+                w2popup.close();
+            });
+
+            elem.onclick = () => {
+                w2popup.open({
+                    title: "Range property",
+                    body: popup_div,
+                    buttons: apply_but,
+                    width: 1280,
+                    height: 800,
+                });
+            };
+            return $(elem);
+        };
+
         let elem = document.createElement('div');
         if(x.type == "bool") {
             let val = x.value;
@@ -3411,10 +3577,15 @@ class DIODE {
             }, x.value);
         }
         else if(x.type == "Range") {
-            // #TODO: How to visualize/edit this?
-            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
-                transthis.propertyChanged(node, x.name, JSON.loads(elem.value));
-            }, JSON.stringify(x.value));
+            elem = create_range_input(transthis, x, node);
+
+            if(false) {
+                // #TODO: How to visualize/edit this?
+                elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                    transthis.propertyChanged(node, x.name, JSON.loads(elem.value));
+                }, JSON.stringify(x.value));
+
+            }
         }
         else if(x.type == "CodeProperty") {
             let codeelem = null;
