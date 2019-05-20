@@ -8,7 +8,6 @@ import {
     DIODE_Context_CodeOut,
     DIODE_Context_Terminal,
     DIODE_Context_SDFG,
-    DIODE_Context_OptGraph,
     DIODE_Context_PropWindow,
     DIODE_Context_Runqueue,
     DIODE_Context_StartPage,
@@ -337,6 +336,7 @@ function start_DIODE() {
                 diode.addContentItem({
                     type: 'component',
                     componentName: 'TransformationHistoryComponent',
+                    title: "Transformation History",
                     componentState: {}
                 });
             }
@@ -457,13 +457,6 @@ function start_DIODE() {
                 
         diode_context.render_sdfg(componentState["sdfg_data"]);
         diode_context.setupEvents(diode.getCurrentProject());
-    });
-    goldenlayout.registerComponent( 'OptGraphComponent', function( container, componentState ){
-        // Wrap the component in a context 
-        let diode_context = new DIODE_Context_OptGraph(diode, container, componentState);
-        diode_context.setupEvents(diode.getCurrentProject());
-        diode_context.createOptGraph();
-        
     });
     goldenlayout.registerComponent( 'TransformationHistoryComponent', function( container, componentState ){
         // Wrap the component in a context 

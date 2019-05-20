@@ -740,7 +740,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
             // Load from project
             let hist = this.project().getTransformationHistory();
             this.create(hist);
-            eh.emit(this.project().eventString('update-tfh'), 'ok');
+            setTimeout(() => eh.emit(this.project().eventString('update-tfh'), 'ok'), 1);
         });
     }
 
@@ -905,6 +905,10 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             }
         });
 
+        this.on(this.project().eventString('-req-locate-transformation-' + sname), msg => {
+            this.locateTransformation(...JSON.parse(msg));
+        });
+
         this.on(this.project().eventString('-req-apply-adv-transformation-' + sname), msg => {
 
             let x = JSON.parse(msg);
@@ -1065,6 +1069,21 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         this.saveToState(_s);
     }
 
+    locateTransformation(opt_name, opt_pos, affects) {
+        console.log("locateTransformation", arguments);
+
+        this.sendHighlightRequest(affects);
+
+        let _state = this.getState();
+        let _repr = _state.optstruct[opt_name][opt_pos].representative;
+        $(_repr).css("background", "green");
+
+        setTimeout(() => {
+            this.sendClearHighlightRequest();
+            $(_repr).css("background", '');
+        }, 1000);
+    }
+
     applyTransformation(x, pos, _title) {
         let _state = this.getState();
         let optstruct = _state['optstruct'];
@@ -1151,8 +1170,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             adv_button.innerText = '...';
 
             adv_button.addEventListener('click', _x => {
-                // Clicking this should reveal the transformation properties
-                // #TODO
+                // Clicking this reveals the transformation properties
                 this.renderProperties(x, pos, [x, pos, _title]);
             });
 
@@ -1211,470 +1229,6 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 }
 
-class DIODE_Context_OptGraph extends DIODE_Context {
-    constructor(diode, gl_container, state) {
-        super(diode, gl_container, state);
-
-        this._tree_view = null;
-        this._current_root = null;
-
-        // Allow overflow
-        let parent_element = this.container.getElement();
-        $(parent_element).css('overflow', 'auto');
-    }
-
-    setupEvents(project) {
-        super.setupEvents(project);
-
-        let transthis = this;
-
-        let eh = this.diode.goldenlayout.eventHub;
-        this.on(this._project.eventString('-req-extend-optgraph'), (msg) => {
-            
-            let o = msg;
-            if(typeof(o) == "string") {
-                JSON.parse(msg);
-            }
-            let sel = o[this.getState()['for_sdfg']];
-            if(sel === undefined) {
-                return;
-            }
-            eh.emit(transthis._project.eventString('extend-optgraph'), 'ok');
-            transthis.extendOptGraph(JSON.stringify(sel));
-        });
-
-        this.on(this._project.eventString('-req-optpath'), msg => {
-            let named = {};
-            let _s = this.getState();
-            let n = _s['for_sdfg'];
-            named[n] = this._current_root.path();
-            eh.emit(transthis._project.eventString('optpath'), named);
-        });
-
-        let sname = this.getState()['for_sdfg'];
-        this.on(this._project.eventString('-req-new-optgraph-' + sname), msg => {
-            // In any case, inform the requester that the request will be treated
-            let o = JSON.parse(msg);
-            let sel = o[sname];
-            if(sel === undefined) {
-                return;
-            }
-            eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'ok');
-
-            this.resetOptGraph(msg);            
-        });
-
-        this.on(this.project().eventString('-req-highlight-transformations-' + sname), msg => {
-
-            let selstring = "s" + msg.state_id + "_" + msg.node_id;
-            let children = this._current_root.children().filter(x => x.pathLabel() != " <virtual>");
-            for(let c of children) {
-                let d = c.data();
-                if(d === undefined) continue;
-                let affects = d.affects;
-
-                if(affects.includes(selstring)) {
-                    console.log("Found elem!");
-                    this.highlightTransformation(c);
-                }
-            }
-        });
-
-        this.on(this.project().eventString('-req-get-transformations-' + sname), msg => {
-
-            let selstring = "s" + msg.state_id + "_" + msg.node_id;
-            let children = this._current_root.children().filter(x => x.pathLabel() != " <virtual>");
-            let ret = [];
-            for(let c of children) {
-                let d = c.data();
-                if(d === undefined) continue;
-                let affects = d.affects;
-
-                if(affects.includes(selstring)) {
-                    ret.push([c.label(), c.path()]);
-                }
-            }
-
-            eh.emit(transthis._project.eventString('get-transformations-' + sname), ret);
-        });
-        
-        this.on(this.project().eventString('-req-apply-transformation-' + sname), msg => {
-            let c = this._current_root.getChild(x => x.label() == msg);
-            if(c == null) { 
-                throw "Node not found";
-            }
-            this._current_root = c;
-            let obj = {};
-            obj[this.getState()['for_sdfg']] = c.path();
-
-            this.diode.optimize(this, obj);
-        });
-
-
-        this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
-            this.propertyChanged(msg.node, msg.name, msg.value);
-            eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok");
-        });
-    }
-
-    highlightTransformation(node) {
-        let repr = node.representative();
-
-        // Expand all parents
-        for(let x = node; x != null; x = x.parent()) {
-            let p = x.representative().parent;
-            if(p != undefined)
-                p.classList.remove("collapsed_sublist");
-        }
-        let sel = $('.tree_view');
-        sel.removeClass('collapsed_sublist');
-
-        $(repr).css('color', 'red');
-        setTimeout(x => {
-            $(repr).css('color', '');
-        }, 5000);
-    }
-
-    propertyChanged(node, name, value) {
-        return this.propertyChanged2(node, name, value);
-        /*
-            When a property is changed, the data associated to the transformation node
-            must be updated.
-            In the old DIODE, the program would be recompiled as well.
-            This function debounces calls to a relatively large timeout (2000ms)
-            to alleviate overhead. Alternatively, this timeout can be disabled and a
-            compile button must be pressed to request compilation from the server.
-        */
-    }
-
-    propertyChanged2(node, name, value) {
-        /*
-            When a property is changed, the data associated to the transformation node
-            must be updated.
-            In the old DIODE, the program would be recompiled as well.
-            This function debounces calls to a relatively large timeout (2000ms)
-            to alleviate overhead. Alternatively, this timeout can be disabled and a
-            compile button must be pressed to request compilation from the server.
-        */
-
-        let dbg_tmp = node.data();
-        
-        node.data()['props'][name] = value;
-
-        // Apply values to saved representation
-        
-
-        let f = this.diode.debounce("optproperty-change", () => {
-            let named = {};
-            named[this.getState()['for_sdfg']] = this._current_root.path();
-            //this.diode.optimize(this, this._current_root.path());
-            this.diode.optimize(this, named);
-        }, 2000);
-        if(DIODE.recompileOnPropertyChange()) {
-            f();
-        }
-    }
-
-    renderProperties(node) {
-        /*
-            node: The TreeNode for which to draw the properties.
-        */
-
-        let params = node.data().props;
-        let parent = $(this.container.getElement()).children(".optpropdiv");
-
-        parent[0].innerHTML = "";
-
-        let transthis = this;
-
-        // The default node is a (doubly-linked) tree and therefore unsuitable for sending
-        let reduced_node = {};
-        reduced_node.data = () => node.data();
-        this.diode.renderPropertiesInWindow(transthis, reduced_node, params);
-
-    }
-
-    resetOptGraph(optgraph) {
-        /*
-            This function ensures that on completion, the displayed OptTree is equivalent
-            to the structure provided in the function parameter.
-
-            #TODO: Since currently, compilation does not echo the provided OptTree used for compilation,
-            #TODO: this function only has to deal with last-level changes (i.e. available Transformations in the current SDFG)
-            #TODO: If the compile()-call returns a full OptTree at some point, this has to be adjusted!
-        */
-
-        // #TODO: As explained in the function description, this is a shortcut that may have to change in the future.
-        this.extendOptGraph(optgraph);
-    }
-
-    extendOptGraph(extension) {
-        let og = JSON.parse(extension);
-        if(this._current_root == null) {
-            // No root available
-            alert("Did not find valid root");
-        }
-        else {
-            let parent = this._current_root.representative().parentNode;
-            
-            this._current_root.clearChildren();
-            this.addNodes(og);
-            
-            //Remove all (potentially already existing) sublists of this selection
-            let children = Array.from(parent.childNodes);
-            children.forEach(x => {
-                if(x.nodeName == 'ul' || x.nodeName == 'UL') {
-                    // Remove the subelements
-                    parent.removeChild(x);
-                }
-            });
-
-            for(let x of this._current_root.children()) {
-                this._tree_view.create_html_in(parent, 0, x);
-            }
-            // Auto-expand
-            parent.classList.remove("collapsed_sublist");
-
-            // Add the expanded element to the state
-            let diode_compat = this.treeToDIODEcompatible(this._tree_view._tree);
-
-            // Also store the current path
-            let current_path = this._current_root.path(x => x.label());
-            this.saveToState({
-                'optgraph_data': JSON.stringify({
-                    'matching_opts': diode_compat,
-                    'extend_path': current_path
-                })
-            });
-        }
-    }
-
-    treeToDIODEcompatible(node) {
-        /*
-            Transforms the tree with root `node` into the DIODE-format
-        */
-
-        let tmp = node.data();
-        let o = null;
-        
-        if(tmp === null) {
-            o = {
-                opt_name: node.label(),
-                children: []
-            };
-        }
-        else {
-            o = {
-                opt_name: node.label(),
-                affects: tmp.affects,
-                opt_params: tmp.props,
-                children: []
-            };
-        }
-
-        for(let x of node.children()) {
-            if(x.pathLabel() != " <virtual>") {
-                o.children.push(this.treeToDIODEcompatible(x));
-            }
-        }
-
-        if(o.opt_name === 'Unoptimized') {
-            // This is implicit, only return the children
-            return o.children;
-        }
-        return o;
-    }
-
-    sendHighlightRequest(idstring_list) {
-        this._project.request(['sdfg-msg'], resp => {
-            
-        }, {
-            params: JSON.stringify({
-                type: 'highlight-elements',
-                sdfg_name: this.getState()['for_sdfg'],
-                elements: idstring_list
-            }),
-            timeout: 1000
-        });        
-    }
-
-    sendClearHighlightRequest() {
-        this._project.request(['sdfg-msg'], resp => {
-            
-        }, {
-            params: JSON.stringify({
-                sdfg_name: this.getState()['for_sdfg'],
-                type: 'clear-highlights',
-            }),
-            timeout: 1000
-        });
-    }
-
-    addNodes(og, to_node = undefined) {
-        let transthis = this;
-
-        if(to_node === undefined) {
-            to_node = this._current_root;
-        }
-
-        
-        
-        //Legacy behavior: Add $<num> to transformation names to disambiguate
-        // #TODO: Maybe change only local names? (requires server adjustment)
-        let conflict_resolution = (node, all_labels) => {
-            let count = all_labels.filter(x => x.startsWith(node.label())).length;
-
-            if(count > 0) {
-                node._label += "$" + count;
-            }
-            return node;
-        };
-
-        let cont = og.matching_opts;
-        if(cont === undefined) {
-            cont = og;
-        }
-
-        // Group homonyms together
-        let grouped = {};
-        let i = 0;
-        for(let x of cont) {
-            if(grouped[x.opt_name] === undefined) {
-                grouped[x.opt_name] = [];
-            }
-            grouped[x.opt_name].push([i, x]);
-            ++i;
-        }
-        // Now group homonyms to the first index
-        let ordered = {};
-        for(let x of Object.keys(grouped)) {
-            let v = grouped[x];
-
-            let index = v[0][0];
-            ordered[index] = v.map(x => x[1]);
-        }
-        let ordered_list = [];
-        let sorted_keys = Object.keys(ordered).sort();
-        for(let x of sorted_keys) {
-            let v = ordered[x];
-            ordered_list.push(v);
-        }
-
-        let adder_func = (target_node, transthis, x) => {
-            let new_node = target_node.addNode(x.opt_name, { 'affects': x.affects, 'props': x.opt_params}, {LabelConflictGlobal: conflict_resolution});
-            new_node.setHandler("activate", function(elem, level) {
-
-                if(level == -1) {
-                    // Stopped hovering - clear highlights
-                    transthis.sendClearHighlightRequest();
-                }
-                if(level == 0) {
-                    // Hover - if available, highlight affected elements
-                    let affects = elem.data().affects;
-                    if(affects != undefined && affects.length > 0) {
-                        transthis.sendHighlightRequest(affects);
-                    }
-                }
-                if(level == 1) {
-                    // Click
-                    transthis.renderProperties(elem);
-                }
-                else if(level == 2) {
-                    // If a doubleclick happened, ask DIODE to manage further steps
-                    transthis._current_root = elem;
-                    let obj = {};
-                    obj[transthis.getState()['for_sdfg']] = new_node.path();
-
-                    transthis.diode.optimize(transthis, obj);
-                }
-            });
-
-            // Children may be provided already - recurse
-            this.addNodes(x.children, new_node);
-        };
-
-        for(let z of ordered_list) {
-            let x = null;
-            if(z instanceof Array) {
-                if(z.length == 1) {
-                    x = z[0];
-                }
-                else {
-                    // (Locally) conflicting names, group into own subtree
-                    let subtree_node = to_node.addNode(z[0].opt_name + "...", undefined);
-                    subtree_node.setPathLabel(" <virtual>");
-
-                    for(let y of z) {
-                        adder_func(subtree_node, transthis, y);
-                    }
-                    console.assert(subtree_node.pathLabel() === ' <virtual>', "Node must be marked as virtual");
-                    continue;
-                }
-            }
-            else {
-                x = z;
-            }
-            adder_func(to_node, transthis, x);
-        }
-    }
-
-    openPath(path) {
-        /*
-            Expands the currently active opttree path.
-        */
-        let current = this._tree_view._tree;
-        current.representative().parentNode.classList.remove('collapsed_sublist');
-        for(let x of path) {
-            for(let c of current.children()) {
-                if(c.label() == x) {
-                    c.representative().parentNode.classList.remove('collapsed_sublist');
-                    current = c;
-                    break;
-                }
-            }
-        }
-        this._current_root = current;
-    }
-
-    createOptGraph() {
-        let rootnode = new ValueTreeNode("Unoptimized");
-        this._current_root = rootnode;
-        let transthis = this;
-
-
-        let base_element = $(this.container.getElement());
-        let treediv = $('<div class="treediv"></div>');
-        let optpropdiv = $('<div class="optpropdiv"></div>');
-        base_element.append(treediv);
-        base_element.append(optpropdiv);
-
-        rootnode.setHandler("activate", function(elem, level) {
-
-            if(level == 2) {
-                // If a doubleclick happened, reset the entire path
-                transthis._current_root = elem;
-
-                let obj = {};
-                obj[transthis.getState()['for_sdfg']] = []
-                transthis.diode.optimize(transthis, obj);
-            }
-        });
-        
-
-        let og = JSON.parse(this.getState().optgraph_data);
-
-        this.addNodes(og);
-
-        this._tree_view = new TreeView(rootnode);
-        this._tree_view.setDebouncing(this.diode);
-        this._tree_view.create_html_in(treediv);
-
-        let expandpath = og.extend_path;
-        if(expandpath != undefined) {
-            this.openPath(expandpath);
-        }
-    }
-}
 
 class DIODE_Context_CodeIn extends DIODE_Context {
     constructor(diode, gl_container, state) {
@@ -3263,11 +2817,19 @@ class DIODE {
                     })
                 },
                 applyTransformation: () => {
-                    this.project().request(['apply-adv-transformation' + target_name], x => {
+                    this.project().request(['apply-adv-transformation-' + target_name], x => {
 
                     }, {
                         timeout: 200,
                         params: options == undefined ? undefined : options.apply_params
+                    })
+                },
+                locateTransformation: (opt_name, opt_pos, affects) => {
+                    this.project().request(['locate-transformation-' + options.sdfg_name], x => {
+
+                    }, {
+                        timeout: 200,
+                        params: JSON.stringify([opt_name, opt_pos, affects]),
                     })
                 },
                 project: () => this.project()
@@ -3323,6 +2885,18 @@ class DIODE {
             title.classList = "";
             title.innerText = options.opt_name;
             parent.appendChild(title);
+
+            // Append a "locate" button
+            let locate_button = document.createElement("span");
+            locate_button.innerText = "location_on";
+            locate_button.classList = "material-icons";
+            locate_button.style = "cursor: pointer;";
+
+            locate_button.addEventListener("click", () => {
+                // Highlight the affected elements (both transformation and nodes)
+                transthis.locateTransformation(options.opt_name, options.pos, options.apply_params[0].affects);
+            });
+            parent.appendChild(locate_button);
         }
         dt.createIn(parent);
         if(options && options.type == "transformation") {
@@ -4129,11 +3703,20 @@ class DIODE {
 
         let create_optgraph_func = () => {
             let new_optgraph_config = {
-                title: name == "" ? "OptGraph" : "OptGraph for `" + name + "`",
-                type: 'component',
-                //componentName: 'OptGraphComponent',
-                componentName: 'AvailableTransformationsComponent',
-                componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
+                type: "column",
+                content: [{
+                    title: name == "" ? "OptGraph" : "OptGraph for `" + name + "`",
+                    type: 'component',
+                    componentName: 'AvailableTransformationsComponent',
+                    componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
+                },
+                {
+                    title: name == "" ? "Transformation History" : "Transformation History for `" + name + "`",
+                    type: 'component',
+                    componentName: 'TransformationHistoryComponent',
+                    componentState: { created: millis, for_sdfg: name }
+                }
+                ]
             };
             this.addContentItem(new_optgraph_config);
         };
@@ -4667,5 +4250,5 @@ class ContextMenu {
     }
 }
 
-export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_OptGraph, DIODE_Context_DIODE2Settings,
+export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODE2Settings,
     DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations}
