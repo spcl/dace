@@ -851,7 +851,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             if(sel === undefined) {
                 return;
             }
-            eh.emit(transthis._project.eventString('extend-optgraph'), 'ok');
+            setTimeout(() => eh.emit(transthis._project.eventString('extend-optgraph'), 'ok'), 1);
             
             this.create(sel);
         });
@@ -868,10 +868,10 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             let o = JSON.parse(msg);
             let sel = o.matching_opts;
             if(sel === undefined) {
-                eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'not ok');
+                //eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'not ok');
                 return;
             }
-            eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'ok');
+            setTimeout(() => eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'ok'), 1);
 
             this.create(o);
         });
@@ -1691,7 +1691,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
         let transthis = this;
 
         let eh = this.diode.goldenlayout.eventHub;
-        this.on(this._project.eventString('-req-input_code'), function(msg) {
+        this.on(this._project.eventString('-req-input_code'), (msg) => {
             // Echo with data
             eh.emit(transthis._project.eventString('input_code'),transthis.editor.getValue());
             transthis.editor.clearSelection();
@@ -1844,7 +1844,9 @@ class DIODE_Context_CodeOut extends DIODE_Context {
                 // Name mismatch; ignore
                 return;
             }
-            eh.emit(transthis._project.eventString('new-codeout'), 'ok');
+            // See DIODE Errata "GoldenLayout:EventResponses"
+            //eh.emit(transthis.project().eventString('new-codeout'), 'ok')
+            setTimeout(x => eh.emit(transthis.project().eventString('new-codeout'), 'ok'), 1);
             let extracted = msg;
             this.setCode(extracted);
         });
@@ -2562,7 +2564,7 @@ class DIODE_Project {
         let hub = this._diode.goldenlayout.eventHub;
 
         let transthis = this;
-        let cb = function(msg) {
+        let cb = (msg) => {
             let tmp = transthis._rcvbuf[id][event];
             if(tmp instanceof Array) {
                 transthis._rcvbuf[id][event].push(msg);
@@ -2754,7 +2756,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
 
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this.project().eventString('-req-display-properties'), (msg) => {
-            eh.emit(this.project().eventString("display-properties"), 'ok');
+            setTimeout(() => eh.emit(this.project().eventString("display-properties"), 'ok'), 1);
             this.getHTMLContainer().innerHTML = "";
             this.diode.renderProperties2(msg.transthis, msg.node, msg.params, this.getHTMLContainer(), msg.options);
         });
@@ -4111,6 +4113,7 @@ class DIODE {
             this.addContentItem(new_codeout_config);
         }
         if(sdfg.generated_code != undefined) {
+            console.log("requesting using ID", this.project());
             this.replaceOrCreate(['new-codeout'], sdfg, create_codeout_func);
         }
     }
@@ -4449,8 +4452,8 @@ class DIODE {
             else
                 props = undefined;
 
-            let cb = function(resp) {
-                transthis.replaceOrCreate(['extend-optgraph'], resp, function(_) {transthis.OptGraphs_available(resp);});
+            let cb = (resp) => {
+                transthis.replaceOrCreate(['extend-optgraph'], resp, (_) => {transthis.OptGraphs_available(resp);});
             };
 
             transthis.compile(calling_context, code, optpath, props, {
@@ -4466,7 +4469,7 @@ class DIODE {
         }
 
 
-        calling_context.project().request(['input_code', 'sdfg_object'], function(data) {
+        calling_context.project().request(['input_code', 'sdfg_object'], (data) => {
 
             let from_code = true;
             if(data['sdfg_object'] != undefined) {
@@ -4491,11 +4494,11 @@ class DIODE {
 
         //#TODO: Find out if it is a bug that one cannot use clearTimeout(recreation_timeout) instead of clearTimeout(tid) when replaceOrCreate-Calls are nested
         //(the let/const-Variables should be scope-local)
-        const recreation_timeout = setTimeout(function() {
+        const recreation_timeout = setTimeout(() => {
             // This should be executed only if the replace request was not answered
             recreate_func(replace_params);
         }, 1000);
-        this.getCurrentProject().request(replace_request, function(resp, tid) {
+        this.getCurrentProject().request(replace_request, (resp, tid) => {
             clearTimeout(tid);
         }, {
             timeout: 500,

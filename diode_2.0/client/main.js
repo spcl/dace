@@ -560,7 +560,7 @@ function start_DIODE() {
         parent_element.append(new_element);
         parent_element.hide().show(0);
         
-        (function(){
+        (() => {
             let editor_div = new_element;
             editor_div.attr("id", editorstring);
             editor_div.hide().show(0);
