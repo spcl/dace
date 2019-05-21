@@ -2722,7 +2722,7 @@ else:
                 - int(outputList[0].desc(self.graph).shape[1])
             )
         else:
-            padding=0
+            padding = 0
 
         if padding > 0:
             # If padding is even (padding is on each side the same)
@@ -2752,8 +2752,12 @@ else:
             # Dilate and pad the incoming gradients
             newShape = [
                 node.inputs[2].shape[0],
-                node.inputs[2].shape[1] + (node.inputs[2].shape[1] - 1) * (strides - 1) + 2 * (ksize - 1),
-                node.inputs[2].shape[2] + (node.inputs[2].shape[2] - 1) * (strides - 1) + 2 * (ksize - 1),
+                node.inputs[2].shape[1]
+                + (node.inputs[2].shape[1] - 1) * (strides - 1)
+                + 2 * (ksize - 1),
+                node.inputs[2].shape[2]
+                + (node.inputs[2].shape[2] - 1) * (strides - 1)
+                + 2 * (ksize - 1),
                 node.inputs[2].shape[3],
             ]
             if newShape[1] - ksize + 1 < node.outputs[0].shape[1]:
@@ -2835,17 +2839,13 @@ else:
         inputParams.append(["-1-i5+" + str(ksize), "-1-i6+" + str(ksize), "i4", "i3"])
 
         # Gradient params
-        inputParams.append(
-            ["i0", "i1" + "+i5", "i2" + "+i6", "i3"]
-        )
+        inputParams.append(["i0", "i1" + "+i5", "i2" + "+i6", "i3"])
 
         mapLabel = _string_builder(node.type)
         mapParams = ["i0", "i1", "i2", "i4"]
         mapParams2 = ["i5", "i6", "i3"]
         mapRange = (
-            paddedOutputDims
-            if padding > 0
-            else outputDims[0]
+            paddedOutputDims if padding > 0 else outputDims[0]
         )  # gradient dimensions
         mapRange2 = inputDims[0][:-2] + [inputDims[0][-1]]  # Kernel dimensions
         mapEntry, mapExit = state.add_map(
@@ -2909,9 +2909,7 @@ else:
             state.add_edge(mapEntry2, None, tasklet, name, memlet)
 
         memlet = Memlet.simple(
-            paddedOutput
-            if padding>0
-            else outputList[0],
+            paddedOutput if padding > 0 else outputList[0],
             ",".join(outputParams[0]),
             wcr_str="lambda a,b: a+b",
             wcr_identity=0,
@@ -2919,6 +2917,8 @@ else:
         state.add_edge(tasklet, "out", mapExit2, None, memlet)
 
     def visit_Conv2DBackpropFilter(self, node):
+        # convolve loss over input.
+        # may need to dilate loss and may need to pad input (no correlation)
 
         state = self.state
         inputList = []
@@ -2928,6 +2928,17 @@ else:
         outputDims = []
         inputParams = []
         inputDims = []
+        strides = int(node.get_attr("strides")[1])
+        # Input, filtersizes, out_backprop
+        ksize = int(node.outputs[0].shape[0])
+        if str(node.get_attr("padding"))[2:-1] == "SAME":
+            padding = int(
+                strides * (int(node.inputs[2].shape[1]) - 1)
+                + ksize
+                - int(node.inputs[0].shape[1])
+            )
+        else:
+            padding = 0
 
         for count, inp in enumerate(node.inputs):
             if count != 1:
@@ -2937,6 +2948,60 @@ else:
                 inputDims.append(dims)
         inputParams.append(["i0", "i1+i5", "i2+i6", "i3"])
         inputParams.append(["i0", "i1", "i2", "i4"])
+
+        # inputNodes looks like [input, out_backprop]
+
+        if padding > 0:
+            paddedInput, paddedDims = self.inputPadding(
+                node,
+                inputNodes[0],
+                inputList[0],
+                int(node.inputs[2].shape[1]),
+                ksize,
+                strides,
+                inputDims[0],
+            )
+            inputNodes[0] = paddedInput
+            inputDims[0] = paddedDims
+
+        if strides > 1:
+            # Dilate and the incoming gradients
+            newShape = [
+                node.inputs[2].shape[0],
+                node.inputs[2].shape[1] + (node.inputs[2].shape[1] - 1) * (strides - 1),
+                node.inputs[2].shape[2] + (node.inputs[2].shape[2] - 1) * (strides - 1),
+                node.inputs[2].shape[3],
+            ]
+            expandedGrads = state.add_transient(
+                _string_builder(node.inputs[2].name) + "_bigger",
+                newShape,
+                _tensortype(node.inputs[2]),
+            )
+            expandedGrads.setzero = True
+            mapParams = self.get_default_params(node.inputs[2])
+            mapRange = self.get_default_dims(node.inputs[2])
+            mapLabel = _string_builder(node.type) + "_grad_expansion"
+            mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+            tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+            self.add_in_memlets(
+                [inputNodes[1]], mapEntry, tasklet, [mapRange], [mapParams]
+            )
+            expandedGradParams = [
+                "i0",
+                "i1*" + str(strides),
+                "i2*" + str(strides),
+                "i3",
+            ]
+            expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
+            self.add_out_memlets(
+                [expandedGrads],
+                mapExit,
+                tasklet,
+                [expandedGradDims],
+                [expandedGradParams],
+            )
+            inputNodes[1] = expandedGrads
+            inputDims[1] = expandedGradDims
 
         outputList = self.create_and_add_output_node(node)
         for count, out in enumerate(node.outputs):
@@ -3882,7 +3947,7 @@ else:
             @param node: tf.Operation
             @param inpnode: DaCe access node to pad
             @param inp: input node descriptor
-            @param outputSize: Output size.
+            @param outputSize: Output size. (int like)
             @param kernelSize: Kernel size.
             @param strides: Strides.
             @param inputDims: List of strings (e.g.["0:N","0:M"]).
