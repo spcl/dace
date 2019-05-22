@@ -2480,8 +2480,8 @@ class TFSession:
         # self.add_out_memlets(outputList, mapExit, tasklet, outputDims, outputParams)
         # self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
+    # CUDNN may have different behaviour!
     def visit_MaxPoolGrad(self, node):
-        # TODO: Currently only supports 2x2 maxpooling
         state = self.state
         mapParams = []
         mapRange = []
@@ -2491,20 +2491,22 @@ class TFSession:
         inputDims = []
         inputList = []
         inputNodes = []
-
+        strides = int(node.get_attr("strides")[1])
+        ksize = node.get_attr("ksize")[2]
         for count, inp in enumerate(node.inputs):
 
-            inputNode, _, dims = self.create_and_add_input_node(inp)
+            inputNode, params, dims = self.create_and_add_input_node(inp)
             inputList.append(inputNode.desc(self.graph))
             inputNodes.append(inputNode)
-            params = []
 
-            for ndims, dim in enumerate(inp.shape):
-                if (not count == 0) and (ndims == 1 or ndims == 2):
-                    params.append("(i" + str(ndims) + "/2)")
+            # params = []
 
-                else:
-                    params.append("i" + str(ndims))
+            # for ndims, dim in enumerate(inp.shape):
+            # if (not count == 0) and (ndims == 1 or ndims == 2):
+            #    params.append("(i" + str(ndims) + "/2)")
+
+            # else:
+            #    params.append("i" + str(ndims))
 
             inputParams.append(params)
             inputDims.append(dims)
@@ -2515,9 +2517,10 @@ class TFSession:
         dtype = dace.typeclass(_tensortype(node))
         shape = dace.properties.ShapeProperty.from_string(str(inputList[0].shape))
 
-        tempNode = state.add_transient(
-            _string_builder(node.name + "_tmp"), shape, dtype, toplevel=True
-        )
+        #tempNode = state.add_transient(
+        #    _string_builder(node.name + "_tmp"), shape, dtype, toplevel=True
+        #)
+        tempNode = outputList[0]
         tempList = [tempNode]
 
         outputDims = inputDims
@@ -2531,7 +2534,7 @@ class TFSession:
         )
 
         mapParams_remainder = ["i4", "i5"]
-        mapRange_remainder = ["0:2", "0:2"]
+        mapRange_remainder = ["0:" + str(ksize), "0:" + str(ksize)]
         mapEntry_remainder, mapExit_remainder = state.add_map(
             mapLabel + "_map1_2", dict(zip(mapParams_remainder, mapRange_remainder))
         )
@@ -2542,11 +2545,19 @@ class TFSession:
             "if (j0==j1):\n\tout = j2\nelse:\n\tout = 0",
         )
         innerParams = []
-        innerParams.append(["i0", "2*i1+i4", "2*i2+i5", "i3"])
+        innerParams.append(
+            ["i0", str(strides) + "*i1+i4", str(strides) + "*i2+i5", "i3"]
+        )
         innerParams.append(["i0", "i1", "i2", "i3"])
         innerParams.append(["i0", "i1", "i2", "i3"])
         self.add_out_memlets(
-            tempList, mapExit, mapExit_remainder, outputDims, outputDims
+            tempList,
+            mapExit,
+            mapExit_remainder,
+            outputDims,
+            outputDims,
+            wcr="lambda a, b: a+b",
+            wcr_identity=0,
         )
         self.add_in_memlets(
             inputNodes, mapEntry, mapEntry_remainder, inputDims.copy(), inputDims.copy()
@@ -2564,59 +2575,65 @@ class TFSession:
             "out",
             mapExit_remainder,
             None,
-            Memlet.simple(tempList[0], ",".join(innerParams[0])),
+            Memlet.simple(
+                tempList[0],
+                ",".join(innerParams[0]),
+                wcr_str="lambda a, b: a+b",
+                wcr_identity=0,
+            ),
         )
 
         # Second map:
         # as we don't have the indicies of the maxpooling we need to manually
         # figure out which one contributed. If it is ambigious we break the
         # tie by the following priority k[i,j]<k[i+1,j]...<k[0,j+1]...
-        newDims = [inputDims[0]] * 4
-        mapRange[1] += ":2"
-        mapRange[2] += ":2"
-
-        newParams = [inputParams[0]]
-        # 2x2 kernel
-        newParams = [
-            ["i0", "i1", "i2", "i3"],
-            ["i0", "i1+1", "i2", "i3"],
-            ["i0", "i1", "i2+1", "i3"],
-            ["i0", "i1+1", "i2+1", "i3"],
-        ]
-
-        string = """
-if(j0!=0):
-        out0=j0
-        out1=0
-        out2=0
-        out3=0
-elif(j1!=0):
-        out0=j0
-        out1=j1
-        out2=0
-        out3=0
-elif(j2!=0):
-        out0=j0
-        out1=j1
-        out2=j2
-        out3=0
-else:
-        out0=j0
-        out1=j1
-        out2=j2
-        out3=j3
-"""
-        tasklet = state.add_tasklet(
-            mapLabel + "_map2",
-            {"j0", "j1", "j2", "j3"},
-            {"out0", "out1", "out2", "out3"},
-            string,
-        )
-        mapEntry, mapExit = state.add_map(
-            mapLabel + "_map2", dict(zip(mapParams, mapRange))
-        )
-        self.add_out_memlets(outputList * 4, mapExit, tasklet, newDims, newParams)
-        self.add_in_memlets(tempList * 4, mapEntry, tasklet, newDims, newParams)
+#        newDims = [inputDims[0]] * 4
+#        mapRange = inputDims[1]
+#        mapRange[1] += ":"+str(strides)
+#        mapRange[2] += ":"+str(strides)
+#
+#        newParams = [inputParams[0]]
+#        # 2x2 kernel
+#        newParams = [
+#            ["i0", "i1", "i2", "i3"],
+#            ["i0", "i1+1", "i2", "i3"],
+#            ["i0", "i1", "i2+1", "i3"],
+#            ["i0", "i1+1", "i2+1", "i3"],
+#        ]
+#
+#        string = """
+#if(j0!=0):
+#        out0=j0
+#        out1=0
+#        out2=0
+#        out3=0
+#elif(j1!=0):
+#        out0=j0
+#        out1=j1
+#        out2=0
+#        out3=0
+#elif(j2!=0):
+#        out0=j0
+#        out1=j1
+#        out2=j2
+#        out3=0
+#else:
+#        out0=j0
+#        out1=j1
+#        out2=j2
+#        out3=j3
+#"""
+#        tasklet = state.add_tasklet(
+#            mapLabel + "_map2",
+#            {"j0", "j1", "j2", "j3"},
+#            {"out0", "out1", "out2", "out3"},
+#            string,
+#        )
+#        mapEntry, mapExit = state.add_map(
+#            mapLabel + "_map2", dict(zip(mapParams, mapRange))
+#        )
+#        self.add_out_memlets(outputList * 4, mapExit, tasklet, newDims, newParams)
+#        self.add_in_memlets(tempList * 4, mapEntry, tasklet, newDims, newParams)
 
     def visit_ReluGrad(self, node):
 
@@ -2764,7 +2781,7 @@ else:
                 newShape[1] = node.outputs[0].shape[1] + ksize - 1
                 newShape[2] = node.outputs[0].shape[2] + ksize - 1
             expandedGrads = state.add_transient(
-                _string_builder(node.inputs[2].name) + "_bigger",
+                _string_builder(node.inputs[2].name) + "_bigger_strided",
                 newShape,
                 _tensortype(node.inputs[2]),
             )
