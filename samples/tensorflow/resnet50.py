@@ -30,6 +30,9 @@ layers = tf.keras.layers
 SEED = int(1)
 initializer = tf.keras.initializers.RandomUniform(seed=SEED)
 
+tf.disable_v2_behavior()
+tf.disable_resource_variables()
+tf.compat.v1.disable_eager_execution()
 
 class _IdentityBlock(tf.keras.Model):
     """_IdentityBlock is the block that has no conv layer at shortcut.
@@ -57,7 +60,7 @@ class _IdentityBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn2a = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2a')
+            axis=bn_axis, name=bn_name_base + '2a', epsilon=0.1)
 
         self.conv2b = layers.Conv2D(
             filters2,
@@ -69,7 +72,7 @@ class _IdentityBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn2b = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2b')
+            axis=bn_axis, name=bn_name_base + '2b', epsilon=0.1)
 
         self.conv2c = layers.Conv2D(
             filters3,
@@ -80,7 +83,7 @@ class _IdentityBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn2c = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2c')
+            axis=bn_axis, name=bn_name_base + '2c', epsilon=0.1)
 
     def call(self, input_tensor, training=False):
         x = self.conv2a(input_tensor)
@@ -135,7 +138,7 @@ class _ConvBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn2a = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2a')
+            axis=bn_axis, name=bn_name_base + '2a', epsilon=0.1)
 
         self.conv2b = layers.Conv2D(
             filters2,
@@ -147,7 +150,7 @@ class _ConvBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn2b = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2b')
+            axis=bn_axis, name=bn_name_base + '2b', epsilon=0.1)
 
         self.conv2c = layers.Conv2D(
             filters3,
@@ -158,7 +161,7 @@ class _ConvBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn2c = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2c')
+            axis=bn_axis, name=bn_name_base + '2c', epsilon=0.1)
 
         self.conv_shortcut = layers.Conv2D(
             filters3,
@@ -170,7 +173,7 @@ class _ConvBlock(tf.keras.Model):
             bias_initializer="zeros",
         )
         self.bn_shortcut = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '1')
+            axis=bn_axis, name=bn_name_base + '1', epsilon=0.1)
 
     def call(self, input_tensor, training=False):
         x = self.conv2a(input_tensor)
@@ -260,7 +263,12 @@ class ResNet50(tf.keras.Model):
         )
         bn_axis = 1 if data_format == "channels_first" else 3
         self.bn_conv1 = layers.BatchNormalization(
-            axis=bn_axis, name='bn_conv1')
+            axis=bn_axis, name='bn_conv1', epsilon=0.1)
+        #self.av_pool = layers.AveragePooling2D(
+        #        (3, 3),
+        #        strides=(2, 2),
+        #        data_format=data_format,
+        #)
         self.max_pool = layers.MaxPooling2D(
             (3, 3),
             strides=(2, 2),
@@ -318,6 +326,7 @@ class ResNet50(tf.keras.Model):
         x = self.bn_conv1(x, training=training)
         x = tf.nn.relu(x)
         x = self.max_pool(x)
+        #x = self.av_pool(x)
 
         x = self.l2a(x, training=training)
         x = self.l2b(x, training=training)
