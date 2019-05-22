@@ -14,6 +14,7 @@ def ttest(A: dace.float32[M, K], B: dace.float32[M, K]):
 
     t += 5 * A
     B -= t
+    # B += 5 * A @ B @ A @ B
 
 
 if __name__ == '__main__':

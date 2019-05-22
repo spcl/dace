@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Tuple, Union, Callable
 import dace
 from dace import data, dtypes, subsets
 from dace.config import Config
+from dace.frontend.common import op_impl
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
@@ -506,7 +507,9 @@ class ProgramVisitor(ExtNodeVisitor):
                  lineoffset: int,
                  arrays: Dict[str, data.Data],
                  global_vars: Dict[str, Any],
-                 nested: bool = False):
+                 nested: bool = False,
+                 parent_arrays: Dict[str, data.Data] = dict(),
+                 variables: Dict[str, str] = dict()):
         self.curnode = None
         self.filename = filename
         self.lineoffset = lineoffset
@@ -515,6 +518,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self.global_arrays = OrderedDict()  # type: Dict[str, data.Data]
         self.global_arrays.update(arrays)
+        self.parent_arrays = parent_arrays
 
         # Entry point to the program
         self.program = None
@@ -527,6 +531,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Keep track of variables and scopes
         self.variables = {k: k for k in arrays.keys()}  # type: Dict[str, str]
+        self.variables.update(variables)
 
         # Add symbols. TODO: more elegant way
         for arr in arrays.values():
@@ -624,7 +629,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_subprogram(self, name, node):
         pv = ProgramVisitor(name, self.filename, self.lineoffset,
-                            self.global_arrays, self.globals, True)
+                            self.global_arrays, self.globals, True,
+                            self.sdfg.arrays, self.variables)
 
         return pv.parse_program(node)
 
@@ -935,6 +941,30 @@ class ProgramVisitor(ExtNodeVisitor):
         state.add_edge(
             tasklet_node, "out", write_node, None,
             dace.Memlet.from_array(target, write_node.desc(self.sdfg)))
+    
+    def _get_variable_name(self, node, name):
+        if name not in self.variables:
+            raise DaceSyntaxError(
+                self, node, 'Array "%s" used before definition' % name)
+        else:
+            new_name = self.variables[name]
+            if new_name not in self.sdfg.arrays:
+                arr = self.parent_arrays[new_name]
+                self.sdfg.arrays[new_name] = arr
+                # postfix = 0
+                # new_name = "{n}_{p}".format(n=name, p=postfix)
+                # while new_name in self.global_arrays:
+                #     postfix += 1
+                #     new_name = "{n}_{p}".format(n=name, p=postfix)
+                # rng = dace.subsets.Range(
+                #     astutils.subscript_to_slice(target, self.global_arrays)[1])
+                # shape = rng.size()
+                # dtype = self.global_arrays[name].dtype
+                # self.sdfg.add_array(new_name, shape, dtype)
+                # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
+                # self.outputs[new_name] = (name, rng)
+
+        return new_name
 
     def visit_Assign(self, node: ast.Assign):
         # Validate assignment targets
@@ -958,6 +988,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Return result
         results = self.visit(node.value)
+        if not isinstance(results, (tuple, list)):
+            results = [results]
         if len(results) != len(elts):
             raise DaceSyntaxError(
                 self, node,
@@ -978,25 +1010,21 @@ class ProgramVisitor(ExtNodeVisitor):
             # Variable broadcast
             elif isinstance(target, ast.Subscript):
                 print(ast.dump(target))
-                if target.id not in self.variables:
-                    raise DaceSyntaxError(
-                        self, node, 'Array "%s" used before definition' % name)
-                    # postfix = 0
-                    # new_name = "{n}_{p}".format(n=name, p=postfix)
-                    # while new_name in self.global_arrays:
-                    #     postfix += 1
-                    #     new_name = "{n}_{p}".format(n=name, p=postfix)
-                    # rng = dace.subsets.Range(
-                    #     astutils.subscript_to_slice(target, self.global_arrays)[1])
-                    # shape = rng.size()
-                    # dtype = self.global_arrays[name].dtype
-                    # self.sdfg.add_array(new_name, shape, dtype)
-                    # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
-                    # self.outputs[new_name] = (name, rng)
-                else:
-                    new_name = self.variables[target.id]
+                name = self._get_variable_name(node, target.value.id)
+                # postfix = 0
+                # new_name = "{n}_{p}".format(n=name, p=postfix)
+                # while new_name in self.global_arrays:
+                #     postfix += 1
+                #     new_name = "{n}_{p}".format(n=name, p=postfix)
+                # rng = dace.subsets.Range(
+                #     astutils.subscript_to_slice(target, self.global_arrays)[1])
+                # shape = rng.size()
+                # dtype = self.global_arrays[name].dtype
+                # self.sdfg.add_array(new_name, shape, dtype)
+                # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
+                # self.outputs[new_name] = (name, rng)
 
-                self._add_tasklet(new_name, node.value)
+                self._add_tasklet(name, node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
@@ -1005,18 +1033,22 @@ class ProgramVisitor(ExtNodeVisitor):
         state = self._add_state("AugAssignState")
 
         if isinstance(node.target, ast.Name):
-            output_node = state.add_write(node.target.id)
+            name = self._get_variable_name(node, node.target.id)
+            output_node = state.add_write(name)
         else:
             raise NotImplementedError
 
         if isinstance(node.value, ast.Name):
-            input_node = state.add_read(node.value.id)
+            name = self._get_variable_name(node, node.value.id)
+            input_node = state.add_read(name)
             constant = 1
         elif isinstance(node.value, ast.BinOp):
             if isinstance(node.value.left, ast.Name):
-                input_node = state.add_read(node.value.left.id)
+                name = self._get_variable_name(node, node.value.left.id)
+                input_node = state.add_read(name)
             elif isinstance(node.value.right, ast.Name):
-                input_node = state.add_read(node.value.right.id)
+                name = self._get_variable_name(node, node.value.right.id)
+                input_node = state.add_read(name)
             else:
                 raise NotImplementedError
             if isinstance(node.value.left, ast.Num):
