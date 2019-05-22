@@ -156,26 +156,26 @@ class TreeView {
         nextparent.classList.add("tree_view");
         nextparent.classList.add("collapsed_sublist");
         
-        let onclickfunc = function() {
+        let onclickfunc = () => {
             nextparent.classList.toggle("collapsed_sublist");
             current.activate(1);
         };
-        let ondblclickfunc = function() {
+        let ondblclickfunc = () => {
             current.activate(2);
         };
         let passed_click_func = onclickfunc;
         let passed_dblclick_func = onclickfunc;
 
         if(this._debouncing != null) {
-            passed_click_func = this._debouncing.debounce("optgraph-click", onclickfunc, 100);
-            passed_dblclick_func = this._debouncing.debounce("optgraph-click", ondblclickfunc, 10);
+            passed_click_func = this._debouncing.debounce("treeview-click", onclickfunc, 100);
+            passed_dblclick_func = this._debouncing.debounce("treeview-click", ondblclickfunc, 10);
         }
         listitem.addEventListener("click", passed_click_func);
 
-        listitem.addEventListener("mouseenter", function() {
+        listitem.addEventListener("mouseenter", () => {
             current.activate(0);
         });
-        listitem.addEventListener("mouseleave", function() {
+        listitem.addEventListener("mouseleave", () => {
             current.activate(-1);
         });
 
@@ -199,17 +199,5 @@ class TreeView {
         }
         parent.append(nextparent);
     }
-    
-}
-
-/*
-#TODO: A proposal for a different representation of transformation paths.
-By hiding unconsumed elements, the clutter is strongly reduced
-*/
-class PathView {
-    constructor(value_tree_node) {
-        this._tree = value_tree_node;
-    }
-
     
 }
