@@ -50,12 +50,18 @@ input_gradients = tf.gradients(loss, input_placeholder)
 sess_dace = TFSession(seed=SEED)
 sess_tf = tf.Session()
 init = tf.global_variables_initializer()
-gradients_dace = sess_dace.train(
-    [],
+#gradients_dace = sess_dace.train(
+#    [],
+#    init,
+#    1,
+#    {input_placeholder: images, label_placeholder: labels},
+#    gradient_tensors,
+#)[1]
+updates_dace = sess_dace.train(
+    update_op,
     init,
     1,
     {input_placeholder: images, label_placeholder: labels},
-    gradient_tensors,
 )[1]
 # wrong_grads = sess_dace.run(
 #    gradient_tensors[0],
@@ -68,20 +74,23 @@ gradients_dace = sess_dace.train(
 #    {input_placeholder: images, label_placeholder: labels},
 #    [logits, softmax, loss],
 # )[1]
-tf.summary.FileWriter("./", sess_tf.graph)
+#tf.summary.FileWriter("./", sess_tf.graph)
 sess_tf.run(init)
 ##outputs_tf = sess_tf.run(
 ##    [logits, softmax, loss],
 ##    feed_dict={input_placeholder: images, label_placeholder: labels},
 ##)
-gradients_tf = sess_tf.run(
-    gradient_tensors,
+#gradients_tf = sess_tf.run(
+#    gradient_tensors,
+#    feed_dict={input_placeholder: images, label_placeholder: labels},
+#)
+updates_tf = sess_tf.run(
+    update_op,
     feed_dict={input_placeholder: images, label_placeholder: labels},
 )
-
-for name, tfgrad, dacegrad in zip(gradient_tensors, gradients_tf, gradients_dace):
-    inf_norm = np.linalg.norm((tfgrad - dacegrad).flatten())
-    print(str(name), str(inf_norm))
+#for name, tfgrad, dacegrad in zip(update_op, updates_tf, updates_dace):
+#    inf_norm = np.linalg.norm((tfgrad - dacegrad).flatten())
+#    print(str(name), str(inf_norm))
 #print(gradients_dace)
 #print(gradients_tf)
 #print(tf.linalg.norm(gradients_dace - gradients_tf).eval(session=sess_tf))
