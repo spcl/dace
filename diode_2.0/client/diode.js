@@ -479,7 +479,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         // Get and render the properties from now on
         let sdfg = this.getSDFGDataFromState().sdfg;
 
-        let unified_id = (parseInt(state_id) << 16) | (parseInt(node_id));
         console.log("sdfg", sdfg);
 
         let states = sdfg.nodes;
@@ -531,6 +530,14 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
             render_props(n);
             break;
+        }
+
+        let edges = state.edges;
+        for(let e of edges) {
+            if(e.src == node_id.src && e.dst == node_id.dst) {
+                render_props(e.attributes.data);
+                break;
+            }
         }
     }
 
@@ -3286,14 +3293,6 @@ class DIODE {
         }
         else if(x.type == "Range") {
             elem = create_range_input(transthis, x, node);
-
-            if(false) {
-                // #TODO: How to visualize/edit this?
-                elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
-                    transthis.propertyChanged(node, x.name, JSON.loads(elem.value));
-                }, JSON.stringify(x.value));
-
-            }
         }
         else if(x.type == "CodeProperty") {
             let codeelem = null;
@@ -3344,7 +3343,7 @@ class DIODE {
             console.log("Property with type 'None' ignored", x);
             return elem;
         }
-        else if(x.type == 'object' && x.name == 'identity') {
+        else if(x.type == 'object' && ['identity', 'wcr_identity'].includes(x.name)) {
             // This is an internal property - ignore
             return elem;
         }
@@ -3390,6 +3389,16 @@ class DIODE {
         else if(x.type == "font") {
             console.warn("Ignoring property type ", x.type);
             return elem;
+        }
+        else if(x.type == "SubsetProperty") {
+            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
+            }, JSON.stringify(x.value));
+        }
+        else if(x.type == "SymbolicProperty") {
+            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
+            }, JSON.stringify(x.value));
         }
         else {
             console.log("Unimplemented property type: ", x);

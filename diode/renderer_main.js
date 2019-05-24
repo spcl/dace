@@ -907,6 +907,13 @@ function canvas_onclick_handler( event,
                     clicked_elements.push(elem);
                 }
             });
+            // Check edges (Memlets). A memlet is considered "clicked" if the label is clicked.
+            state.edges.forEach((edge) => {
+                if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
+                    let elem = {'type': edge.type, 'id': {src: edge.src, dst: edge.dst }};
+                    clicked_elements.push(elem);
+                }
+            });
         }
     });
     if(mode == "click") {
@@ -1013,6 +1020,16 @@ function isWithinBB(x, y, layoutinfo) {
     return false;
 }
 
+function isWithinBBEdgeLabel(x, y, layoutinfo) {
+    if ((x > layoutinfo.x - layoutinfo.width) && 
+        (x < layoutinfo.x) &&
+        (y > layoutinfo.y - layoutinfo.height) &&
+        (y < layoutinfo.y)) {
+            return true;
+    }
+    return false;
+}
+
 function addXYOffset(g, x_offs, y_offs) {
     "use strict";
     g.nodes().forEach(function (v) {
@@ -1113,7 +1130,6 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
     sdfg.edges.forEach(function (edge) {
         let gedge = g.edge(edge.src, edge.dst);
         edge.attributes = {};
-        // FIXME: edge.attributes should be an object when we generate json SDFG in Python
         edge.attributes.label = gedge.label; 
         edge.attributes.layout = {};
         edge.attributes.layout.width = gedge.width;
@@ -1157,10 +1173,17 @@ function layout_state(sdfg_state, controller_state = undefined) {
 
     let ctx = controller_state.ctx;
     sdfg_state.edges.forEach(edge => {
-        let label = edge.attributes.data.label
+        let label = edge.attributes.data.label;
         console.assert(label != undefined);
         let textmetrics = ctx.measureText(label);
-        g.setEdge(edge.src, edge.dst, { label: label, height: LINEHEIGHT, width: textmetrics.width });
+
+        // Inject layout information analogous to state nodes
+        edge.attributes.layout = {
+            label: label,
+            width: textmetrics.width,
+            height: LINEHEIGHT,
+        };
+        g.setEdge(edge.src, edge.dst, edge.attributes.layout);
     });
 
     dagre.layout(g);
