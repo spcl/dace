@@ -266,6 +266,17 @@ ul.tree_view.collapsed_sublist ul {
     display: none;
 }
 
+ul.tree_view > li::before {
+    content: "\25E2";
+    color: black;
+    display: inline-block;
+}
+ul.tree_view.collapsed_sublist > li::before {
+    transform: rotate(-45deg);
+}
+ul.tree_view .selected {
+    background: lightseagreen;
+}
 
 /* End of TreeView */
 

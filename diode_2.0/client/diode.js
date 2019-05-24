@@ -1870,6 +1870,10 @@ class DIODE_Context_Settings extends DIODE_Context {
         // Link handlers
         parent.setHandler("activate", (node, level) => {
             if(level == 1) {
+                let repr = node.representative();
+                // Clear all selections in this tree
+                node.head().asPreOrderArray(x => x.representative()).forEach(x => x.classList.remove("selected"));
+                repr.classList.add("selected");
                 let cont = $("#diode_settings_props_container")[0];
                 cont.innerHTML = "";
                 dt.createIn(cont);
