@@ -60,7 +60,7 @@ def _reduce(sdfg: SDFG,
 
     # Convert axes to tuple
     if axis is not None and not isinstance(axis, (tuple, list)):
-        axis = (axis, )
+        axis = (axis,)
     axis = tuple(pystr_to_symbolic(a) for a in axis)
 
     # Compute memlets
@@ -114,7 +114,7 @@ def parse_dace_program(f, argtypes, global_vars, modules):
         f.__name__,
         src_file,
         src_line,
-        #astutils.get_argtypes(src_ast.body[0], global_vars),
+        # astutils.get_argtypes(src_ast.body[0], global_vars),
         argtypes,
         global_vars)
 
@@ -523,7 +523,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Entry point to the program
         self.program = None
         self.sdfg = SDFG(name)
-        self.last_state = None  #self.sdfg.add_state('init', is_start_state=True)
+        self.last_state = None  # self.sdfg.add_state('init', is_start_state=True)
         # if not self.nested:
         self.sdfg.arrays.update(arrays)
         self.inputs = {}
@@ -559,13 +559,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 n.data: state.out_edges(n)[0].data
                 for n in state.source_nodes()
                 if isinstance(n, nodes.AccessNode)
-                and self.sdfg.arrays[n.data].transient == False
+                   and self.sdfg.arrays[n.data].transient == False
             })
         for state in self.sdfg.nodes():
             outputs.update({
                 n.data: state.in_edges(n)[0].data
                 for n in state.sink_nodes() if isinstance(n, nodes.AccessNode)
-                and self.sdfg.arrays[n.data].transient == False
+                                               and self.sdfg.arrays[n.data].transient == False
             })
 
         return self.sdfg, inputs, outputs
@@ -678,7 +678,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif dec == 'dace.program':  # Nested SDFG
             raise DaceSyntaxError(
                 self, node, 'Nested programs must be '
-                'defined outside existing programs')
+                            'defined outside existing programs')
         else:
             raise DaceSyntaxError(self, node, 'Unsupported function decorator')
 
@@ -702,7 +702,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node, "Target of ast.For must be a name or a tuple")
 
         if isinstance(node, ast.Name):
-            elts = (node, )
+            elts = (node,)
         else:
             elts = node.elts
 
@@ -855,11 +855,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # 3. `for i,j,k in dace.map[0:M, 0:N, 0:K]`: Creates an ND map
         # print(ast.dump(node))
         indices = self._parse_for_indices(node.target)
-        print(indices)
         iterator, ranges = self._parse_for_iterator(node.iter)
-        print(iterator)
-        print(ranges)
-
+        
         if len(indices) != len(ranges):
             raise DaceSyntaxError(
                 self, node,
@@ -1150,7 +1147,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise DaceSyntaxError(
                 self, node, "Array dtype must either be a dace/numpy type or "
-                " the dtype attribute of another array.")
+                            " the dtype attribute of another array.")
 
         return dtype
 
@@ -1192,33 +1189,8 @@ class ProgramVisitor(ExtNodeVisitor):
         return (shape, dtype)
 
     def _parse_function_arg(self, arg: ast.AST):
-        # If an attribute or a name, check if it is a defined variable
-        if isinstance(arg, (ast.Attribute, ast.Name)):
-            name = until(astutils.unparse(arg), '.')
-
-            # If an allowed global, use directly
-            if name in self.globals:
-                return _inner_eval_ast(self.globals, arg)
-
-            if name not in self.variables:
-                raise DaceSyntaxError(self, arg,
-                                      'Use of undefined variable "%s"' % name)
-            name = self.variables[name]
-            if isinstance(arg, ast.Attribute):
-                return getattr(self.sdfg.arrays[name], arg.attr)
-            else:
-                return name
-        elif isinstance(arg, ast.List):  # Recursively loop over elements
-            return [self._parse_function_arg(a) for a in arg.elts]
-        elif isinstance(arg, ast.Tuple):  # Recursively loop over elements
-            return tuple(self._parse_function_arg(a) for a in arg.elts)
-
-        # In any other case, use the string representation with variables replaced
-        argast = copy.deepcopy(arg)
-        astutils.ASTFindReplace(self.variables).visit(argast)
-
         # Obtain a string representation
-        return astutils.unparse(argast)
+        return self.visit(arg)
 
     def visit_Call(self, node):
         default_impl = Config.get('frontend', 'implementation')
@@ -1320,3 +1292,43 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_AsyncWith(self, node):
         return self.visit_With(node, is_async=True)
+
+    def _visitname(self, name: str, node: ast.AST):
+        # If an allowed global, use directly
+        if name in self.globals:
+            return _inner_eval_ast(self.globals, node)
+
+        if name not in self.variables:
+            raise DaceSyntaxError(self, node,
+                                  'Use of undefined variable "%s"' % name)
+        return self.variables[name]
+
+
+    #### Visitors that return arrays
+    def visit_Str(self, node: ast.Str):
+        # A string constant returns itself
+        return node.s
+
+    def visit_Num(self, node: ast.Str):
+        # A constant returns itself
+        return node.n
+
+    def visit_Name(self, node: ast.Name):
+        # If visiting a name, check if it is a defined variable or a global
+        return self._visitname(node.id, node)
+
+    def visit_Attribute(self, node: ast.Attribute):
+        # If visiting an attribute, return attribute value if it's of an array or global
+        name = until(astutils.unparse(node), '.')
+        result = self._visitname(name, node)
+        return getattr(self.sdfg.arrays[result], node.attr)
+
+    def visit_List(self, node: ast.List):
+        # Recursively loop over elements
+        return [self.visit(a) for a in node.elts]
+
+    def visit_Tuple(self, node: ast.Tuple):
+        # Recursively loop over elements
+        return tuple(self.visit(a) for a in node.elts)
+    ############################################################
+
