@@ -931,16 +931,22 @@ class ProgramVisitor(ExtNodeVisitor):
         value = self._parse_value(value_node)
         print(target, value)
 
+        if isinstance(target, tuple):
+            name, subset = target
+            memlet = dace.Memlet(name, subset.num_elements(), subset, 1)
+        else:
+            name = target
+            memlet = dace.Memlet.from_array(name, self.sdfg.arrays[name])
+
         state = self._add_state("TaskletState")
-        write_node = state.add_write(target)
+        write_node = state.add_write(name)
         tasklet_node = state.add_tasklet(
             name="Tasklet",
             inputs={},
             outputs={"out"},
             code="out = {}".format(value))
-        state.add_edge(
-            tasklet_node, "out", write_node, None,
-            dace.Memlet.from_array(target, write_node.desc(self.sdfg)))
+        state.add_edge(tasklet_node, "out", write_node, None, memlet)
+            # dace.Memlet.from_array(name, write_node.desc(self.sdfg)))
     
     def _get_variable_name(self, node, name):
         if name not in self.variables:
@@ -951,18 +957,6 @@ class ProgramVisitor(ExtNodeVisitor):
             if new_name not in self.sdfg.arrays:
                 arr = self.parent_arrays[new_name]
                 self.sdfg.arrays[new_name] = arr
-                # postfix = 0
-                # new_name = "{n}_{p}".format(n=name, p=postfix)
-                # while new_name in self.global_arrays:
-                #     postfix += 1
-                #     new_name = "{n}_{p}".format(n=name, p=postfix)
-                # rng = dace.subsets.Range(
-                #     astutils.subscript_to_slice(target, self.global_arrays)[1])
-                # shape = rng.size()
-                # dtype = self.global_arrays[name].dtype
-                # self.sdfg.add_array(new_name, shape, dtype)
-                # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
-                # self.outputs[new_name] = (name, rng)
 
         return new_name
 
@@ -1011,20 +1005,22 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(target, ast.Subscript):
                 print(ast.dump(target))
                 name = self._get_variable_name(node, target.value.id)
+                arr = self.sdfg.arrays[name]
+                self.outputs[name] = (name, dace.subsets.Range.from_array(arr))
                 # postfix = 0
                 # new_name = "{n}_{p}".format(n=name, p=postfix)
                 # while new_name in self.global_arrays:
                 #     postfix += 1
                 #     new_name = "{n}_{p}".format(n=name, p=postfix)
-                # rng = dace.subsets.Range(
-                #     astutils.subscript_to_slice(target, self.global_arrays)[1])
+                rng = dace.subsets.Range(
+                    astutils.subscript_to_slice(target, self.global_arrays)[1])
                 # shape = rng.size()
                 # dtype = self.global_arrays[name].dtype
                 # self.sdfg.add_array(new_name, shape, dtype)
                 # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
                 # self.outputs[new_name] = (name, rng)
 
-                self._add_tasklet(name, node.value)
+                self._add_tasklet((name, rng), node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
