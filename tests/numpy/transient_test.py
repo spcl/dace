@@ -22,9 +22,10 @@ if __name__ == '__main__':
     K.set(25)
     A = np.random.rand(M.get(), K.get()).astype(np.float32)
     B = np.random.rand(M.get(), K.get()).astype(np.float32)
-    ttest(A, B)
 
     realB = B - 5 * A - 1.0
+    ttest(A, B)
+
     diff = np.linalg.norm(B - realB) / (M.get() * K.get())
     print('Difference:', diff)
     exit(1 if diff >= 1e-5 else 0)
