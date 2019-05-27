@@ -1419,7 +1419,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # If visiting an attribute, return attribute value if it's of an array or global
         name = until(astutils.unparse(node), '.')
         result = self._visitname(name, node)
-        return getattr(self.sdfg.arrays[result], node.attr)
+        try:
+            return getattr(self.sdfg.arrays[result], node.attr)
+        except KeyError:
+            return result
 
     def visit_List(self, node: ast.List):
         # Recursively loop over elements
