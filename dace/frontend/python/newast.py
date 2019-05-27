@@ -327,7 +327,7 @@ def _ndslice_to_subset(ndslice):
 def _fill_missing_slices(das, ast_ndslice, array, indices):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
-    ndslice = [None] * len(ast_ndslice)
+    ndslice = [None] * len(array.shape)
     ndslice_size = 1
     offsets = []
     idx = 0
@@ -342,6 +342,12 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             idx += 1
         else:
             ndslice[i] = _pyexpr_to_symbolic(das, dim)
+
+    # Extend slices to unspecified dimensions
+    for i in range(len(ast_ndslice), len(array.shape)):
+        ndslice[i] = (0, array.shape[indices[idx]] - 1, 1)
+        idx += 1
+        offsets.append(i)
 
     return ndslice, offsets
 
@@ -1113,13 +1119,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 print(ast.dump(target))
                 if self.nested:
                     if not target in self.accesses:
-                        tmp_name = "__tmp_{l}_{c}".format(l=target.lineno,
-                                                          c=target.col_offset)
+                        tmp_name = "__tmp_{l}_{c}".format(
+                            l=target.lineno, c=target.col_offset)
                         parent_name = self.variables[target.value.id]
                         parent_array = self.parent_arrays[parent_name]
                         rng = dace.subsets.Range(
-                            astutils.subscript_to_slice(target,
-                                                        self.parent_arrays)[1])
+                            astutils.subscript_to_slice(
+                                target, self.parent_arrays)[1])
                         shape = rng.size()
                         dtype = parent_array.dtype
                         self.sdfg.add_array(tmp_name, shape, dtype)
@@ -1467,7 +1473,8 @@ class ProgramVisitor(ExtNodeVisitor):
         operand = self.visit(opnode)
         if isinstance(operand, (list, tuple)):
             if len(operand) != 1:
-                raise DaceSyntaxError(self, opnode, 'Operand cannot be a tuple')
+                raise DaceSyntaxError(self, opnode,
+                                      'Operand cannot be a tuple')
             operand = operand[0]
 
         if isinstance(operand, str) and operand in self.sdfg.arrays:
@@ -1521,3 +1528,31 @@ class ProgramVisitor(ExtNodeVisitor):
         for i in range(1, len(node.values)):
             last = self._visit_op(node, last, node.values[i])
         return last
+
+    ### Subscript (slicing) handling
+    def visit_Subscript(self, node: ast.Subscript):
+        # Obtain array
+        array, arrtype = self._gettype(node.value)
+        if arrtype == 'str' or arrtype in dtypes._CTYPES:
+            raise DaceSyntaxError(self, node,
+                                  'Type "%s" cannot be sliced' % arrtype)
+
+        # Try to construct memlet from subscript
+        expr: MemletExpr = ParseMemlet(self, self.defined, node)
+        arrobj = self.sdfg.arrays[array]
+
+        # TODO: Check dimensionality of access and extend as necessary
+
+        # Add slicing state
+        self._add_state('slice_%s_%d' % (array, node.lineno))
+        tmp, tmparr = self.sdfg.add_temp_transient(
+            expr.subset.size(), arrobj.dtype, arrobj.storage)
+        rnode = self.last_state.add_read(array)
+        wnode = self.last_state.add_write(tmp)
+        self.last_state.add_nedge(
+            rnode, wnode,
+            Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
+                   expr.wcr_identity))
+        return tmp
+
+    ##################################
