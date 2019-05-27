@@ -195,6 +195,17 @@ class DaceProgram:
             for sym in (symbolic.symlist(arg.descriptor.shape) if hasattr(
                 arg, 'descriptor') else [])
         })
+        # Update arguments with symbol values
+        for aname in self.argnames:
+            if aname in binaryobj.sdfg.arrays:
+                sym_shape = binaryobj.sdfg.arrays[aname].shape
+                for sym in (sym_shape):
+                    if symbolic.issymbolic(sym):
+                        try:
+                            kwargs[str(sym)] = sym.get()
+                        except:
+                            pass
+
         return binaryobj(**kwargs)
 
     def generate_pdp(self, *compilation_args):
