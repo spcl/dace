@@ -1465,9 +1465,10 @@ class ProgramVisitor(ExtNodeVisitor):
     def _gettype(self, opnode: ast.AST):
         """ Returns an operand and its type as a 2-tuple of strings. """
         operand = self.visit(opnode)
-        if isinstance(operand, (list, tuple)) and len(operand) != 1:
-            raise DaceSyntaxError(self, opnode, 'Operand cannot be a tuple')
-        operand = operand[0]
+        if isinstance(operand, (list, tuple)):
+            if len(operand) != 1:
+                raise DaceSyntaxError(self, opnode, 'Operand cannot be a tuple')
+            operand = operand[0]
 
         if isinstance(operand, str) and operand in self.sdfg.arrays:
             return operand, type(self.sdfg.arrays[operand]).__name__
