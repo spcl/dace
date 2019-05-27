@@ -3222,7 +3222,7 @@ class DIODE {
         //        is beyond the scope of the initial PoC.
         
         // Obtain fixed ranges (all but smallest)
-        let __fixed_rngs = __ranges.slice(1).map(x => x).reverse();
+        let __fixed_rngs = __ranges.map(x => x).sort((a,b) => a.depth - b.depth).slice(1)/*.map(x => x)*/.reverse();
         // Get the variable range (smallest)
         let __var_rng = __ranges[0];
         
@@ -3257,11 +3257,28 @@ class DIODE {
 
                 input_cont.appendChild(_lbl);
             }
+            {
+                let r = __var_rng;
+                let _lbl = document.createElement("label");
+                let _in = document.createElement("span");
+
+                _in.addEventListener("change", _click => {
+                    // #TODO: Trigger update
+                    __create_func();
+                });
+                
+                _in.innerText = "(whole range)";
+                _lbl.innerText = "Range iterator " + r.var + " over [" + __main(r.val.start) + ", " + __main(r.val.end) + "] in steps of " + __main(r.val.step);
+                _lbl.appendChild(_in);
+
+                input_cont.appendChild(_lbl);
+            }
             __tbl_container.appendChild(input_cont);    
         }
         
         __create_func = () => {
             __tbl_vert.innerHTML = "";
+            __tbl_vert.appendChild(__axis_x_info);
             let __all_fixed = {};
             Object.assign(__all_fixed, __additional_defines);
             // Get the fixed values
@@ -3276,7 +3293,8 @@ class DIODE {
 
             let __defstring = Object.keys(__all_fixed).map(x => "let " + x + " = " + __all_fixed[x] + ";").join("");
 
-            const __ellision_thresh = 32;
+            const __ellision_thresh_y = 64;
+            const __ellision_thresh_x = 128;
 
             let __mark_cells = {};
 
@@ -3308,9 +3326,9 @@ class DIODE {
             for(let __dim_2 = 0; __dim_2 < __mem_dims[1]; ++__dim_2) {
 
                 // Check ellision
-                if(__mem_dims[1] > __ellision_thresh && __dim_2 > __ellision_thresh / 2 && __dim_2 < __mem_dims[1] - __ellision_thresh / 2) {
+                if(__mem_dims[1] > __ellision_thresh_y && __dim_2 > __ellision_thresh_y / 2 && __dim_2 < __mem_dims[1] - __ellision_thresh_y / 2) {
                     // Elide
-                    if(__dim_2 - 1 == __ellision_thresh / 2) {
+                    if(__dim_2 - 1 == __ellision_thresh_y / 2) {
                         // Add ellision info _once_
                         let __row = document.createElement("div");
                         __row.classList = "flex_row";
@@ -3326,11 +3344,12 @@ class DIODE {
 
                 for(let __i = 0; __i < __mem_dims[0]; ++__i) {
                     // Check ellision
-                    if(__mem_dims[0] > __ellision_thresh && __i > __ellision_thresh / 2 && __i < __mem_dims[0] - __ellision_thresh / 2) {
+                    if(__mem_dims[0] > __ellision_thresh_x && __i > __ellision_thresh_x / 2 && __i < __mem_dims[0] - __ellision_thresh_x / 2) {
                         // Elide
-                        if(__i - 1 == __ellision_thresh / 2) {
+                        if(__i - 1 == __ellision_thresh_x / 2) {
                             // Add ellision info _once_
                             let __cell = document.createElement('div');
+                            __cell.style = "line-height: 1px;";
                             //let __colorstr = "background: white;";
                             //__cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid black;" + __colorstr;
                             __cell.innerText = "...";
@@ -3350,10 +3369,10 @@ class DIODE {
                     let __cell = document.createElement('div');
                     let __colorstr = "background: white;";
                     if(__set_marking) {
-                        __colorstr = "background: SpringGreen;";
+                        __colorstr = "background: red;";
                     }
                     
-                    __cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid black;" + __colorstr;
+                    __cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid darkgray;" + __colorstr;
                     __row.appendChild(__cell);
                 }
 
@@ -3721,7 +3740,7 @@ class DIODE {
                     popup_div.appendChild(popup_div_body);
 
                     w2popup.open({
-                        title: "Range property",
+                        title: "Data access / Indices property",
                         body: popup_div,
                         //buttons: apply_but,
                         width: 1280,

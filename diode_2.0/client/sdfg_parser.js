@@ -8,7 +8,7 @@ class SDFG_Parser {
         return this._sdfg.nodes.map(x => new SDFG_State_Parser(x));
     }
 
-    static lookup_symbols(sdfg, state_id, elem, symbols_to_resolve) {
+    static lookup_symbols(sdfg, state_id, elem, symbols_to_resolve, depth=0) {
         // Resolve used symbols by following connectors in reverse order
         let state = sdfg.nodes[state_id];
 
@@ -30,7 +30,8 @@ class SDFG_Parser {
                     let tmp = mdata.indices.map(x => x).reverse();
                     for(let x of tmp) {
                         // Add the used variables as null and hope that they will be resolved
-                        syms.push({var: x, val: null});
+                        depth += 1;
+                        syms.push({var: x, val: null, depth: depth});
                     }
                 }
                 else if(mdata.type == "subsets.Range") {
@@ -41,7 +42,7 @@ class SDFG_Parser {
 
                 // Find parent nodes
                 let parent = sdfg.nodes[state_id].nodes[m.src];
-                let tmp = SDFG_Parser.lookup_symbols(sdfg, state_id, m.src, symbols_to_resolve);
+                let tmp = SDFG_Parser.lookup_symbols(sdfg, state_id, m.src, symbols_to_resolve, depth + 1);
                 syms = [...syms, ...tmp];
             }
         }
@@ -64,7 +65,8 @@ class SDFG_Parser {
                     // Check first if the variable is already defined, and if yes, if the value is the same
                     let fltrd = syms.filter(x => x.var == params[i]);
                     if(fltrd.length == 0) {
-                        syms.push({var: params[i], val: rngs[i]});
+                        depth += 1;
+                        syms.push({var: params[i], val: rngs[i], depth: depth});
                     }
                     else {
                         if(JSON.stringify(fltrd[0].val) != JSON.stringify(rngs[i])) {
@@ -79,7 +81,7 @@ class SDFG_Parser {
             // Find all incoming edges
             let inc_edges = state.edges.filter(x => x.dst == elem);
             for(let e of inc_edges) {
-                let tmp = SDFG_Parser.lookup_symbols(sdfg, state_id, e, symbols_to_resolve);
+                let tmp = SDFG_Parser.lookup_symbols(sdfg, state_id, e, symbols_to_resolve, depth + 1);
                 syms = [...syms, ...tmp];
             }
         }
