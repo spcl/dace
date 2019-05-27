@@ -3873,12 +3873,19 @@ class DIODE {
             }, val);
         }
         else if(
-            x.type == "str" || x.type == "tuple" || x.type == "dict" ||
-            x.type == "list" || x.type == "set" || x.type == "float"
+            x.type == "str" || x.type == "float"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
+        }
+        else if(
+            x.type == "tuple" || x.type == "dict" ||
+            x.type == "list" || x.type == "set"
+        ) {
+            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
+            }, JSON.stringify(x.value));
         }
         else if(x.type == "Range") {
             elem = create_range_input(transthis, x, node);
