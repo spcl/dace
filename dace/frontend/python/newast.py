@@ -620,6 +620,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Keep track of variables and scopes
         self.variables = {k: k for k in arrays.keys()}  # type: Dict[str, str]
         self.variables.update(variables)
+        self.accesses = dict()
 
         # Add symbols. TODO: more elegant way
         for arr in arrays.values():
@@ -639,25 +640,35 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
-        # TODO: Incremental, union-of-subset creation of self.inputs and self.outputs
-        inputs = {}
-        outputs = {}
-        for state in self.sdfg.nodes():
-            inputs.update({
-                n.data: state.out_edges(n)[0].data
-                for n in state.source_nodes()
-                if isinstance(n, nodes.AccessNode) and (
-                    self.sdfg.arrays[n.data].transient == False
-                    or n.data in self.parent_arrays)
-            })
-        for state in self.sdfg.nodes():
-            outputs.update({
-                n.data: state.in_edges(n)[0].data
-                for n in state.sink_nodes()
-                if isinstance(n, nodes.AccessNode) and (
-                    self.sdfg.arrays[n.data].transient == False
-                    or n.data in self.parent_arrays)
-            })
+        if not self.nested:
+            # TODO: Incremental, union-of-subset creation of self.inputs and self.outputs
+            inputs = {}
+            outputs = {}
+            for state in self.sdfg.nodes():
+                inputs.update({
+                    n.data: state.out_edges(n)[0].data
+                    for n in state.source_nodes()
+                    if isinstance(n, nodes.AccessNode) and (
+                        self.sdfg.arrays[n.data].transient == False
+                        or n.data in self.parent_arrays)
+                })
+            for state in self.sdfg.nodes():
+                outputs.update({
+                    n.data: state.in_edges(n)[0].data
+                    for n in state.sink_nodes()
+                    if isinstance(n, nodes.AccessNode) and (
+                        self.sdfg.arrays[n.data].transient == False
+                        or n.data in self.parent_arrays)
+                })
+        else:
+            inputs = {}
+            for conn, (arr_name, subset) in self.inputs.items():
+                inputs[conn] = dace.Memlet(arr_name, subset.num_elements(),
+                                           subset, 1)
+            outputs = {}
+            for conn, (arr_name, subset) in self.outputs.items():
+                outputs[conn] = dace.Memlet(arr_name, subset.num_elements(),
+                                            subset, 1)
 
         return self.sdfg, inputs, outputs
 
@@ -1100,23 +1111,36 @@ class ProgramVisitor(ExtNodeVisitor):
             # Variable broadcast
             elif isinstance(target, ast.Subscript):
                 print(ast.dump(target))
-                name = self._get_variable_name(node, target.value.id)
-                arr = self.sdfg.arrays[name]
-                self.outputs[name] = (name, dace.subsets.Range.from_array(arr))
-                # postfix = 0
-                # new_name = "{n}_{p}".format(n=name, p=postfix)
-                # while new_name in self.global_arrays:
-                #     postfix += 1
-                #     new_name = "{n}_{p}".format(n=name, p=postfix)
-                rng = dace.subsets.Range(
-                    astutils.subscript_to_slice(target, self.global_arrays)[1])
-                # shape = rng.size()
-                # dtype = self.global_arrays[name].dtype
-                # self.sdfg.add_array(new_name, shape, dtype)
-                # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
-                # self.outputs[new_name] = (name, rng)
+                if self.nested:
+                    if not target in self.accesses:
+                        tmp_name = "__tmp_{l}_{c}".format(l=target.lineno,
+                                                          c=target.col_offset)
+                        parent_name = self.variables[target.value.id]
+                        parent_array = self.parent_arrays[parent_name]
+                        rng = dace.subsets.Range(
+                            astutils.subscript_to_slice(target,
+                                                        self.parent_arrays)[1])
+                        shape = rng.size()
+                        dtype = parent_array.dtype
+                        self.sdfg.add_array(tmp_name, shape, dtype)
+                        self.outputs[tmp_name] = (parent_name, rng)
+                # name = self._get_variable_name(node, target.value.id)
+                # arr = self.sdfg.arrays[name]
+                # self.outputs[name] = (name, dace.subsets.Range.from_array(arr))
+                # # postfix = 0
+                # # new_name = "{n}_{p}".format(n=name, p=postfix)
+                # # while new_name in self.global_arrays:
+                # #     postfix += 1
+                # #     new_name = "{n}_{p}".format(n=name, p=postfix)
+                # rng = dace.subsets.Range(
+                #     astutils.subscript_to_slice(target, self.global_arrays)[1])
+                # # shape = rng.size()
+                # # dtype = self.global_arrays[name].dtype
+                # # self.sdfg.add_array(new_name, shape, dtype)
+                # # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
+                # # self.outputs[new_name] = (name, rng)
 
-                self._add_tasklet((name, rng), node.value)
+                self._add_tasklet(tmp_name, node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
