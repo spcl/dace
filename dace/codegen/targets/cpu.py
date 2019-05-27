@@ -1206,13 +1206,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Take care of nested SDFG I/O
         for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
-            callsite_stream.write(
-                self.memlet_definition(sdfg, in_memlet, False, vconn), sdfg,
-                state_id, node)
+            if in_memlet.data is not None:
+                callsite_stream.write(
+                    self.memlet_definition(sdfg, in_memlet, False, vconn),
+                    sdfg, state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
-            callsite_stream.write(
-                self.memlet_definition(sdfg, out_memlet, True, uconn), sdfg,
-                state_id, node)
+            if out_memlet.data is not None:
+                callsite_stream.write(
+                    self.memlet_definition(sdfg, out_memlet, True, uconn),
+                    sdfg, state_id, node)
 
         callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
                               node)
