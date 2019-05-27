@@ -26,6 +26,87 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
     return name
 
 
+def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
+    """ Implements a general element-wise unary operator. """
+    arr1 = sdfg.arrays[op1]
+
+    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
+    state.add_mapped_tasklet(
+        "_%s_" % opname,
+        {'__i%d' % i: '0:%s' % s
+         for i, s in enumerate(arr1.shape)}, {
+             'in1':
+             Memlet.simple(
+                 op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
+         },
+        'out = %s in1' % opcode, {
+            'out':
+            Memlet.simple(
+                name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
+        },
+        external_edges=True)
+    return name
+
+
+def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
+           opname: str):
+    """ Implements a general element-wise binary operator. """
+    arr1 = sdfg.arrays[op1]
+    arr2 = sdfg.arrays[op2]
+    if (len(arr1.shape) != len(arr2.shape)
+            or any(s1 != s2 for s1, s2 in zip(arr1.shape, arr2.shape))):
+        raise SyntaxError('Array sizes must match')
+
+    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
+    state.add_mapped_tasklet(
+        "_%s_" % opname,
+        {'__i%d' % i: '0:%s' % s
+         for i, s in enumerate(arr1.shape)}, {
+             'in1':
+             Memlet.simple(
+                 op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))])),
+             'in2':
+             Memlet.simple(
+                 op2, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
+         },
+        'out = in1 %s in2' % opcode, {
+            'out':
+            Memlet.simple(
+                name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
+        },
+        external_edges=True)
+    return name
+
+
+# Defined as a function in order to include the op and the opcode in the closure
+def _makeunop(op, opcode):
+    @oprepo.replaces_operator('Array', op)
+    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+        return _unop(sdfg, state, op1, opcode, op)
+
+
+def _makebinop(op, opcode):
+    @oprepo.replaces_operator('Array', op)
+    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+        return _binop(sdfg, state, op1, op2, opcode, op)
+
+
+# Define all standard Python unary operators
+for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', '!'), ('Invert',
+                                                                '~')]:
+    _makeunop(op, opcode)
+
+# Define all standard Python binary operators
+# NOTE: ('MatMult', '@') is defined separately
+for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
+                   ('FloorDiv', '//'), ('Mod', '%'), ('Pow', '**'), ('LShift',
+                                                                     '<<'),
+                   ('RShift', '>>'), ('BitOr', '|'), ('BitXor',
+                                                      '^'), ('BitAnd', '&'),
+                   ('And', '&&'), ('Or', '||'), ('Eq', '=='), ('NotEq', '!='),
+                   ('Lt', '<'), ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
+    _makebinop(op, opcode)
+
 # @oprepo.replaces('dace.define_stream')
 # def _define_stream(sdfg: SDFG, state: SDFGState, dtype=dtypes.float32, buffer_size=0):
 #     name, _ = sdfg.add_temp_transient(shape, dtype)
@@ -60,8 +141,9 @@ def _reduce(sdfg: SDFG,
 
     # Convert axes to tuple
     if axis is not None and not isinstance(axis, (tuple, list)):
-        axis = (axis,)
-    axis = tuple(pystr_to_symbolic(a) for a in axis)
+        axis = (axis, )
+    if axis is not None:
+        axis = tuple(pystr_to_symbolic(a) for a in axis)
 
     # Compute memlets
     input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
@@ -496,6 +578,10 @@ class TaskletTransformer(ExtNodeTransformer):
         return node
 
 
+# TODO: Take care of recursive SDFG generation w.r.t. temporary transient creation (maybe there
+#  is no need if the temporary transients from the parent SDFG are added to the current SDFG arrays)
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and 
         constructs an SDFG.
@@ -518,6 +604,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self.global_arrays = OrderedDict()  # type: Dict[str, data.Data]
         self.global_arrays.update(arrays)
+
         self.parent_arrays = parent_arrays
 
         # Entry point to the program
@@ -525,6 +612,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.sdfg = SDFG(name)
         self.last_state = None  # self.sdfg.add_state('init', is_start_state=True)
         # if not self.nested:
+        self.sdfg.arrays.update(parent_arrays)
         self.sdfg.arrays.update(arrays)
         self.inputs = {}
         self.outputs = {}
@@ -558,24 +646,35 @@ class ProgramVisitor(ExtNodeVisitor):
             inputs.update({
                 n.data: state.out_edges(n)[0].data
                 for n in state.source_nodes()
-                if isinstance(n, nodes.AccessNode)
-                   and self.sdfg.arrays[n.data].transient == False
+                if isinstance(n, nodes.AccessNode) and (
+                    self.sdfg.arrays[n.data].transient == False
+                    or n.data in self.parent_arrays)
             })
         for state in self.sdfg.nodes():
             outputs.update({
                 n.data: state.in_edges(n)[0].data
-                for n in state.sink_nodes() if isinstance(n, nodes.AccessNode)
-                                               and self.sdfg.arrays[n.data].transient == False
+                for n in state.sink_nodes()
+                if isinstance(n, nodes.AccessNode) and (
+                    self.sdfg.arrays[n.data].transient == False
+                    or n.data in self.parent_arrays)
             })
 
         return self.sdfg, inputs, outputs
 
     @property
     def defined(self):
-        return {
+        # Check parent SDFG arrays first
+        # result = {
+        #     k: self.parent_arrays[v]
+        #     for k, v in self.variables.items() if v in self.parent_arrays
+        # }
+        result = {}
+        result.update({
             k: self.sdfg.arrays[v]
             for k, v in self.variables.items() if v in self.sdfg.arrays
-        }
+        })
+
+        return result
 
     def _add_state(self, label=None):
         state = self.sdfg.add_state(label)
@@ -678,7 +777,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif dec == 'dace.program':  # Nested SDFG
             raise DaceSyntaxError(
                 self, node, 'Nested programs must be '
-                            'defined outside existing programs')
+                'defined outside existing programs')
         else:
             raise DaceSyntaxError(self, node, 'Unsupported function decorator')
 
@@ -702,7 +801,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node, "Target of ast.For must be a name or a tuple")
 
         if isinstance(node, ast.Name):
-            elts = (node,)
+            elts = (node, )
         else:
             elts = node.elts
 
@@ -856,7 +955,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # print(ast.dump(node))
         indices = self._parse_for_indices(node.target)
         iterator, ranges = self._parse_for_iterator(node.iter)
-        
+
         if len(indices) != len(ranges):
             raise DaceSyntaxError(
                 self, node,
@@ -943,12 +1042,12 @@ class ProgramVisitor(ExtNodeVisitor):
             outputs={"out"},
             code="out = {}".format(value))
         state.add_edge(tasklet_node, "out", write_node, None, memlet)
-            # dace.Memlet.from_array(name, write_node.desc(self.sdfg)))
-    
+        # dace.Memlet.from_array(name, write_node.desc(self.sdfg)))
+
     def _get_variable_name(self, node, name):
         if name not in self.variables:
-            raise DaceSyntaxError(
-                self, node, 'Array "%s" used before definition' % name)
+            raise DaceSyntaxError(self, node,
+                                  'Array "%s" used before definition' % name)
         else:
             new_name = self.variables[name]
             if new_name not in self.sdfg.arrays:
@@ -977,7 +1076,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         state = self._add_state("assign_%d" % node.lineno)
 
-        # Return result
+        # Return result (UnaryOp, BinOp, BoolOp, Call, etc.)
         results = self.visit(node.value)
         if not isinstance(results, (tuple, list)):
             results = [results]
@@ -1147,7 +1246,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise DaceSyntaxError(
                 self, node, "Array dtype must either be a dace/numpy type or "
-                            " the dtype attribute of another array.")
+                " the dtype attribute of another array.")
 
         return dtype
 
@@ -1303,7 +1402,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                   'Use of undefined variable "%s"' % name)
         return self.variables[name]
 
-
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
         # A string constant returns itself
@@ -1330,5 +1428,68 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Tuple(self, node: ast.Tuple):
         # Recursively loop over elements
         return tuple(self.visit(a) for a in node.elts)
+
+    def visit_Lambda(self, node: ast.Lambda):
+        # Return a string representation of the function
+        return astutils.unparse(node)
+
     ############################################################
 
+    def _gettype(self, opnode: ast.AST):
+        """ Returns an operand and its type as a 2-tuple of strings. """
+        operand = self.visit(opnode)
+        if isinstance(operand, (list, tuple)) and len(operand) != 1:
+            raise DaceSyntaxError(self, opnode, 'Operand cannot be a tuple')
+        operand = operand[0]
+
+        if isinstance(operand, str) and operand in self.sdfg.arrays:
+            return operand, type(self.sdfg.arrays[operand]).__name__
+        else:
+            return operand, type(operand).__name__
+
+    def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
+                  op1: ast.AST, op2: ast.AST):
+        default_impl = Config.get('frontend', 'implementation')
+        opname = type(node.op).__name__
+
+        # Parse operands
+        operand1, op1type = self._gettype(op1)
+        if op2 is not None:
+            operand2, op2type = self._gettype(op2)
+        else:
+            operand2, op2type = None, None
+
+        func = oprepo.Replacements.getop(
+            op1type, opname, implementation=default_impl, otherclass=op2type)
+        if func is None:
+            # Check for SDFG as fallback
+            func = oprepo.Replacements.getop(
+                op1type, opname, otherclass=op2type)
+            if func is None:
+                raise DaceSyntaxError(
+                    self, node,
+                    'Operator "%s" is not defined for types %s and %s' %
+                    (opname, op1type, op2type))
+            print(
+                'WARNING: Operator "%s" is not registered with an %s implementation for'
+                'types %s and %s, falling back to SDFG' %
+                (opname, default_impl, op1type, op2type))
+
+        self._add_state('%s_%d' % (type(node).__name__, node.lineno))
+        result = func(self.sdfg, self.last_state, operand1, operand2)
+        if not isinstance(result, (tuple, list)):
+            return [result]
+        return result
+
+    def visit_UnaryOp(self, node: ast.UnaryOp):
+        return self._visit_op(node, node.operand, None)
+
+    def visit_BinOp(self, node: ast.BinOp):
+        return self._visit_op(node, node.left, node.right)
+
+    def visit_BoolOp(self, node: ast.BoolOp):
+        last = node.values[0]
+        # Syntax of BoolOp is a list of values, we parse left to right
+        for i in range(1, len(node.values)):
+            last = self._visit_op(node, last, node.values[i])
+        return last
