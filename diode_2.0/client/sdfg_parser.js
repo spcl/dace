@@ -7,6 +7,85 @@ class SDFG_Parser {
 
         return this._sdfg.nodes.map(x => new SDFG_State_Parser(x));
     }
+
+    static lookup_symbols(sdfg, state_id, elem, symbols_to_resolve) {
+        // Resolve used symbols by following connectors in reverse order
+        let state = sdfg.nodes[state_id];
+
+        let syms = [];
+
+        if(elem.constructor == Object) {
+            // Memlet
+            let memlets = state.edges.filter(x => x.dst == elem.dst && x.src == elem.src);
+
+            // Recurse into parent (since this a multigraph, all edges need to be looked at)
+            for(let m of memlets) {
+
+                // Find symbols used (may be Indices or Range)
+                let mdata = m.attributes.data.attributes.subset;
+                // Check for indices
+                if(mdata.type == "subsets.Indices") {
+                    // These are constants or variables
+                    // Reverse to have smallest unit first
+                    let tmp = mdata.indices.map(x => x).reverse();
+                    for(let x of tmp) {
+                        // Add the used variables as null and hope that they will be resolved
+                        syms.push({var: x, val: null});
+                    }
+                }
+                else if(mdata.type == "subsets.Range") {
+                    // These are ranges
+                    
+                    // These ranges are not of interest, as they specify what is copied and don't define new variables 
+                }
+
+                // Find parent nodes
+                let parent = sdfg.nodes[state_id].nodes[m.src];
+                let tmp = SDFG_Parser.lookup_symbols(sdfg, state_id, m.src, symbols_to_resolve);
+                syms = [...syms, ...tmp];
+            }
+        }
+        else {
+            // Node
+            let node = state.nodes[elem];
+
+            // Maps (and Consumes) define ranges, extract symbols from there
+            try {
+                let rngs = node.attributes.range.ranges.map(x => x); // The iterator ranges
+                let params = node.attributes.params.map(x => x); // The iterators
+
+                console.assert(rngs.length == params.length, "Ranges and params should have the same count of elements");
+
+                // Reverse from big -> little to little -> big (or outer -> inner to inner -> outer)
+                rngs.reverse();
+                params.reverse();
+
+                for(let i = 0; i < rngs.length; ++i) {
+                    // Check first if the variable is already defined, and if yes, if the value is the same
+                    let fltrd = syms.filter(x => x.var == params[i]);
+                    if(fltrd.length == 0) {
+                        syms.push({var: params[i], val: rngs[i]});
+                    }
+                    else {
+                        if(JSON.stringify(fltrd[0].val) != JSON.stringify(rngs[i])) {
+                            console.warn("Colliding definitions for var " + params[i], fltrd[0].val, rngs[i]);
+                        }
+                    }
+                }
+            }
+            catch(e) {
+                // Not a node defining ranges (every node except maps / consumes)
+            }
+            // Find all incoming edges
+            let inc_edges = state.edges.filter(x => x.dst == elem);
+            for(let e of inc_edges) {
+                let tmp = SDFG_Parser.lookup_symbols(sdfg, state_id, e, symbols_to_resolve);
+                syms = [...syms, ...tmp];
+            }
+        }
+        
+        return syms;
+    }
 }
 
 class SDFG_State_Parser {

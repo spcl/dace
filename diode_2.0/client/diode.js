@@ -579,6 +579,33 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.diode.renderPropertiesInWindow(transthis, node, params);
     }
 
+    getSDFGElementReference(node_id, state_id) {
+        if(node_id.constructor == Object) {
+            return this.getEdgeReference(node_id, state_id);
+        }
+        else {
+            return this.getNodeReference(node_id, state_id);
+        }
+    }
+
+    getEdgeReference(node_id, state_id) {
+        let o = this.getSDFGDataFromState();
+        let sdfg = o['sdfg'];
+
+        for(let x of sdfg.nodes) {
+            if(x.id == state_id) {
+                for(let e of x.edges) {
+
+                    if(e.src == node_id.src && e.dst == node_id.dst) {
+                        return [e.attributes.data, sdfg];
+                    }
+                }
+
+                break;
+            }
+        }
+    }
+
     getNodeReference(node_id, state_id) {
         let o = this.getSDFGDataFromState();
         let sdfg = o['sdfg'];
@@ -613,7 +640,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             When a node-property is changed, the changed data is written back
             into the state.
         */
-        let nref = this.getNodeReference(node.node_id, node.state_id);
+        let nref = this.getSDFGElementReference(node.node_id, node.state_id);
 
         nref[0].attributes[name] = value;
 
@@ -3088,61 +3115,402 @@ class DIODE {
         }
     }
 
-    create_visual_range_representation(__start, __end, __step, __tile, mayfail=true) {
-        // NOTE: This context is eval()'d. This means that all variables must be in the forbidden namespace (__*) or they might be erroneously evaluated.
-        let __symbols = {};
-        let __e_start = null;
-        let __e_end = null;
-        let __e_step = null;
-        let __e_tile = null;
-        while(true) {
-            let __failed = false;
-            let __symbol_setter = Object.entries(__symbols).map(x => "let " + x[0] + "=" + x[1]+";").join("");
-            try {
-                // Define a couple of dace-functions that are used here
-                let Min = (...x) => Math.min(...x);
-                let int_ceil = (a, b) => Math.ceil(a / b);
+    create_visual_access_representation(elems, data) {
 
-                __e_start = eval(__symbol_setter + __start);
-                __e_end = eval(__symbol_setter + __end) + 1; // The DaCe ranges are inclusive - we want to exclusive here.
-                __e_step = eval(__symbol_setter + __step);
-                __e_tile = eval(__symbol_setter + __tile);
+        let __access_indices = elems[0];
+        let __ranges = elems[1];
+        let __user_input = elems[2];
+        let __additional_defines = {};
+
+        // Add standard functions
+        __additional_defines['Min'] = "(...x) => Math.min(...x)";
+        __additional_defines['int_ceil'] = "(a,b) => Math.ceil(a/b)";
+
+        for(let x of __user_input) {
+            let _r = window.prompt("Enter a value for symbol " + x);
+            if(_r != null) {
+
+                // Write the value 
+                __additional_defines[x] = _r;
             }
-            catch(e) {
-                if(e instanceof ReferenceError) {
-                    // Expected, let the user provide inputs
-                    if(mayfail) {
-                        __failed = true;
-                        break;
-                    }
-                    else {
-                        // Prompt the user and retry
-                        let __sym_name = e.message.split(" ")[0];
-                        let ret = window.prompt("Enter a value for Symbol `" + __sym_name + "`");
-                        if(ret == null) throw e;
-                        __symbols[__sym_name] = parseInt(ret);
-                        __failed = true;
-                    }
-                }
-                else {
-                    // Unexpected error, rethrow
-                    throw e;
-                }
-            }
-            if(!__failed) {
+            else {
+                // Aborted
                 break;
             }
         }
 
-        let __e_size = __e_end - __e_start;
+        // Read the data object properties
+        console.log("data", data);
+        if(data.type != "Array") {
+            console.warn("Non-Array accessed", data);
+            // #TODO: What to do here?
+        }
+        let __mem_dims = data.attributes.shape;
+        console.assert(__mem_dims != undefined);
+        // Try to eval the functions
+        let __eval_func = () => {
+            let __defs = Object.keys(__additional_defines).map(x => "let " + x + " = " + __additional_defines[x]).join(";") + ";";
+            __mem_dims = __mem_dims.map(x => eval(__defs + x));
+        };
+        __eval_func();
+
+
+        let __tbl_container = document.createElement("div");
+        let __tbl_hor = document.createElement("div");
+        __tbl_hor.classList = "flex_row";
+        __tbl_hor.style = "flex-wrap: nowrap; justify-content: flex-start;";
+        let __axis_x_info = document.createElement("div");
+        {
+            __axis_x_info.classList = "flex_row";
+            __axis_x_info.style = "justify-content: space-between;";
+
+
+            for(let __i = 0; __i < 2; ++__i) {
+                let __tmp = document.createElement("div");
+                // Take the second dimension
+                try {
+                    __tmp.innerText = (__i == 0) ? "0" : __mem_dims[1];
+                }
+                catch(__e) {
+                    __tmp.innerText = (__i == 0) ? "Start" : "End";
+                }
+                __axis_x_info.appendChild(__tmp);
+            }
+        }
         
+        let __axis_y_info = document.createElement("div");
+        {
+            __axis_y_info.classList = "flex_column";
+            __axis_y_info.style = "justify-content: space-between;";
+
+
+            for(let __i = 0; __i < 2; ++__i) {
+                let __tmp = document.createElement("div");
+                // Take the first dimension
+                try {
+                    __tmp.innerText = (__i == 0) ? "0" : __mem_dims[0];
+                }
+                catch(__e) {
+                    __tmp.innerText = (__i == 0) ? "Start" : "End";
+                }
+                __axis_y_info.appendChild(__tmp);
+            }
+        }
+
+        let __tbl_vert = document.createElement("div");
+        __tbl_vert.classList = "flex_col";
+        if(data != null) {
+            __tbl_vert.appendChild(__axis_x_info);
+            __tbl_hor.appendChild(__axis_y_info);
+        }
+        // Now create a table with the according cells for this
+        let __size = 10;
+        if(__mem_dims.some(x => x > 128)) __size = 5;
+        
+        if(__mem_dims.length < 2) __mem_dims.push(1); // Force at least 2 dimensions (2nd dim size is trivial: 1)
+
+        console.log("access indices", __access_indices);
+        console.log("ranges", __ranges);
+
+        // This is very limited; future work can take place here
+        // The current implementation works only by fixing all but one range per dimension.
+        // This is done for 2 main reasons:
+        // 1) Performance. It is not possible to determine the access patterns in O(n) without either using an LSE
+        //        with range side conditions (which is hard to solve in "naked" JS). The only alternative is to actually
+        //        scan __all__ possible values, which is infeasible on a browser client.
+        // 2) Visual Cluttering. Seeing too much at once is not helpful. Implementing an easy-to-use UI solving this problem
+        //        is beyond the scope of the initial PoC.
+        
+        // Obtain fixed ranges (all but smallest)
+        let __fixed_rngs = __ranges.slice(1).map(x => x).reverse();
+        // Get the variable range (smallest)
+        let __var_rng = __ranges[0];
+        
+        let __rng_inputs = [];
+
+        let __create_func = () => null;
+
+        let __main = x => x.main != undefined ? x.main : x;
+        // Add inputs for every fixed range
+        {
+            let __defs = Object.keys(__additional_defines).map(x => "let " + x + " = " + __additional_defines[x]).join(";") + ";";
+            
+            let input_cont = document.createElement("div");
+            input_cont.classList = "flex_column";
+            for(let r of __fixed_rngs) {
+                let _lbl = document.createElement("label");
+                let _in = document.createElement("input");
+                _in.type = "number";
+                _in.min = "0";
+                _in.step = "1";
+
+                _in.addEventListener("change", _click => {
+                    // #TODO: Trigger update
+                    __create_func();
+                });
+                
+                _in.value = eval(__defs + __main(r.val.start));
+                _lbl.innerText = "Range iterator " + r.var + " over [" + __main(r.val.start) + ", " + __main(r.val.end) + "] in steps of " + __main(r.val.step);
+                _in.setAttribute("data-rname", r.var);
+                _lbl.appendChild(_in);
+                __rng_inputs.push(_in);
+
+                input_cont.appendChild(_lbl);
+            }
+            __tbl_container.appendChild(input_cont);    
+        }
+        
+        __create_func = () => {
+            __tbl_vert.innerHTML = "";
+            let __all_fixed = {};
+            Object.assign(__all_fixed, __additional_defines);
+            // Get the fixed values
+            {
+                for(let i of __rng_inputs) {
+                    let rname = i.getAttribute("data-rname");
+                    let val = i.value;
+
+                    __all_fixed[rname] = val;
+                }
+            }
+
+            let __defstring = Object.keys(__all_fixed).map(x => "let " + x + " = " + __all_fixed[x] + ";").join("");
+
+            const __ellision_thresh = 32;
+
+            let __mark_cells = {};
+
+            // Evaluate the range
+            {
+                let feval = (x) => {
+                    return eval(__defstring + x);
+                };
+                let __it = __var_rng.var;
+                let __r_s = __main(__var_rng.val.start);
+                let __r_e = __main(__var_rng.val.end);
+                let __r_step = __main(__var_rng.val.step);
+                
+                // Remember: Inclusive ranges
+                for(let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
+
+                    // Add this to the full evaluation
+                    let __a_i = __access_indices.map(x => x);
+                    __a_i = __a_i.map(__y => feval("let " + __it + " = " + __x + ";" + __y.var));
+
+                    let __tmp = __mark_cells[__a_i[0]];
+                    if(__tmp == undefined) {
+                        __mark_cells[__a_i[0]] = [];
+                    }
+                    __mark_cells[__a_i[0]].push(__a_i[1]);
+                }
+            }
+
+            for(let __dim_2 = 0; __dim_2 < __mem_dims[1]; ++__dim_2) {
+
+                // Check ellision
+                if(__mem_dims[1] > __ellision_thresh && __dim_2 > __ellision_thresh / 2 && __dim_2 < __mem_dims[1] - __ellision_thresh / 2) {
+                    // Elide
+                    if(__dim_2 - 1 == __ellision_thresh / 2) {
+                        // Add ellision info _once_
+                        let __row = document.createElement("div");
+                        __row.classList = "flex_row";
+                        __row.style = "justify-content: flex-start;flex-wrap: nowrap;"
+                        __row.innerText = "...";
+                        __tbl_vert.appendChild(__row);
+                    }
+                    continue;
+                }
+                let __row = document.createElement("div");
+                __row.classList = "flex_row";
+                __row.style = "justify-content: flex-start;flex-wrap: nowrap;"
+
+                for(let __i = 0; __i < __mem_dims[0]; ++__i) {
+                    // Check ellision
+                    if(__mem_dims[0] > __ellision_thresh && __i > __ellision_thresh / 2 && __i < __mem_dims[0] - __ellision_thresh / 2) {
+                        // Elide
+                        if(__i - 1 == __ellision_thresh / 2) {
+                            // Add ellision info _once_
+                            let __cell = document.createElement('div');
+                            //let __colorstr = "background: white;";
+                            //__cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid black;" + __colorstr;
+                            __cell.innerText = "...";
+                            __row.appendChild(__cell);
+                        }
+                        continue;
+                    }
+
+                    let __set_marking = false;
+                    {
+                        let __tmp = __mark_cells[__dim_2];
+                        if(__tmp != undefined) {
+                            if(__tmp.includes(__i)) __set_marking = true;
+                        }
+                    }
+
+                    let __cell = document.createElement('div');
+                    let __colorstr = "background: white;";
+                    if(__set_marking) {
+                        __colorstr = "background: SpringGreen;";
+                    }
+                    
+                    __cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid black;" + __colorstr;
+                    __row.appendChild(__cell);
+                }
+
+                __tbl_vert.appendChild(__row);
+            }
+            __tbl_hor.appendChild(__tbl_vert);
+        };
+        __tbl_container.appendChild(__tbl_hor);
+
+        __create_func();
+
+        return __tbl_container;
+    }
+
+    create_visual_range_representation(__starts, __ends, __steps, __tiles, __mayfail=true, __data=null) {
+        let __obj_to_arr = x => (x instanceof Array) ? x : [x];
+
+        __starts = __obj_to_arr(__starts);
+        __ends = __obj_to_arr(__ends);
+        __steps = __obj_to_arr(__steps);
+        __tiles = __obj_to_arr(__tiles);
+
+        // NOTE: This context is eval()'d. This means that all variables must be in the forbidden namespace (__*) or they might be erroneously evaluated.
+        let __symbols = {};
+
+        let __e_starts = [];
+        let __e_ends = [];
+        let __e_steps = [];
+        let __e_tiles = [];
+        let __e_sizes = [];
+
+        for(let __r_it = 0; __r_it < __starts.length; ++__r_it) {
+
+            let __start = __starts[__r_it];
+            let __end = __ends[__r_it];
+            let __step = __steps[__r_it];
+            let __tile = __tiles[__r_it];
+
+            let __e_start = null;
+            let __e_end = null;
+            let __e_step = null;
+            let __e_tile = null;
+
+            let __mem_dims = [];
+            while(true) {
+                let __failed = false;
+                let __symbol_setter = Object.entries(__symbols).map(x => "let " + x[0] + "=" + x[1]+";").join("");
+                try {
+                    // Define a couple of dace-functions that are used here
+                    let Min = (...x) => Math.min(...x);
+                    let int_ceil = (a, b) => Math.ceil(a / b);
+
+                    __e_start = eval(__symbol_setter + __start);
+                    __e_end = eval(__symbol_setter + __end) + 1; // The DaCe ranges are inclusive - we want to exclusive here.
+                    __e_step = eval(__symbol_setter + __step);
+                    __e_tile = eval(__symbol_setter + __tile);
+
+                    if(__data != null) {
+                        let __shapedims = __data.attributes.shape.length;
+                        __mem_dims = [];
+                        for(let __s = 0; __s < __shapedims; ++__s) {
+                            __mem_dims.push(eval(__symbol_setter + __data.attributes.shape[__s]));
+                        }
+                    }
+                }
+                catch(e) {
+                    if(e instanceof ReferenceError) {
+                        // Expected, let the user provide inputs
+                        if(__mayfail) {
+                            __failed = true;
+                            break;
+                        }
+                        else {
+                            // Prompt the user and retry
+                            let __sym_name = e.message.split(" ")[0];
+                            let __ret = window.prompt("Enter a value for Symbol `" + __sym_name + "`");
+                            if(__ret == null) throw e;
+                            __symbols[__sym_name] = parseInt(__ret);
+                            __failed = true;
+                        }
+                    }
+                    else {
+                        // Unexpected error, rethrow
+                        throw e;
+                    }
+                }
+                if(!__failed) {
+                    break;
+                }
+            }
+
+            let __e_size = __e_end - __e_start;
+
+            __e_starts.push(__e_start);
+            __e_ends.push(__e_end);
+            __e_steps.push(__e_step);
+            __e_tiles.push(__e_tile);
+            __e_sizes.push(__e_size);
+        }
+        
+        let __tbl_container = document.createElement("div");
+        let __tbl_hor = document.createElement("div");
+        __tbl_hor.classList = "flex_row";
+        __tbl_hor.style = "flex-wrap: nowrap;";
+        let __axis_x_info = document.createElement("div");
+        {
+            __axis_x_info.classList = "flex_row";
+            __axis_x_info.style = "justify-content: space-between;";
+
+
+            for(let __i = 0; __i < 2; ++__i) {
+                let __tmp = document.createElement("div");
+                // Take the second dimension
+                try {
+                    __tmp.innerText = (__i == 0) ? "0" : __mem_dims[1];
+                }
+                catch(__e) {
+                    __tmp.innerText = (__i == 0) ? "Start" : "End";
+                }
+                __axis_x_info.appendChild(__tmp);
+            }
+        }
+        
+        let __axis_y_info = document.createElement("div");
+        {
+            __axis_y_info.classList = "flex_column";
+            __axis_y_info.style = "justify-content: space-between;";
+
+
+            for(let __i = 0; __i < 2; ++__i) {
+                let __tmp = document.createElement("div");
+                // Take the first dimension
+                try {
+                    __tmp.innerText = (__i == 0) ? "0" : __mem_dims[0];
+                }
+                catch(__e) {
+                    __tmp.innerText = (__i == 0) ? "Start" : "End";
+                }
+                __axis_y_info.appendChild(__tmp);
+            }
+        }
+
+        if(__data != null) {
+            __tbl_container.appendChild(__axis_x_info);
+            __tbl_hor.appendChild(__axis_y_info);
+        }
         // Now create a table with the according cells for this
         // Since this is done on a per-dimension basis, the table only has to be 1D, so we use a flexbox for this (easier)
         let __row = document.createElement("div");
         __row.classList = "flex_row";
-        __row.style = "justify-content: flex-start;"
+        __row.style = "justify-content: flex-start;flex-wrap: nowrap;"
 
         let __size = 10;
+        let __e_size = __e_sizes[0]; // #TODO: Adapt for multi-dim ranges if those are requested
+        let __e_step = __e_steps[0];
+        let __e_tile = __e_tiles[0];
+    
         if(__e_size > 512) __size = 5;
         
         for(let __i = 0; __i < __e_size; ++__i) {
@@ -3162,7 +3530,9 @@ class DIODE {
             __row.appendChild(__cell);
         }
 
-        return __row;
+        __tbl_hor.appendChild(__row);
+        __tbl_container.appendChild(__tbl_hor);
+        return __tbl_container;
     }
 
     getMatchingInput(transthis, x, node) {
@@ -3185,7 +3555,199 @@ class DIODE {
             return elem;
         };
 
-        let create_range_input = () => {
+        let __resolve_initials = (__initials, __syms) => {
+            "use strict";
+            delete window.i; // Whoever thought it was a good idea to define a global variable named 'i'...
+            // We have to operate in the forbidden namespace (__*)
+
+            // Filter out all constants first
+            __initials = __initials.filter(x => isNaN(x.var));
+
+            // Add a merger function
+            let __merger = (a, b) => {
+                let acpy = a.map(x => x);
+                for(let y of b) {
+                    if(acpy.filter(x => (x == y) || (x.var != undefined && (JSON.stringify(x.var) == JSON.stringify(y.var)))).length > 0) {
+                        continue;
+                    }
+                    else {
+                        acpy.push(y);
+                    }
+                }
+                return acpy;
+            };
+            
+            let __needed_defs = [];
+            let __placeholder_defines = [];
+            let __user_input_needed = [];
+            while(true) {
+                let __retry = false;
+                let __placeholder_def_str = __placeholder_defines.map(x => "let " + x + " = 1").join(";");
+                // Inject the known functions as well
+                __placeholder_def_str += ";let Min = (...e) => Math.min(...e); let int_ceil = (a, b) => Math.ceil(a/b);"
+                for(let __i of __initials) {
+                    // For every initial, find the first defining element (element with the same name that assigns an expression)
+                    try {
+                        let __test = eval(__placeholder_def_str + __i.var);
+                    }
+                    catch(e) {
+                        if(e instanceof ReferenceError) {
+                            let __sym_name = e.message.split(" ")[0];
+                            let __defs = __syms.filter(x => x.var == __sym_name && x.val != null);
+                            if(__defs.length > 0) {
+                                // Found a matching definition
+                                __placeholder_defines.push(__sym_name);
+                                __needed_defs = __merger(__needed_defs, [__defs[0]]);
+
+                                let __j = 0;
+                                for(; __j < __syms.length; ++__j) {
+                                    if(JSON.stringify(__syms[__j]) == JSON.stringify(__defs[0])) {
+                                        break;
+                                    }
+                                }
+                                let __f = x => x.main != undefined ? x.main : x;
+
+                                // Recurse into range subelements (if applicable)
+                                if(__defs[0].val != null && __defs[0].val.start != undefined) {
+                                    // find the starting node
+                                    
+                                    let __tmp = __resolve_initials([{var: __f(__defs[0].val.start), val: null}], __syms.slice(__j));
+                                    __needed_defs = __merger(__needed_defs, __tmp[1]);
+                                    __user_input_needed = __merger(__user_input_needed, __tmp[2]);
+                                    __tmp = __resolve_initials([{var: __f(__defs[0].val.end), val: null}], __syms.slice(__j));
+                                    __needed_defs = __merger(__needed_defs, __tmp[1]);
+                                    __user_input_needed = __merger(__user_input_needed, __tmp[2]);
+                                    __tmp = __resolve_initials([{var: __f(__defs[0].val.step), val: null}], __syms.slice(__j));
+                                    __needed_defs = __merger(__needed_defs, __tmp[1]);
+                                    __user_input_needed = __merger(__user_input_needed, __tmp[2]);
+                                    __tmp = __resolve_initials([{var: __f(__defs[0].val.tile), val: null}], __syms.slice(__j));
+                                    __needed_defs = __merger(__needed_defs, __tmp[1]);
+                                    __user_input_needed = __merger(__user_input_needed, __tmp[2]);
+                                }
+                                else {
+                                    // Recurse into the found value.
+                                    let __tmp = __resolve_initials([{var: __f(__defs[0].val), val: null}], __syms.slice(__j));
+                                    console.log("rec", __tmp);
+                                    // Add elements to lists
+                                    __needed_defs = __merger(__needed_defs, __tmp[1]);
+                                    __user_input_needed = __merger(__user_input_needed, __tmp[2]);
+                                }
+                            }
+                            else {
+                                // Need user input for this Symbol (defer actually requesting that info from the user)
+                                __user_input_needed.push(__sym_name);
+                                // Also promise to define the symbol later
+                                __placeholder_defines.push(__sym_name);
+                            }
+                            __retry = true;
+                            break;
+                        }
+                        else {
+                            // Rethrow unknown exceptions
+                            throw e;
+                        }
+                    }
+                    if(__retry) break;
+                }
+                if(__retry) continue;
+
+
+                break;
+            }
+            // Return a (cleaned) list of the required elements
+            return [__initials, __needed_defs, __user_input_needed];
+        };
+
+        let create_index_subset_input = (transthis, x, node) => {
+            // Similar to range, but actually binding values
+            // This therefore occurs in memlets inside Maps mostly
+            // (Except when accessing using constants)
+
+            // Because the indices are used to access data (arrays),
+            // there needs to be lookup by finding the parent nodes (potentially using connectors).
+            // A lookup may traverse to top-level and throw if the symbols are not resolved yet.
+
+            let elem = document.createElement("button");
+            elem.innerText = "Show";
+
+            elem.addEventListener("click", (_click) => {
+                this.project().request(['sdfg_object'], resp => {
+                    let tmp = resp['sdfg_object'];
+                    tmp = JSON.parse(tmp);
+                    let syms = [];
+                    for(let v of Object.values(tmp)) {
+                        let tsyms = SDFG_Parser.lookup_symbols(v, node.state_id, node.node_id, null);
+                        syms = [...syms, ...tsyms];
+                        console.log("syms", syms);
+
+                        // Got the symbols, now resolve.
+
+                        // Resolve (ltr is inner-to-outer)
+                    }
+                    // Rationale here: Render the underlying data as a basis,
+                    // then use index and range information to find access patterns
+
+                    // Find the initial values
+                    let initials = [];
+                    for(let x of syms) {
+                        if(x.val != null) break;
+                        initials.push(x);
+                    }
+                    // initials contains the indices used. Resolve all ranges defining those
+
+                    let newelems = __resolve_initials(initials, syms);
+                    console.log("newelems", newelems);
+
+                    let data = node.data().props.filter(x => x.name == "data")[0];
+
+                    let data_objs = [];
+                    for(let x of Object.values(tmp)) {
+                        data_objs.push(x.attributes._arrays[data.value]);
+                    }
+                    data_objs = data_objs.filter(x => x != undefined);
+                    if(data_objs.length > 0) {
+                        data = data_objs[0];
+                    }
+
+                    let popup_div = document.createElement('div');
+                
+                    let popup_div_body = document.createElement('div');
+
+                    let e = this.create_visual_access_representation(
+                        newelems, data                    
+                    );
+
+                    popup_div_body.appendChild(e);
+                    popup_div.appendChild(popup_div_body);
+
+                    w2popup.open({
+                        title: "Range property",
+                        body: popup_div,
+                        //buttons: apply_but,
+                        width: 1280,
+                        height: 800,
+                    });
+                }, {});
+            });
+
+            return $(elem);
+        }
+
+        let create_range_input = (transthis, x, node) => {
+
+            // As ranges _usually_ operate on data, check if a property named "data" is in the same object.
+            // If it is, we can inform the design of visualizations with the shape of the data object (array)
+            // #TODO: Always update this when changed (in the current implementation, it is possible that stale values are read for different properties)
+            let data_obj = null;
+            if(node.data != undefined)
+            {
+                let tmp = node.data().props.filter(x => x.name == "data");
+                if(tmp.length > 0) {
+                    // Found data (name only, will resolve when rendering is actually requested)
+                    data_obj = tmp[0];
+                }
+            }
+
             let elem = document.createElement("button");
             elem.innerText = "Show";
 
@@ -3227,11 +3789,38 @@ class DIODE {
                     }
                     range_elems.push(input_refs);
                     let visbut = document.createElement('div');
-                    visbut.style = "min-width: 200px; min-height: 1rem;flex-grow: 1";
+                    visbut.style = "min-width: 200px; min-height: 1rem;flex-grow: 1;display: flex;";
                     visbut.addEventListener('click', () => {
-                        let vis_elem = this.create_visual_range_representation(...input_refs.map(x => x.value), false);
-                        visbut.innerHTML ="";
-                        visbut.appendChild(vis_elem);
+
+                        // Resolve the data name and set the object accordingly
+                        if(data_obj != null) {
+
+                            this.project().request(['sdfg_object'], sdfg_obj => {
+                                sdfg_obj = JSON.parse(sdfg_obj.sdfg_object);
+                                console.log("got sdfg object", sdfg_obj);
+                                // Iterate over all SDFGs, checking arrays and returning matching data elements
+
+                                let data_objs = [];
+                                for(let x of Object.values(sdfg_obj)) {
+                                    data_objs.push(x.attributes._arrays[data_obj.value]);
+                                }
+                                data_objs = data_objs.filter(x => x != undefined);
+                                if(data_objs.length > 0) {
+                                    data_obj = data_objs[0];
+                                }
+
+                                let vis_elem = this.create_visual_range_representation(...input_refs.map(x => x.value), false, data_obj);
+                                visbut.innerHTML ="";
+                                visbut.appendChild(vis_elem);
+                            }, {});
+                            
+                        }
+                        else {
+                            let vis_elem = this.create_visual_range_representation(...input_refs.map(x => x.value), false, data_obj);
+                            visbut.innerHTML ="";
+                            visbut.appendChild(vis_elem);
+                        }
+                        
                     });
                     visbut.innerText = "Click here for visual representation";
                     r_row.appendChild(visbut);
@@ -3391,9 +3980,17 @@ class DIODE {
             return elem;
         }
         else if(x.type == "SubsetProperty") {
-            elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
-                transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
-            }, JSON.stringify(x.value));
+            if(x.value == null) {
+                elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
+                    transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
+                }, JSON.stringify(x.value));
+            }
+            else if(x.value.type == "subsets.Indices") {
+                elem = create_index_subset_input(transthis, x, node);
+            }
+            else {
+                elem = create_range_input(transthis, x, node);
+            }
         }
         else if(x.type == "SymbolicProperty") {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
