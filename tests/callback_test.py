@@ -1,4 +1,6 @@
 import dace
+import numpy
+
 
 # Performs square
 def notypes():

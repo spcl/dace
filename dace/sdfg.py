@@ -1373,7 +1373,7 @@ subgraph cluster_state_{state} {{
             return False
         return True
 
-    def apply_strict_transformations(self):
+    def apply_strict_transformations(self, validate=True):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -1389,23 +1389,24 @@ subgraph cluster_state_{state} {{
         opt = optimizer.SDFGOptimizer(self, inplace=True)
         fusions = 0
         arrays = 0
-        options = [
-            match for match in opt.get_pattern_matches(strict=True)
-            if isinstance(match, (StateFusion, RedundantArray))
-        ]
-        while options:
-            sdfg = self.sdfg_list[options[0].sdfg_id]
-            options[0].apply(sdfg)
-            self.validate()
-            if isinstance(options[0], StateFusion):
-                fusions += 1
-            if isinstance(options[0], RedundantArray):
-                arrays += 1
-
-            options = [
-                match for match in opt.get_pattern_matches(strict=True)
-                if isinstance(match, (StateFusion, RedundantArray))
-            ]
+        applied = True
+        while applied:
+            applied = False
+            # Find and apply immediately
+            for match in opt.get_pattern_matches(
+                    strict=True, patterns=(RedundantArray, StateFusion)):
+                sdfg = self.sdfg_list[match.sdfg_id]
+                match.apply(sdfg)
+                if validate:
+                    self.validate()
+                if isinstance(match, StateFusion):
+                    print("F")
+                    fusions += 1
+                if isinstance(match, RedundantArray):
+                    print("A")
+                    arrays += 1
+                applied = True
+                break
 
         if Config.get_bool('debugprint') and (fusions > 0 or arrays > 0):
             print('Automatically applied {} strict state fusions and removed'

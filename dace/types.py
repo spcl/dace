@@ -185,12 +185,12 @@ class typeclass(object):
     """
 
     def __init__(self, wrapped_type):
-        self.type = wrapped_type
-        self.ctype = _CTYPES[wrapped_type]
-        self.ctype_unaligned = self.ctype
-        self.dtype = self
-        self.bytes = _BYTES[wrapped_type]
-        self.materialize_func = None
+        self.type = wrapped_type  # Type in Python
+        self.ctype = _CTYPES[wrapped_type]  # Type in C
+        self.ctype_unaligned = self.ctype  # Type in C (without alignment)
+        self.dtype = self  # For compatibility support with numpy
+        self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
+        self.materialize_func = None  # Materialize function for immaterial types
 
     def __hash__(self):
         return hash((self.type, self.ctype, self.materialize_func))
@@ -198,6 +198,10 @@ class typeclass(object):
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
         return self.type.__name__
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type]
 
     def is_complex(self):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
@@ -242,6 +246,10 @@ class pointer(typeclass):
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
         self.materialize_func = None
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return ctypes.POINTER(_FFI_CTYPES[self.type])
 
 
 def immaterial(dace_data, materialize_func):
@@ -293,6 +301,7 @@ class struct(typeclass):
                 self.bytes += v.bytes
 
     def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
         # Populate the ctype fields for the struct class.
         fields = []
         for k, v in self._data.items():
@@ -318,6 +327,7 @@ class struct(typeclass):
                 for tname, t in sorted(self._data.items())
             ]))
 
+
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
 
@@ -328,7 +338,8 @@ class callback(typeclass):
         self.input_type_cstring = [arg.ctype if arg is not None else "" for arg in variadic_args]
         self.bytes = int64.bytes
         self.materialize_func = None
-        self.return_ctype = _FFI_CTYPES[return_type.type] if return_type is not None else None
+        self.return_ctype = _FFI_CTYPES[
+            return_type.type] if return_type is not None else None
         self.input_ctypes = []
         for some_arg in variadic_args:
             self.input_ctypes.append(_FFI_CTYPES[some_arg.type] if some_arg is not None else None)
@@ -337,14 +348,15 @@ class callback(typeclass):
         self.type = self
         self.ctype = self
 
-    def get_cf_object(self):
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
         cf_object = ctypes.CFUNCTYPE(self.return_ctype, *self.input_ctypes)
         return cf_object
 
     def signature(self, name):
         cstring = self.return_type_cstring + " " + "(*" + name + ")("
         for index, inp_arg in enumerate(self.input_type_cstring):
-            if index>0:
+            if index > 0:
                 cstring = cstring + ","
             cstring = cstring + inp_arg
         cstring = cstring + ")"
@@ -358,6 +370,7 @@ class callback(typeclass):
 
     def __repr__(self):
         return "dace.callback"
+
 
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)

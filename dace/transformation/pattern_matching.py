@@ -374,19 +374,19 @@ def match_pattern(state_id,
             match_found = pattern.can_be_applied(
                 state, subgraph, idx, sdfg, strict=strict)
             if match_found:
-                bisect.insort_left(
-                    matches,
-                    pattern(
-                        sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx))
+                #bisect.insort_left(
+                #    matches,
+                #    pattern(
+                #        sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx))
+                yield pattern(
+                    sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx)
 
     # Recursive call for nested SDFGs
     for node in state.nodes():
         if isinstance(node, dace.graph.nodes.NestedSDFG):
             sub_sdfg = node.sdfg
             for i, sub_state in enumerate(sub_sdfg.nodes()):
-                matches += match_pattern(i, sub_state, pattern, sub_sdfg)
-
-    return matches
+                yield from match_pattern(i, sub_state, pattern, sub_sdfg)
 
 
 def match_stateflow_pattern(sdfg,
@@ -423,16 +423,15 @@ def match_stateflow_pattern(sdfg,
             match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
                                                  strict)
             if match_found:
-                bisect.insort_left(
-                    matches,
-                    pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx))
+                #bisect.insort_left(
+                #    matches,
+                #    pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx))
                 # matches.append(
                 #     pattern(pattern, state_id, subgraph, options))
+                yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
 
     # Recursive call for nested SDFGs
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                matches += match_stateflow_pattern(node.sdfg, pattern)
-
-    return matches
+                yield from match_stateflow_pattern(node.sdfg, pattern)
