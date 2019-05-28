@@ -174,7 +174,7 @@ class Transformation(object):
             in match. Used for ordering transformations consistently.
         """
         if type(self) != type(other):
-            return type(self) < type(other)
+            return type(self).__name__ < type(other).__name__
 
         self_ids = iter(self.subgraph.values())
         other_ids = iter(self.subgraph.values())
@@ -360,8 +360,6 @@ def match_pattern(state_id,
     # Handling VF2 in networkx for now
     digraph = collapse_multigraph_to_nx(state)
 
-    matches = []
-
     for idx, expression in enumerate(pattern.expressions()):
         cexpr = collapse_multigraph_to_nx(expression)
         graph_matcher = iso.DiGraphMatcher(
@@ -409,8 +407,6 @@ def match_stateflow_pattern(sdfg,
     # Handling VF2 in networkx for now
     digraph = collapse_multigraph_to_nx(sdfg)
 
-    matches = []
-
     for idx, expression in enumerate(pattern.expressions()):
         cexpr = collapse_multigraph_to_nx(expression)
         graph_matcher = iso.DiGraphMatcher(
@@ -426,8 +422,6 @@ def match_stateflow_pattern(sdfg,
                 #bisect.insort_left(
                 #    matches,
                 #    pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx))
-                # matches.append(
-                #     pattern(pattern, state_id, subgraph, options))
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
 
     # Recursive call for nested SDFGs

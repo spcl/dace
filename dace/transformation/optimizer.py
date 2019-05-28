@@ -106,7 +106,7 @@ class SDFGOptimizer(object):
         pattern_counter = 0
         while True:
             # Print in the UI all the pattern matching options.
-            ui_options = self.get_pattern_matches()
+            ui_options = sorted(self.get_pattern_matches())
             ui_options_idx = 0
             for pattern_match in ui_options:
                 sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
