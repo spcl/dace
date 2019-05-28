@@ -633,6 +633,31 @@ class DIODE_Context_SDFG extends DIODE_Context {
         */
         console.log("symbolPropertyChanged", node.data(), name, value);
         
+        // Search arrays first
+        let o = this.getSDFGDataFromState();
+        let sdfg = o['sdfg'];
+
+        let found = false;
+        let d = node.data();
+        for(let x of Object.keys(sdfg.attributes._arrays)) {
+            if(x == d[0]) {
+                // Matching name
+                sdfg.attributes._arrays[x].attributes[name] = value;
+                found = true;
+                break;
+            }
+        }
+        if(!found) console.error("Did not find symbol " + name + " in SDFG, this is a fatal error");
+
+        let old = this.getState();
+        if(old.type == "SDFG")
+            console.error("Defensive programming no longer allowed; change input");
+        else
+            old.sdfg_data.sdfg = sdfg;
+
+        this.resetState(old);
+
+        this.diode.showStaleDataButton();
     }
 
     propertyChanged(node, name, value) {
