@@ -600,7 +600,6 @@ class ProgramVisitor(ExtNodeVisitor):
                  arrays: Dict[str, data.Data],
                  global_vars: Dict[str, Any],
                  nested: bool = False,
-                 parent_arrays: Dict[str, data.Data] = dict(),
                  variables: Dict[str, str] = dict()):
         self.curnode = None
         self.filename = filename
@@ -608,31 +607,31 @@ class ProgramVisitor(ExtNodeVisitor):
         self.globals = global_vars
         self.nested = nested
 
-        self.global_arrays = OrderedDict()  # type: Dict[str, data.Data]
-        self.global_arrays.update(arrays)
-
-        self.parent_arrays = parent_arrays
+        self.scope_arrays = OrderedDict()  # type: Dict[str, data.Data]
+        self.scope_arrays.update(arrays)
 
         # Entry point to the program
         self.program = None
         self.sdfg = SDFG(name)
         self.last_state = None  # self.sdfg.add_state('init', is_start_state=True)
-        # if not self.nested:
-        self.sdfg.arrays.update(parent_arrays)
-        self.sdfg.arrays.update(arrays)
+        if not self.nested:
+            self.sdfg.arrays.update(arrays)
         self.inputs = {}
         self.outputs = {}
 
         # Keep track of variables and scopes
-        self.variables = {k: k for k in arrays.keys()}  # type: Dict[str, str]
-        self.variables.update(variables)
+        self.scope_vars = {k: k for k in arrays.keys()}  # type: Dict[str, str]
+        self.scope_vars.update(variables)
+        self.variables = dict()
         self.accesses = dict()
 
         # Add symbols. TODO: more elegant way
         for arr in arrays.values():
+            if arr is None:
+                continue
             for dim in arr.shape:
                 if not hasattr(dim, 'free_symbols'): continue
-                self.variables.update(
+                self.scope_vars.update(
                     {str(k): self.globals[str(k)]
                      for k in dim.free_symbols})
 
@@ -656,7 +655,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for n in state.source_nodes()
                     if isinstance(n, nodes.AccessNode) and (
                         self.sdfg.arrays[n.data].transient == False
-                        or n.data in self.parent_arrays)
+                        or n.data in self.scope_arrays)
                 })
             for state in self.sdfg.nodes():
                 outputs.update({
@@ -664,7 +663,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for n in state.sink_nodes()
                     if isinstance(n, nodes.AccessNode) and (
                         self.sdfg.arrays[n.data].transient == False
-                        or n.data in self.parent_arrays)
+                        or n.data in self.scope_arrays)
                 })
         else:
             inputs = {}
@@ -688,7 +687,7 @@ class ProgramVisitor(ExtNodeVisitor):
         result = {}
         result.update({
             k: self.sdfg.arrays[v]
-            for k, v in self.variables.items() if v in self.sdfg.arrays
+            for k, v in self.scope_vars.items() if v in self.sdfg.arrays
         })
 
         return result
@@ -744,9 +743,10 @@ class ProgramVisitor(ExtNodeVisitor):
         return None, None
 
     def _parse_subprogram(self, name, node):
+        scope_arrays = {**self.scope_arrays, **self.sdfg.arrays}
+        scope_vars = {**self.scope_arrays, **self.variables}
         pv = ProgramVisitor(name, self.filename, self.lineoffset,
-                            self.global_arrays, self.globals, True,
-                            self.sdfg.arrays, self.variables)
+                            scope_arrays, self.globals, True, scope_vars)
 
         return pv.parse_program(node)
 
@@ -1035,14 +1035,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Convert memlets to their actual data nodes
         for i in inputs.values():
-            i.data = self.variables[i.data]
+            i.data = self.scope_vars[i.data]
         for o in outputs.values():
-            o.data = self.variables[o.data]
+            o.data = self.scope_vars[o.data]
         return node, inputs, outputs
 
-    def _add_tasklet(self, target, value_node):
-        value = self._parse_value(value_node)
-        print(target, value)
+    def _add_tasklet(self, target, operand):
+        # value = self._parse_value(value_node)
+        print(target, operand)
 
         if isinstance(target, tuple):
             name, subset = target
@@ -1052,26 +1052,34 @@ class ProgramVisitor(ExtNodeVisitor):
             memlet = dace.Memlet.from_array(name, self.sdfg.arrays[name])
 
         state = self._add_state("TaskletState")
+        if operand in self.sdfg.arrays:
+            inputs = {"inp"}
+            code = "out = inp"
+        else:
+            inputs = {}
+            code = "out = {}".format(operand)
         write_node = state.add_write(name)
         tasklet_node = state.add_tasklet(
             name="Tasklet",
-            inputs={},
+            inputs=inputs,
             outputs={"out"},
-            code="out = {}".format(value))
+            code=code)
+        if operand in self.sdfg.arrays:
+            read_node = state.add_read(operand)
+            state.add_edge(read_node, None, tasklet_node, "inp",
+                           dace.Memlet.from_array(
+                               operand, self.sdfg.arrays[operand]))
         state.add_edge(tasklet_node, "out", write_node, None, memlet)
         # dace.Memlet.from_array(name, write_node.desc(self.sdfg)))
 
     def _get_variable_name(self, node, name):
-        if name not in self.variables:
+        if name in self.variables:
+            return self.variables[name]
+        elif name in self.scope_vars:
+            return self.scope_vars[name]
+        else:
             raise DaceSyntaxError(self, node,
                                   'Array "%s" used before definition' % name)
-        else:
-            new_name = self.variables[name]
-            if new_name not in self.sdfg.arrays:
-                arr = self.parent_arrays[new_name]
-                self.sdfg.arrays[new_name] = arr
-
-        return new_name
 
     def visit_Assign(self, node: ast.Assign):
         # Validate assignment targets
@@ -1106,7 +1114,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for target, result in zip(elts, results):
             # Variable assignment
             if isinstance(target, ast.Name):
-                if target.id in self.global_arrays:
+                if target.id in self.scope_vars or target.id in self.variables:
                     raise DaceSyntaxError(
                         self, target,
                         'Cannot reassign value to parameter "%s"' % target.id)
@@ -1117,36 +1125,55 @@ class ProgramVisitor(ExtNodeVisitor):
             # Variable broadcast
             elif isinstance(target, ast.Subscript):
                 print(ast.dump(target))
+                name = rname(target)
+                rng = dace.subsets.Range(astutils.subscript_to_slice(
+                    target, {**self.sdfg.arrays, **self.scope_arrays})[1])
                 if self.nested:
-                    if not target in self.accesses:
-                        tmp_name = "__tmp_{l}_{c}".format(
+                    if (name, rng, 'w') in self.accesses:
+                        self._add_tasklet(self.accesses[(name, rng, 'w')], result)
+                    elif name in self.variables:
+                        aname = self.variables[name]
+                        # rng = dace.subsets.Range(
+                        #     astutils.subscript_to_slice(
+                        #         target, self.sdfg.arrays)[1])
+                        self._add_tasklet((aname, rng), result)
+                    elif ((name, rng, 'r') in self.accesses
+                            or name in self.scope_vars):
+                        vname = "__tmp_{l}_{c}".format(
                             l=target.lineno, c=target.col_offset)
-                        parent_name = self.variables[target.value.id]
-                        parent_array = self.parent_arrays[parent_name]
-                        rng = dace.subsets.Range(
-                            astutils.subscript_to_slice(
-                                target, self.parent_arrays)[1])
+                        self.accesses[(name, rng, 'w')] = vname
+                        parent_name = self.scope_vars[name]
+                        parent_array = self.scope_arrays[parent_name]
+                        # rng = dace.subsets.Range(
+                        #     astutils.subscript_to_slice(
+                        #         target, self.scope_arrays)[1])
                         shape = rng.size()
                         dtype = parent_array.dtype
-                        self.sdfg.add_array(tmp_name, shape, dtype)
-                        self.outputs[tmp_name] = (parent_name, rng)
-                # name = self._get_variable_name(node, target.value.id)
-                # arr = self.sdfg.arrays[name]
-                # self.outputs[name] = (name, dace.subsets.Range.from_array(arr))
-                # # postfix = 0
-                # # new_name = "{n}_{p}".format(n=name, p=postfix)
-                # # while new_name in self.global_arrays:
-                # #     postfix += 1
-                # #     new_name = "{n}_{p}".format(n=name, p=postfix)
-                # rng = dace.subsets.Range(
-                #     astutils.subscript_to_slice(target, self.global_arrays)[1])
-                # # shape = rng.size()
-                # # dtype = self.global_arrays[name].dtype
-                # # self.sdfg.add_array(new_name, shape, dtype)
-                # # self.global_arrays[new_name] = self.sdfg.arrays[new_name]
-                # # self.outputs[new_name] = (name, rng)
+                        self.sdfg.add_array(vname, shape, dtype)
+                        self.outputs[vname] = (parent_name, rng)
+                        self._add_tasklet(vname, result)
+                    else:
+                        raise DaceSyntaxError(
+                            self, target,
+                            'Array "{}" used before definition'.format(name))
+                else:
+                    if name in self.variables:
+                        aname = self.variables[name]
+                        # rng = dace.subsets.Range(
+                        #     astutils.subscript_to_slice(
+                        #         target, self.sdfg.arrays)[1])
+                        self._add_tasklet((aname, rng), result)
+                    elif name in self.scope_vars:
+                        aname = self.scope_vars[name]
+                        # rng = dace.subsets.Range(
+                        #     astutils.subscript_to_slice(
+                        #         target, self.scope_arrays)[1])
+                    else:
+                        raise DaceSyntaxError(
+                            self, target,
+                            'Array "{}" used before definition'.format(name))
 
-                self._add_tasklet(tmp_name, node.value)
+                    self._add_tasklet((aname, rng), result)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
@@ -1241,7 +1268,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, "Attribute {} is not shape".format(
                         rname(node)))
-            shape = self.global_arrays[node.value.id].shape
+            shape = self.scope_arrays[node.value.id].shape
         else:
             raise DaceSyntaxError(
                 self, node,
@@ -1272,7 +1299,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, "Attribute {} is not dtype".format(
                         rname(node)))
             else:
-                dtype = self.global_arrays[node.value.id].dtype
+                dtype = self.scope_arrays[node.value.id].dtype
         else:
             raise DaceSyntaxError(
                 self, node, "Array dtype must either be a dace/numpy type or "
@@ -1427,10 +1454,10 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.globals:
             return _inner_eval_ast(self.globals, node)
 
-        if name not in self.variables:
+        if name not in self.scope_vars:
             raise DaceSyntaxError(self, node,
                                   'Use of undefined variable "%s"' % name)
-        return self.variables[name]
+        return self.scope_vars[name]
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
@@ -1479,6 +1506,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(operand, str) and operand in self.sdfg.arrays:
             return operand, type(self.sdfg.arrays[operand]).__name__
+        elif isinstance(operand, str) and operand in self.scope_arrays:
+            return operand, type(self.scope_arrays[operand]).__name__
         else:
             return operand, type(operand).__name__
 
@@ -1531,28 +1560,64 @@ class ProgramVisitor(ExtNodeVisitor):
 
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript):
-        # Obtain array
-        array, arrtype = self._gettype(node.value)
-        if arrtype == 'str' or arrtype in dtypes._CTYPES:
-            raise DaceSyntaxError(self, node,
-                                  'Type "%s" cannot be sliced' % arrtype)
+        if self.nested:
+            target = node
+            name = rname(target)
+            rng = dace.subsets.Range(astutils.subscript_to_slice(
+                target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+            if (name, rng, 'w') in self.accesses:
+                return self.accesses[(name, rng, 'w')]
+            elif (name, rng, 'r') in self.accesses:
+                return self.accesses[(name, rng, 'r')]
+            elif name in self.variables:
+                raise NotImplementedError
+                # aname = self.variables[name]
+                # rng = dace.subsets.Range(
+                #     astutils.subscript_to_slice(
+                #         target, self.sdfg.arrays)[1])
+                # self._add_tasklet((aname, rng), node.value)
+            elif name in self.scope_vars:
+                vname = "__tmp_{l}_{c}".format(
+                    l=target.lineno, c=target.col_offset)
+                self.accesses[(name, rng, 'r')] = vname
+                parent_name = self.scope_vars[name]
+                parent_array = self.scope_arrays[parent_name]
+                rng = dace.subsets.Range(
+                    astutils.subscript_to_slice(
+                        target, self.scope_arrays)[1])
+                shape = rng.size()
+                dtype = parent_array.dtype
+                self.sdfg.add_array(vname, shape, dtype)
+                self.inputs[vname] = (parent_name, rng)
+                return vname
+                # self._add_tasklet(vname, node.value)
+            else:
+                raise DaceSyntaxError(
+                    self, target,
+                    'Array "{}" used before definition'.format(name))
+        else:
+            # Obtain array
+            array, arrtype = self._gettype(node.value)
+            if arrtype == 'str' or arrtype in dtypes._CTYPES:
+                raise DaceSyntaxError(self, node,
+                                    'Type "%s" cannot be sliced' % arrtype)
 
-        # Try to construct memlet from subscript
-        expr: MemletExpr = ParseMemlet(self, self.defined, node)
-        arrobj = self.sdfg.arrays[array]
+            # Try to construct memlet from subscript
+            expr: MemletExpr = ParseMemlet(self, self.defined, node)
+            arrobj = self.sdfg.arrays[array]
 
-        # TODO: Check dimensionality of access and extend as necessary
+            # TODO: Check dimensionality of access and extend as necessary
 
-        # Add slicing state
-        self._add_state('slice_%s_%d' % (array, node.lineno))
-        tmp, tmparr = self.sdfg.add_temp_transient(
-            expr.subset.size(), arrobj.dtype, arrobj.storage)
-        rnode = self.last_state.add_read(array)
-        wnode = self.last_state.add_write(tmp)
-        self.last_state.add_nedge(
-            rnode, wnode,
-            Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                   expr.wcr_identity))
-        return tmp
+            # Add slicing state
+            self._add_state('slice_%s_%d' % (array, node.lineno))
+            tmp, tmparr = self.sdfg.add_temp_transient(
+                expr.subset.size(), arrobj.dtype, arrobj.storage)
+            rnode = self.last_state.add_read(array)
+            wnode = self.last_state.add_write(tmp)
+            self.last_state.add_nedge(
+                rnode, wnode,
+                Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
+                    expr.wcr_identity))
+            return tmp
 
     ##################################
