@@ -48,8 +48,8 @@ update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(
     gradients)
 input_gradients = tf.gradients(loss, input_placeholder)
 sess_dace = TFSession(seed=SEED)
-sess_tf = tf.Session()
-init = tf.global_variables_initializer()
+#sess_tf = tf.Session()
+#init = tf.global_variables_initializer()
 #gradients_dace = sess_dace.train(
 #    [],
 #    init,
@@ -59,7 +59,8 @@ init = tf.global_variables_initializer()
 #)[1]
 updates_dace = sess_dace.train(
     update_op,
-    init,
+    [],
+    #init,
     1,
     {
         input_placeholder: images,
@@ -78,7 +79,7 @@ updates_dace = sess_dace.train(
 #    [logits, softmax, loss],
 # )[1]
 #tf.summary.FileWriter("./", sess_tf.graph)
-sess_tf.run(init)
+#sess_tf.run(init)
 ##outputs_tf = sess_tf.run(
 ##    [logits, softmax, loss],
 ##    feed_dict={input_placeholder: images, label_placeholder: labels},
@@ -87,13 +88,6 @@ sess_tf.run(init)
 #    gradient_tensors,
 #    feed_dict={input_placeholder: images, label_placeholder: labels},
 #)
-updates_tf = sess_tf.run(
-    update_op,
-    feed_dict={
-        input_placeholder: images,
-        label_placeholder: labels
-    },
-)
 #for name, tfgrad, dacegrad in zip(update_op, updates_tf, updates_dace):
 #    inf_norm = np.linalg.norm((tfgrad - dacegrad).flatten())
 #    print(str(name), str(inf_norm))
