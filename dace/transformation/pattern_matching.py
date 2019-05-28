@@ -188,17 +188,23 @@ class Transformation(object):
         except StopIteration:
             return False
 
+        self_end = False
+
         while self_id is not None and other_id is not None:
             if self_id != other_id:
                 return self_id < other_id
             try:
                 self_id = next(self_ids)
             except StopIteration:
-                return True
+                self_end = True
             try:
                 other_id = next(other_ids)
             except StopIteration:
+                if self_end:  # Transformations are equal
+                    return False
                 return False
+            if self_end:
+                return True
 
     def apply_pattern(self, sdfg):
         """ Applies this transformation on the given SDFG. """
