@@ -362,6 +362,15 @@ class ExecutorServer:
     def addRun(self, client_id, compilation_output_tuple, more_options):
 
         config_path = "./client_configs/" + client_id + ".conf"
+        if not os.path.isdir("./client_configs/"):
+            os.mkdir("./client_configs/")
+        if not os.path.isfile(config_path):
+            # Config not (yet) available, load default and copy
+            with config_lock:
+                from dace.config import Config
+                Config.load()
+                Config.save(config_path)
+
         if isinstance(compilation_output_tuple, str):
             # Group command
             gc = compilation_output_tuple
@@ -1065,12 +1074,11 @@ def get_run_status():
 def run():
     """
         This function is equivalent to the old DIODE "Run"-Button.
-        It might not be suitable for this stateless version.
 
         POST-Parameters:
             (Same as for compile(), language defaults to 'dace')
             perfmodes: list including every queried mode
-            corecounts: list of core counds
+            corecounts: list of core counts (one run for every number of cores)
             
     """
 

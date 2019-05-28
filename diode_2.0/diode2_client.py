@@ -15,6 +15,9 @@ parser.add_argument("-p", "--port", default="5000",
 parser.add_argument("-compile", "--compile", action="store_true",
                     help="Compiles the SDFG and returns resulting structures.")
 
+parser.add_argument("-r", "--run", action="store_true",
+                    help = "Executes the SDFG on the target machine specified in Config and prints the execution output (blocking)")
+
 parser.add_argument("-code", "--code", action="store_true",
                     help="Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)")
 
@@ -27,7 +30,7 @@ parser.add_argument("-ver", "--version", default="1.0",
                     help="Sets the REST API Version to use.")
 args = parser.parse_args()
 
-if args.compile:
+if args.compile or args.run:
     url = 'http://' + str(args.connect) + ":" + str(args.port)
     data = {}
     stdin_input = sys.stdin.read()
@@ -36,12 +39,32 @@ if args.compile:
         data['code'] = stdin_input
     else:
         # Compile from serialized data
-        data['sdfg'] = stdin_input
+        data['sdfg'] = json.loads(stdin_input)
     
     data['client_id'] = args.user
     
     #data = json.dumps(data)
-    response = requests.post(url + "/dace/api/v" + args.version + "/compile/dace", json=data)
+    cmdstr = "run/" if args.run else "compile/dace"
+    response = requests.post(url + "/dace/api/v" + args.version + "/" + cmdstr, json=data)
+
+    if args.run:
+        first_out = response.text
+        output_ok = False
+        # Output is a json asking to use a different URL to read the output
+        for i in range(0, 5):
+            import time
+            time.sleep(1)
+            response = requests.post(url + "/dace/api/v" + args.version + "/run/status/", json={'client_id': args.user})
+            try:
+                tmp = json.loads(response.text)
+            except:
+                # Got valid data
+                output_ok = True
+                break
+        if not output_ok:
+            sys.exit(-1)
+        sys.stdout.write(response.text)
+        sys.exit(0)
 
     resp_json = response.json()
     
@@ -75,7 +98,11 @@ if args.compile:
     if args.extract:
         if "sdfg" in args.extract:
             # Output SDFG
-            pass
+            comps = resp_json['compounds']
+            ret = {}
+            for k, v in comps.items():
+                ret[k] = v['sdfg']
+            sys.stdout.write(json.dumps(ret, indent=2))
         if "txform" in args.extract:
             # Output available transformations
             get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
@@ -93,7 +120,7 @@ if args.compile:
                 sys.stdout.write("//" + x + ":\n")
                 l = resp_json['compounds'][x]['generated_code']
                 for c in l:
-                    sys.stdout.write("// #### Next ####")
+                    sys.stdout.write("// #### Next ####\n")
                     sys.stdout.write(c)
     
     else:
