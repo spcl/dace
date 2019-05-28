@@ -30,9 +30,6 @@ layers = tf.keras.layers
 SEED = int(1)
 initializer = tf.keras.initializers.RandomUniform(seed=SEED)
 
-tf.disable_v2_behavior()
-tf.disable_resource_variables()
-tf.compat.v1.disable_eager_execution()
 
 class _IdentityBlock(tf.keras.Model):
     """_IdentityBlock is the block that has no conv layer at shortcut.

@@ -22,30 +22,30 @@ num_classes = 10
 def random_batch(batch_size):
     shape = (batch_size, 224, 224, 3)
     images = np.random.uniform(size=shape).astype(np.float32)
-    labels = np.random.randint(low=0, high=num_classes, size=(batch_size)).astype(
-        np.int32
-    )
+    labels = np.random.randint(
+        low=0, high=num_classes, size=(batch_size)).astype(np.int32)
     # print(labels.shape)
     return images, labels
 
-tf.disable_v2_behavior()
-tf.disable_resource_variables()
-tf.compat.v1.disable_eager_execution()
+
 images, labels = random_batch(batch_size)
 # Graph building
-myresnet = resnet50.ResNet50("channels_last", classes=num_classes)  # trainable=False)
-input_placeholder = tf.placeholder(dtype=tf.float32, shape=(batch_size, 224, 224, 3))
+myresnet = resnet50.ResNet50(
+    "channels_last", classes=num_classes)  # trainable=False)
+input_placeholder = tf.placeholder(
+    dtype=tf.float32, shape=(batch_size, 224, 224, 3))
 label_placeholder = tf.placeholder(dtype=tf.int32, shape=(batch_size))
 logits = myresnet(input_placeholder)
 softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
-    labels=label_placeholder, logits=logits
-)
+    labels=label_placeholder, logits=logits)
 loss = tf.reduce_mean(softmax, name="loss")
-gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
+gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(
+    loss)
 gradient_tensors = []
 for tup in gradients:
     gradient_tensors.append(tup[0])
-update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(gradients)
+update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(
+    gradients)
 input_gradients = tf.gradients(loss, input_placeholder)
 sess_dace = TFSession(seed=SEED)
 sess_tf = tf.Session()
@@ -61,7 +61,10 @@ updates_dace = sess_dace.train(
     update_op,
     init,
     1,
-    {input_placeholder: images, label_placeholder: labels},
+    {
+        input_placeholder: images,
+        label_placeholder: labels
+    },
 )[1]
 # wrong_grads = sess_dace.run(
 #    gradient_tensors[0],
@@ -86,7 +89,10 @@ sess_tf.run(init)
 #)
 updates_tf = sess_tf.run(
     update_op,
-    feed_dict={input_placeholder: images, label_placeholder: labels},
+    feed_dict={
+        input_placeholder: images,
+        label_placeholder: labels
+    },
 )
 #for name, tfgrad, dacegrad in zip(update_op, updates_tf, updates_dace):
 #    inf_norm = np.linalg.norm((tfgrad - dacegrad).flatten())
