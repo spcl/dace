@@ -74,7 +74,7 @@ class InterstateEdge(object):
         import json
         ret = {
             'type': type(self).__name__,
-            'attributes': Property.all_properties_to_json(self)
+            'attributes': json.loads(Property.all_properties_to_json(self))
         }
 
         return json.dumps(ret)

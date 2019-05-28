@@ -243,13 +243,10 @@ class SDFG(OrderedDiGraph):
             print("edge: " + str(e))
             e = json.loads(json.dumps(e), object_hook=Property.json_loader)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
-            pass
 
-        #for v in json_obj['undefined_symbols']:
-        #    for sym in ret.undefined_symbols(True):
-        #        if str(sym) == symname:
-        #            symbol = dace.symbolic.symbol(symname)
-        #            symbol.set(value)
+        for v in json_obj['undefined_symbols']:
+            symbol = dace.symbolic.symbol(v)
+            #symbol.set(v)
 
 
 
