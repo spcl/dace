@@ -17,6 +17,8 @@ import re
 from typing import List
 import numpy as np
 
+from inspect import isfunction
+
 import dace
 from dace.frontend import operations
 from dace.frontend.python import ndarray
@@ -209,7 +211,7 @@ class CompiledSDFG(object):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
-            if not isinstance(atype, dt.Array) and not isinstance(
+            if not isinstance(atype, dt.Array) and not isinstance(atype.dtype, dace.callback) and not isinstance(
                     arg, atype.dtype.type):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
@@ -256,6 +258,13 @@ class CompiledSDFG(object):
              atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
             for arg, atype in callparams)
 
+        # Replace function objects with CFUNCTYPES
+        #TODO
+        callparams = tuple(
+            (atype.get_cf_object()(arg),
+             atype) if isfunction(arg) else (arg, atype)
+            for arg, atype in callparams)
+                
         # Replace arrays with their pointers
         newargs = tuple(
             (ctypes.c_void_p(arg.__array_interface__['data'][0]),
