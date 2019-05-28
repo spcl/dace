@@ -323,14 +323,17 @@ class callback(typeclass):
 
     def __init__(self, return_type, *variadic_args):
         self.dtype=self
-        self.return_type_cstring = return_type.ctype
-        self.input_type_cstring = [arg.ctype for arg in variadic_args]
+        #print(return_type)
+        self.return_type_cstring = return_type.ctype if return_type is not None else "void"
+        self.input_type_cstring = [arg.ctype if arg is not None else "" for arg in variadic_args]
         self.bytes = int64.bytes
         self.materialize_func = None
         self.return_ctype = _FFI_CTYPES[return_type.type] if return_type is not None else None
         self.input_ctypes = []
         for some_arg in variadic_args:
-            self.input_ctypes.append(_FFI_CTYPES[some_arg.type])
+            self.input_ctypes.append(_FFI_CTYPES[some_arg.type] if some_arg is not None else None)
+        if self.input_ctypes == [None]:
+            self.input_ctypes = []
         self.type = self
         self.ctype = self
 
@@ -351,10 +354,10 @@ class callback(typeclass):
         return hash((self.return_type_cstring, *self.input_type_cstring))
 
     def __str__(self):
-        return "no strings attached"
+        return "dace.callback"
 
     def __repr__(self):
-        return "no strings attached"
+        return "dace.callback"
 
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)

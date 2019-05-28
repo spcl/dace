@@ -259,7 +259,6 @@ class CompiledSDFG(object):
             for arg, atype in callparams)
 
         # Replace function objects with CFUNCTYPES
-        #TODO
         callparams = tuple(
             (atype.get_cf_object()(arg),
              atype) if isfunction(arg) else (arg, atype)
