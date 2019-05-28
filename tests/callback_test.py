@@ -1,12 +1,15 @@
 import dace
+import numpy
+
 
 # Performs square
 def mypythonfunction(inp):
-    import numpy
     return numpy.square(inp)
 
-@dace.program(dace.uint32[2], dace.uint32[2], dace.callback(dace.uint32, dace.uint32))
-def external_tasklet(A, B, callback_function):
+
+@dace.program(dace.uint32[2], dace.uint32[2],
+              dace.callback(dace.uint32, dace.uint32))
+def callback_test(A, B, callback_function):
     @dace.map(_[0:2])
     def index(i):
         a << A[i]
@@ -24,5 +27,5 @@ if __name__ == '__main__':
     B[:] = 0
 
     print(A)
-    external_tasklet(A, B, mypythonfunction)
+    callback_test(A, B, mypythonfunction)
     print(B)
