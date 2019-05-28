@@ -318,6 +318,43 @@ class struct(typeclass):
                 for tname, t in sorted(self._data.items())
             ]))
 
+class callback(typeclass):
+    """ Looks like dace.callback([None, <some_native_type>], *types)"""
+
+    def __init__(self, return_type, *variadic_args):
+        self.dtype=self
+        self.return_type_cstring = return_type.ctype
+        self.input_type_cstring = [arg.ctype for arg in variadic_args]
+        self.bytes = int64.bytes
+        self.materialize_func = None
+        self.return_ctype = _FFI_CTYPES[return_type.type] if return_type is not None else None
+        self.input_ctypes = []
+        for some_arg in variadic_args:
+            self.input_ctypes.append(_FFI_CTYPES[some_arg.type])
+        self.type = self
+        self.ctype = self
+
+    def get_cf_object(self):
+        cf_object = ctypes.CFUNCTYPE(self.return_ctype, *self.input_ctypes)
+        return cf_object
+
+    def signature(self, name):
+        cstring = self.return_type_cstring + " " + "(*" + name + ")("
+        for index, inp_arg in enumerate(self.input_type_cstring):
+            if index>0:
+                cstring = cstring + ","
+            cstring = cstring + inp_arg
+        cstring = cstring + ")"
+        return cstring
+
+    def __hash__(self):
+        return hash((self.return_type_cstring, *self.input_type_cstring))
+
+    def __str__(self):
+        return "no strings attached"
+
+    def __repr__(self):
+        return "no strings attached"
 
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
