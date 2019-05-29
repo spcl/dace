@@ -19,20 +19,20 @@ for t in "${TESTFILES[@]}"; do
 
 
     # Run the client(s) and check output
-    cat $SAMPLESBASEPATH/$t | $DIODE2BASEPATH/diode2_client.py --code --compile --extract outcode > "$(basename $t).from_code"
+    cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --compile --extract outcode > "$(basename $t).from_code"
 
     # Execute and check output
-    cat $SAMPLESBASEPATH/$t | $DIODE2BASEPATH/diode2_client.py --code --run > "$(basename $t).txt"
+    cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --run > "$(basename $t).txt"
     if [ $? -ne 0 ]; then
         RETVAL=1
         FAILEDFILES+=("(output) $t")
     fi
 
     # Compile again and store entire output
-    cat $SAMPLESBASEPATH/$t | $DIODE2BASEPATH/diode2_client.py --code --compile --extract sdfg > "$(basename $t).serialized"
+    cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --compile --extract sdfg > "$(basename $t).serialized"
 
     # Compile from previous output and extract code (expect the same generated code as earlier)
-    cat "$(basename $t).serialized" | $DIODE2BASEPATH/diode2_client.py --compile --extract outcode > "$(basename $t).from_serialized"
+    cat "$(basename $t).serialized" | python3 $DIODE2BASEPATH/diode2_client.py --compile --extract outcode > "$(basename $t).from_serialized"
 
     diff "$(basename $t).from_code" "$(basename $t).from_serialized"
     if [ $? -ne 0 ]; then
