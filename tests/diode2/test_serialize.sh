@@ -12,8 +12,8 @@ FAILEDFILES=()
 
 echo "server pid is: $SERVPID"
 
-# Wait 5 seconds for the server to come online
-sleep 5
+# Wait 10 seconds for the server to come online
+sleep 10
 
 for t in "${TESTFILES[@]}"; do
 
