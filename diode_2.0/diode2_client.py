@@ -73,18 +73,18 @@ if args.compile or args.run:
     if args.run:
         first_out = response.text
         output_ok = False
-        resptext = ""
+        #resptext = ""
         # Output is a json asking to use a different URL to read the output
         for i in range(0, 5):
             import time
             time.sleep(1)
             response = requests.post(url + "/dace/api/v" + args.version + "/run/status/", json={'client_id': args.user})
-            resptext = ""
-            for l in response.iter_lines(decode_unicode=True):
-                resptext += str(l) + '\n'
+            #resptext = ""
+            #for l in response.iter_lines(decode_unicode=True):
+            #    resptext += str(l) + '\n'
             try:
-                #tmp = json.loads(response.text)
-                tmp = json.loads(resptext)
+                tmp = json.loads(response.text)
+                #tmp = json.loads(resptext)
             except:
                 # Got valid data
                 output_ok = True
@@ -92,8 +92,8 @@ if args.compile or args.run:
         if not output_ok:
             sys.stderr.write("Failed to get run reference\n")
             sys.exit(-1)
-        #sys.stdout.write(response.text)
-        sys.stdout.write(resptext)
+        sys.stdout.write(response.text)
+        #sys.stdout.write(resptext)
         sys.exit(0)
 
     resp_json = response.json()
