@@ -806,6 +806,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
     create(hist=[]) {
         let parent_element = this.container.getElement();
         $(parent_element).css('overflow', 'auto');
+        $(parent_element)[0].setAttribute("data-hint", '{"type": "DIODE2_Element", "name": "TransformationHistory"}');
 
         parent_element = $(parent_element)[0];
 
@@ -1209,12 +1210,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             this.sendClearHighlightRequest();
         });
         
-        // Single click show properties (disabled)
-        /*title.addEventListener('click', _x => {
-
-            this.renderProperties(x, pos, [x, pos, _title]);
-        });*/
-        title.addEventListener(/*'dblclick'*/'click', _x => {
+        title.addEventListener('click', _x => {
 
             this.applyTransformation(x, pos, _title);
         });
@@ -1240,6 +1236,8 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             let help_button = document.createElement('i');
             help_button.classList = "";
             help_button.innerText = '?';
+            help_button.setAttribute("data-hint", '{"type": "transformation", "name": "' + x.opt_name + '"}');
+            help_button.addEventListener("click", _ev => this.diode.hint(_ev));
             ctrl.appendChild(help_button);
         }
 
@@ -2582,6 +2580,8 @@ class DIODE_Context_PropWindow extends DIODE_Context {
     }
 
     createFromState() {
+        let p = this.getHTMLContainer();
+        p.setAttribute("data-hint", '{"type": "DIODE2", "name": "Property_Window"}');
         let state = this.getState();
         if(state.params != undefined) {
             let p = state.params;
@@ -2749,7 +2749,53 @@ class DIODE {
         // Install the hint mechanic on the whole window
         window.addEventListener('contextmenu', ev => {
             console.log("contextmenu requested on", ev.target);
+
+            this.hint(ev);
         });
+    }
+
+    hint(ev) {
+        /*
+            ev: Event triggering this hint.
+        */
+
+        let create_overlay = (_h) => {
+            // Found hint data
+            let fulldata = JSON.parse(_h);
+
+            // #TODO: Link to documentation instead of using this placeholder
+            $(target).w2overlay("<div><h2>Help for category " + fulldata.type + "</h2>" + fulldata.name + "</div>");
+        };
+
+        let target = ev.target;
+        let _h = target.getAttribute("data-hint");
+        if(_h == null) {
+            // Iterate chain
+            if(!ev.composed) return;
+            let x = ev.composedPath();
+            for(let e of x) {
+                if(e.getAttribute != undefined) {
+                    _h = e.getAttribute("data-hint");
+                }
+                else _h = null;
+
+                if(_h != null) {
+                    create_overlay(_h);
+                    ev.stopPropagation();
+                    ev.preventDefault();
+                    break;
+                }
+            }
+            return;
+        }
+        else {
+            create_overlay(_h);
+            ev.stopPropagation();
+            ev.preventDefault();
+        }
+
+        console.log("Got hint data", _h);
+
     }
 
     openUploader(purpose="") {
