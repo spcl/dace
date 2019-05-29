@@ -45,7 +45,25 @@ if args.compile or args.run:
     
     #data = json.dumps(data)
     cmdstr = "run/" if args.run else "compile/dace"
-    response = requests.post(url + "/dace/api/v" + args.version + "/" + cmdstr, json=data)
+
+    nofail = False
+    for i in range(0, 5):
+        uri = url + "/dace/api/v" + args.version + "/" + cmdstr
+        try:
+            response = requests.post(uri, json=data)
+        except Exception as e:
+            print("Failed to request url + '" + uri + "' with error " + str(e))
+            import time
+            time.sleep(2)
+            continue
+
+        # Break if there was no exception
+        nofail = True
+        break
+    if not nofail:
+        # Cannot continue
+        sys.exit(-2)
+
 
     if args.run:
         first_out = response.text
