@@ -16,7 +16,7 @@ setup_dace:
     - echo "Installing additional dependencies"
     - pip3 install --upgrade --user tensorflow-gpu
     - echo "Installing DaCe"
-    - pip3 install --upgrade --user .
+    - pip3 install --ignore-installed --upgrade --user .
 
 test_diode2_serialization:
   stage: test
