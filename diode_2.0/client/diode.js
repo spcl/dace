@@ -3304,9 +3304,22 @@ class DIODE {
         let __main = x => x.main != undefined ? x.main : x;
         // Add inputs for every fixed range
         {
+            let input_cont = document.createElement("div");
             let __defs = Object.keys(__additional_defines).map(x => "let " + x + " = " + __additional_defines[x]).join(";") + ";";
             
-            let input_cont = document.createElement("div");
+            let __global_slider = document.createElement("input");
+            {
+                __global_slider.type = "range";
+                __global_slider.min = "0";
+                __global_slider.value = "0";
+                __global_slider.step = "1";
+
+                input_cont.appendChild(__global_slider);
+            }
+
+            let __total_rng_count = 1;
+            let __locked_range = false;
+            
             input_cont.classList = "flex_column";
             for(let r of __fixed_rngs) {
                 let _lbl = document.createElement("label");
@@ -3316,25 +3329,77 @@ class DIODE {
                 _in.step = "1";
 
                 _in.addEventListener("change", _click => {
-                    // #TODO: Trigger update
+                    // Trigger update
                     __create_func();
                 });
-                
-                _in.value = eval(__defs + __main(r.val.start));
+                // Set limits
+                try {
+                    _in.min = eval(__defs + __main(r.val.start));
+                } catch(e) { console.warn("Got error when resolving expression"); }
+                try {
+                    _in.max = eval(__defs + __main(r.val.end));
+                } catch(e) { console.warn("Got error when resolving expression"); }
+                try {
+                    _in.value = eval(__defs + __main(r.val.start));
+                } catch(e) { console.warn("Got error when resolving expression"); }
+
                 _lbl.innerText = "Range iterator " + r.var + " over [" + __main(r.val.start) + ", " + __main(r.val.end) + "] in steps of " + __main(r.val.step);
                 _in.setAttribute("data-rname", r.var);
                 _lbl.appendChild(_in);
                 __rng_inputs.push(_in);
 
                 input_cont.appendChild(_lbl);
+
+                if(__total_rng_count == 0) __total_rng_count = 1;
+
+                let __e_size = ((__x) => eval(__defs + "(" +__main(__x.val.end) + " - " + __main(__x.val.start) + "+1) / " + __main(__x.val.step)) )(r);
+                if(__e_size == 0 || __locked_range) {
+                    __locked_range = true;
+                }
+                else {
+                    __total_rng_count *= __e_size;
+                }
             }
+            console.log("__total_rng_count", __total_rng_count);
             {
+                __global_slider.max = __total_rng_count - 1; // Inclusive range
+
+                __global_slider.addEventListener("change", __ev => {
+                    let __v = parseInt(__global_slider.value);
+
+                    for(let __r of __rng_inputs.map(x => x).reverse()) {
+                        let __s = parseInt(__r.max) - parseInt(__r.min) + 1;
+
+                        let __subval = __v % __s;
+
+                        __r.value = __subval;
+
+                        __v = Math.floor(__v / __s);
+                    }
+                });
+
                 let r = __var_rng;
                 let _lbl = document.createElement("label");
                 let _in = document.createElement("span");
 
                 _in.addEventListener("change", _click => {
-                    // #TODO: Trigger update
+                    // Trigger update
+
+                    // Move the slider position
+                    let __spos = 0;
+                    let __base = 1;
+                    for(let __r of __rng_inputs.map(x => x).reverse()) {
+                        let __s = parseInt(__r.max) - parseInt(__r.min) + 1;
+
+                        let __v = __r.value;
+
+                        __spos += parseInt(__v) * __base;
+                        __base *= parseInt(__s);
+                    }
+                    __global_slider.value = __spos;
+                    __create_func();
+                });
+                __global_slider.addEventListener("change", _ev => {
                     __create_func();
                 });
                 
@@ -3382,22 +3447,24 @@ class DIODE {
                 // Remember: Inclusive ranges
                 for(let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
 
+                    // #TODO: Use correct access order (from property)
+
                     // Add this to the full evaluation
                     let __a_i = __access_indices.map(x => x);
                     __a_i = __a_i.map(__y => feval("let " + __it + " = " + __x + ";" + __y.var));
 
-                    let __tmp = __mark_cells[__a_i[0]];
+                    let __tmp = __mark_cells[__a_i[1]];
                     if(__tmp == undefined) {
-                        __mark_cells[__a_i[0]] = [];
+                        __mark_cells[__a_i[1]] = [];
                     }
-                    __mark_cells[__a_i[0]].push(__a_i[1]);
+                    __mark_cells[__a_i[1]].push(__a_i[0]);
                 }
             }
 
-            for(let __dim_2 = 0; __dim_2 < __mem_dims[1]; ++__dim_2) {
+            for(let __dim_2 = 0; __dim_2 < __mem_dims[0]; ++__dim_2) {
 
                 // Check ellision
-                if(__mem_dims[1] > __ellision_thresh_y && __dim_2 > __ellision_thresh_y / 2 && __dim_2 < __mem_dims[1] - __ellision_thresh_y / 2) {
+                if(__mem_dims[0] > __ellision_thresh_y && __dim_2 > __ellision_thresh_y / 2 && __dim_2 < __mem_dims[0] - __ellision_thresh_y / 2) {
                     // Elide
                     if(__dim_2 - 1 == __ellision_thresh_y / 2) {
                         // Add ellision info _once_
@@ -3413,9 +3480,9 @@ class DIODE {
                 __row.classList = "flex_row";
                 __row.style = "justify-content: flex-start;flex-wrap: nowrap;"
 
-                for(let __i = 0; __i < __mem_dims[0]; ++__i) {
+                for(let __i = 0; __i < __mem_dims[1]; ++__i) {
                     // Check ellision
-                    if(__mem_dims[0] > __ellision_thresh_x && __i > __ellision_thresh_x / 2 && __i < __mem_dims[0] - __ellision_thresh_x / 2) {
+                    if(__mem_dims[1] > __ellision_thresh_x && __i > __ellision_thresh_x / 2 && __i < __mem_dims[1] - __ellision_thresh_x / 2) {
                         // Elide
                         if(__i - 1 == __ellision_thresh_x / 2) {
                             // Add ellision info _once_

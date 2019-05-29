@@ -1347,3 +1347,12 @@ if __name__ == '__main__':
     app.run(host='localhost' if args.localhost else "0.0.0.0", debug=True, use_reloader=False)
 
     es.stop()
+else:
+    # Start the executor server
+    es = ExecutorServer()
+    es_ref.append(es)
+
+    import atexit
+    def tmp():
+        es.stop()
+    atexit.register(tmp)
