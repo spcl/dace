@@ -2759,12 +2759,12 @@ class DIODE {
             ev: Event triggering this hint.
         */
 
-        let create_overlay = (_h) => {
+        let create_overlay = (_h, elem) => {
             // Found hint data
             let fulldata = JSON.parse(_h);
 
             // #TODO: Link to documentation instead of using this placeholder
-            $(target).w2overlay("<div><h2>Help for category " + fulldata.type + "</h2>" + fulldata.name + "</div>");
+            $(elem).w2overlay("<div><h2>Help for category " + fulldata.type + "</h2>" + fulldata.name + "</div>");
         };
 
         let target = ev.target;
@@ -2780,7 +2780,7 @@ class DIODE {
                 else _h = null;
 
                 if(_h != null) {
-                    create_overlay(_h);
+                    create_overlay(_h, e);
                     ev.stopPropagation();
                     ev.preventDefault();
                     break;
@@ -2789,7 +2789,7 @@ class DIODE {
             return;
         }
         else {
-            create_overlay(_h);
+            create_overlay(_h, target);
             ev.stopPropagation();
             ev.preventDefault();
         }
