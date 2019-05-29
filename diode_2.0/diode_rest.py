@@ -577,7 +577,6 @@ def properties_to_json_list(props):
             typestr = "CodeProperty"
 
             if val == None:
-                print("[Warning] None value for " + str(x))
                 continue
 
             val = x.to_string(val)
@@ -587,7 +586,6 @@ def properties_to_json_list(props):
             typestr = "DebugInfo"
 
             if val == None:
-                print("[Warning] None value for " + str(x))
                 continue
 
             nval = {
@@ -627,8 +625,6 @@ def get_all_SDFG_node_properties(sdfg):
 
     for x in nodelist:
         _id, _node = x
-        print("_id: " + str(_id))
-        print("_node: " + str(_node))
         sid, nid = split_nodeid_in_state_and_nodeid(_id)
         props = get_SDFG_node_properties(sdfg, _node)
         sdfg_props.append({
@@ -1339,8 +1335,15 @@ def status():
 
 if __name__ == '__main__':
 
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-l", "--localhost", action="store_true",
+                    help="Bind to localhost only")
+
+    args = parser.parse_args()
     es = ExecutorServer()
     es_ref.append(es)
-    app.run(host='0.0.0.0', debug=True, use_reloader=False)
+    app.run(host='localhost' if args.localhost else "0.0.0.0", debug=True, use_reloader=False)
 
     es.stop()

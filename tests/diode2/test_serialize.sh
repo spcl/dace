@@ -3,7 +3,7 @@
 DIODE2BASEPATH="../../diode_2.0/"
 SAMPLESBASEPATH="../../samples/"
 # Start the REST server
-python3 $DIODE2BASEPATH/diode_rest.py &
+python3 $DIODE2BASEPATH/diode_rest.py --localhost &
 SERVPID=$!
 RETVAL=0
 
