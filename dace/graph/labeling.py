@@ -638,7 +638,7 @@ def _propagate_labels(g, sdfg):
 
 # External API
 def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
-                     union_inner_edges: bool):
+                     union_inner_edges: bool, arr=None):
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
@@ -670,7 +670,7 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
 
     new_subset = _propagate_edge(dfg_state.parent, None,
                                  scope_node, None, memlet, aggdata,
-                                 MemletPattern.patterns(), None)
+                                 MemletPattern.patterns(), None, arr)
 
     new_memlet = copy.copy(memlet)
     new_memlet.subset = new_subset
@@ -776,7 +776,7 @@ def _propagate_node(sdfg,
         array_data[target][memlet.data].append(memlet)
 
 
-def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed):
+def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed, arr=None):
     if ((isinstance(u, nodes.EntryNode) or isinstance(u, nodes.ExitNode))):
         mapnode = u.map
 
@@ -787,27 +787,29 @@ def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed):
         data = memlet.data
         expr = [edge.subset for edge in aggdata]
 
-        if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
-                           'in SDFG.' % memlet.data)
+        if arr is None:
+            if memlet.data not in sdfg.arrays:
+                raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
+                            'in SDFG.' % memlet.data)
+            arr = sdfg.arrays[memlet.data]
 
         for pattern in patterns:
             if pattern.match(
                     expr,
                 [[symbolic.pystr_to_symbolic(p) for p in mapnode.params]],
                     mapnode.range, aggdata):  # Only one level of context
-                return pattern.propagate(sdfg.arrays[memlet.data], expr,
+                return pattern.propagate(arr, expr,
                                          mapnode.range)
 
         # No patterns found. Emit a warning and propagate the entire array
         print('WARNING: Cannot find appropriate memlet pattern to propagate %s'
               % str(expr))
 
-        return subsets.Range.from_array(sdfg.arrays[memlet.data])
+        return subsets.Range.from_array(arr)
     elif isinstance(u, nodes.ConsumeEntry) or isinstance(u, nodes.ConsumeExit):
 
         # Nothing to analyze/propagate in consume
-        return subsets.Range.from_array(sdfg.arrays[memlet.data])
+        return subsets.Range.from_array(arr)
 
     else:
         raise NotImplementedError('Unimplemented primitive: %s' % type(u))

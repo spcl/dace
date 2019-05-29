@@ -11,6 +11,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
 from dace.graph import nodes
+from dace.graph.labeling import propagate_memlet
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
@@ -744,7 +745,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_subprogram(self, name, node):
         scope_arrays = {**self.scope_arrays, **self.sdfg.arrays}
-        scope_vars = {**self.scope_arrays, **self.variables}
+        scope_vars = {**self.scope_vars, **self.variables}
         pv = ProgramVisitor(name, self.filename, self.lineoffset,
                             scope_arrays, self.globals, True, scope_vars)
 
@@ -953,7 +954,23 @@ class ProgramVisitor(ExtNodeVisitor):
             state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
         if outputs:
             for conn, memlet in outputs.items():
-                write_node = state.add_write(memlet.data)
+                if memlet.data not in self.sdfg.arrays:
+                    arr = self.scope_arrays[memlet.data]
+                    scope_memlet = propagate_memlet(state, memlet, exit_node, True, arr)
+                    name = memlet.data
+                    rng = scope_memlet.subset
+                    vname = "{c}_out_of_{s}_{n}".format(
+                        c=conn, s=self.sdfg.nodes().index(state),
+                        n=state.node_id(exit_node))
+                    self.accesses[(name, rng, 'w')] = vname
+                    shape = rng.size()
+                    dtype = arr.dtype
+                    self.sdfg.add_array(vname, shape, dtype)
+                    self.outputs[vname] = (memlet.data, rng)
+                    memlet.data = vname
+                else:
+                    vname = memlet.data
+                write_node = state.add_write(vname)
                 state.add_memlet_path(
                     internal_node,
                     exit_node,
