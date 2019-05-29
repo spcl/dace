@@ -240,7 +240,6 @@ class SDFG(OrderedDiGraph):
             ret.add_node(state)
 
         for e in edges:
-            print("edge: " + str(e))
             e = json.loads(json.dumps(e), object_hook=Property.json_loader)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 

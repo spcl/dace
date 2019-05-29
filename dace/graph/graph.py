@@ -108,8 +108,6 @@ class MultiConnectorEdge(MultiEdge):
         src_nid = json_obj['src']
         dst_nid = json_obj['dst']
 
-        print("dst_nid={dn}, src_nid={sn}".format(dn=dst_nid, sn=src_nid))
-        print("nodes: " + str(sdfg.nodes()))
         dst = sdfg.nodes()[int(dst_nid)]
         src = sdfg.nodes()[int(src_nid)]
 
