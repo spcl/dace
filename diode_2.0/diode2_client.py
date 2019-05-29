@@ -39,7 +39,12 @@ if args.compile or args.run:
         data['code'] = stdin_input
     else:
         # Compile from serialized data
-        data['sdfg'] = json.loads(stdin_input)
+        try:
+            data['sdfg'] = json.loads(stdin_input)
+        except:
+            sys.stderr.write("Failed to parse serialized SDFG input, is it in a correct json format?")
+            sys.stdout.write("Invalid data: " + str(stdin_input))
+            sys.exit(-3)
     
     data['client_id'] = args.user
     

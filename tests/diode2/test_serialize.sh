@@ -21,6 +21,11 @@ for t in "${TESTFILES[@]}"; do
     # Run the client(s) and check output
     cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --compile --extract outcode > "$(basename $t).from_code"
 
+    echo "Input file $t"
+    cat $SAMPLESBASEPATH/$t
+    echo "Output"
+    cat "$(basename $t).from_code"
+
     # Execute and check output
     cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --run > "$(basename $t).txt"
     if [ $? -ne 0 ]; then
