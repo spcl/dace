@@ -2,8 +2,11 @@
 
 DIODE2BASEPATH="../../diode_2.0/"
 SAMPLESBASEPATH="../../samples/"
+
+# Remove old config files if they exist
+rm ./client_configs/default.conf
 # Start the REST server
-python3 $DIODE2BASEPATH/diode_rest.py --localhost &
+python3 $DIODE2BASEPATH/diode_rest.py --localhost --localdace &
 SERVPID=$!
 RETVAL=0
 

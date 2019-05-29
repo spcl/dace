@@ -1341,7 +1341,31 @@ if __name__ == '__main__':
     parser.add_argument("-l", "--localhost", action="store_true",
                     help="Bind to localhost only")
 
+    parser.add_argument("-ld", "--localdace", action="store_true",
+                    help="Use local comamnds instead of ssh")
+
+    parser.add_argument("-rd", "--restoredace", action="store_true",
+                    help="Restore the backup file")
+
     args = parser.parse_args()
+
+    if args.restoredace:
+        from dace.config import Config
+        Config.load("./dace.conf.bak")
+        Config.save()
+
+    if args.localdace:
+        from dace.config import Config
+        Config.load()
+        Config.save("./dace.conf.bak")
+        Config.load()
+        Config.set("execution", "general", "execcmd", value='${command}', autosave=True)
+        Config.set("execution", "general", "copycmd_r2l", value='cp ${srcfile} ${dstfile}', autosave=True)
+        Config.set("execution", "general", "copycmd_l2r", value='cp ${srcfile} ${dstfile}', autosave=True)
+        if not os.path.isdir("./client_configs"):
+            os.mkdir("./client_configs")
+        Config.save("./client_configs/default.conf")
+
     es = ExecutorServer()
     es_ref.append(es)
     app.run(host='localhost' if args.localhost else "0.0.0.0", debug=True, use_reloader=False)
