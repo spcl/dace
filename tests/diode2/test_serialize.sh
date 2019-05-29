@@ -24,7 +24,7 @@ for t in "${TESTFILES[@]}"; do
     # Execute and check output
     cat $SAMPLESBASEPATH/$t | $DIODE2BASEPATH/diode2_client.py --code --run > "$(basename $t).txt"
     if [ $? -ne 0 ]; then
-        RETVAL=-1
+        RETVAL=1
         FAILEDFILES+=("(output) $t")
     fi
 
@@ -36,7 +36,7 @@ for t in "${TESTFILES[@]}"; do
 
     diff "$(basename $t).from_code" "$(basename $t).from_serialized"
     if [ $? -ne 0 ]; then
-        RETVAL=-1
+        RETVAL=1
         FAILEDFILES+=($t)
     fi
 
@@ -45,7 +45,7 @@ done
 kill $SERVPID
 
 if [ "${#FAILEDFILES[@]}" -ne 0 ]; then
-    echo "Failed: ${FAILEDFILES[*]}"
+    echo "Failed tests:\n${FAILEDFILES[*]}"
 fi
 
 exit $RETVAL

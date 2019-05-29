@@ -18,7 +18,15 @@ setup_dace:
     - echo "Installing DaCe"
     - pip3 install --upgrade --user .
 
-   
+test_diode2_serialization:
+  stage: test
+  tags:
+    - diode2
+    - json
+  script:
+    - cd tests/diode2/
+    - ./test_serialize.sh
+
 test_linux_cpu:
   stage: test
   tags: 
