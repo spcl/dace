@@ -21,8 +21,8 @@ setup_dace:
 test_diode2_serialization:
   stage: test
   tags:
-    - diode2
-    - json
+    - intel
+    - linux
   script:
     - cd tests/diode2/
     - ./test_serialize.sh
