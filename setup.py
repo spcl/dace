@@ -57,7 +57,7 @@ setup(
     install_requires=[
         'matplotlib', 'numpy', 'networkx >= 2.2', 'astunparse', 'sympy',
         'scipy', 'pyyaml', 'cmake', 'absl-py', 'ply', 'websockets', 'graphviz',
-        'dace-xdot'
+        'dace-xdot', 'requests'
     ],
     # install_requires for DIODE: pygobject
     scripts=['scripts/diode', 'scripts/dacelab'])
