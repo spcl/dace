@@ -3293,7 +3293,7 @@ class DIODE {
         //        is beyond the scope of the initial PoC.
         
         // Obtain fixed ranges (all but smallest)
-        let __fixed_rngs = __ranges.map(x => x).sort((a,b) => a.depth - b.depth).slice(1)/*.map(x => x)*/.reverse();
+        let __fixed_rngs = __ranges.map(x => x).sort((a,b) => a.depth - b.depth).slice(1).reverse();
         // Get the variable range (smallest)
         let __var_rng = __ranges[0];
         
@@ -3441,13 +3441,17 @@ class DIODE {
                 let __r_e = __main(__var_rng.val.end);
                 let __r_step = __main(__var_rng.val.step);
                 
+                let __access_order = data.attributes.access_order;
+                // Access order reverse lookup
+                let __rev_access_order = __access_order.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+
                 // Remember: Inclusive ranges
                 for(let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
-
-                    // #TODO: Use correct access order (from property)
-
                     // Add this to the full evaluation
-                    let __a_i = __access_indices.map(x => x);
+                    // Use the access order from the data property; this means remap if necessary.
+                    let __a_i = __access_indices.map((x, i) => [x, i]).sort((a, b) => __rev_access_order[a[1]] - __rev_access_order[b[1]]).map(x => x[0]);
+                    
+
                     __a_i = __a_i.map(__y => feval("let " + __it + " = " + __x + ";" + __y.var));
 
                     let __tmp = __mark_cells[__a_i[1]];
