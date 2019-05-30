@@ -3330,6 +3330,20 @@ class DIODE {
 
                 _in.addEventListener("change", _click => {
                     // Trigger update
+
+                    // Move the slider position
+                    let __spos = 0;
+                    let __base = 1;
+                    for(let __r of __rng_inputs.map(x => x).reverse()) {
+                        let __s = parseInt(__r.max) - parseInt(__r.min) + 1;
+
+                        let __v = __r.value;
+
+                        __spos += parseInt(__v) * __base;
+                        __base *= parseInt(__s);
+                    }
+                    __global_slider.value = __spos;
+
                     __create_func();
                 });
                 // Set limits
@@ -3364,7 +3378,7 @@ class DIODE {
             {
                 __global_slider.max = __total_rng_count - 1; // Inclusive range
 
-                __global_slider.addEventListener("change", __ev => {
+                __global_slider.addEventListener("input", __ev => {
                     let __v = parseInt(__global_slider.value);
 
                     for(let __r of __rng_inputs.map(x => x).reverse()) {
@@ -3382,24 +3396,7 @@ class DIODE {
                 let _lbl = document.createElement("label");
                 let _in = document.createElement("span");
 
-                _in.addEventListener("change", _click => {
-                    // Trigger update
-
-                    // Move the slider position
-                    let __spos = 0;
-                    let __base = 1;
-                    for(let __r of __rng_inputs.map(x => x).reverse()) {
-                        let __s = parseInt(__r.max) - parseInt(__r.min) + 1;
-
-                        let __v = __r.value;
-
-                        __spos += parseInt(__v) * __base;
-                        __base *= parseInt(__s);
-                    }
-                    __global_slider.value = __spos;
-                    __create_func();
-                });
-                __global_slider.addEventListener("change", _ev => {
+                __global_slider.addEventListener("input", _ev => {
                     __create_func();
                 });
                 
