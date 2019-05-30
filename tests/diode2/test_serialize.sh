@@ -24,10 +24,10 @@ for t in "${TESTFILES[@]}"; do
     # Run the client(s) and check output
     cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --compile --extract outcode > "$(basename $t).from_code"
 
-    echo "Input file $t"
-    cat $SAMPLESBASEPATH/$t
-    echo "Output"
-    cat "$(basename $t).from_code"
+    #echo "Input file $t"
+    #cat $SAMPLESBASEPATH/$t
+    #echo "Output"
+    #cat "$(basename $t).from_code"
 
     # Execute and check output
     cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --run > "$(basename $t).txt"
@@ -36,21 +36,21 @@ for t in "${TESTFILES[@]}"; do
         FAILEDFILES+=("(output) $t")
     fi
 
-    echo "Execution ended, output:"
-    cat "$(basename $t).txt"
-    echo "Failed state:\n${FAILEDFILES[*]}"
+    #echo "Execution ended, output:"
+    #cat "$(basename $t).txt"
+    #echo "Failed state:\n${FAILEDFILES[*]}"
 
     # Compile again and store entire output
     cat $SAMPLESBASEPATH/$t | python3 $DIODE2BASEPATH/diode2_client.py --code --compile --extract sdfg > "$(basename $t).serialized"
 
-    echo "Code extracted:"
-    cat "$(basename $t).serialized"
+    #echo "Code extracted:"
+    #cat "$(basename $t).serialized"
 
     # Compile from previous output and extract code (expect the same generated code as earlier)
     cat "$(basename $t).serialized" | python3 $DIODE2BASEPATH/diode2_client.py --compile --extract outcode > "$(basename $t).from_serialized"
 
-    echo "Re-serialized:"
-    cat "$(basename $t).from_serialized"
+    #echo "Re-serialized:"
+    #cat "$(basename $t).from_serialized"
 
     diff "$(basename $t).from_code" "$(basename $t).from_serialized"
     if [ $? -ne 0 ]; then
