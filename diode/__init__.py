@@ -1,7 +1,13 @@
 from .abstract_sdfg import AbstractSDFG
-from .rendered_graph import RenderedGraph
+try:
+    from .rendered_graph import RenderedGraph
+except:
+    print("[Warning] Could not load RenderedGraph")
 from .config_ui import DIODEConfig
-from .pattern_editor import PatternEditor
+try:
+    from .pattern_editor import PatternEditor
+except:
+    print("[Warning] Could not load PatternEditor")
 try:
     from .performance_plot import PerformancePlot
 except:
