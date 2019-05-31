@@ -160,7 +160,7 @@ class SDFG(OrderedDiGraph):
         self._constants = {}  # type: Dict[str, Any]
         self._propagate = propagate
         self._parent = parent
-        self._symbols = {}  # type: Dict[str, type]
+        self._symbols = {}  # type: Dict[str, dtypes.typeclass]
         self._parent_sdfg = None
         self._sdfg_list = [self]
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
@@ -177,6 +177,12 @@ class SDFG(OrderedDiGraph):
         """
         return self._arrays
 
+    @property
+    def symbols(self):
+        """ Returns a dictionary of symbols (constant variables) used in this
+            SDFG. """
+        return self._symbols
+
     def add_symbol(self, name, stype, override_dtype=False):
         """ Adds a symbol to the SDFG.
             @param name: Symbol name.
@@ -186,6 +192,9 @@ class SDFG(OrderedDiGraph):
         """
         if name in self._symbols:
             raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
+        if not isinstance(stype, dtypes.typeclass):
+            stype = dtypes.DTYPE_TO_TYPECLASS[stype]
+
         symbolic.symbol(name, stype, override_dtype=override_dtype)
         self._symbols[name] = stype
 

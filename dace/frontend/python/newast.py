@@ -107,6 +107,58 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
                    ('Lt', '<'), ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
     _makebinop(op, opcode)
 
+
+@oprepo.replaces_operator('Scalar', 'Mult', otherclass='Array')
+def _scalarrmult(sdfg: SDFG,
+                 state: SDFGState,
+                 scalop: str,
+                 arrop: str,
+                 reverse=False):
+    """ Implements a Scalar-Array element-wise multiplication operator. """
+    scalar = scalop
+    arr = sdfg.arrays[arrop]
+
+    # Argument type checking
+    if isinstance(scalar, str):
+        if scalar not in sdfg.symbols:
+            raise SyntaxError('Scalar "%s" not defined in SDFG' % scalar)
+        scaltype = sdfg.symbols[scalar]
+    else:
+        scaltype = type(scalar)
+        if scaltype in dtypes.DTYPE_TO_TYPECLASS:
+            scaltype = dtypes.DTYPE_TO_TYPECLASS[scaltype]
+    if scaltype != arr.dtype:
+        print(
+            "WARNING: Different types in scalar-array multiplication (%s scalar, %s array)"
+            % (scaltype.to_string(), arr.dtype.to_string()))
+    # End of argument type checking
+
+    name, _ = sdfg.add_temp_transient(arr.shape, arr.dtype, arr.storage)
+    state.add_mapped_tasklet(
+        "_SA%s_" % 'Mult',
+        {'__i%d' % i: '0:%s' % s
+         for i, s in enumerate(arr.shape)}, {
+             'inp':
+             Memlet.simple(
+                 arrop, ','.join(['__i%d' % i
+                                  for i in range(len(arr.shape))])),
+         },
+        'out = %s * %s' % ('inp' if reverse else str(scalar), str(scalar)
+                           if reverse else 'inp'),
+        {
+            'out':
+            Memlet.simple(
+                name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
+        },
+        external_edges=True)
+    return name
+
+
+@oprepo.replaces_operator('Array', 'Mult', otherclass='Scalar')
+def _arrscalmult(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    return _scalarrmult(sdfg, state, op2, op1, reverse=True)
+
+
 # @oprepo.replaces('dace.define_stream')
 # def _define_stream(sdfg: SDFG, state: SDFGState, dtype=dtypes.float32, buffer_size=0):
 #     name, _ = sdfg.add_temp_transient(shape, dtype)
@@ -1502,10 +1554,14 @@ class ProgramVisitor(ExtNodeVisitor):
                                       'Operand cannot be a tuple')
             operand = operand[0]
 
-        if isinstance(operand, str) and operand in self.sdfg.arrays:
-            return operand, type(self.sdfg.arrays[operand]).__name__
-        else:
-            return operand, type(operand).__name__
+        if isinstance(operand, str):
+            if operand in self.sdfg.arrays:
+                return operand, type(self.sdfg.arrays[operand]).__name__
+            elif operand in self.sdfg.symbols:
+                return operand, data.Scalar.__name__
+        elif dtypes.isconstant(operand):
+            return operand, data.Scalar.__name__
+        return operand, type(operand).__name__
 
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
