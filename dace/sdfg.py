@@ -140,11 +140,7 @@ class SDFG(OrderedDiGraph):
         `dace.graph.nodes` for a full list of available node types); edges in the multigraph represent data movement using memlets, as described in the `Memlet` class documentation.
     """
 
-    def __init__(self,
-                 name: str,
-                 symbols: Dict[str, type] = {},
-                 propagate: bool = True,
-                 parent=None):
+    def __init__(self, name: str, propagate: bool = True, parent=None):
         """ Constructs a new SDFG.
             @param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
@@ -164,9 +160,7 @@ class SDFG(OrderedDiGraph):
         self._constants = {}  # type: Dict[str, Any]
         self._propagate = propagate
         self._parent = parent
-        if not isinstance(symbols, dict):
-            raise ValueError('Ill-defined additional symbol dictionary')
-        self._symbols = symbols
+        self._symbols = {}  # type: Dict[str, type]
         self._parent_sdfg = None
         self._sdfg_list = [self]
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
