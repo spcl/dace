@@ -179,8 +179,13 @@ for file in *_test.py; do
     TOTAL_TESTS=`expr $TOTAL_TESTS + 1`
 done
 
+for file in numpy/*_test.py; do
+    if [ $file == 'numpy/*_test.py' ]; then break; fi # No files found
+    TOTAL_TESTS=`expr $TOTAL_TESTS + 1`
+done
+
 for file in octave/*.m; do
-    if [ $file == '*.m' ]; then break; fi # No files found
+    if [ $file == 'octave/*.m' ]; then break; fi # No files found
     TOTAL_TESTS=`expr $TOTAL_TESTS + 1`
 done
 
@@ -211,8 +216,13 @@ for file in *_test.py; do
     runtest_py $file
 done
 
+for file in numpy/*_test.py; do
+    if [ $file == 'numpy/*_test.py' ]; then break; fi # No files found
+    runtest_py $file
+done
+
 for file in octave/*.m; do
-    if [ $file == '*.m' ]; then break; fi # No files found
+    if [ $file == 'octave/*.m' ]; then break; fi # No files found
     runtest_octave $file
 done
 
