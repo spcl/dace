@@ -259,11 +259,6 @@ class DaceProgram:
             for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
 
-        # Add keyword arguments as additional globals
-        global_vars.update(
-            {k: v
-             for k, v in self.kwargs.items() if dtypes.isallowed(v)})
-
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules)
+                                         modules, self.kwargs)

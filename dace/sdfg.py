@@ -142,13 +142,13 @@ class SDFG(OrderedDiGraph):
 
     def __init__(self,
                  name: str,
-                 symbols: Set[str] = set(),
+                 symbols: Dict[str, type] = {},
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
             @param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
-            @param symbols: Additional set of symbol names that the SDFG 
+            @param symbols: Additional dictionary of symbol names -> types that the SDFG
                             defines, apart from symbolic data sizes.
             @param propagate: If False, disables automatic propagation of
                               memlet subsets from scopes outwards. Saves
@@ -164,6 +164,8 @@ class SDFG(OrderedDiGraph):
         self._constants = {}  # type: Dict[str, Any]
         self._propagate = propagate
         self._parent = parent
+        if not isinstance(symbols, dict):
+            raise ValueError('Ill-defined additional symbol dictionary')
         self._symbols = symbols
         self._parent_sdfg = None
         self._sdfg_list = [self]
@@ -191,7 +193,7 @@ class SDFG(OrderedDiGraph):
         if name in self._symbols:
             raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
         symbolic.symbol(name, stype, override_dtype=override_dtype)
-        self._symbols.add(name)
+        self._symbols[name] = stype
 
     @property
     def start_state(self):
@@ -400,8 +402,7 @@ class SDFG(OrderedDiGraph):
         """ Returns all scalar data arguments to the SDFG (this excludes
             symbols used to define array sizes)."""
         return [
-            (name, dt.Scalar(symbolic.symbol(name).dtype))
-            for name in self._symbols
+            (name, dt.Scalar(stype)) for name, stype in self._symbols.items()
             # Exclude constant variables if requested
             if (include_constants or (name not in self.constants))
         ]

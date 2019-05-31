@@ -4,7 +4,7 @@ import copy
 from typing import Any, Dict, List, Tuple, Union, Callable
 
 import dace
-from dace import data, dtypes, subsets
+from dace import data, dtypes, subsets, symbolic
 from dace.config import Config
 from dace.frontend.common import op_impl
 from dace.frontend.common import op_repository as oprepo
@@ -167,7 +167,7 @@ def _reduce(sdfg: SDFG,
 ############################################
 
 
-def parse_dace_program(f, argtypes, global_vars, modules):
+def parse_dace_program(f, argtypes, global_vars, modules, constants):
     """ Parses a `@dace.program` function into a _ProgramNode object.
         @param f: A Python function to parse.
         @param argtypes: An dictionary of (name, type) for the given
@@ -177,14 +177,22 @@ def parse_dace_program(f, argtypes, global_vars, modules):
                             of `f`.
         @param modules: A dictionary from an imported module name to the
                         module itself.
+        @param constants: A dictionary from a name to a constant value.
         @return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
         @rtype: astnodes._ProgramNode
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
+    # Resolve symbols to their names
+    symrepl = {
+        k: v.name
+        for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
+    }
+    src_ast = astutils.ASTFindReplace(symrepl).visit(src_ast)
+
     src_ast = ModuleResolver(modules).visit(src_ast)
-    # Convert modules to after resolution
+    # Convert modules after resolution
     for mod, modval in modules.items():
         if mod == 'builtins':
             continue
@@ -196,9 +204,9 @@ def parse_dace_program(f, argtypes, global_vars, modules):
         f.__name__,
         src_file,
         src_line,
-        # astutils.get_argtypes(src_ast.body[0], global_vars),
         argtypes,
-        global_vars)
+        global_vars,
+        constants=constants)
 
     sdfg, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
@@ -601,7 +609,8 @@ class ProgramVisitor(ExtNodeVisitor):
                  global_vars: Dict[str, Any],
                  nested: bool = False,
                  parent_arrays: Dict[str, data.Data] = dict(),
-                 variables: Dict[str, str] = dict()):
+                 variables: Dict[str, str] = dict(),
+                 constants: Dict[str, Any] = dict()):
         self.curnode = None
         self.filename = filename
         self.lineoffset = lineoffset
@@ -619,7 +628,19 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_state = None  # self.sdfg.add_state('init', is_start_state=True)
         # if not self.nested:
         self.sdfg.arrays.update(parent_arrays)
-        self.sdfg.arrays.update(arrays)
+        self.sdfg.arrays.update({
+            k: v
+            for k, v in arrays.items() if not isinstance(v, data.Scalar)
+        })
+
+        # Define symbols
+        for k, v in arrays.items():
+            if isinstance(v, data.Scalar):
+                self.sdfg.add_symbol(k, v.dtype)
+
+        # Define constants
+        self.sdfg.add_constants(constants)
+
         self.inputs = {}
         self.outputs = {}
 
