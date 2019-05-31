@@ -15,6 +15,9 @@ parser.add_argument("-p", "--port", default="5000",
 parser.add_argument("-compile", "--compile", action="store_true",
                     help="Compiles the SDFG and returns resulting structures.")
 
+parser.add_argument("-tf", "--transform", default="",
+                    help="Sets the name of the transform to apply. If the transformation name is ambiguous, the first transformation with that name is chosen.")
+
 parser.add_argument("-r", "--run", action="store_true",
                     help = "Executes the SDFG on the target machine specified in Config and prints the execution output (blocking)")
 
@@ -40,7 +43,7 @@ if args.compile or args.run:
     else:
         # Compile from serialized data
         try:
-            data['sdfg'] = json.loads(stdin_input)
+            data['sdfg'] = json.loads(stdin_input)['sdfg']
         except:
             sys.stderr.write("Failed to parse serialized SDFG input, is it in a correct json format?")
             sys.stdout.write("Invalid data: " + str(stdin_input))
@@ -50,6 +53,48 @@ if args.compile or args.run:
     
     #data = json.dumps(data)
     cmdstr = "run/" if args.run else "compile/dace"
+
+    if args.transform:
+        if args.code:
+            sys.stderr.write("Cannot combine --code and --transform. Compile using '--code --extract sdfg txform_detail' first, then pipe the output into a command with --transform")
+            sys.exit(-4)
+
+        try:
+            transforms = json.loads(stdin_input)['advanced_transform']
+        except:
+            sys.stderr.write("Commands executed with --transform need an input file generated previously that includes --extract txform_detail. (Not passing --extract is not valid)")
+            sys.exit(-4)
+        
+        # Apply default transform (no property change)
+        txf_found = False
+        txform_sdfg = ""
+        for k, v in transforms.items():
+            # Compound level (key = target sdfg name, value = Object of transforms)
+            
+            try:
+                txform = v[args.transform]
+                txf_found = True
+                txform_sdfg = k
+                break
+            except:
+                # Key not found
+                continue
+        if not txf_found:
+            sys.stderr.write("Could not find a transformation named " + args.transform)
+            sys.exit(-5)
+        # Else we have a transform to apply
+
+        # Build the format for the transformation manually
+        data['optpath'] = {
+            txform_sdfg: [ {
+                    'name': args.transform,
+                    'params': {
+                        'props': txform
+                    }
+                }
+            ]
+            
+        }
 
     nofail = False
     for i in range(0, 5):
@@ -111,8 +156,9 @@ if args.compile or args.run:
         return d
 
     def get_transformations(resp_json, cb):
-        for x in resp_json['compounds'].keys():
-            sys.stdout.write(x + ":\n")
+        clist = resp_json['compounds'].keys()
+        for x in clist:
+            sys.stdout.write('"' + x + '"' + ":\n{")
             l = resp_json['compounds'][x]['matching_opts']
             encountered = {}
             for c in l:
@@ -123,35 +169,68 @@ if args.compile or args.run:
                 name_str = "" if encountered[c['opt_name']] == 0 else ("$" + str(encountered[c['opt_name']]))
                 #sys.stdout.write(c['opt_name'] + name_str + '\n')
                 cb(x, c['opt_name'] + name_str, c)
+                if c != l[-1]: sys.stdout.write(',')
+
+            sys.stdout.write("}")
+            if x != list(clist)[-1]: sys.stdout.write(',')
 
     # Extract if requested
     if args.extract:
+        if len(args.extract) == 1 and "outcode" in args.extract:
+            pass
+        else:
+            sys.stdout.write("{")
         if "sdfg" in args.extract:
             # Output SDFG
             comps = resp_json['compounds']
             ret = {}
             for k, v in comps.items():
                 ret[k] = v['sdfg']
+            sys.stdout.write('"sdfg":')
             sys.stdout.write(json.dumps(ret, indent=2))
+            if "sdfg" != args.extract[-1]: sys.stdout.write(',')
         if "txform" in args.extract:
             # Output available transformations
+            sys.stdout.write('"simple_transform":')
+            sys.stdout.write("{")
             get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
+            sys.stdout.write("}")
+            if "txform" != args.extract[-1]: sys.stdout.write(',')
         if "txform_detail" in args.extract:
-            get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n' + json.dumps(c, indent=2) + '\n\n'))
+            # Output available transformations in json-format (necessary to apply)
+            sys.stdout.write('"advanced_transform":')
+            sys.stdout.write("{")
+            get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
+            sys.stdout.write("}")
+            if "txform_detail" != args.extract[-1]: sys.stdout.write(',')
         if "structure" in args.extract:
             # Remove values; only output skeleton structure (i.e. only true tree nodes, no leafs)
+            sys.stdout.write('"structure":')
             new_d = dict_scanner(resp_json)
             sys.stdout.write(json.dumps(new_d, indent=2))
         if "struct_noprop" in args.extract:
+            sys.stdout.write('"struct_noprop":')
             new_d = dict_scanner(resp_json, nometa=True)
             sys.stdout.write(json.dumps(new_d, indent=2))
         if "outcode" in args.extract:
+
+            # Don't add objects if this is the only requested output
+            if len(args.extract) > 1:
+                sys.stdout.write('"outcode": "')
             for x in resp_json['compounds'].keys():
                 sys.stdout.write("//" + x + ":\n")
                 l = resp_json['compounds'][x]['generated_code']
                 for c in l:
                     sys.stdout.write("// #### Next ####\n")
                     sys.stdout.write(c)
+            if len(args.extract) > 1:
+                sys.stdout.write('"')
+                if "outcode" != args.extract[-1]: sys.stdout.write(',')
+
+        if len(args.extract) == 1 and "outcode" in args.extract:
+            pass
+        else:
+            sys.stdout.write("}")
     
     else:
         sys.stdout.write(response.text)

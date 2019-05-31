@@ -1925,15 +1925,16 @@ VALUES
                 str(percent_diff), modestr,
                 PerfSettings.perf_max_scope_depth(), overhead_number_string)
 
-            with open("perf_%s.json" % modestr, "w") as out:
-                out.write(totstr)
+            if False: # Disable debug json and csv by default
+                with open("perf_%s.json" % modestr, "w") as out:
+                    out.write(totstr)
 
-            # Debug CSV output
-            for idx, v in enumerate(multirun_supersections):
-                o, r_supersections = v
-                with open("perf%d.csv" % idx, "w") as out:
-                    for x in r_supersections:
-                        out.write(x.toCSVstring())
+                # Debug CSV output
+                for idx, v in enumerate(multirun_supersections):
+                    o, r_supersections = v
+                    with open("perf%d.csv" % idx, "w") as out:
+                        for x in r_supersections:
+                            out.write(x.toCSVstring())
 
         except:
             import traceback
