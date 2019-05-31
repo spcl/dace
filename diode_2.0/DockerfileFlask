@@ -1,0 +1,50 @@
+FROM python:3-stretch
+
+
+
+RUN useradd -ms /bin/bash daceuser
+RUN apt update && apt install sudo nano ssh openssh-client openssh-server apt-utils python3 libyaml-dev xdot python3-dev python3-pip gcc g++ openssh-client -y --no-install-recommends
+RUN pip3 install --upgrade pip
+RUN pip3 install setuptools flask requests
+
+# Install PAPI
+RUN apt update && apt install libpapi-dev -y
+
+COPY . /home/daceuser
+
+#RUN rm /home/daceuser/diode_2.0/client/renderer_dir
+COPY ./diode/ /home/daceuser/diode_2.0/client/renderer_dir
+
+RUN echo "daceuser ALL = NOPASSWD: /usr/sbin/service" >> /etc/sudoers
+
+USER daceuser
+WORKDIR /home/daceuser
+
+RUN mkdir -p /home/daceuser/rundir
+
+# Install an ssh key
+RUN ssh-keygen -b 2048 -t rsa -f ~/.ssh/id_rsa -q -N "" && cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+RUN ssh-keyscan -H localhost >> ~/.ssh/known_hosts
+
+# Set host checking to accept-new to not have a question to trust the host
+# Since accept-new is new in 7.6 and we only have 7.4 in this container, just turn it off.
+RUN echo "StrictHostKeyChecking no" >> ~/.ssh/config
+
+USER root
+# The pip DIODE is likely to be outdated - install from fresh (copied) data
+RUN cd /home/daceuser && pip3 install --upgrade .
+
+# Install DaCe dependencies (might be too much)
+RUN apt install libyaml-dev libgirepository1.0-dev xdot python3-gi -y
+
+
+# Theoretically unnecessary - there is a include issue in DIODE1
+RUN apt install libgtksourceviewmm-3.0-dev python3-cairo python3-gi-cairo -y
+RUN pip3 install pygobject matplotlib
+
+
+USER daceuser
+WORKDIR /home/daceuser/rundir
+
+ENTRYPOINT sudo service ssh start && cd ~/rundir && python3 ~/diode_2.0/diode_rest.py
+#ENTRYPOINT service ssh start && python3 /home/daceuser/diode_2.0/diode_rest.py
