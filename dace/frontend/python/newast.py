@@ -245,7 +245,6 @@ def parse_dace_program(f, argtypes, global_vars, modules, constants):
 
     # TODO: Resolve constants to their values (if they are not already defined in this scope)
 
-
     src_ast = ModuleResolver(modules).visit(src_ast)
     # Convert modules after resolution
     for mod, modval in modules.items():
@@ -535,6 +534,132 @@ def _parse_memlet(visitor, src: MemletType, dst: MemletType,
         1,
         wcr=expr.wcr,
         wcr_identity=expr.wcr_identity)
+
+
+def _subset_has_indirection(subset):
+    for dim in subset:
+        if not isinstance(dim, tuple):
+            dim = [dim]
+        for r in dim:
+            if symbolic.contains_sympy_functions(r):
+                return True
+    return False
+
+
+def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
+                             dst: nodes.Node, memlet: Memlet, local_name: str):
+    """ Replaces the specified edge in the specified graph with a subgraph that
+        implements indirection without nested memlet subsets. """
+
+    array = sdfg.arrays[memlet.data]
+    indirect_inputs = set()
+    indirect_outputs = set()
+
+    # Scheme for multi-array indirection:
+    # 1. look for all arrays and accesses, create set of arrays+indices
+    #    from which the index memlets will be constructed from
+    # 2. each separate array creates a memlet, of which num_accesses = len(set)
+    # 3. one indirection tasklet receives them all + original array and
+    #    produces the right output index/range memlet
+    #########################
+    # Step 1
+    accesses = OrderedDict()
+    newsubset = copy.deepcopy(memlet.subset)
+    for dimidx, dim in enumerate(memlet.subset):
+        # Range/Index disambiguation
+        direct_assignment = False
+        if not isinstance(dim, tuple):
+            dim = [dim]
+            direct_assignment = True
+
+        for i, r in enumerate(dim):
+            for expr in symbolic.swalk(r, enter_functions=True):
+                if symbolic.is_sympy_userfunction(expr):
+                    fname = expr.func.__name__
+                    if fname not in accesses:
+                        accesses[fname] = []
+
+                    # Replace function with symbol (memlet local name to-be)
+                    if expr.args in accesses[fname]:
+                        aindex = accesses[fname].index(expr.args)
+                        toreplace = 'index_' + fname + '_' + str(aindex)
+                    else:
+                        accesses[fname].append(expr.args)
+                        toreplace = 'index_' + fname + '_' + str(
+                            len(accesses[fname]) - 1)
+
+                    if direct_assignment:
+                        newsubset[dimidx] = r.subs(expr, toreplace)
+                    else:
+                        newsubset[dimidx][i] = r.subs(expr, toreplace)
+    #########################
+    # Step 2
+    ind_inputs = {'__ind_' + local_name}
+    ind_outputs = {'lookup'}
+    # Add accesses to inputs
+    for arrname, arr_accesses in accesses.items():
+        for i in range(len(arr_accesses)):
+            ind_inputs.add('index_%s_%d' % (arrname, i))
+
+    tasklet = nodes.Tasklet("Indirection", ind_inputs, ind_outputs)
+
+    input_index_memlets = []
+    for arrname, arr_accesses in accesses.items():
+        arr = sdfg.arrays[arrname]
+        for i, access in enumerate(arr_accesses):
+            # Memlet to load the indirection index
+            indexMemlet = Memlet(arrname, 1, subsets.Indices(list(access)), 1)
+            input_index_memlets.append(indexMemlet)
+            read_node = graph.add_read(arrname)
+            graph.add_memlet_path(
+                read_node,
+                src,
+                tasklet,
+                dst_conn="index_%s_%d" % (arrname, i),
+                memlet=indexMemlet)
+
+    #########################
+    # Step 3
+    # Create new tasklet that will perform the indirection
+    tasklet.code = "lookup = {arr}[{index}]".format(
+        arr='__ind_' + local_name,
+        index=', '.join([symbolic.symstr(s) for s in newsubset]))
+
+    # Create transient variable to trigger the indirect load
+    if memlet.num_accesses == 1:
+        storage = sdfg.add_scalar(
+            '__' + local_name + '_value', array.dtype, transient=True)
+    else:
+        storage = sdfg.add_array(
+            '__' + local_name + '_value',
+            array.dtype,
+            storage=dtypes.StorageType.Default,
+            transient=True,
+            shape=memlet.bounding_box_size())
+    indirectRange = subsets.Range([(0, s - 1, 1) for s in storage.shape])
+    dataNode = nodes.AccessNode('__' + local_name + '_value')
+
+    # Create memlet that depends on the full array that we look up in
+    fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
+    fullMemlet = Memlet(memlet.data, memlet.num_accesses, fullRange,
+                        memlet.veclen)
+    full_read_node = graph.add_read(memlet.data)
+    graph.add_memlet_path(
+        full_read_node,
+        src,
+        tasklet,
+        dst_conn='__ind_' + local_name,
+        memlet=fullMemlet)
+
+    # Memlet to store the final value into the transient, and to load it into
+    # the tasklet that needs it
+    indirectMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
+                            indirectRange, memlet.veclen)
+    graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
+
+    valueMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
+                         indirectRange, memlet.veclen)
+    graph.add_edge(dataNode, None, dst, local_name, valueMemlet)
 
 
 class TaskletTransformer(ExtNodeTransformer):
@@ -854,7 +979,8 @@ class ProgramVisitor(ExtNodeVisitor):
             internal_node, inputs, outputs = self._parse_tasklet(state, node)
 
             # Add memlets
-            self._add_dependencies(state, internal_node, None, None, inputs, outputs)
+            self._add_dependencies(state, internal_node, None, None, inputs,
+                                   outputs)
 
         elif dec.startswith('dace.map') or dec.startswith(
                 'dace.consume'):  # Scope or scope+tasklet
@@ -1027,7 +1153,16 @@ class ProgramVisitor(ExtNodeVisitor):
             inputs: Dict[str, Memlet], outputs: Dict[str, Memlet]):
         if inputs:
             for conn, memlet in inputs.items():
+                if _subset_has_indirection(memlet.subset):
+                    read_node = entry_node
+                    if entry_node is None:
+                        read_node = state.add_read(memlet.data)
+                    add_indirection_subgraph(self.sdfg, state, read_node,
+                                             internal_node, memlet, conn)
+                    continue
+
                 read_node = state.add_read(memlet.data)
+
                 if entry_node is not None:
                     state.add_memlet_path(
                         read_node,
@@ -1495,7 +1630,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 tasklet, inputs, outputs = self._parse_tasklet(state, node)
 
                 # Add memlets
-                self._add_dependencies(state, tasklet, None, None, inputs, outputs)
+                self._add_dependencies(state, tasklet, None, None, inputs,
+                                       outputs)
                 return
 
         raise DaceSyntaxError(
