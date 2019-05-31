@@ -1431,7 +1431,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
         this._terminal_identifer = terminal_identifier;
 
-        this.diode.gatherProjectElementsAndCompile(this, { 'code': code}, { run: true, term_id: terminal_identifier });
+        this.diode.gatherProjectElementsAndCompile(this, {}/*{ 'code': code}*/, { run: true, term_id: terminal_identifier });
     }
 
 }
@@ -4690,12 +4690,21 @@ class DIODE {
             if(options.dry_run === true)
                 return;
 
+            let cis = values['sdfg_object'] != undefined;
+            let cval = values['input_code'];
+
+            if(cis) {
+                cval = values['sdfg_object'];
+                cval = JSON.parse(cval);
+            }
+
             if(options.run === true) {
                 let runopts = {};
                 if(options['perfmodes']) {
                     runopts['perfmodes'] = options['perfmodes'];
                 }
-                this.compile_and_run(calling_context, options.term_id, values['input_code'], values['optpath'], values['sdfg_props'], runopts);
+                runopts['code_is_sdfg'] = cis;
+                this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts);
             }
             else {
                 let cb = (resp) => {
@@ -4704,13 +4713,7 @@ class DIODE {
                 if(options['no_optgraph'] === true) {
                     cb = undefined;
                 }
-                let cis = values['sdfg_object'] != undefined;
-                let cval = values['input_code'];
-
-                if(cis) {
-                    cval = values['sdfg_object'];
-                    cval = JSON.parse(cval);
-                }
+                
                 this.compile(calling_context, cval, values['optpath'], values['sdfg_props'],
                 {
                     optpath_cb: cb,
@@ -4806,7 +4809,7 @@ class DIODE {
         this.addContentItem(terminal_config);
 
 
-        this.gatherProjectElementsAndCompile(this, {}, { run: true, term_id: terminal_identifier });
+        this.gatherProjectElementsAndCompile(this, {}, { run: true, term_id: terminal_identifier, sdfg_over_code: true });
     }
 
     load_perfdata() {
@@ -4831,7 +4834,13 @@ class DIODE {
     }
 
     compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options={}) {
-        let post_params = { "code": code };
+        let post_params = {};
+        if(options.code_is_sdfg === true) {
+            post_params = { "sdfg": code };
+        }
+        else {
+            post_params = { "code": code };
+        }
         if(optpath != undefined) {
             post_params['optpath'] = optpath;
         }

@@ -10,7 +10,7 @@ class diode_optscript_parser:
         else:
             self._of = sys.stdout
 
-        self._chain_ended = True
+        self._chain_ended = False
         self._chain = []
         
     def close(self):
@@ -19,7 +19,8 @@ class diode_optscript_parser:
 
     def OpenPythonFile(self, filepath):
         # Open as dace file and compile
-        self._of.write(";cat {fpath} | {cpath}diode2_client.py --code --compile ".format(fpath=filepath, cpath=self._diode_client_path))
+        if self._chain_ended: self._of.write(" && ")
+        self._of.write("cat {fpath} | {cpath}diode2_client.py --code --compile --extract sdfg txform_detail ".format(fpath=filepath, cpath=self._diode_client_path))
 
         # Build the chain to recreate when necessary
         self._chain.append(lambda: self.OpenPythonFile(filepath))
@@ -29,6 +30,8 @@ class diode_optscript_parser:
         # Run
         #print("Run called")
         self._of.write(" | {cpath}diode2_client.py --run ".format(cpath=self._diode_client_path))
+
+        self._chain.append(lambda: self.Run())
         self._chain_ended = True
 
     def ExpandNode(self, nodename):
@@ -38,7 +41,10 @@ class diode_optscript_parser:
         # 2) Filter transformations, find the node name. Special care is needed for the global suffixes
         # 3) Send a new compile request with the selected optimization
 
-        
+        if self._chain_ended:
+            # Restart the chain
+            for x in self._chain:
+                x()
 
         pass
 

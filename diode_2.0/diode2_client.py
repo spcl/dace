@@ -102,7 +102,7 @@ if args.compile or args.run:
         try:
             response = requests.post(uri, json=data)
         except Exception as e:
-            print("Failed to request url + '" + uri + "' with error " + str(e))
+            print("Failed to request url '" + uri + "' with error " + str(e))
             import time
             time.sleep(2)
             continue

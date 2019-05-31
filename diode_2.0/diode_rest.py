@@ -912,6 +912,13 @@ def compileProgram(request, language, perfopts=None):
             for n, s in sdfg_dict.items():
                 code_tuple_dict[n] = codegen.generate_code(s)
 
+        if dace_state == None:
+            try:
+                dace_state = DaceState("", "fake", sdfg=list(sdfg_dict.values())[0], headless=True)
+            except Exception as e:
+                traceback.print_exc()
+                print("Failed to create DaceState")
+
         # The config won't save back on its own, and we don't want it to - these changes are transient
 
         if len(errors) > 0:
