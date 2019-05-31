@@ -1020,6 +1020,16 @@ subgraph cluster_state_{state} {{
             allow_conflicts=allow_conflicts,
             access_order=access_order)
 
+    def temp_data_name(self):
+        """ Returns a temporary data descriptor name that can be used in this SDFG. """
+
+        name = '__tmp%d' % self._temp_transients
+        while name in self._arrays:
+            self._temp_transients += 1
+            name = '__tmp%d' % self._temp_transients
+
+        return name
+
     def add_temp_transient(self,
                            shape,
                            dtype,
@@ -1033,10 +1043,7 @@ subgraph cluster_state_{state} {{
                            access_order=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
-        name = '__tmp%d' % self._temp_transients
-        while name in self._arrays:
-            self._temp_transients += 1
-            name = '__tmp%d' % self._temp_transients
+        name = self.temp_data_name()
 
         return name, self.add_array(
             name,
