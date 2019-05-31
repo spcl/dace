@@ -770,6 +770,16 @@ class ProgramVisitor(ExtNodeVisitor):
         if dec == 'dace.tasklet':  # Tasklet
             internal_node, inputs, outputs = self._parse_tasklet(state, node)
 
+            # Add memlets
+            for connector, memlet in inputs.items():
+                accessnode = state.add_read(memlet.data)
+                state.add_edge(accessnode, None, internal_node, connector,
+                               memlet)
+            for connector, memlet in outputs.items():
+                accessnode = state.add_write(memlet.data)
+                state.add_edge(internal_node, connector, accessnode, None,
+                               memlet)
+
         elif dec.startswith('dace.map') or dec.startswith(
                 'dace.consume'):  # Scope or scope+tasklet
             params = self._decorator_or_annotation_params(node)
@@ -1346,12 +1356,6 @@ class ProgramVisitor(ExtNodeVisitor):
         if not isinstance(result, (tuple, list)):
             return [result]
         return result
-
-    def _parse_memlet(self, src: MemletType, dst: MemletType):
-        pass
-
-    def _parse_memlet_subset(self, node: ast.Subscript):
-        pass
 
     # Used for memlet expressions, otherwise ignored
     def visit_TopLevelExpr(self, node: ast.Expr):
