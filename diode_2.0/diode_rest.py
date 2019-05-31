@@ -750,7 +750,7 @@ def compileProgram(request, language, perfopts=None):
         except:
             perf_mode = None
     else:
-        print("Perfopts: " + str(perfopts))
+        #print("Perfopts: " + str(perfopts))
         perf_mode = perfopts
 
     client_id = request.json['client_id']
@@ -1189,7 +1189,12 @@ def compile(language):
                                 in the sdfg field
     """
 
-    tmp = compileProgram(request, language)
+    tmp = None
+    try:
+        tmp = compileProgram(request, language)
+    except Exception as e:
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
+
     if len(tmp) > 1:
         sdfgs, code_tuples, sdfg_props, dace_state = tmp
     else:

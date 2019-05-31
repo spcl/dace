@@ -349,7 +349,9 @@ function start_DIODE() {
             }
             if(event.target == "compile-menu:compile") {
                 // "Normal" recompilation
-                diode.gatherProjectElementsAndCompile(diode);
+                diode.gatherProjectElementsAndCompile(diode, {}, {
+                    sdfg_over_code: true
+                });
             }
             if(event.target == "compile-menu:compile-clean") {
                 // Compile, disregarding everything but the input code
