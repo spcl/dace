@@ -773,14 +773,18 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_state = state
         return state
 
-    def _parse_arg(self, arg: Any):
+    def _parse_arg(self, arg: Any, as_list=True):
         """ Parse possible values to slices or objects that can be used in
             the SDFG API. """
         if isinstance(arg, ast.Subscript) and rname(arg) == '_':
-            return [
+            result = [
                 ':'.join([str(d) for d in dim]) for dim in
                 astutils.subscript_to_slice(arg, self.sdfg.arrays)[1]
             ]
+            if as_list is False and len(result) == 1:
+                return result[0]
+            return result
+
         return arg
 
     def _decorator_or_annotation_params(
@@ -801,7 +805,10 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 args = [self._parse_arg(arg) for arg in dec.args]
         else:  # Otherwise, use annotations
-            args = [arg.annotation for arg in node.args.args]
+            args = [
+                self._parse_arg(arg.annotation, as_list=False)
+                for arg in node.args.args
+            ]
 
         result = [(rname(arg), argval)
                   for arg, argval in zip(node.args.args, args)]

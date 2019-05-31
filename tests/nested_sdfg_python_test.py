@@ -12,22 +12,19 @@ N = dp.symbol('N')
 def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
     @dp.mapscope
     def elements(i: _[0:N], j: _[0:N]):
-        input << A[i, j]
-        output >> B[i, j]
-
         @dp.tasklet
         def init():
-            inp << input
-            out >> output
+            inp << A[i, j]
+            out >> B[i, j]
             out = inp
 
         for k in range(4):
 
             @dp.tasklet
             def do():
-                inp << input
-                oin << output
-                out >> output
+                inp << A[i, j]
+                oin << B[i, j]
+                out >> B[i, j]
                 out = oin * inp
 
 
