@@ -174,5 +174,5 @@ def reduce(op, in_array, out_array, axis=None, identity=None):
         Requires `out_array` with one dimension less than `in_array`, or a 
         scalar if `axis` is None.
     """
-    # The function is empty because it is parsed in astparser
+    # The function is empty because it is parsed in the Python frontend
     return None

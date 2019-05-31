@@ -5,11 +5,6 @@ import numpy as np
 W = dp.symbol('W')
 
 
-@dp.external_function
-def what(i):
-    return i * 4 + 5
-
-
 @dp.program
 def indirection(A: dp.float32[W, W, W], x: dp.int32[W], y: dp.int32[W],
                 B: dp.float32[W, W, W]):

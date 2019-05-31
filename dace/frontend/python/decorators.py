@@ -18,12 +18,6 @@ def program(f, *args, **kwargs):
     return parser.DaceProgram(f, args, kwargs)
 
 
-@paramdec
-def external_function(f, **alternative_implementations):
-    """ External functions that may be called within a DaCe program. """
-    return dtypes._external_function(f, alternative_implementations)
-
-
 # Internal DaCe decorators, these are not actually run, but rewritten
 
 

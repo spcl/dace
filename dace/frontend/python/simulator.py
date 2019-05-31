@@ -4,16 +4,12 @@
 from __future__ import print_function
 import ast
 import copy
-from functools import wraps
-import inspect
-import numpy
-import sys
 import numpy
 
-from dace import data, symbolic, dtypes
+from dace import data, symbolic
 from dace.config import Config
-from dace.frontend.python import astparser, astnodes, astutils, ndloop, ndarray
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python import astnodes, ndloop, ndarray
+from dace.frontend.python.astutils import unparse, rname
 from dace.frontend.python.parser import DaceProgram
 
 
@@ -181,9 +177,9 @@ class SimulatorTransformer(ast.NodeTransformer):
                 return self.generic_visit(node)
             dec = node.decorator_list[0]
             if isinstance(dec, ast.Call):
-                decname = astparser.rname(dec.func.attr)
+                decname = rname(dec.func.attr)
             else:
-                decname = astparser.rname(dec.attr)
+                decname = rname(dec.attr)
 
             if decname in [
                     'map', 'reduce', 'consume', 'tasklet', 'iterate', 'loop',
@@ -502,8 +498,8 @@ class SimulatorTransformer(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Assign(self, node):
-        if astutils.rname(node.targets[0]) in self.accumOnAssignment:
-            var_name = astutils.rname(node.targets[0])
+        if rname(node.targets[0]) in self.accumOnAssignment:
+            var_name = rname(node.targets[0])
             array_name, accum = self.accumOnAssignment[var_name]
             if isinstance(node.targets[0], ast.Subscript):
                 array_name += '[' + unparse(node.targets[0].slice) + ']'
@@ -519,7 +515,7 @@ class SimulatorTransformer(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Call(self, node):
-        if '.push' in astutils.rname(node.func):
+        if '.push' in rname(node.func):
             node.func.attr = 'append'
         return self.generic_visit(node)
 

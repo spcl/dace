@@ -5,7 +5,7 @@ import numpy as np
 W = dace.symbol()
 
 
-@dace.external_function
+@dace.program
 def bla(AA, BB):
     tmp = dace.define_local([W], AA.dtype)
 
