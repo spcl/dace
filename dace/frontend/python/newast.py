@@ -243,6 +243,9 @@ def parse_dace_program(f, argtypes, global_vars, modules, constants):
     }
     src_ast = astutils.ASTFindReplace(symrepl).visit(src_ast)
 
+    # TODO: Resolve constants to their values (if they are not already defined in this scope)
+
+
     src_ast = ModuleResolver(modules).visit(src_ast)
     # Convert modules after resolution
     for mod, modval in modules.items():
@@ -851,14 +854,7 @@ class ProgramVisitor(ExtNodeVisitor):
             internal_node, inputs, outputs = self._parse_tasklet(state, node)
 
             # Add memlets
-            for connector, memlet in inputs.items():
-                accessnode = state.add_read(memlet.data)
-                state.add_edge(accessnode, None, internal_node, connector,
-                               memlet)
-            for connector, memlet in outputs.items():
-                accessnode = state.add_write(memlet.data)
-                state.add_edge(internal_node, connector, accessnode, None,
-                               memlet)
+            self._add_dependencies(state, internal_node, None, None, inputs, outputs)
 
         elif dec.startswith('dace.map') or dec.startswith(
                 'dace.consume'):  # Scope or scope+tasklet
@@ -1032,27 +1028,37 @@ class ProgramVisitor(ExtNodeVisitor):
         if inputs:
             for conn, memlet in inputs.items():
                 read_node = state.add_read(memlet.data)
-                state.add_memlet_path(
-                    read_node,
-                    entry_node,
-                    internal_node,
-                    memlet=memlet,
-                    src_conn=None,
-                    dst_conn=conn)
+                if entry_node is not None:
+                    state.add_memlet_path(
+                        read_node,
+                        entry_node,
+                        internal_node,
+                        memlet=memlet,
+                        src_conn=None,
+                        dst_conn=conn)
+                else:
+                    state.add_edge(read_node, None, internal_node, conn,
+                                   memlet)
         else:
-            state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
+            if entry_node is not None:
+                state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
         if outputs:
             for conn, memlet in outputs.items():
                 write_node = state.add_write(memlet.data)
-                state.add_memlet_path(
-                    internal_node,
-                    exit_node,
-                    write_node,
-                    memlet=memlet,
-                    src_conn=conn,
-                    dst_conn=None)
+                if exit_node is not None:
+                    state.add_memlet_path(
+                        internal_node,
+                        exit_node,
+                        write_node,
+                        memlet=memlet,
+                        src_conn=conn,
+                        dst_conn=None)
+                else:
+                    state.add_edge(internal_node, conn, write_node, None,
+                                   memlet)
         else:
-            state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
+            if exit_node is not None:
+                state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
 
     def visit_For(self, node: ast.For):
         # We allow three types of for loops:
@@ -1489,14 +1495,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 tasklet, inputs, outputs = self._parse_tasklet(state, node)
 
                 # Add memlets
-                for connector, memlet in inputs.items():
-                    accessnode = state.add_read(memlet.data)
-                    state.add_edge(accessnode, None, tasklet, connector,
-                                   memlet)
-                for connector, memlet in outputs.items():
-                    accessnode = state.add_write(memlet.data)
-                    state.add_edge(tasklet, connector, accessnode, None,
-                                   memlet)
+                self._add_dependencies(state, tasklet, None, None, inputs, outputs)
                 return
 
         raise DaceSyntaxError(
