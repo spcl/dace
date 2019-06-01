@@ -244,7 +244,7 @@ class SDFG(OrderedDiGraph):
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         for v in json_obj['undefined_symbols']:
-            symbol = dace.symbolic.symbol(v)
+            symbol = symbolic.symbol(v)
             #symbol.set(v)
 
 
