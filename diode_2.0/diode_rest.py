@@ -921,7 +921,7 @@ def compileProgram(request, language, perfopts=None):
 
         if dace_state == None:
             if "code" in request.json:
-                in_code = request.json['code'] 
+                in_code = request.json['code']
             else:
                 in_code = ""
             try:

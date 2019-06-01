@@ -243,7 +243,7 @@ if args.compile or args.run:
                 runnercode = ""
                 try:
                     d = json.loads(stdin_input)
-                    runnercode = d['runnercode']
+                    runnercode = d['runnercode'][0]
                 except:
                     pass
                 if not args.code and runnercode == "":

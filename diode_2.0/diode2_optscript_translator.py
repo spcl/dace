@@ -17,6 +17,17 @@ class diode_optscript_parser:
         if self._of != sys.stdout:
             self._of.close()
 
+    def rebuild_chain(self):
+        if self._chain_ended:
+            self._chain_ended = False
+            self._of.write(" && ")
+            # Restart the chain
+            chain_cpy = self._chain
+            self._chain = []
+            for x in chain_cpy:
+                x()
+            self._chain_ended = False
+
     def OpenPythonFile(self, filepath):
         # Open as dace file and compile
         if self._chain_ended: self._of.write(" && ")
@@ -28,26 +39,32 @@ class diode_optscript_parser:
 
     def Run(self):
         # Run
-        #print("Run called")
-        self._of.write(" | python3 {cpath}diode2_client.py --run ".format(cpath=self._diode_client_path))
+        self.rebuild_chain()
+        self._of.write(" | python3 {cpath}diode2_client.py --run".format(cpath=self._diode_client_path))
 
-        self._chain.append(lambda: self.Run())
+        #self._chain.append(lambda: self.Run())
+        self._chain_ended = True
+
+    def ShowOutcode(self):
+        self.rebuild_chain()
+        self._of.write(" | python3 {cpath}diode2_client.py --compile --extract outcode".format(cpath=self._diode_client_path))
         self._chain_ended = True
 
     def ExpandNode(self, nodename):
         # This did open a new node in the old DIODE optgraph/opttree.
         # For diode2, the process is more involved:
-        # 1) Get the current SDFG and optimizations
+        # 1) Get the current SDFG and optimizations (implicit due to piping)
         # 2) Filter transformations, find the node name. Special care is needed for the global suffixes
         # 3) Send a new compile request with the selected optimization
 
-        if self._chain_ended:
-            self._of.write(" && ")
-            # Restart the chain
-            for x in self._chain:
-                x()
+        # The diode2 client is smart enough to work for local transformations by name - this should be sufficient for most test cases
+        # #TODO: Fix for non-local transformations (transformations with global name)
+        # #TODO: Fix for advanced transformations (transformations with non-default properties)
 
-        self._of.write()
+        self.rebuild_chain()
+
+        self._of.write(" | python3 {cpath}diode2_client.py --compile --transform {name} --extract sdfg txform_detail runnercode".format(cpath=self._diode_client_path, name=nodename))
+        self._chain.append(lambda: self.ExpandNode(nodename))
 
     def ActivateNode(self, nodename):
         # #TODO
