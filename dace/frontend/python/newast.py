@@ -958,15 +958,20 @@ class ProgramVisitor(ExtNodeVisitor):
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, exit_node, True, arr)
                     name = memlet.data
-                    rng = scope_memlet.subset
+                    irng = memlet.subset
+                    orng = copy.deepcopy(scope_memlet.subset)
+                    for i, o in zip(irng, orng):
+                        if i == o:
+                            irng.ranges.remove(i)
+                            orng.ranges.remove(o)
                     vname = "{c}_out_of_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(exit_node))
-                    self.accesses[(name, rng, 'w')] = vname
-                    shape = rng.size()
+                    self.accesses[(name, scope_memlet.subset, 'w')] = vname
+                    shape = orng.size()
                     dtype = arr.dtype
                     self.sdfg.add_array(vname, shape, dtype)
-                    self.outputs[vname] = (memlet.data, rng)
+                    self.outputs[vname] = (memlet.data, scope_memlet.subset)
                     memlet.data = vname
                 else:
                     vname = memlet.data
