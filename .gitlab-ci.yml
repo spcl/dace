@@ -78,6 +78,7 @@ test_filter:
     - linux
   script: 
     - cd tests/
+    - ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file filter_test_opt.py -d2p "../diode_2.0/" | sh'
     - xvfb-run python3 ../scripts/diode --optscript filter_test_opt.py --headless --local 
  
 
@@ -88,6 +89,7 @@ test_spmv:
     - linux
   script: 
     - cd tests/
+    - ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file spmv_test_opt.py -d2p "../diode_2.0/" | sh'
     - xvfb-run python3 ../scripts/diode --optscript spmv_test_opt.py --headless --local 
 
 
@@ -98,6 +100,7 @@ test_simple_stencil:
     - linux
   script: 
     - cd tests/
+    - ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file simple_stencil_test_opt.py -d2p "../diode_2.0/" | sh'
     - xvfb-run python3 ../scripts/diode --optscript simple_stencil_test_opt.py --headless --local 
 
 test_all:on-schedule:
