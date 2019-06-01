@@ -23,7 +23,7 @@ from dace.data import validate_name
 from dace.graph import dot, nxutil
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
-from dace.properties import make_properties, Property, CodeProperty
+from dace.properties import make_properties, Property, CodeProperty, OrderedDictProperty
 
 
 def getcaller() -> Tuple[str, int]:
@@ -141,7 +141,8 @@ class SDFG(OrderedDiGraph):
     """
 
     name = Property(dtype=str, desc="The name of the sdfg")
-    arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
+    #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
+    arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG")

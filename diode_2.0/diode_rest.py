@@ -930,6 +930,8 @@ def compileProgram(request, language, perfopts=None):
             except Exception as e:
                 traceback.print_exc()
                 print("Failed to create DaceState")
+            if len(dace_state.errors) > 0:
+                print("ERRORS: " + str(dace_state.errors))
 
         # The config won't save back on its own, and we don't want it to - these changes are transient
 

@@ -565,6 +565,32 @@ def indirect_properties(indirect_class, indirect_function, override=False):
     return indirection
 
 
+class OrderedDictProperty(Property):
+    """ Property type for ordered dicts
+    """
+
+    @staticmethod
+    def to_json(d):
+
+        # The ordered dict is more of a list than a dict.
+        retlist = [{k: v} for k, v in d.items()]
+        return json.dumps(retlist, default=Property.json_dumper)
+
+    @staticmethod
+    def from_json(s, sdfg=None):
+
+        obj = json.loads(s, object_hook=Property.json_loader)
+        # This is expected to be a list (a JSON dict does not guarantee an order,
+        # although it would often be lexicographically ordered by key name)
+
+        import collections
+        ret = collections.OrderedDict()
+        for x in obj:
+            ret[list(x.keys())[0]] = list(x.values())[0]
+
+        return ret
+
+
 class ListProperty(Property):
     """ Property type for lists.
     """

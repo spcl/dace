@@ -51,7 +51,7 @@ if args.compile or args.run:
 
         # Append runnercode if available
         try:
-            data['code'] = json.loads(stdin_input)['runnercode']
+            data['code'] = json.loads(stdin_input)['runnercode'][0]
         except:
             pass
     
@@ -124,18 +124,13 @@ if args.compile or args.run:
     if args.run:
         first_out = response.text
         output_ok = False
-        #resptext = ""
         # Output is a json asking to use a different URL to read the output
         for i in range(0, 5):
             import time
             time.sleep(1)
             response = requests.post(url + "/dace/api/v" + args.version + "/run/status/", json={'client_id': args.user})
-            #resptext = ""
-            #for l in response.iter_lines(decode_unicode=True):
-            #    resptext += str(l) + '\n'
             try:
                 tmp = json.loads(response.text)
-                #tmp = json.loads(resptext)
             except:
                 # Got valid data
                 output_ok = True
@@ -144,7 +139,6 @@ if args.compile or args.run:
             sys.stderr.write("Failed to get run reference\n")
             sys.exit(-1)
         sys.stdout.write(response.text)
-        #sys.stdout.write(resptext)
         sys.exit(0)
 
     resp_json = response.json()
@@ -180,78 +174,89 @@ if args.compile or args.run:
             sys.stdout.write("}")
             if x != list(clist)[-1]: sys.stdout.write(',')
 
+    extract_list = list(args.extract)
     # Extract if requested
     if args.extract:
         if len(args.extract) == 1 and "outcode" in args.extract:
             pass
         else:
             sys.stdout.write("{")
-        if "sdfg" in args.extract:
-            # Output SDFG
-            comps = resp_json['compounds']
-            ret = {}
-            for k, v in comps.items():
-                ret[k] = v['sdfg']
-            sys.stdout.write('"sdfg":')
-            sys.stdout.write(json.dumps(ret, indent=2))
-            if "sdfg" != args.extract[-1]: sys.stdout.write(',')
-        if "txform" in args.extract:
-            # Output available transformations
-            sys.stdout.write('"simple_transform":')
-            sys.stdout.write("{")
-            get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
-            sys.stdout.write("}")
-            if "txform" != args.extract[-1]: sys.stdout.write(',')
-        if "txform_detail" in args.extract:
-            # Output available transformations in json-format (necessary to apply)
-            sys.stdout.write('"advanced_transform":')
-            sys.stdout.write("{")
-            get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
-            sys.stdout.write("}")
-            if "txform_detail" != args.extract[-1]: sys.stdout.write(',')
-        if "structure" in args.extract:
-            # Remove values; only output skeleton structure (i.e. only true tree nodes, no leafs)
-            sys.stdout.write('"structure":')
-            new_d = dict_scanner(resp_json)
-            sys.stdout.write(json.dumps(new_d, indent=2))
-        if "struct_noprop" in args.extract:
-            sys.stdout.write('"struct_noprop":')
-            new_d = dict_scanner(resp_json, nometa=True)
-            sys.stdout.write(json.dumps(new_d, indent=2))
-        if "outcode" in args.extract:
-            # Don't add objects if this is the only requested output
-            if len(args.extract) > 1:
-                sys.stdout.write('"outcode": "')
-            for x in resp_json['compounds'].keys():
-                sys.stdout.write("//" + x + ":\n")
-                l = resp_json['compounds'][x]['generated_code']
-                for c in l:
-                    sys.stdout.write("// #### Next ####\n")
-                    sys.stdout.write(c)
-            if len(args.extract) > 1:
-                sys.stdout.write('"')
-                if "outcode" != args.extract[-1]: sys.stdout.write(',')
-        if "runnercode" in args.extract:
-        
-            sys.stdout.write('"runnercode": "')
-            # Pass the input code through
+        for elem in extract_list:
+            
+            if "sdfg" == elem:
+                # Output SDFG
+                comps = resp_json['compounds']
+                ret = {}
+                for k, v in comps.items():
+                    ret[k] = v['sdfg']
+                sys.stdout.write('"sdfg":')
+                sys.stdout.write(json.dumps(ret, indent=2))
+                if "sdfg" != args.extract[-1]: sys.stdout.write(',')
+            if "txform" == elem:
+                # Output available transformations
+                sys.stdout.write('"simple_transform":')
+                sys.stdout.write("{")
+                get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
+                sys.stdout.write("}")
+                if "txform" != args.extract[-1]: sys.stdout.write(',')
+            if "txform_detail" == elem:
+                # Output available transformations in json-format (necessary to apply)
+                sys.stdout.write('"advanced_transform":')
+                sys.stdout.write("{")
+                get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
+                sys.stdout.write("}")
+                if "txform_detail" != args.extract[-1]: sys.stdout.write(',')
+            if "structure" == elem:
+                # Remove values; only output skeleton structure (i.e. only true tree nodes, no leafs)
+                sys.stdout.write('"structure":')
+                new_d = dict_scanner(resp_json)
+                sys.stdout.write(json.dumps(new_d, indent=2))
+            if "struct_noprop" == elem:
+                sys.stdout.write('"struct_noprop":')
+                new_d = dict_scanner(resp_json, nometa=True)
+                sys.stdout.write(json.dumps(new_d, indent=2))
+            if "outcode" == elem:
+                # Don't add objects if this is the only requested output
+                as_json = False
+                if len(args.extract) > 1:
+                    sys.stdout.write('"outcode": ')
+                    as_json = True
+                if as_json:
+                    sys.stdout.write(json.dumps({k: v['generated_code'] for k, v in resp_json['compounds'].items()}))
+                    
+                else:
+                    for x in resp_json['compounds'].keys():
+                        sys.stdout.write("//" + x + ":\n")
+                        l = resp_json['compounds'][x]['generated_code']
+                        for c in l:
+                            sys.stdout.write("// #### Next ####\n")
+                            sys.stdout.write(c)
+                if len(args.extract) > 1:
+                    if "outcode" != extract_list[-1]:
+                        sys.stdout.write(',')
+            if "runnercode" == elem:
+            
+                sys.stdout.write('"runnercode": ')
+                # Pass the input code through
 
-            # Check if the code was in already passed-through data input (read json)
-            runnercode = ""
-            try:
-                d = json.loads(stdin_input)
-                runnercode = d['runnercode']
-            except:
-                pass
-            if not args.code and runnercode == "":
-                sys.stderr.write("Error: Cannot extract runnercode as it was not in input.")
-                sys.exit(-4)
-            elif args.code:
-                # Take stdin_input
-                runnercode = stdin_input
+                # Check if the code was in already passed-through data input (read json)
+                runnercode = ""
+                try:
+                    d = json.loads(stdin_input)
+                    runnercode = d['runnercode']
+                except:
+                    pass
+                if not args.code and runnercode == "":
+                    sys.stderr.write("Error: Cannot extract runnercode as it was not in input.")
+                    sys.exit(-4)
+                elif args.code:
+                    # Take stdin_input
+                    runnercode = stdin_input
 
-            sys.stdout.write('"')
-            if "runnercode" != args.extract[-1]: sys.stdout.write(',')
+                sys.stdout.write(json.dumps([runnercode]))
+
+                if "runnercode" != extract_list[-1]:
+                    sys.stdout.write(',')
 
 
         if len(args.extract) == 1 and "outcode" in args.extract:
