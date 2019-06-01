@@ -20,7 +20,7 @@ class diode_optscript_parser:
     def OpenPythonFile(self, filepath):
         # Open as dace file and compile
         if self._chain_ended: self._of.write(" && ")
-        self._of.write("cat {fpath} | {cpath}diode2_client.py --code --compile --extract sdfg txform_detail runnercode".format(fpath=filepath, cpath=self._diode_client_path))
+        self._of.write("cat {fpath} | python3 {cpath}diode2_client.py --code --compile --extract sdfg txform_detail runnercode".format(fpath=filepath, cpath=self._diode_client_path))
 
         # Build the chain to recreate when necessary
         self._chain.append(lambda: self.OpenPythonFile(filepath))
@@ -29,7 +29,7 @@ class diode_optscript_parser:
     def Run(self):
         # Run
         #print("Run called")
-        self._of.write(" | {cpath}diode2_client.py --run ".format(cpath=self._diode_client_path))
+        self._of.write(" | python3 {cpath}diode2_client.py --run ".format(cpath=self._diode_client_path))
 
         self._chain.append(lambda: self.Run())
         self._chain_ended = True
@@ -42,11 +42,12 @@ class diode_optscript_parser:
         # 3) Send a new compile request with the selected optimization
 
         if self._chain_ended:
+            self._of.write(" && ")
             # Restart the chain
             for x in self._chain:
                 x()
 
-        pass
+        self._of.write()
 
     def ActivateNode(self, nodename):
         # #TODO
