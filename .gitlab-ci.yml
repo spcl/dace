@@ -57,6 +57,7 @@ test_mpihello:
     - mpi
   script: 
     - cd tests/
+    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file mpihello_test_opt.py -d2p "../diode_2.0/" | sh'
     - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../scripts/diode --optscript mpihello_test_opt.py --headless --local 
 
 
@@ -68,6 +69,7 @@ test_mpihello2:
     - mpi
   script: 
     - cd tests/
+    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file mpihello2_test_opt.py -d2p "../diode_2.0/" | sh'
     - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../scripts/diode --optscript mpihello2_test_opt.py --headless --local 
 
 
