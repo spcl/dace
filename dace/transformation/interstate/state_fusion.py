@@ -60,8 +60,8 @@ class StateFusion(pattern_matching.Transformation):
 
             # If second state has other input edges, there might be issues
             second_in_edges = graph.in_edges(second_state)
-            if ((not second_state.is_empty() or not first_state.is_empty())
-                    and len(second_in_edges) != 1):
+            # (not second_state.is_empty() or not first_state.is_empty()) and
+            if len(second_in_edges) != 1:
                 return False
 
             # Get connected components.
