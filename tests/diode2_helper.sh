@@ -27,6 +27,7 @@ elif cat cmdout.txt | grep -q '+ exit 0'; then
     RETVAL=0
 else
     echo "Failed to get sensible output"
+    cat cmdout.txt
     RETVAL=1
 fi
 
