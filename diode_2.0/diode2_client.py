@@ -27,7 +27,7 @@ parser.add_argument("-code", "--code", action="store_true",
 parser.add_argument("-u", "--user", default="default",
                     help="Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)")
 
-parser.add_argument("-e", "--extract", nargs="+", choices=["txform", "sdfg", "structure", "struct_noprop", "outcode", "txform_detail"])
+parser.add_argument("-e", "--extract", nargs="+", choices=["txform", "sdfg", "structure", "struct_noprop", "outcode", "txform_detail", "runnercode"])
 
 parser.add_argument("-ver", "--version", default="1.0",
                     help="Sets the REST API Version to use.")
@@ -48,6 +48,12 @@ if args.compile or args.run:
             sys.stderr.write("Failed to parse serialized SDFG input, is it in a correct json format?")
             sys.stdout.write("Invalid data: " + str(stdin_input))
             sys.exit(-3)
+
+        # Append runnercode if available
+        try:
+            data['code'] = json.loads(stdin_input)['runnercode']
+        except:
+            pass
     
     data['client_id'] = args.user
     
@@ -213,7 +219,6 @@ if args.compile or args.run:
             new_d = dict_scanner(resp_json, nometa=True)
             sys.stdout.write(json.dumps(new_d, indent=2))
         if "outcode" in args.extract:
-
             # Don't add objects if this is the only requested output
             if len(args.extract) > 1:
                 sys.stdout.write('"outcode": "')
@@ -226,6 +231,28 @@ if args.compile or args.run:
             if len(args.extract) > 1:
                 sys.stdout.write('"')
                 if "outcode" != args.extract[-1]: sys.stdout.write(',')
+        if "runnercode" in args.extract:
+        
+            sys.stdout.write('"runnercode": "')
+            # Pass the input code through
+
+            # Check if the code was in already passed-through data input (read json)
+            runnercode = ""
+            try:
+                d = json.loads(stdin_input)
+                runnercode = d['runnercode']
+            except:
+                pass
+            if not args.code and runnercode == "":
+                sys.stderr.write("Error: Cannot extract runnercode as it was not in input.")
+                sys.exit(-4)
+            elif args.code:
+                # Take stdin_input
+                runnercode = stdin_input
+
+            sys.stdout.write('"')
+            if "runnercode" != args.extract[-1]: sys.stdout.write(',')
+
 
         if len(args.extract) == 1 and "outcode" in args.extract:
             pass

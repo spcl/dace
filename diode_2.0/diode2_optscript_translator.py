@@ -20,7 +20,7 @@ class diode_optscript_parser:
     def OpenPythonFile(self, filepath):
         # Open as dace file and compile
         if self._chain_ended: self._of.write(" && ")
-        self._of.write("cat {fpath} | {cpath}diode2_client.py --code --compile --extract sdfg txform_detail ".format(fpath=filepath, cpath=self._diode_client_path))
+        self._of.write("cat {fpath} | {cpath}diode2_client.py --code --compile --extract sdfg txform_detail runnercode".format(fpath=filepath, cpath=self._diode_client_path))
 
         # Build the chain to recreate when necessary
         self._chain.append(lambda: self.OpenPythonFile(filepath))

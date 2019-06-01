@@ -726,6 +726,43 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
     sdfg = applySDFGProperties(sdfg, sdfg_props, step)
     return sdfg
 
+def create_DaceState(code, sdfg_dict, errors):
+    dace_state = None
+    try:
+        dace_state = DaceState(code, "fake", headless=True)
+        for x in dace_state.sdfgs:
+            name, sdfg = x
+            sdfg_dict[name] = sdfg
+
+        return dace_state
+
+    except SyntaxError as se:
+        # Syntax error
+        errors.append({
+            'type': "SyntaxError",
+            'line': se.lineno,
+            'offset': se.offset,
+            'text': se.text,
+            'msg': se.msg
+        })
+    except ValueError as ve:
+        # DACE-Specific error
+        tb = traceback.format_exc()
+        errors.append({
+            'type': "ValueError",
+            'stringified': str(ve),
+            'traceback': tb
+        })
+    except Exception as ge:
+        # Generic exception
+        tb = traceback.format_exc()
+        errors.append({
+            'type': ge.__class__.__name__,
+            'stringified': str(ge),
+            'traceback': tb
+        })
+
+    return dace_state
 
 def compileProgram(request, language, perfopts=None):
     if not request.json or (('code' not in request.json) and
@@ -843,37 +880,7 @@ def compileProgram(request, language, perfopts=None):
                 sdfg = statements.generate_code()
                 sdfg.set_sourcecode(code, "matlab")
             elif language == "dace":
-                try:
-                    dace_state = DaceState(code, "fake", headless=True)
-                    for x in dace_state.sdfgs:
-                        name, sdfg = x
-                        sdfg_dict[name] = sdfg
-
-                except SyntaxError as se:
-                    # Syntax error
-                    errors.append({
-                        'type': "SyntaxError",
-                        'line': se.lineno,
-                        'offset': se.offset,
-                        'text': se.text,
-                        'msg': se.msg
-                    })
-                except ValueError as ve:
-                    # DACE-Specific error
-                    tb = traceback.format_exc()
-                    errors.append({
-                        'type': "ValueError",
-                        'stringified': str(ve),
-                        'traceback': tb
-                    })
-                except Exception as ge:
-                    # Generic exception
-                    tb = traceback.format_exc()
-                    errors.append({
-                        'type': ge.__class__.__name__,
-                        'stringified': str(ge),
-                        'traceback': tb
-                    })
+                dace_state = create_DaceState(code, sdfg_dict, errors)
 
         # The DaceState uses the variable names in the dace code. This is not useful enough for us, so we translate
         copied_dict = {}
@@ -913,8 +920,13 @@ def compileProgram(request, language, perfopts=None):
                 code_tuple_dict[n] = codegen.generate_code(s)
 
         if dace_state == None:
+            if "code" in request.json:
+                in_code = request.json['code'] 
+            else:
+                in_code = ""
             try:
-                dace_state = DaceState("", "fake", sdfg=list(sdfg_dict.values())[0], headless=True)
+                dace_state = DaceState(in_code, "fake", headless=True)
+                dace_state.set_sdfg(list(sdfg_dict.values())[0], list(sdfg_dict.keys())[0])
             except Exception as e:
                 traceback.print_exc()
                 print("Failed to create DaceState")

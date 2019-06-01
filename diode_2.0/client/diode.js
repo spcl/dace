@@ -4704,6 +4704,7 @@ class DIODE {
                     runopts['perfmodes'] = options['perfmodes'];
                 }
                 runopts['code_is_sdfg'] = cis;
+                runopts['runnercode'] = values['input_code'];
                 this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts);
             }
             else {
@@ -4730,10 +4731,13 @@ class DIODE {
         /*
             options:
                 .code_is_sdfg: If true, the code parameter is treated as a serialized SDFG
+                .runnercode: [opt] Provides the python code used to invoke the SDFG program if needed
         */
         let post_params = {};
         if(options.code_is_sdfg === true) {
             post_params = { "sdfg": code };
+
+            post_params['code'] = options.runnercode;
         }
         else {
             post_params = { "code": code };
@@ -4834,9 +4838,13 @@ class DIODE {
     }
 
     compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options={}) {
+        /*
+            .runnercode: [opt] Code provided with SDFG to invoke the SDFG program. 
+        */
         let post_params = {};
         if(options.code_is_sdfg === true) {
             post_params = { "sdfg": code };
+            post_params['code'] = options.runnercode;
         }
         else {
             post_params = { "code": code };
