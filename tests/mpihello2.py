@@ -45,3 +45,4 @@ if __name__ == "__main__":
     print('Vector add MPI %d' % (N.get()))
 
     mpihello(V, Vout)
+    print("+ exit 0") # Added for test run
