@@ -5,7 +5,7 @@ import errno
 import itertools
 from inspect import getframeinfo, stack
 import os
-import pickle
+import pickle, json
 from pydoc import locate
 from typing import Any, Dict, Set, Tuple, List
 
@@ -145,7 +145,9 @@ class SDFG(OrderedDiGraph):
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG")
+    _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
+                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k != None}, default=Property.json_dumper) if x != None else "null",
+                        from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
 
     global_code = CodeProperty(desc="Code generated in a global scope on the frame-code generated file.", default="")
     init_code = CodeProperty(desc="Code generated in the `__dapp_init` function.", default="")

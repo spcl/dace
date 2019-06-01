@@ -445,7 +445,7 @@ class Stream(Data):
 
         # Create dummy object
         ret = Stream(dace.types.int8, 1, 1)
-        Property.set_properties_from_json(ret, json_obj, context=sdfg)
+        Property.set_properties_from_json(ret, json_obj, context=context)
         # TODO: FIXME:
         # Since the strides are a list-property (normal Property()),
         # loading from/to string (and, consequently, from/to json)

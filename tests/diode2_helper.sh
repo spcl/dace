@@ -18,8 +18,21 @@ echo "server pid is: $SERVPID"
 sleep 10
 
 echo $1
-sh -c "$1"
-REVAL=$?
+sh -c "$1 > cmdout.txt"
+RETVAL=$?
+
+if cat cmdout.txt | grep -q '+ exit 1'; then
+    RETVAL=1
+elif cat cmdout.txt | grep -q '+ exit 0'; then
+    RETVAL=0
+else
+    echo "Failed to get sensible output"
+    RETVAL=1
+fi
+
+if [ $RETVAL -eq 0 ]; then
+    echo "TEST COMMAND SUCCESSFUL"
+fi
 
 # Terminate the server
 kill $SERVPID

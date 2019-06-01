@@ -321,6 +321,11 @@ class Property:
         return self._category
 
     @staticmethod
+    def add_none_pair(dict_in):
+        dict_in[None] = None
+        return dict_in
+
+    @staticmethod
     def all_properties_to_json(object_with_properties,
                                options={"no_meta": False}):
         retdict = {}
@@ -1264,6 +1269,8 @@ class DataProperty(Property):
 
     @staticmethod
     def to_json(obj):
+        if obj == None:
+            return "null"
         return json.dumps(str(obj))
 
     @staticmethod
@@ -1273,6 +1280,10 @@ class DataProperty(Property):
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
         if s not in sdfg.arrays:
+            if s == None:
+                # This is fine
+                #return "null" # Every SDFG has a 'null' element
+                return None
             raise ValueError("No data found in SDFG with name: {}".format(s))
         return s
 
