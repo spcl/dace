@@ -1195,6 +1195,26 @@ class ProgramVisitor(ExtNodeVisitor):
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
 
+    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True):
+        """ Visits a subtree of the AST, creating special states before and after the visit.
+            Returns the previous state, and the first and last internal states of the
+            recursive visit. """
+        before_state = self.last_state
+        self.last_state = None
+        first_internal_state = self._add_state('%s_%d' % (name, lineno))
+
+        # Recursive loop processing
+        for stmt in body:
+            self.visit_TopLevel(stmt)
+
+        # Create the next state
+        last_internal_state = self.last_state
+        if last_state:
+            self.last_state = None
+            self._add_state('end%s_%d' % (name, lineno))
+
+        return before_state, first_internal_state, last_internal_state
+
     def visit_For(self, node: ast.For):
         # We allow three types of for loops:
         # 1. `for i in range(...)`: Creates a looping state
@@ -1223,18 +1243,9 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
-            laststate = self.last_state
-            self.last_state = None
-            first_loop_state = self._add_state('for_%d' % node.lineno)
-
-            # Recursive loop processing
-            for stmt in node.body:
-                self.visit_TopLevel(stmt)
-
-            # Create the next state
-            last_loop_state = self.last_state
-            self.last_state = None
-            end_loop_state = self._add_state('endfor_%d' % node.lineno)
+            laststate, first_loop_state, last_loop_state = \
+                self._recursive_visit(node.body, 'for', node.lineno)
+            end_loop_state = self.last_state
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) <
@@ -1246,10 +1257,44 @@ class ProgramVisitor(ExtNodeVisitor):
                 '%s + %s' % (indices[0], ranges[0][2]), last_loop_state)
 
     def visit_While(self, node: ast.While):
-        pass
+        # Add an initial loop state with a None last_state (so as to not
+        # create an interstate edge)
+        laststate, first_loop_state, last_loop_state = \
+            self._recursive_visit(node.body, 'while', node.lineno)
+        end_loop_state = self.last_state
+
+        # Add loop to SDFG
+        loop_cond = astutils.unparse(node.test)
+        self.sdfg.add_loop(
+            laststate, first_loop_state, end_loop_state, None,
+            None, loop_cond, None, last_loop_state)
 
     def visit_If(self, node: ast.If):
-        pass
+        # Add a guard state
+        self._add_state('if_guard')
+
+        # Visit recursively
+        laststate, first_if_state, last_if_state = \
+            self._recursive_visit(node.body, 'if', node.lineno)
+        end_if_state = self.last_state
+
+        # Connect the states
+        cond = astutils.unparse(node.test)
+        cond_else = astutils.unparse(astutils.negate_expr(node.test))
+        self.sdfg.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
+        self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
+
+        # Process 'else'/'elif' statements
+        if len(node.orelse) > 0:
+            # Visit recursively
+            _, first_else_state, last_else_state = \
+                self._recursive_visit(node.orelse, 'else', node.lineno, False)
+
+            # Connect the states
+            self.sdfg.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
+            self.sdfg.add_edge(last_else_state, end_if_state, dace.InterstateEdge())
+        else:
+            self.sdfg.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
 
     def _parse_index(self, node: ast.Index):
 
