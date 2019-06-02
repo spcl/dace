@@ -26,6 +26,31 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
     return name
 
 
+@oprepo.replaces('dace.define_stream')
+def _define_stream(sdfg: SDFG,
+                   state: SDFGState,
+                   dtype=dtypes.float32,
+                   buffer_size=1):
+    """ Defines a local stream array in a DaCe program. """
+    name = sdfg.temp_data_name()
+    sdfg.add_stream(name, dtype, buffer_size=buffer_size, transient=True)
+    return name
+
+
+@oprepo.replaces('dace.define_streamarray')
+@oprepo.replaces('dace.stream')
+def _define_streamarray(sdfg: SDFG,
+                        state: SDFGState,
+                        dimensions,
+                        dtype=dtypes.float32,
+                        buffer_size=1):
+    """ Defines a local stream array in a DaCe program. """
+    name = sdfg.temp_data_name()
+    sdfg.add_stream(
+        name, dtype, shape=dimensions, buffer_size=buffer_size, transient=True)
+    return name
+
+
 def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise unary operator. """
     arr1 = sdfg.arrays[op1]
@@ -465,6 +490,9 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
                 node: MemletType):
     das = defined_arrays_and_symbols
     arrname = rname(node)
+    if arrname not in das:
+        raise DaceSyntaxError(visitor, node,
+                              'Use of undefined data "%s" in memlet' % arrname)
     array = das[arrname]
 
     # Determine number of accesses to the memlet (default is the slice size)
@@ -1195,7 +1223,11 @@ class ProgramVisitor(ExtNodeVisitor):
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
 
-    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True):
+    def _recursive_visit(self,
+                         body: List[ast.AST],
+                         name: str,
+                         lineno: int,
+                         last_state=True):
         """ Visits a subtree of the AST, creating special states before and after the visit.
             Returns the previous state, and the first and last internal states of the
             recursive visit. """
@@ -1265,9 +1297,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add loop to SDFG
         loop_cond = astutils.unparse(node.test)
-        self.sdfg.add_loop(
-            laststate, first_loop_state, end_loop_state, None,
-            None, loop_cond, None, last_loop_state)
+        self.sdfg.add_loop(laststate, first_loop_state, end_loop_state, None,
+                           None, loop_cond, None, last_loop_state)
 
     def visit_If(self, node: ast.If):
         # Add a guard state
@@ -1281,7 +1312,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Connect the states
         cond = astutils.unparse(node.test)
         cond_else = astutils.unparse(astutils.negate_expr(node.test))
-        self.sdfg.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
+        self.sdfg.add_edge(laststate, first_if_state,
+                           dace.InterstateEdge(cond))
         self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
 
         # Process 'else'/'elif' statements
@@ -1291,10 +1323,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 self._recursive_visit(node.orelse, 'else', node.lineno, False)
 
             # Connect the states
-            self.sdfg.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
-            self.sdfg.add_edge(last_else_state, end_if_state, dace.InterstateEdge())
+            self.sdfg.add_edge(laststate, first_else_state,
+                               dace.InterstateEdge(cond_else))
+            self.sdfg.add_edge(last_else_state, end_if_state,
+                               dace.InterstateEdge())
         else:
-            self.sdfg.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
+            self.sdfg.add_edge(laststate, end_if_state,
+                               dace.InterstateEdge(cond_else))
 
     def _parse_index(self, node: ast.Index):
 
@@ -1623,14 +1658,14 @@ class ProgramVisitor(ExtNodeVisitor):
             return [result]
         return result
 
-    # Used for memlet expressions, otherwise ignored
+    # Used for memlet expressions outside of tasklets, otherwise ignored
     def visit_TopLevelExpr(self, node: ast.Expr):
         if isinstance(node.value, ast.BinOp):
             # Add two access nodes and a memlet (the arrays must already exist)
-            if (isinstance(node.value.op, ast.LShift)):
+            if isinstance(node.value.op, ast.LShift):
                 src = node.value.right
                 dst = node.value.left
-            elif (isinstance(node.value.op, ast.RShift)):
+            elif isinstance(node.value.op, ast.RShift):
                 src = node.value.left
                 dst = node.value.right
             else:
@@ -1638,11 +1673,25 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.generic_visit(node)
                 return
 
-            state = self._add_state()
-            srcnode = state.add_read(rname(src))
-            dstnode = state.add_write(rname(dst))
-            memlet = self.parse_memlet(src, dst)
-            state.add_nedge(srcnode, dstnode, memlet)
+            # Create an edge between the two data descriptors
+            state = self._add_state('globalmemlet_%d' % node.lineno)
+            src_expr = ParseMemlet(self, self.defined, src)
+            dst_expr = ParseMemlet(self, self.defined, dst)
+            src_name = self.variables[src_expr.name]
+            dst_name = self.variables[dst_expr.name]
+
+            rnode = state.add_read(src_name)
+            wnode = state.add_write(dst_name)
+            state.add_nedge(
+                rnode, wnode,
+                Memlet(
+                    src_name,
+                    src_expr.accesses,
+                    src_expr.subset,
+                    1,
+                    wcr=dst_expr.wcr,
+                    wcr_identity=dst_expr.wcr_identity,
+                    other_subset=dst_expr.subset))
             return
 
         # Calling reduction or other SDFGs / functions

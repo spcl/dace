@@ -171,12 +171,12 @@ def define_local_scalar(dtype=dtypes.float32, allow_conflicts=False):
     return transient([1], dtype=dtype, allow_conflicts=allow_conflicts)
 
 
-def define_stream(dtype=dtypes.float32, buffer_size=0):
+def define_stream(dtype=dtypes.float32, buffer_size=1):
     """ Defines a local stream in a DaCe program. """
     return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
 
 
-def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=0):
+def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
     """ Defines a local stream array in a DaCe program. """
     return stream(dtype, dimensions)
 

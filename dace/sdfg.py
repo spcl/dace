@@ -3100,7 +3100,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Verify that source and destination subsets contain the same
             # number of elements
-            if e.data.other_subset is not None:
+            if e.data.other_subset is not None and not (
+                (isinstance(src_node, nd.AccessNode)
+                 and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
+                (isinstance(dst_node, nd.AccessNode)
+                 and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
                 if (e.data.subset.num_elements() !=
                         e.data.other_subset.num_elements()):
                     raise InvalidSDFGEdgeError(
