@@ -630,7 +630,7 @@ class DIODE:
         self.draw_sdfg_graph()
         self.update_generated_code()
 
-    def Run(self, fail_on_nonzero=None):
+    def Run(self, fail_on_nonzero=None, run_sync=True):
         if self.optimization_graph.get_current() == None:
             return False
         if fail_on_nonzero is None:
@@ -648,6 +648,10 @@ class DIODE:
 
             # Clean database and create tables
             db_setup()
+
+        if run_sync:
+            executor = Executor(self.perfplot, self.headless, self.rendered_sdfgs, None)
+            return executor.run(dace_state, fail_on_nonzero)
 
         res = self.executor.run_async(dace_state, fail_on_nonzero)
 
