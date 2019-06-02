@@ -1623,7 +1623,7 @@ class DIODE_Context_StartPage extends DIODE_Context {
 
         dace_logo = "data:image/svg+xml;base64," + btoa(dace_logo);
 
-        startpage_resources.appendChild(this.createStartpageListElement("Visit DaCe on GitHub", null, null, "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png", x => {
+        startpage_resources.appendChild(this.createStartpageListElement("Visit DaCe on GitHub", null, null, "external_lib/GitHub-Mark.png", x => {
             window.open("https://github.com/spcl/dace", "_blank");
         }));
         startpage_resources.appendChild(this.createStartpageListElement("Visit project page", null, null, dace_logo, x => {
