@@ -3871,9 +3871,21 @@ class DIODE {
                 
                     let popup_div_body = document.createElement('div');
 
+                    let value_input = document.createElement("input");
+                    value_input.type = "text";
+                    value_input.value = JSON.stringify(x.value);
+
                     let e = this.create_visual_access_representation(
                         newelems, data                    
                     );
+
+                    let apply_but = document.createElement("button");
+                    apply_but.innerText = "Apply changes";
+                    apply_but.addEventListener("click", _click => {
+                        transthis.propertyChanged(node, x.name, JSON.parse(value_input.value));
+                        w2popup.close();
+                    });
+                    popup_div_body.appendChild(value_input);
 
                     popup_div_body.appendChild(e);
                     popup_div.appendChild(popup_div_body);
@@ -3881,7 +3893,7 @@ class DIODE {
                     w2popup.open({
                         title: "Data access / Indices property",
                         body: popup_div,
-                        //buttons: apply_but,
+                        buttons: apply_but,
                         width: 1280,
                         height: 800,
                     });
@@ -4779,6 +4791,11 @@ class DIODE {
     handleErrors(calling_context, object) {
         let errors = object['error'];
 
+        if(typeof(errors) == "string") {
+            console.error("Error: ", errors);
+            alert(JSON.stringify(errors));
+            return;
+        }
         for(let error of errors) {
 
             if(error.type === "SyntaxError") {
