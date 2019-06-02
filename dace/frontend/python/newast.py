@@ -668,13 +668,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 })
         else:
             inputs = {}
-            for conn, (arr_name, subset) in self.inputs.items():
-                inputs[conn] = dace.Memlet(arr_name, subset.num_elements(),
-                                           subset, 1)
+            for conn, (arr_name, subset, inner_indices) in self.inputs.items():
+                inputs[conn] = (dace.Memlet(arr_name, subset.num_elements(),
+                                            subset, 1), inner_indices)
             outputs = {}
-            for conn, (arr_name, subset) in self.outputs.items():
-                outputs[conn] = dace.Memlet(arr_name, subset.num_elements(),
-                                            subset, 1)
+            for conn, (arr_name, subset, inner_indices) in self.outputs.items():
+                outputs[conn] = (dace.Memlet(arr_name, subset.num_elements(),
+                                             subset, 1), inner_indices)
 
         return self.sdfg, inputs, outputs
 
@@ -941,7 +941,33 @@ class ProgramVisitor(ExtNodeVisitor):
             entry_node: nodes.EntryNode, exit_node: nodes.ExitNode,
             inputs: Dict[str, Memlet], outputs: Dict[str, Memlet]):
         if inputs:
-            for conn, memlet in inputs.items():
+            for conn, (memlet, inner_indices) in inputs.items():
+                if memlet.data not in self.sdfg.arrays:
+                    arr = self.scope_arrays[memlet.data]
+                    scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                    name = memlet.data
+                    irng = memlet.subset
+                    orng = copy.deepcopy(scope_memlet.subset)
+                    outer_indices = []
+                    for n, (i, o) in enumerate(zip(irng, orng)):
+                        if i == o and n not in inner_indices:
+                            outer_indices.append(n)
+                        elif n not in inner_indices:
+                            inner_indices.add(n)
+                    for n in reversed(outer_indices):
+                        irng.ranges.pop(n)
+                        orng.ranges.pop(n)
+                    vname = "{c}_in_from_{s}_{n}".format(
+                        c=conn, s=self.sdfg.nodes().index(state),
+                        n=state.node_id(entry_node))
+                    self.accesses[(name, scope_memlet.subset, 'r')] = vname
+                    shape = orng.size()
+                    dtype = arr.dtype
+                    self.sdfg.add_array(vname, shape, dtype)
+                    self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
+                    memlet.data = vname
+                else:
+                    vname = memlet.data
                 read_node = state.add_read(memlet.data)
                 state.add_memlet_path(
                     read_node,
@@ -953,17 +979,22 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
         if outputs:
-            for conn, memlet in outputs.items():
+            for conn, (memlet, inner_indices) in outputs.items():
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, exit_node, True, arr)
                     name = memlet.data
                     irng = memlet.subset
                     orng = copy.deepcopy(scope_memlet.subset)
-                    for i, o in zip(irng, orng):
-                        if i == o:
-                            irng.ranges.remove(i)
-                            orng.ranges.remove(o)
+                    outer_indices = []
+                    for n, (i, o) in enumerate(zip(irng, orng)):
+                        if i == o and n not in inner_indices:
+                            outer_indices.append(n)
+                        elif n not in inner_indices:
+                            inner_indices.add(n)
+                    for n in reversed(outer_indices):
+                        irng.ranges.pop(n)
+                        orng.ranges.pop(n)
                     vname = "{c}_out_of_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(exit_node))
@@ -971,7 +1002,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     shape = orng.size()
                     dtype = arr.dtype
                     self.sdfg.add_array(vname, shape, dtype)
-                    self.outputs[vname] = (memlet.data, scope_memlet.subset)
+                    self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
                 else:
                     vname = memlet.data
@@ -1172,7 +1203,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         shape = rng.size()
                         dtype = parent_array.dtype
                         self.sdfg.add_array(vname, shape, dtype)
-                        self.outputs[vname] = (parent_name, rng)
+                        self.outputs[vname] = (parent_name, rng, set())
                         self._add_tasklet(vname, result)
                     else:
                         raise DaceSyntaxError(
@@ -1610,7 +1641,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 shape = rng.size()
                 dtype = parent_array.dtype
                 self.sdfg.add_array(vname, shape, dtype)
-                self.inputs[vname] = (parent_name, rng)
+                self.inputs[vname] = (parent_name, rng, set())
                 return vname
                 # self._add_tasklet(vname, node.value)
             else:
