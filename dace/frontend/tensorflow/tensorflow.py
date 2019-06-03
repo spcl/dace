@@ -410,14 +410,16 @@ class TFSession:
         node_types = {}
         for state in self.graph.nodes():
             for node in state.nodes():
-                if state.in_degree(node) + state.out_degree(node) == 0:
+                if (
+                    state.in_degree(node) + state.out_degree(node) == 0
+                    and node.label not in total_output_names
+                ):
                     state.remove_node(node)
                     if node.label in self.constDict:
                         del self.constDict[node.label]
                 elif isinstance(node, dace.graph.nodes.AccessNode):
                     node_types[node.data] = node.desc(self.graph).dtype.type
         ############################
-
         # Set up arguments
         sdfg_args = {}
         sdfg_args.update(self.constDict)
@@ -2371,41 +2373,32 @@ class TFSession:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_ShapeN(self, node):
-        inputList = []
+        outputLabels = [_string_builder(op.name) for op in node.outputs]
+
         inputNodes = []
-        state = self.state
-        inputParams = []
-        inputDims = []
+        for n in node.inputs:
+            inputNodes.append(self.create_and_add_input_node(n)[0])
 
-        for inp in node.inputs:
-            inputNode, params, dims = self.create_and_add_input_node(inp)
-            inputList.append(inputNode.desc(self.graph))
-            inputNodes.append(inputNode)
-            inputParams.append(params)
-            inputDims.append(dims)
+        shapes = [
+            np.array(input_tensor.shape, dtype=_tensortype(node.outputs[i]))
+            for i, input_tensor in enumerate(node.inputs)
+        ]
 
-        outputList = self.create_and_add_output_node(node)
-
-        mapLabel = _string_builder(node.type)
-        for i, node in enumerate(outputList):
-            tasklet = state.add_tasklet(
-                mapLabel + str(i),
-                {},
-                {"out"},
-                "\n".join(
-                    [
-                        "out[%d] = %s" % (j, dim)
-                        for j, dim in enumerate(inputList[i].shape)
-                    ]
-                ),
-            )
-            self.state.add_edge(
-                tasklet,
-                "out",
-                node,
-                None,
-                Memlet.simple(node, "0:" + str(len(inputDims[i]))),
-            )
+        for label, shape, outputTensor, inputNode in zip(
+            outputLabels, shapes, node.outputs, inputNodes
+        ):
+            self.constDict[label] = shape
+            # Make outputs as non transients
+            try:
+                outpNode = self.state.find_node(label)
+            except (LookupError):
+                outpNode = self.state.add_array(
+                    label,
+                    _tensorshape(outputTensor),
+                    _tensortype(outputTensor),
+                    toplevel=True,
+                )
+            outpNode.desc(self.graph).transient = False
 
     def visit_Reshape(self, node):
 
