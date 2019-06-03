@@ -1026,9 +1026,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
                 sdfg, inputs, outputs = self._parse_subprogram(node.name, node)
-                internal_node = nodes.NestedSDFG(node.name, sdfg,
-                                                 set(inputs.keys()),
-                                                 set(outputs.keys()))
+                internal_node = state.add_nested_sdfg(sdfg, self.sdfg,
+                                                      set(inputs.keys()),
+                                                      set(outputs.keys()))
             else:  # Scope + tasklet (e.g., @dace.map)
                 internal_node, inputs, outputs = self._parse_tasklet(
                     state, node)
