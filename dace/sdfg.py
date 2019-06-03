@@ -1440,8 +1440,8 @@ subgraph cluster_state_{state} {{
         opt = optimizer.SDFGOptimizer(self, inplace=True)
         applied = {k.__name__: 0 for k in strict_transformations}
         options = [
-            match for match in opt.get_pattern_matches(strict=True)
-            if isinstance(match, strict_transformations)
+            match for match in opt.get_pattern_matches(
+                strict=True, patterns=strict_transformations)
         ]
 
         while options:
@@ -1453,8 +1453,8 @@ subgraph cluster_state_{state} {{
             applied[applying] += 1
 
             options = [
-                match for match in opt.get_pattern_matches(strict=True)
-                if isinstance(match, strict_transformations)
+                match for match in opt.get_pattern_matches(
+                    strict=True, patterns=strict_transformations)
             ]
 
         if Config.get_bool('debugprint') and any(v > 0
