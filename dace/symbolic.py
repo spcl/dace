@@ -618,7 +618,13 @@ def pystr_to_symbolic(expr, symbol_map={}):
         expr = expr.replace('not', 'Not')
 
     # TODO: support SymExpr over-approximated expressions
-    return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
+    try:
+        return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
+    except TypeError:  # Symbol object is not subscriptable
+        # Replace subscript expressions with function calls
+        expr = expr.replace('[', '(')
+        expr = expr.replace(']', ')')
+        return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
 
 
 class DaceSympyPrinter(StrPrinter):

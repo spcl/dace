@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict, namedtuple
 import copy
+import re
 from typing import Any, Dict, List, Tuple, Union, Callable
 
 import dace
@@ -432,7 +433,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
     # Extend slices to unspecified dimensions
     for i in range(len(ast_ndslice), len(array.shape)):
-        ndslice[i] = (0, array.shape[indices[idx]] - 1, 1)
+        ndslice[i] = (0, array.shape[idx] - 1, 1)
         idx += 1
         offsets.append(i)
 
@@ -458,8 +459,14 @@ def _parse_memlet_subset(array: data.Data,
         # Loop over nd-slices (A[i][j][k]...)
         subset_array = []
         for ast_ndslice in ast_ndslices:
+            # Cut out dimensions that were indexed in the previous slice
+            narray = copy.deepcopy(array)
+            narray.shape = [
+                s for i, s in enumerate(array.shape) if i in offsets
+            ]
+
             # Loop over the N dimensions
-            ndslice, offsets = _fill_missing_slices(das, ast_ndslice, array,
+            ndslice, offsets = _fill_missing_slices(das, ast_ndslice, narray,
                                                     offsets)
             subset_array.append(_ndslice_to_subset(ndslice))
 
@@ -976,9 +983,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 'All arguments in primitive %s must be annotated' % node.name)
         return result
 
-    def _parse_mapscope(self, node):
-        return None, None
-
     def _parse_subprogram(self, name, node):
         pv = ProgramVisitor(name, self.filename, self.lineoffset,
                             self.global_arrays, self.globals, True,
@@ -1013,6 +1017,8 @@ class ProgramVisitor(ExtNodeVisitor):
         elif dec.startswith('dace.map') or dec.startswith(
                 'dace.consume'):  # Scope or scope+tasklet
             params = self._decorator_or_annotation_params(node)
+            params, map_inputs = self._parse_map_inputs(
+                node.name, params, node)
             if 'map' in dec:
                 entry, exit = state.add_map(node.name, ndrange=params)
             elif 'consume' in dec:
@@ -1029,7 +1035,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs,
-                                   outputs)
+                                   outputs, map_inputs)
 
         elif dec == 'dace.program':  # Nested SDFG
             raise DaceSyntaxError(
@@ -1094,8 +1100,9 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(node, ast.Num):
             return str(node.n)
         else:
-            raise DaceSyntaxError(self, node,
-                                  "Expected ast.Name or ast.Num as value")
+            return _pyexpr_to_symbolic(self.defined, node)
+            # raise DaceSyntaxError(self, node,
+            #                       "Expected ast.Name or ast.Num as value")
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
@@ -1175,10 +1182,71 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (iterator, ranges)
 
-    def _add_dependencies(
-            self, state: SDFGState, internal_node: nodes.CodeNode,
-            entry_node: nodes.EntryNode, exit_node: nodes.ExitNode,
-            inputs: Dict[str, Memlet], outputs: Dict[str, Memlet]):
+    def _parse_map_inputs(
+            self, name: str, params: List[Tuple[str, str]],
+            node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
+        """ Parse map parameters for data-dependent inputs, modifying the
+            parameter dictionary and returning relevant memlets.
+            @return: A 2-tuple of (parameter dictionary, mapping from connector
+                     name to memlet).
+        """
+        new_params = []
+        map_inputs = {}
+        for k, v in params:
+            vsp = list(v.split(':'))
+            for i, (val, vid) in enumerate(zip(vsp, 'best')):
+                # Walk through expression, find functions and replace with variables
+                ctr = 0
+                repldict = {}
+                for expr in symbolic.swalk(pystr_to_symbolic(val)):
+                    if symbolic.is_sympy_userfunction(expr):
+                        # If function contains a function
+                        if any(
+                                symbolic.contains_sympy_functions(a)
+                                for a in expr.args):
+                            raise DaceSyntaxError(
+                                self, node,
+                                'Indirect accesses not supported in map ranges'
+                            )
+                        arr = expr.func.__name__
+                        newvar = '__%s_%s%d' % (name, vid, ctr)
+                        repldict[arr] = newvar
+                        # Create memlet
+                        map_inputs[newvar] = Memlet.simple(
+                            self.variables[arr],
+                            ','.join([str(a) for a in expr.args]))
+                        ctr += 1
+                # Replace functions with new variables
+                for find, replace in repldict.items():
+                    val = re.sub(r"%s\(.*?\)" % find, replace, val)
+                vsp[i] = val
+
+            new_params.append((k, ':'.join(vsp)))
+
+        return new_params, map_inputs
+
+    def _add_dependencies(self,
+                          state: SDFGState,
+                          internal_node: nodes.CodeNode,
+                          entry_node: nodes.EntryNode,
+                          exit_node: nodes.ExitNode,
+                          inputs: Dict[str, Memlet],
+                          outputs: Dict[str, Memlet],
+                          map_inputs: Dict[str, Memlet] = None):
+
+        # Parse map inputs (for memory-based ranges)
+        if map_inputs is not None:
+            for conn, memlet in map_inputs.items():
+                read_node = state.add_read(memlet.data)
+                if _subset_has_indirection(memlet.subset):
+                    add_indirection_subgraph(self.sdfg, state, read_node,
+                                             entry_node, memlet, conn)
+                    continue
+
+                entry_node.add_in_connector(conn)
+                state.add_edge(read_node, None, entry_node, conn, memlet)
+
+        # Parse internal node inputs and indirect memory accesses
         if inputs:
             for conn, memlet in inputs.items():
                 if _subset_has_indirection(memlet.subset):
@@ -1205,6 +1273,8 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             if entry_node is not None:
                 state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
+
+        # Parse internal node outputs
         if outputs:
             for conn, memlet in outputs.items():
                 write_node = state.add_write(memlet.data)
@@ -1263,15 +1333,16 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if iterator == 'dace.map':
             state = self._add_state('MapState')
-            me, mx = state.add_map(
-                name='Map',
-                ndrange={k: ':'.join(v)
-                         for k, v in zip(indices, ranges)})
+            params = [(k, ':'.join(v)) for k, v in zip(indices, ranges)]
+            params, map_inputs = self._parse_map_inputs(
+                'map_%d' % node.lineno, params, node)
+            me, mx = state.add_map(name='Map', ndrange=params)
             # body = SDFG('MapBody')
             body, inputs, outputs = self._parse_subprogram('MapBody', node)
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
-            self._add_dependencies(state, tasklet, me, mx, inputs, outputs)
+            self._add_dependencies(state, tasklet, me, mx, inputs, outputs,
+                                   map_inputs)
         elif iterator == 'range':
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
