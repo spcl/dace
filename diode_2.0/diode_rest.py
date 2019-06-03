@@ -927,11 +927,13 @@ def compileProgram(request, language, perfopts=None):
             try:
                 dace_state = DaceState(in_code, "fake", headless=True)
                 dace_state.set_sdfg(list(sdfg_dict.values())[0], list(sdfg_dict.keys())[0])
+                if len(dace_state.errors) > 0:
+                    print("ERRORS: " + str(dace_state.errors))
+                    errors.extend(dace_state.errors)
             except Exception as e:
                 traceback.print_exc()
                 print("Failed to create DaceState")
-            if len(dace_state.errors) > 0:
-                print("ERRORS: " + str(dace_state.errors))
+            
 
         # The config won't save back on its own, and we don't want it to - these changes are transient
 

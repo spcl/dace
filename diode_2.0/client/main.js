@@ -13,6 +13,7 @@ import {
     DIODE_Context_StartPage,
     DIODE_Context_TransformationHistory,
     DIODE_Context_AvailableTransformations,
+    DIODE_Context_Error
 } from "./diode.js"
 
 function find_object_cycles(obj) {
@@ -354,6 +355,7 @@ function start_DIODE() {
                 });
             }
             if(event.target == "compile-menu:compile-clean") {
+                diode.project().request(["clear-errors"], () => {});
                 // Compile, disregarding everything but the input code
                 diode.project().request(['input_code'], msg => {
                     diode.compile(diode, msg['input_code']);
@@ -549,7 +551,7 @@ function start_DIODE() {
         let diode_context = new DIODE_Context_CodeOut(diode, container, componentState);
         let editorstring = "code_out_" + diode_context.created;
         let parent_element = $(container.getElement());
-        let new_element = $("<div id='" + editorstring + "' style='height: 100%; width: 100%; overflow-y:auto'></div>");
+        let new_element = $("<div id='" + editorstring + "' style='height: 100%; width: 100%; overflow:auto'></div>");
         
         
         parent_element.append(new_element);
@@ -577,6 +579,42 @@ function start_DIODE() {
         
     });
 
+    // Create an error component which is used for all errors originating in python.
+    // As such, the errors are usually tracebacks. The current implementation
+    // (just displaying the output) is rudimentary and can/should be improved.
+    // #TODO: Improve the error-out formatting
+    goldenlayout.registerComponent( 'ErrorComponent', function( container, componentState ){
+        // Wrap the component in a context 
+        let diode_context = new DIODE_Context_Error(diode, container, componentState);
+        let editorstring = "error_" + diode_context.created;
+        let parent_element = $(container.getElement());
+        let new_element = $("<div id='" + editorstring + "' style='height: 100%; width: 100%; overflow:auto'></div>");
+        
+        
+        parent_element.append(new_element);
+        parent_element.hide().show(0);
+        
+        (() => {
+            let editor_div = new_element;
+            editor_div.attr("id", editorstring);
+            editor_div.hide().show(0);
+            let editor = ace.edit(new_element[0]);
+            editor.setTheme(DIODE.themeString());
+            editor.session.setMode("ace/mode/python");
+
+
+            diode_context.setEditorReference(editor);
+            diode_context.setupEvents(diode.getCurrentProject());
+
+            let extracted = diode_context.getState().error;
+            diode_context.setError(extracted);
+            editor.resize();
+        })
+    ()
+    ;
+        
+        
+    });
 
     goldenlayout.registerComponent( 'TerminalComponent', function( container, componentState ){
         // Wrap the component in a context 

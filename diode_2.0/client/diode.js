@@ -1310,22 +1310,26 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
         this.on(this.project().eventString('-req-new_error'), msg => {
             // Echo with data
-            eh.emit(transthis._project.eventString('new_error'), 'ok');
+            setTimeout(() => eh.emit(transthis._project.eventString('new_error'), 'ok'), 1);
             this.highlight_error(msg);
         });
         
         this.on(this.project().eventString('-req-highlight-code'), msg => {
-            eh.emit(transthis._project.eventString('highlight-code'), 'ok');
+            setTimeout(() => eh.emit(transthis._project.eventString('highlight-code'), 'ok'), 1);
             this.highlight_code(msg);
         });
         
         this.on(this.project().eventString('-req-set-inputcode'), msg => {
-            eh.emit(transthis._project.eventString('set-inputcode'), 'ok');
+            setTimeout(() => eh.emit(transthis._project.eventString('set-inputcode'), 'ok'), 1);
             
             this.editor.setValue(msg);
             this.editor.clearSelection();
         });
         
+        this.on(this.project().eventString('-req-clear-errors'), msg => {
+            setTimeout(() => eh.emit(transthis._project.eventString('clear-errors'), 'ok'), 1);
+            this.clearErrors();
+        });
         
     }
 
@@ -1352,6 +1356,13 @@ class DIODE_Context_CodeIn extends DIODE_Context {
         setTimeout(() => {
             this.editor.getSession().removeMarker(marker);
         }, 5000);
+    }
+
+    clearErrors() {
+        for(let m of this._markers) {
+            this.editor.getSession().removeMarker(m);
+        }
+        this._markers = [];
     }
 
     highlight_error(error) {
@@ -1496,6 +1507,55 @@ class DIODE_Context_CodeOut extends DIODE_Context {
             }
         }
         this.saveToState({ 'code': input });
+    }
+
+    setEditorReference(editor) {
+        this.editor = editor;
+
+        let elem = this.container.getElement()[0];
+        elem.addEventListener('resize', x => {
+            this.editor.resize();
+        });
+    }
+}
+
+class DIODE_Context_Error extends DIODE_Context {
+    constructor(diode, gl_container, state) {
+        super(diode, gl_container, state);
+
+        this.editor = null;
+    }
+
+    setupEvents(project) {
+        super.setupEvents(project);
+
+        let transthis = this;
+
+        let eh = this.diode.goldenlayout.eventHub;
+        this.on(this._project.eventString('-req-new-error'), (msg) => {
+
+            setTimeout(x => eh.emit(transthis.project().eventString('new-error'), 'ok'), 1);
+            let extracted = msg;
+            this.setError(extracted);
+        });
+    }
+
+    setError(error) {
+        console.log("error", error);
+    
+        let error_string = "";
+        if(typeof(error) == "string")
+            this.editor.setValue(error);
+        else if(Array.isArray(error)) {
+            for(let e of error) {
+                if(e.msg != undefined) {
+                    error_string += e.msg;
+                }
+                console.log("Error element", e);
+            }
+            this.editor.setValue(error_string);
+        }
+        this.saveToState({ 'error': error });
     }
 
     setEditorReference(editor) {
@@ -4611,6 +4671,19 @@ class DIODE {
         }
     }
 
+    Error_available(error) {
+        let create_error_func = () => {
+            let new_error_config = {
+                    title: "Error",
+                    type: 'component',
+                    componentName: 'ErrorComponent',
+                    componentState: { error: error }
+            };
+            this.addContentItem(new_error_config);
+        };
+        this.replaceOrCreate(['new-error'], error, create_error_func);
+    }
+
     OptGraph_available(optgraph, name="") {
         
         if(typeof optgraph != "string") {
@@ -4710,6 +4783,8 @@ class DIODE {
                 cval = JSON.parse(cval);
             }
 
+            calling_context.project().request(["clear-errors"], () => {});
+
             if(options.run === true) {
                 let runopts = {};
                 if(options['perfmodes']) {
@@ -4791,9 +4866,11 @@ class DIODE {
     handleErrors(calling_context, object) {
         let errors = object['error'];
 
+        this.Error_available(errors);
+
         if(typeof(errors) == "string") {
-            console.error("Error: ", errors);
-            alert(JSON.stringify(errors));
+            console.warn("Error: ", errors);
+            //alert(JSON.stringify(errors));
             return;
         }
         for(let error of errors) {
@@ -4808,8 +4885,8 @@ class DIODE {
                 });
             }
             else {
-                console.error("Error: ", error);
-                alert(JSON.stringify(error));
+                console.warn("Error: ", error);
+                //alert(JSON.stringify(error));
             }
         }
     }
@@ -5192,4 +5269,5 @@ class ContextMenu {
 }
 
 export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODE2Settings,
-    DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations}
+    DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations,
+    DIODE_Context_Error}
