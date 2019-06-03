@@ -962,6 +962,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         n=state.node_id(entry_node))
                     self.accesses[(name, scope_memlet.subset, 'r')] = vname
                     shape = orng.size()
+                    shape = [d for d in shape if d != 1]
+                    if not shape:
+                        shape = [1]
                     dtype = arr.dtype
                     self.sdfg.add_array(vname, shape, dtype)
                     self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
@@ -1000,6 +1003,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         n=state.node_id(exit_node))
                     self.accesses[(name, scope_memlet.subset, 'w')] = vname
                     shape = orng.size()
+                    shape = [d for d in shape if d != 1]
+                    if not shape:
+                        shape = [1]
                     dtype = arr.dtype
                     self.sdfg.add_array(vname, shape, dtype)
                     self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
@@ -1125,6 +1131,45 @@ class ProgramVisitor(ExtNodeVisitor):
         state.add_edge(tasklet_node, "out", write_node, None, memlet)
         # dace.Memlet.from_array(name, write_node.desc(self.sdfg)))
 
+    def _add_copy(self, target, operand):
+        # value = self._parse_value(value_node)
+        print(target, operand)
+
+        state = self._add_state("CopyState")
+        read_node = state.add_read(operand)
+        write_node = state.add_write(target)
+        state.add_nedge(read_node, write_node, dace.Memlet.from_array(target, self.sdfg.arrays[target]))
+
+    def _add_mapped_copy(self, node, target, operand):
+        # value = self._parse_value(value_node)
+        print(target, operand)
+
+        state = self._add_state("MappedCopyState")
+        shape = self.sdfg.arrays[target].shape
+        ranges = {"__idx_{}_{}_{}".format(node.lineno, node.col_offset, i): "0:{}".format(end)
+                  for i, end in enumerate(shape)}
+        outputs = {"out": dace.Memlet.simple(target, ",".join(ranges.keys()))}
+        if operand in self.sdfg.arrays:
+            inputs = {"inp": dace.Memlet.from_array(operand, self.sdfg.arrays[operand])}
+            code = "out = inp"
+        else:
+            inputs = {}
+            code = "out = {}".format(operand)
+        write_node = state.add_write(target)
+        _, me, mx = state.add_mapped_tasklet(
+            name="MappedCopy",
+            map_ranges=ranges,
+            inputs=inputs,
+            outputs=outputs,
+            code=code)
+        if operand in self.sdfg.arrays:
+            read_node = state.add_read(operand)
+            state.add_nedge(read_node, me,
+                           dace.Memlet.from_array(
+                               operand, self.sdfg.arrays[operand]))
+        state.add_nedge(mx, write_node,
+                       dace.Memlet.from_array(target, self.sdfg.arrays[target]))
+
     def _get_variable_name(self, node, name):
         if name in self.variables:
             return self.variables[name]
@@ -1179,8 +1224,11 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(target, ast.Subscript):
                 print(ast.dump(target))
                 name = rname(target)
+                real_name = {**self.variables, **self.scope_vars}[name]
+                real_target = copy.deepcopy(target)
+                real_target.value.id = real_name
                 rng = dace.subsets.Range(astutils.subscript_to_slice(
-                    target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+                    real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
                 if self.nested:
                     if (name, rng, 'w') in self.accesses:
                         self._add_tasklet(self.accesses[(name, rng, 'w')], result)
@@ -1201,10 +1249,27 @@ class ProgramVisitor(ExtNodeVisitor):
                         #     astutils.subscript_to_slice(
                         #         target, self.scope_arrays)[1])
                         shape = rng.size()
+                        shape = [d for d in shape if d != 1]
+                        if not shape:
+                            shape = [1]
                         dtype = parent_array.dtype
                         self.sdfg.add_array(vname, shape, dtype)
                         self.outputs[vname] = (parent_name, rng, set())
-                        self._add_tasklet(vname, result)
+                        if result in self.sdfg.arrays:
+                            result_shape = list(self.sdfg.arrays[result].shape)
+                        else:
+                            result_shape = [1]
+                        if shape == result_shape:
+                            if shape == [1]:
+                                self._add_tasklet(vname, result)
+                            else:
+                                self._add_copy(vname, result)
+                        else:
+                            if result_shape == [1]:
+                                self._add_mapped_copy(target, vname, result)
+                            else:
+                                raise DaceSyntaxError(
+                                    self, node, 'Incompatible shapes')
                     else:
                         raise DaceSyntaxError(
                             self, target,
@@ -1616,8 +1681,11 @@ class ProgramVisitor(ExtNodeVisitor):
         if self.nested:
             target = node
             name = rname(target)
+            real_name = {**self.variables, **self.scope_vars}[name]
+            real_target = copy.deepcopy(target)
+            real_target.value.id = real_name
             rng = dace.subsets.Range(astutils.subscript_to_slice(
-                target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+                real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
             if (name, rng, 'w') in self.accesses:
                 return self.accesses[(name, rng, 'w')]
             elif (name, rng, 'r') in self.accesses:
@@ -1635,10 +1703,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.accesses[(name, rng, 'r')] = vname
                 parent_name = self.scope_vars[name]
                 parent_array = self.scope_arrays[parent_name]
-                rng = dace.subsets.Range(
-                    astutils.subscript_to_slice(
-                        target, self.scope_arrays)[1])
+                # rng = dace.subsets.Range(
+                #     astutils.subscript_to_slice(
+                #         target, self.scope_arrays)[1])
                 shape = rng.size()
+                shape = [d for d in shape if d != 1]
+                if not shape:
+                    shape = [1]
                 dtype = parent_array.dtype
                 self.sdfg.add_array(vname, shape, dtype)
                 self.inputs[vname] = (parent_name, rng, set())

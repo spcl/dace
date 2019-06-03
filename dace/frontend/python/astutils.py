@@ -287,7 +287,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 end = symbolic.pystr_to_symbolic(unparse(end))
             else:
                 end = symbolic.pystr_to_symbolic(
-                    dtypes.symbol_name_or_value(arrdesc.shape[i]))
+                    symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
             if skip is None:
                 skip = symbolic.pystr_to_symbolic(1)
             else:
