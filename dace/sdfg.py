@@ -1464,7 +1464,7 @@ subgraph cluster_state_{state} {{
             applied = False
             # Find and apply immediately
             for match in opt.get_pattern_matches(
-                strict=True,
+                strict=False,
                 patterns=(
                     RedundantArray,
                     RedundantArrayCopying,
@@ -1480,7 +1480,12 @@ subgraph cluster_state_{state} {{
                 if isinstance(match, StateFusion):
                     print("F")
                     fusions += 1
-                if isinstance(match, RedundantArray):
+                if (
+                    isinstance(match, RedundantArray)
+                    or isinstance(match, RedundantArrayCopying)
+                    or isinstance(match, RedundantArrayCopying2)
+                    or isinstance(match, RedundantArrayCopying3)
+                ):
                     print("A")
                     arrays += 1
                 applied = True
