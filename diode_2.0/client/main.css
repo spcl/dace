@@ -104,6 +104,17 @@ input[type="text"] {
     border-radius: 5px;
 }
 
+input[type="list"] {
+    padding: 5px;
+    border: 2px solid gray;
+    border-radius: 5px;
+}
+
+button {
+    padding: 5px;
+    border: 2px solid gray;
+    border-radius: 5px;
+}
 
 input[type="number"] {
     padding: 5px;
@@ -594,4 +605,8 @@ table.diode_property_table tr:nth-child(even) {
 }
 .gmat-undo::after {
     content: "undo"
+}
+
+.gmat-playlist_play::after {
+    content: "playlist_play"
 }

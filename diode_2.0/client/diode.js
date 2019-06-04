@@ -1865,6 +1865,127 @@ class DIODE_Context_DIODE2Settings extends DIODE_Context {
 
 }
 
+
+class DIODE_Context_RunConfig extends DIODE_Context {
+    constructor(diode, gl_container, state) {
+        super(diode, gl_container, state);
+        
+        this._settings_container = null;
+
+    }
+
+    create() {
+        let parent = this.container.getElement()[0];
+
+        let runopts_container = document.createElement("div");
+        
+        let runopts_general_container = document.createElement("div");
+
+        // Build the callback object
+        let transthis = {
+            propertyChanged: (a, b, c) => {
+                console.log("propertyChanged called", a, b, c);
+            }
+        };
+        /*
+        element structure:
+        {
+            name: <name>
+            desc: <description> (as tooltip)
+            category: <Category name>
+            type: <Type used to render>
+            value: <Value to store>
+        }
+        */
+        {
+            let params = [{
+                    name: "Configuration name",
+                    type: "str",
+                    value: "",
+                    desc: "Name of this configuration",
+                }, {
+                    name: "Host",
+                    type: "hosttype",
+                    value: "localhost",
+                    desc: "Host executing the programs",
+                },
+            ]; // Array of elements
+
+            // Add category (common to all elements)
+            params.forEach(x => x.category = "General");
+
+            let remoteparams = [{
+                    name: "Use SSH",
+                    type: "bool",
+                    value: true,
+                    desc: "Use SSH. Mandatory for remote hosts, optional for localhost.",
+                }, {
+                    name: "SSH Key",
+                    type: "str",
+                    value: this.diode.pubSSH(),
+                    desc: "Public SSH key (id_rsa.pub) to add to remote authorized_keys. This key must not be password-protected!",
+                }, {
+                    name: "SSH Key override",
+                    type: "str",
+                    value: "",
+                    desc: "Override the identity key file (ssh option -i) with this value if your password-free key is not id_rsa"
+                }
+            ];
+
+            // Add category (common to all elements)
+            remoteparams.forEach(x => x.category = "Remote");
+
+            let instrumentationparams = [{
+                    name: "Instrumentation",
+                    type: "selectinput",
+                    value: 'off',
+                    options: ['off', 'minimal', 'full'],
+                    desc: "Set instrumentation mode (CPU only)",
+                },
+                {
+                    name: "Number of threads",
+                    type: "list",
+                    value: '[0]',
+                    desc: "Sets the number of OpenMP threads." +
+                           "If multiple numbers are specified, the program is executed once for every number of threads specified. Specify 0 to use system default"
+                },
+                
+            ];
+
+            // Add category (common to all elements)
+            instrumentationparams.forEach(x => x.category = "Profiling");
+
+
+            // Merge params
+            params = [...params, ...remoteparams, ...instrumentationparams];
+
+            let node = {
+                data: () => params
+            };
+
+            // Build the settings
+            this.diode.renderProperties(transthis, node, params, runopts_general_container, {});
+        }
+            
+
+
+        runopts_container.appendChild(runopts_general_container);
+
+
+        parent.appendChild(runopts_container);
+
+        let apply_button = document.createElement("div");
+        apply_button.innerText = "Save";
+        apply_button.addEventListener('click', _x => {
+
+        });
+        parent.appendChild(apply_button);
+    }
+
+
+
+}
+
 class DIODE_Context_Settings extends DIODE_Context {
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
@@ -2022,174 +2143,12 @@ class DIODE_Context_Settings extends DIODE_Context {
         return settings_lookup;
     }
 
-    parse_settings(settings, parent=undefined, path = []) {
-        if(parent === undefined) {
-            parent = $("#diode_settings_container");
-            //parent.parent().parent().css("overflow-y", "auto");
-        }
-
-        let categories = [];
-        let settings_lookup = {};
-
-        Object.entries(settings).forEach(
-            ([key, value]) => {
-                let meta = value.meta;
-                let val = value.value;
-
-                let setting_path = path.concat(key);
-
-                if(meta.type == "dict") {
-                    if(parent.attr('id') == 'diode_settings_container') {
-                        // Top level
-                        // Category, add an h2 to the settings window and register in categories
-                        categories.push(key);
-                        let cat_header = document.createElement("h2");
-                        cat_header.id = "category_header_" + key;
-                        cat_header.classList = "togglable";
-                        cat_header.innerHTML = meta.title;
-                        cat_header.title = meta.description;
-
-                        parent.append(cat_header);
-
-                        let cat_container = document.createElement("div");
-                        cat_container.id = "sub_header_" + key + "_container";
-                        cat_container.classList = "settings_container level_0 collapsed_container"
-                        $(cat_header).after(cat_container);
-
-                        this.link_togglable_onclick($(cat_header), $(cat_container));
-
-                        // Recurse for sub-elements
-                        let tmp = this.parse_settings(val, $(cat_container), path.concat([key]));
-                        settings_lookup = {...settings_lookup, ...tmp};
-                    }
-                    else if(parent.attr('id').startsWith("category_header")) {
-                        // One level under categories
-                        let sub_header = document.createElement("h3");
-                        sub_header.id = "sub_header_" + key;
-                        sub_header.innerHTML = meta.title;
-                        sub_header.title = meta.description;
-                        sub_header.classList = "togglable";
-
-                        parent.append(sub_header);
-
-                        let sub_container = document.createElement("div");
-                        sub_container.id = "sub_header_" + key + "_container";
-                        sub_container.classList = "settings_container level_1 collapsed_container"
-                        $(sub_header).after(sub_container);
-
-                        this.link_togglable_onclick($(sub_header), $(sub_container));
-
-                        // Recurse for sub-elements
-                        let tmp = this.parse_settings(val, $(sub_container), path.concat([key]));                    
-                        settings_lookup = {...settings_lookup, ...tmp};
-                    }
-                    else if(parent.attr('id').startsWith("sub_header")) {
-                        // One level under categories
-                        let subsub_header = document.createElement("h4");
-                        subsub_header.id = "subsub_header_" + key;
-                        subsub_header.innerHTML = meta.title;
-                        subsub_header.title = meta.description;
-                        subsub_header.classList = "togglable";
-
-                        parent.append(subsub_header);
-
-                        let subsub_container = document.createElement("div");
-                        subsub_container.id = "sub_header_" + key + "_container";
-                        subsub_container.classList = "settings_container level_1 collapsed_container"
-                        $(subsub_header).after(subsub_container);
-
-                        this.link_togglable_onclick($(subsub_header), $(subsub_container));
-
-                        // Recurse for sub-elements
-                        let tmp = this.parse_settings(val, $(subsub_container), path.concat([key]));
-                        settings_lookup = {...settings_lookup, ...tmp};
-                    }
-                }
-                else if(meta.type == "bool") {
-
-                    let idstr = "bool_switch_" + key;
-                    let label = FormBuilder.createLabel(idstr + "_label", meta.title, meta.description);
-                    let tswitch = FormBuilder.createToggleSwitch(idstr, elem => { 
-
-                        this.settings_change_callback("bool", setting_path, elem.checked);
-                    }, val);
-
-                    let container = FormBuilder.createContainer("");
-                    container.append(label);
-                    container.append(tswitch);
-                    //container.append("<br />");
-                    parent.append(container);
-
-                    settings_lookup[setting_path] = val;
-                }
-                else if(meta.type == "str") {
-                    let idstr = "string_field_" + key;
-                    let label = FormBuilder.createLabel(idstr + "_label", meta.title, meta.description);
-                    let text_input = FormBuilder.createTextInput(idstr, elem => {
-                        this.settings_change_callback("str", setting_path, elem.value);
-                    });
-                    text_input.val(val);
-
-                    let container = FormBuilder.createContainer("");
-                    container.append(label);
-                    container.append(text_input);
-                    //container.append("<br />");
-                    parent.append(container);
-
-                    settings_lookup[setting_path] = val;
-                }
-                else if(meta.type == "int") {
-                    let idstr = "int_field_" + key;
-                    let label = FormBuilder.createLabel(idstr + "_label", meta.title, meta.description);
-                    let int_input = FormBuilder.createIntInput(idstr, elem => {
-                        this.settings_change_callback("int", setting_path, elem.value);
-                    });
-                    int_input.val(val);
-
-                    let container = FormBuilder.createContainer("");
-                    container.append(label);
-                    container.append(int_input);
-                    //container.append("<br />");
-                    parent.append(container);
-
-                    settings_lookup[setting_path] = val;
-                }
-                else if(meta.type == "float") {
-                    let idstr = "float_field_" + key;
-                    let label = FormBuilder.createLabel(idstr + "_label", meta.title, meta.description);
-                    let float_input = FormBuilder.createFloatInput(idstr, elem => { 
-                        this.settings_change_callback("float", setting_path, elem.value);
-                    });
-                    float_input.val(val);
-
-                    let container = FormBuilder.createContainer("");
-                    container.append(label);
-                    container.append(float_input);
-                    //container.append("<br />");
-                    parent.append(container);
-
-                    settings_lookup[setting_path] = val;
-                }
-                else if(meta.type == "font") {
-                    // Not sure what to do here yet
-                }
-                else {
-                    alert("Unknown settings type: \"" + meta.type + "\"");
-                }
-            }
-        );        
-
-
-        return settings_lookup;
-    }
-
     get_settings() {
         let post_params = {
             client_id: this.diode.getClientID()
         }
         REST_request("/dace/api/v1.0/preferences/get", post_params, (xhr) => {
             if (xhr.readyState === 4 && xhr.status === 200) {
-                //let settings = this.parse_settings(JSON.parse(xhr.response));
                 let settings = this.parse_settings2(JSON.parse(xhr.response));
 
                 this.diode._settings = new DIODE_Settings(settings);
@@ -2561,7 +2520,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         this.on(this.project().eventString('-req-display-properties'), (msg) => {
             setTimeout(() => eh.emit(this.project().eventString("display-properties"), 'ok'), 1);
             this.getHTMLContainer().innerHTML = "";
-            this.diode.renderProperties2(msg.transthis, msg.node, msg.params, this.getHTMLContainer(), msg.options);
+            this.diode.renderProperties(msg.transthis, msg.node, msg.params, this.getHTMLContainer(), msg.options);
         });
 
         this.on(this.project().eventString('-req-render-free-vars'), msg => {
@@ -2645,7 +2604,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         let state = this.getState();
         if(state.params != undefined) {
             let p = state.params;
-            this.diode.renderProperties2(p.transthis, p.node, p.params, this.getHTMLContainer());
+            this.diode.renderProperties(p.transthis, p.node, p.params, this.getHTMLContainer());
         }
     }
 
@@ -2812,6 +2771,35 @@ class DIODE {
 
             this.hint(ev);
         });
+    }
+
+    pubSSH() {
+        let cached = localStorage.getItem('diode2_pubSSH');
+        if(cached != null) {
+            return cached;
+        }
+        REST_request("/dace/api/v1.0/getPubSSH/", undefined, xhr => {
+            if (xhr.readyState === 4 && xhr.status === 200) {
+                let j = JSON.parse(xhr.response);
+                if(j.error == undefined) {
+                    let t = j.pubkey;
+                    localStorage.setItem('diode2_pubSSH', t);
+                }
+                else {
+                    alert(j.error);
+                }
+            }
+        }, 'GET');
+    }
+
+    static getHostList() {
+        let tmp = localStorage.getItem("diode2_host_list");
+        if(tmp == null) return ['localhost'];
+        else return JSON.parse(tmp);
+    }
+
+    static setHostList(list) {
+        localStorage.setItem("diode2_host_list", JSON.stringify(list));
     }
 
     hint(ev) {
@@ -3074,9 +3062,9 @@ class DIODE {
         return JSON.parse(cached)['enum'];
     }
 
-    renderProperties2(transthis, node, params, parent, options=undefined) {
+    renderProperties(transthis, node, params, parent, options=undefined) {
         /*
-            Creates property visualizations like Visual Studio
+            Creates property visualizations in a 2-column table.
         */
 
         if(!Array.isArray(params)) {
@@ -3166,9 +3154,11 @@ class DIODE {
             dtc = new DiodeTables.TableCategory(cur_dt, tr);
 
             for(let x of y) {
-            
+                let title_part = document.createElement("span");
+                title_part.innerText = x.name;
+                title_part.title = x.desc;
                 let value_part = diode.getMatchingInput(transthis, x, node);
-                let cr = cur_dt.addRow(x.name, value_part);
+                let cr = cur_dt.addRow(title_part, value_part);
                 if(dtc != null) {
                     dtc.addContentRow(cr);
                 }
@@ -3207,42 +3197,6 @@ class DIODE {
             });
             parent.appendChild(button);
 
-        }
-    }
-
-    renderProperties(transthis, node, params, parent) {
-        /*
-            Creates property visualizations like DIODE1
-        */
-        if(typeof(transthis) == 'string') {
-            // Event-based
-            let target_name = transthis;
-            transthis = {
-                propertyChanged: (node, name, value) => {
-                    this.project().request(['property-changed-' + target_name], x => {
-
-                    }, {
-                        timeout: 200,
-                        params: {
-                            node: node,
-                            name: name,
-                            value: value
-                        }
-                    })
-                },
-                project: () => this.project()
-            };
-        }
-        for(let x of params) {
-            let cont = document.createElement("div");
-            cont.classList.add("settings_key_value");
-            let label = document.createElement('span');
-            label.classList.add("title");
-            label.innerText = x.name;
-            label.title = x.desc;
-            cont.append(label);
-            $(cont).append(this.getMatchingInput(transthis, x, node));
-            parent.append(cont);
         }
     }
 
@@ -4212,6 +4166,16 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
         }
+        else if(x.type == "hosttype") {
+            elem = FormBuilder.createHostInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, DIODE.getHostList(), x.value);
+        }
+        else if(x.type == "selectinput") {
+            elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, x.options, x.value);
+        }
         else if(x.type == "font") {
             console.warn("Ignoring property type ", x.type);
             return elem;
@@ -4278,6 +4242,11 @@ class DIODE {
             Show a hard-to-miss button hinting to recompile.
         */
 
+        if(DIODE.recompileOnPropertyChange()) {
+            // Don't show a warning, just recompile directly
+            this.gatherProjectElementsAndCompile(this, {}, { sdfg_over_code: true });
+            return;
+        }
         if(this._stale_data_button != null) {
             return;
         }
@@ -4930,6 +4899,16 @@ class DIODE {
             }
         });
     }
+    
+    show_run_options(calling_context) {
+        let newconf = {
+            type: "component",
+            componentName: "RunConfigComponent",
+
+        };
+
+        this.addContentItem(newconf);
+    }
 
     compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options={}) {
         /*
@@ -5151,7 +5130,7 @@ class DIODE {
 
     static recompileOnPropertyChange() {
         // Set a tendency towards 'false' 
-        return localStorage.getItem('diode2_recompile_on_prop_change') != "true";
+        return localStorage.getItem('diode2_recompile_on_prop_change') == "true";
     }
 
     static setRecompileOnPropertyChange(boolean_value) {
@@ -5270,4 +5249,4 @@ class ContextMenu {
 
 export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODE2Settings,
     DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations,
-    DIODE_Context_Error}
+    DIODE_Context_Error, DIODE_Context_RunConfig}

@@ -517,6 +517,18 @@ def index(path):
     """
     return send_from_directory("client", path)
 
+@app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
+def getPubSSH():
+    try:
+        with open(os.path.expanduser("~/.ssh/id_rsa.pub")) as f:
+            key = f.read()
+
+        return jsonify({"pubkey": key})
+    except:
+        print("Failed to open keyfile")
+        traceback.print_exc()
+        return jsonify({"error": "Could not open keyfile"})
+
 
 @app.route('/dace/api/v1.0/getEnum/<string:name>', methods=['GET'])
 def getEnum(name):

@@ -1,4 +1,3 @@
-//var base_url = "http://localhost:5000";
 var base_url = "//" + window.location.host;
 
 import {
@@ -13,7 +12,8 @@ import {
     DIODE_Context_StartPage,
     DIODE_Context_TransformationHistory,
     DIODE_Context_AvailableTransformations,
-    DIODE_Context_Error
+    DIODE_Context_Error,
+    DIODE_Context_RunConfig,
 } from "./diode.js"
 
 function find_object_cycles(obj) {
@@ -141,6 +141,55 @@ class FormBuilder {
         return $(elem);
     }
 
+    static createHostInput(id, onchange, known_list = ['localhost'], initial="localhost") {
+        let elem = document.createElement('input');
+        elem.type = "list";
+        elem.id = id;
+        let dlist = document.getElementById("hosttype-dlist");
+        if(!dlist) {
+            dlist = document.createElement("datalist");
+            dlist.id = "hosttype-dlist";
+            document.body.appendChild(dlist);
+        }
+        $(elem).attr("list", "hosttype-dlist");
+        dlist.innerHTML = "";
+        for(let x of known_list) {
+            dlist.innerHTML += '<option value="' + x + '">'
+        }
+
+        elem.value = initial;
+        elem.onchange = () => {
+            onchange(elem);
+        };
+
+        return $(elem);
+    }
+
+    static createComboboxInput(id, onchange, known_list, initial) {
+        let elem = document.createElement('div');
+        let inputelem = document.createElement('input');
+        inputelem.type = "list";
+        inputelem.id = id;
+        let dlist = document.createElement("datalist");
+        dlist.id = id + "-dlist";
+        elem.appendChild(dlist);
+        
+        $(inputelem).attr("list", id + "-dlist");
+        dlist.innerHTML = "";
+        for(let x of known_list) {
+            dlist.innerHTML += '<option value="' + x + '">'
+        }
+
+        inputelem.value = initial;
+        inputelem.onchange = () => {
+            onchange(inputelem);
+        };
+
+        elem.appendChild(inputelem);
+
+        return $(elem);
+    }
+
     static createCodeReference(id, onclick, obj) {
         let elem = document.createElement('span');
         elem.id = id;
@@ -258,6 +307,7 @@ function start_DIODE() {
     var diode = new DIODE();
     window.diode = diode;
     diode.initEnums();
+    diode.pubSSH(true);
 
     $("#toolbar").w2toolbar({
         name: "toolbar",
@@ -273,6 +323,7 @@ function start_DIODE() {
             { type: 'menu',   id: 'settings-menu', caption: 'Settings', icon: 'material-icons-outlined gmat-settings', items: [
                 { text: 'DACE settings', icon: 'material-icons-outlined gmat-settings-cloud', id: 'diode-settings' }, 
                 { text: 'DIODE2 settings', icon: 'material-icons-outlined gmat-settings-application', id: 'diode2-settings' }, 
+                { text: 'Run Configurations', icon: 'material-icons-outlined gmat-playlist_play', id: 'runoptions' }, 
                 { text: 'Runqueue', icon: 'material-icons-outlined gmat-view_list', id: 'runqueue' }, 
                 { text: 'Perfdata', id: 'perfdata' },
             ]},
@@ -364,8 +415,12 @@ function start_DIODE() {
                     on_timeout: () => alert("No input code found, open a new file")
                 });
             }
+            if(event.target == "settings-menu:runoptions") {
+                diode.show_run_options(diode);
+            }
             if(event.target == "compile-menu:run") {
                 // Running
+
                 diode.ui_compile_and_run(diode);
             }
             if(event.target == "closed-windows") {
@@ -660,6 +715,13 @@ function start_DIODE() {
         diode_context.setContainer(new_element);
         parent_element.append(new_element);
 
+    });
+
+    goldenlayout.registerComponent( 'RunConfigComponent', function( container, componentState ){
+        let diode_context = new DIODE_Context_RunConfig(diode, container, componentState);
+
+        diode_context.setupEvents(diode.getCurrentProject());
+        diode_context.create();
     });
 
     goldenlayout.registerComponent( 'PropWinComponent', function( container, componentState ){
