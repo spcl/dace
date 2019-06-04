@@ -3335,7 +3335,7 @@ class DIODE {
             let __locked_range = false;
             
             input_cont.classList = "flex_column";
-            for(let r of __fixed_rngs) {
+            for(let __r of __fixed_rngs) {
                 let _lbl = document.createElement("label");
                 let _in = document.createElement("input");
                 _in.type = "number";
@@ -3362,17 +3362,20 @@ class DIODE {
                 });
                 // Set limits
                 try {
-                    _in.min = eval(__defs + __main(r.val.start));
+                    _in.min = eval(__defs + __main(__r.val.start));
                 } catch(e) { console.warn("Got error when resolving expression"); }
                 try {
-                    _in.max = eval(__defs + __main(r.val.end));
+                    _in.max = eval(__defs + __main(__r.val.end));
                 } catch(e) { console.warn("Got error when resolving expression"); }
                 try {
-                    _in.value = eval(__defs + __main(r.val.start));
+                    _in.value = eval(__defs + __main(__r.val.start));
                 } catch(e) { console.warn("Got error when resolving expression"); }
 
-                _lbl.innerText = "Range iterator " + r.var + " over [" + __main(r.val.start) + ", " + __main(r.val.end) + "] in steps of " + __main(r.val.step);
-                _in.setAttribute("data-rname", r.var);
+                // Add the starting value as an expression to defs
+                __defs += "let " + __r.var + " = " + __main(__r.val.start) + ";";
+
+                _lbl.innerText = "Range iterator " + __r.var + " over [" + __main(__r.val.start) + ", " + __main(__r.val.end) + "] in steps of " + __main(__r.val.step);
+                _in.setAttribute("data-rname", __r.var);
                 _lbl.appendChild(_in);
                 __rng_inputs.push(_in);
 
@@ -3380,7 +3383,7 @@ class DIODE {
 
                 if(__total_rng_count == 0) __total_rng_count = 1;
 
-                let __e_size = ((__x) => eval(__defs + "(" +__main(__x.val.end) + " - " + __main(__x.val.start) + "+1) / " + __main(__x.val.step)) )(r);
+                let __e_size = ((__x) => eval(__defs + "(" +__main(__x.val.end) + " - " + __main(__x.val.start) + "+1) / " + __main(__x.val.step)) )(__r);
                 if(__e_size == 0 || __locked_range) {
                     __locked_range = true;
                 }

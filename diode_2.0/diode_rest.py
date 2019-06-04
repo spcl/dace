@@ -5,7 +5,7 @@ import dace.frontend.octave.parse as octave_frontend
 import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
-from flask import Flask, Response, request, abort, make_response, jsonify, send_from_directory
+from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory
 import json
 import re
 from diode.remote_execution import Executor, AsyncExecutor
@@ -507,6 +507,10 @@ class ExecutorServer:
 
         return runner
 
+
+@app.route('/')
+def redirect_base():
+    return redirect(url_for("index", path="index.html"), code=301)
 
 @app.route('/client/<path:path>', methods=['GET'])
 def index(path):
