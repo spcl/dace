@@ -217,8 +217,7 @@ class CompiledSDFG(object):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
-        # Replace python function object with a man-in-the middle
-
+        # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             if isinstance(argtype.dtype, dace.callback):
                 arglist[index] = argtype.dtype.get_trampoline(arg)
