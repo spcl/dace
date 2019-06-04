@@ -269,8 +269,6 @@ def parse_dace_program(f, argtypes, global_vars, modules, constants):
     }
     src_ast = astutils.ASTFindReplace(symrepl).visit(src_ast)
 
-    # TODO: Resolve constants to their values (if they are not already defined in this scope)
-
     src_ast = ModuleResolver(modules).visit(src_ast)
     # Convert modules after resolution
     for mod, modval in modules.items():
@@ -279,6 +277,12 @@ def parse_dace_program(f, argtypes, global_vars, modules, constants):
         newmod = global_vars[mod]
         del global_vars[mod]
         global_vars[modval] = newmod
+
+    # Resolve constants to their values (if they are not already defined in this scope)
+    src_ast = GlobalResolver(
+        {k: v
+         for k, v in global_vars.items()
+         if dtypes.isconstant(v)}).visit(src_ast)
 
     pv = ProgramVisitor(
         f.__name__,
@@ -695,6 +699,37 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     valueMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
                          indirectRange, memlet.veclen)
     graph.add_edge(dataNode, None, dst, local_name, valueMemlet)
+
+
+class GlobalResolver(ast.NodeTransformer):
+    """ Resolves global constants and lambda expressions if not
+        already defined in the given scope. """
+
+    def __init__(self, globals: Dict[str, Any]):
+        self.globals = globals
+        self.current_scope = set()
+
+    def generic_visit(self, node: ast.AST):
+        if hasattr(node, 'body') or hasattr(node, 'orelse'):
+            oldscope = self.current_scope
+            self.current_scope = set()
+            self.current_scope.update(oldscope)
+            result = super().generic_visit(node)
+            self.current_scope = oldscope
+            return result
+        else:
+            return super().generic_visit(node)
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, (ast.Store, ast.AugStore)):
+            self.current_scope.add(node.id)
+        else:
+            if node.id in self.current_scope:
+                return node
+            if node.id in self.globals:
+                return ast.copy_location(
+                    ast.Num(n=self.globals[node.id]), node)
+        return node
 
 
 class TaskletTransformer(ExtNodeTransformer):
@@ -1807,14 +1842,16 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.visit_With(node, is_async=True)
 
     def _visitname(self, name: str, node: ast.AST):
+        # First, if it is defined in the parser, use the definition
+        if name in self.variables:
+            return self.variables[name]
+
         # If an allowed global, use directly
         if name in self.globals:
             return _inner_eval_ast(self.globals, node)
 
-        if name not in self.variables:
-            raise DaceSyntaxError(self, node,
-                                  'Use of undefined variable "%s"' % name)
-        return self.variables[name]
+        raise DaceSyntaxError(self, node,
+                              'Use of undefined variable "%s"' % name)
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
