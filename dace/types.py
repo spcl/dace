@@ -20,6 +20,7 @@ class AutoNumber(enum.Enum):
 
 class StorageType(AutoNumber):
     """ Available data storage types in the SDFG. """
+
     Default = ()  # Scope-default storage location
     Immaterial = ()  # Needs materialize function
     Register = ()  # Tasklet storage location
@@ -36,6 +37,7 @@ class StorageType(AutoNumber):
 
 class ScheduleType(AutoNumber):
     """ Available map schedule types in the SDFG. """
+
     Default = ()  # Scope-default parallel schedule
     Sequential = ()  # Sequential code (single-core)
     MPI = ()  # MPI processes
@@ -48,13 +50,15 @@ class ScheduleType(AutoNumber):
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
-    ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
-    ScheduleType.GPU_ThreadBlock_Dynamic
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
 ]
 
 
 class ReductionType(AutoNumber):
     """ Reduction types natively supported by the SDFG compiler. """
+
     Custom = ()  # Defined by an arbitrary lambda function
     Min = ()  # Minimum value
     Max = ()  # Maximum value
@@ -72,12 +76,14 @@ class ReductionType(AutoNumber):
 
 class Language(AutoNumber):
     """ Available programming languages for SDFG tasklets. """
+
     Python = ()
     CPP = ()
 
 
 class AccessType(AutoNumber):
     """ Types of access to an `AccessNode`. """
+
     ReadOnly = ()
     WriteOnly = ()
     ReadWrite = ()
@@ -112,23 +118,23 @@ DYNAMIC = -1
 
 # Translation of types to C types
 _CTYPES = {
-    int: 'int',
-    float: 'float',
-    bool: 'bool',
-    numpy.bool: 'bool',
-    numpy.int8: 'char',
-    numpy.int16: 'short',
-    numpy.int32: 'int',
-    numpy.int64: 'long long',
-    numpy.uint8: 'unsigned char',
-    numpy.uint16: 'unsigned short',
-    numpy.uint32: 'unsigned int',
-    numpy.uint64: 'unsigned long long',
-    numpy.float16: 'half',
-    numpy.float32: 'float',
-    numpy.float64: 'double',
-    numpy.complex64: 'dace::complex64',
-    numpy.complex128: 'dace::complex128'
+    int: "int",
+    float: "float",
+    bool: "bool",
+    numpy.bool: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
+    numpy.float16: "half",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "dace::complex64",
+    numpy.complex128: "dace::complex128",
 }
 
 # Translation of types to ctypes types
@@ -149,7 +155,7 @@ _FFI_CTYPES = {
     numpy.float32: ctypes.c_float,
     numpy.float64: ctypes.c_double,
     numpy.complex64: ctypes.c_uint64,
-    numpy.complex128: ctypes.c_longdouble
+    numpy.complex128: ctypes.c_longdouble,
 }
 
 # Number of bytes per data type
@@ -171,7 +177,7 @@ _BYTES = {
     numpy.float32: 4,
     numpy.float64: 8,
     numpy.complex64: 8,
-    numpy.complex128: 16
+    numpy.complex128: 16,
 }
 
 
@@ -185,12 +191,12 @@ class typeclass(object):
     """
 
     def __init__(self, wrapped_type):
-        self.type = wrapped_type
-        self.ctype = _CTYPES[wrapped_type]
-        self.ctype_unaligned = self.ctype
-        self.dtype = self
-        self.bytes = _BYTES[wrapped_type]
-        self.materialize_func = None
+        self.type = wrapped_type  # Type in Python
+        self.ctype = _CTYPES[wrapped_type]  # Type in C
+        self.ctype_unaligned = self.ctype  # Type in C (without alignment)
+        self.dtype = self  # For compatibility support with numpy
+        self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
+        self.materialize_func = None  # Materialize function for immaterial types
 
     def __hash__(self):
         return hash((self.type, self.ctype, self.materialize_func))
@@ -198,6 +204,10 @@ class typeclass(object):
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
         return self.type.__name__
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type]
 
     def is_complex(self):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
@@ -220,9 +230,10 @@ class typeclass(object):
             @return: A data.Array data descriptor.
         """
         from dace import data
+
         if isinstance(s, list) or isinstance(s, tuple):
             return data.Array(self, tuple(s))
-        return data.Array(self, (s, ))
+        return data.Array(self, (s,))
 
     def __repr__(self):
         return self.ctype
@@ -242,6 +253,10 @@ class pointer(typeclass):
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
         self.materialize_func = None
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return ctypes.POINTER(_FFI_CTYPES[self.type])
 
 
 def immaterial(dace_data, materialize_func):
@@ -278,45 +293,159 @@ class struct(typeclass):
             if isinstance(v, tuple):
                 t, l = v
                 if not isinstance(t, pointer):
-                    raise TypeError('Only pointer types may have a length.')
+                    raise TypeError("Only pointer types may have a length.")
                 if l not in fields_and_types.keys():
                     raise ValueError(
-                        'Length {} not a field of struct {}'.format(
-                            l, self.name))
+                        "Length {} not a field of struct {}".format(l, self.name)
+                    )
                 self._data[k] = t
                 self._length[k] = l
                 self.bytes += t.bytes
             else:
                 if isinstance(v, pointer):
-                    raise TypeError('Pointer types must have a length.')
+                    raise TypeError("Pointer types must have a length.")
                 self._data[k] = v
                 self.bytes += v.bytes
 
     def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
         # Populate the ctype fields for the struct class.
         fields = []
         for k, v in self._data.items():
             if isinstance(v, pointer):
                 fields.append(
-                    (k,
-                     ctypes.c_void_p))  #ctypes.POINTER(_FFI_CTYPES[v.type])))
+                    (k, ctypes.c_void_p)
+                )  # ctypes.POINTER(_FFI_CTYPES[v.type])))
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
         fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
-        struct_class = type('NewStructClass', (ctypes.Structure, ),
-                            {"_fields_": fields})
+        struct_class = type("NewStructClass", (ctypes.Structure,), {"_fields_": fields})
         return struct_class
 
     def emit_definition(self):
-        return '''struct {name} {{
+        return """struct {name} {{
 {types}
-}};'''.format(
+}};""".format(
             name=self.name,
-            types='\n'.join([
-                '    %s %s;' % (t.ctype, tname)
-                for tname, t in sorted(self._data.items())
-            ]))
+            types="\n".join(
+                [
+                    "    %s %s;" % (t.ctype, tname)
+                    for tname, t in sorted(self._data.items())
+                ]
+            ),
+        )
+
+
+####### Utility function ##############
+def ptrtonumpy(ptr, inner_ctype, shape):
+    import ctypes
+    import numpy as np
+    return np.ctypeslib.as_array(
+        ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape
+    )
+
+
+# TODO only handles input arrays, not output arrays
+class callback(typeclass):
+    """ Looks like dace.callback([None, <some_native_type>], *types)"""
+
+    def __init__(self, return_type, *variadic_args):
+        from dace import data
+        if isinstance(return_type, data.Array):
+            raise TypeError("Callbacks that return arrays are not supported as per SDFG semantics")
+        self.dtype = self
+        self.return_type = return_type
+        self.input_types = variadic_args
+        self.bytes = int64.bytes
+        self.materialize_func = None
+        self.type = self
+        self.ctype = self
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        from dace import data
+
+        return_ctype = (
+            self.return_type.as_ctypes() if self.return_type is not None else None
+        )
+        input_ctypes = []
+        for some_arg in self.input_types:
+            if isinstance(some_arg, data.Array):
+                input_ctypes.append(ctypes.c_void_p)
+            else:
+                input_ctypes.append(
+                    some_arg.as_ctypes() if some_arg is not None else None
+                )
+        if input_ctypes == [None]:
+            input_ctypes = []
+        cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
+        return cf_object
+
+    def signature(self, name):
+        from dace import data
+
+        return_type_cstring = (
+            self.return_type.ctype if self.return_type is not None else "void"
+        )
+        input_type_cstring = []
+        for arg in self.input_types:
+            if isinstance(arg, data.Array):
+                # const hack needed to prevent error in casting const int* to int*
+                input_type_cstring.append(arg.dtype.ctype + " const *")
+            else:
+                input_type_cstring.append(arg.ctype if arg is not None else "")
+        cstring = return_type_cstring + " " + "(*" + name + ")("
+        for index, inp_arg in enumerate(input_type_cstring):
+            if index > 0:
+                cstring = cstring + ","
+            cstring = cstring + inp_arg
+        cstring = cstring + ")"
+        return cstring
+
+    def get_trampoline(self, pyfunc):
+        from functools import partial
+        from dace import data, symbolic
+
+        arraypos = []
+        types_and_sizes = []
+        for index, arg in enumerate(self.input_types):
+            if isinstance(arg, data.Array):
+                arraypos.append(index)
+                types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+        if len(arraypos) == 0:
+            return pyfunc
+
+        def trampoline(orig_function, indices, data_types_and_sizes, *other_inputs):
+            list_of_other_inputs = list(other_inputs)
+            for i in indices:
+                data_type, size = data_types_and_sizes[i]
+                non_symbolic_sizes = []
+                for s in size:
+                    if isinstance(s, symbolic.symbol):
+                        non_symbolic_sizes.append(s.get())
+                    else:
+                        non_symbolic_sizes.append(s)
+                list_of_other_inputs[i] = ptrtonumpy(
+                    other_inputs[i], data_type, non_symbolic_sizes
+                )
+            return orig_function(*list_of_other_inputs)
+
+        return partial(
+            trampoline,
+            pyfunc,
+            arraypos,
+            types_and_sizes
+        )
+
+    def __hash__(self):
+        return hash((self.return_type, *self.input_types))
+
+    def __str__(self):
+        return "dace.callback"
+
+    def __repr__(self):
+        return "dace.callback"
 
 
 int8 = typeclass(numpy.int8)
@@ -334,8 +463,19 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 TYPECLASS_STRINGS = [
-    'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64',
-    'float16', 'float32', 'float64', 'complex64', 'complex128'
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float16",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
 ]
 
 #######################################################
@@ -360,7 +500,7 @@ _CONSTANT_TYPES = [
     numpy.float64,
     numpy.complex64,
     numpy.complex128,
-    typeclass  #, type
+    typeclass,  # , type
 ]
 
 
@@ -372,10 +512,10 @@ def isconstant(var):
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
 _ALLOWED_MODULES = {
-    "builtins": '',
-    "dace": 'dace::',
-    "math": 'dace::math::',
-    "cmath": 'dace::cmath::'
+    "builtins": "",
+    "dace": "dace::",
+    "math": "dace::math::",
+    "cmath": "dace::cmath::",
 }
 
 
@@ -385,7 +525,7 @@ def ismoduleallowed(var):
     mod = inspect.getmodule(var)
     try:
         for m in _ALLOWED_MODULES:
-            if mod.__name__ == m or mod.__name__.startswith(m + '.'):
+            if mod.__name__ == m or mod.__name__.startswith(m + "."):
                 return True
     except AttributeError:
         return False
@@ -422,12 +562,7 @@ class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for 
         IDE and debugging purposes. """
 
-    def __init__(self,
-                 start_line,
-                 start_column,
-                 end_line,
-                 end_column,
-                 filename=None):
+    def __init__(self, start_line, start_column, end_line, end_column, filename=None):
         self.start_line = start_line
         self.end_line = end_line
         self.start_column = start_column
@@ -442,4 +577,5 @@ class DebugInfo:
 def deduplicate(iterable):
     """ Removes duplicates in the passed iterable. """
     return type(iterable)(
-        [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+        [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))]
+    )
