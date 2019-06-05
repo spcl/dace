@@ -9,64 +9,68 @@ learning_rate = 0.01
 batch_size = 1
 num_classes = 10
 
-#dace.Config.set(
+# dace.Config.set(
 #    "compiler",
 #    "cpu",
 #    "args",
 #    value=dace.Config.get("compiler", "cpu", "args")
 #    .replace("O3", "O0")
 #    .replace("-ffast-math", ""),
-#)
+# )
 
 
 def random_batch(batch_size):
     shape = (batch_size, 224, 224, 3)
     images = np.random.uniform(size=shape).astype(np.float32)
-    labels = np.random.randint(
-        low=0, high=num_classes, size=(batch_size)).astype(np.int32)
+    labels = np.random.randint(low=0, high=num_classes, size=(batch_size)).astype(
+        np.int32
+    )
     # print(labels.shape)
     return images, labels
 
 
 images, labels = random_batch(batch_size)
 # Graph building
-myresnet = resnet50.ResNet50(
-    "channels_last", classes=num_classes)  # trainable=False)
-input_placeholder = tf.placeholder(
-    dtype=tf.float32, shape=(batch_size, 224, 224, 3))
+myresnet = resnet50.ResNet50("channels_last", classes=num_classes)  # trainable=False)
+input_placeholder = tf.placeholder(dtype=tf.float32, shape=(batch_size, 224, 224, 3))
 label_placeholder = tf.placeholder(dtype=tf.int32, shape=(batch_size))
 logits = myresnet(input_placeholder)
 softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
-    labels=label_placeholder, logits=logits)
+    labels=label_placeholder, logits=logits
+)
 loss = tf.reduce_mean(softmax, name="loss")
-gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(
-    loss)
+gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
 gradient_tensors = []
 for tup in gradients:
     gradient_tensors.append(tup[0])
-update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(
-    gradients)
+update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(gradients)
 input_gradients = tf.gradients(loss, input_placeholder)
 sess_dace = TFSession(seed=SEED)
-#sess_tf = tf.Session()
-#init = tf.global_variables_initializer()
-#gradients_dace = sess_dace.train(
+# sess_tf = tf.Session()
+# init = tf.global_variables_initializer()
+# gradients_dace = sess_dace.train(
 #    [],
 #    init,
 #    1,
 #    {input_placeholder: images, label_placeholder: labels},
 #    gradient_tensors,
-#)[1]
-updates_dace = sess_dace.train(
-    update_op,
-    [],
-    #init,
-    1,
-    {
-        input_placeholder: images,
-        label_placeholder: labels
-    },
-)[1]
+# )[1]
+# updates_dace = sess_dace.train(
+#    update_op,
+#    [],
+#    #init,
+#    1,
+#    {
+#        input_placeholder: images,
+#        label_placeholder: labels
+#    },
+# )[1]
+updates_dace = sess_dace.run(
+    update_op, feed_dict={input_placeholder: images, label_placeholder: labels}
+)
+#input_grads_dace = sess_dace.run(
+#        input_gradients, feed_dict={input_placeholder: images, label_placeholder: labels}
+#)
 # wrong_grads = sess_dace.run(
 #    gradient_tensors[0],
 #    feed_dict={input_placeholder: images, label_placeholder: labels},
@@ -78,24 +82,24 @@ updates_dace = sess_dace.train(
 #    {input_placeholder: images, label_placeholder: labels},
 #    [logits, softmax, loss],
 # )[1]
-#tf.summary.FileWriter("./", sess_tf.graph)
-#sess_tf.run(init)
+# tf.summary.FileWriter("./", sess_tf.graph)
+# sess_tf.run(init)
 ##outputs_tf = sess_tf.run(
 ##    [logits, softmax, loss],
 ##    feed_dict={input_placeholder: images, label_placeholder: labels},
 ##)
-#gradients_tf = sess_tf.run(
+# gradients_tf = sess_tf.run(
 #    gradient_tensors,
 #    feed_dict={input_placeholder: images, label_placeholder: labels},
-#)
-#for name, tfgrad, dacegrad in zip(update_op, updates_tf, updates_dace):
+# )
+# for name, tfgrad, dacegrad in zip(update_op, updates_tf, updates_dace):
 #    inf_norm = np.linalg.norm((tfgrad - dacegrad).flatten())
 #    print(str(name), str(inf_norm))
-#print(gradients_dace)
-#print(gradients_tf)
-#print(tf.linalg.norm(gradients_dace - gradients_tf).eval(session=sess_tf))
-#print("gradient was ", str(gradient_tensors[0]))
-#print("older one was ", str(gradient_tensors[0]), " new one is ", str(gradient_tensors[1]))
+# print(gradients_dace)
+# print(gradients_tf)
+# print(tf.linalg.norm(gradients_dace - gradients_tf).eval(session=sess_tf))
+# print("gradient was ", str(gradient_tensors[0]))
+# print("older one was ", str(gradient_tensors[0]), " new one is ", str(gradient_tensors[1]))
 
 ################### FORWARD PASS NORM ###################################
 # print(tf.linalg.norm(outputs_dace[0]-outputs_tf[0]).eval(session=sess_tf))
