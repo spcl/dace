@@ -1486,7 +1486,6 @@ subgraph cluster_state_{state} {{
                     or isinstance(match, RedundantArrayCopying2)
                     or isinstance(match, RedundantArrayCopying3)
                 ):
-                    print("A")
                     arrays += 1
                 applied = True
                 break
