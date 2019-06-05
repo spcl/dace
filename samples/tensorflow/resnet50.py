@@ -323,7 +323,6 @@ class ResNet50(tf.keras.Model):
         x = self.bn_conv1(x, training=training)
         x = tf.nn.relu(x)
         x = self.max_pool(x)
-        #x = self.av_pool(x)
 
         x = self.l2a(x, training=training)
         x = self.l2b(x, training=training)
