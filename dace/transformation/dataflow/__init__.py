@@ -22,6 +22,9 @@ from .redundant_array import RedundantArray
 from .redundant_array_copying import (
     RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
 
+# Tensorflow specific stuff
+from .tensorflow_redundant_array import TensorflowRedundantArray
+
 # Device-related
 from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
