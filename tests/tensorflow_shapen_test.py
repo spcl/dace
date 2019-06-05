@@ -1,0 +1,20 @@
+import tensorflow as tf
+import dace
+from dace.frontend.tensorflow import TFSession
+
+myshape = [69, 96, 666]
+num_inputs = 5
+
+inpList = [tf.ones(myshape) for _ in range(num_inputs)]
+
+sess_tf = tf.Session()
+sess_dace = TFSession()
+
+shapes_tf = sess_tf.run(tf.shape_n(inpList))
+shapes_dace = sess_dace.run(tf.shape_n(inpList))
+for dc, tf in zip(shapes_dace, shapes_tf):
+    try:
+        assert (dc == tf).all()
+    except (AssertionError):
+        print(dc)
+        print(tf)
