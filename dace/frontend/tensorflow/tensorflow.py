@@ -131,6 +131,46 @@ class TFSession:
     def __exit__(self, exception_type, exception_value, traceback):
         pass
 
+    def apply_tensorflow_transform(self, validate=True):
+        """ Applies tensorflow specific transformations. Currently it is built for removing
+        ReadVariableOp and control dependencies.
+            B{Note:} This is an in-place operation on the SDFG.
+        """
+        # Avoiding import loops
+        from dace.transformation import optimizer
+        from dace.transformation.dataflow import (
+            TensorflowRedundantArray,
+        )
+
+        # Apply strict state fusions greedily.
+        opt = optimizer.SDFGOptimizer(self.graph, inplace=True)
+        arrays = 0
+        applied = True
+        while applied:
+            applied = False
+            # Find and apply immediately
+            for match in opt.get_pattern_matches(
+                strict=False,
+                patterns=(
+                    TensorflowRedundantArray,
+                ),
+            ):
+                sdfg = self.graph.sdfg_list[match.sdfg_id]
+                match.apply(sdfg)
+                if validate:
+                    self.graph.validate()
+                if isinstance(match, TensorflowRedundantArray):
+                    arrays += 1
+                applied = True
+                break
+
+        from dace.config import Config
+        if Config.get_bool("debugprint") and arrays > 0:
+            print(
+                "Automatically removed"
+                " {} tensorflow redundant arrays.".format(arrays)
+            )
+
     def train(
         self,
         optimizer,
@@ -322,8 +362,9 @@ class TFSession:
 
         print("Adding connectors")
         self.graph.fill_scope_connectors()
-        print("Applying strict transformations")
-        self.graph.apply_strict_transformations(validate=False)
+        print("Applying Tensorflow transformations")
+        #self.graph.apply_strict_transformations(validate=False)
+        self.apply_tensorflow_transform(validate=False)
 
         # Compile and call the SDFG
         self.graph.draw_to_file()
@@ -456,6 +497,9 @@ class TFSession:
 
         # Compile the SDFG
         self.graph.fill_scope_connectors()
+        self.apply_tensorflow_transform(validate=False)
+        #self.graph.apply_strict_transformations(validate=False)
+        #self.graph.validate()
         self.graph.draw_to_file()
         compiled_sdfg = self.graph.compile(optimizer=False)
 
