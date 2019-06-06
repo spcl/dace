@@ -9,21 +9,19 @@ N = dp.symbol('N')
 
 
 @dp.program
-def sdfg_internal(input: dp.float32, output: dp.float32):
+def sdfg_internal(input: dp.float32, output: dp.float32[1]):
     @dp.tasklet
     def init():
-        inp << input
         out >> output
-        out = inp
+        out = input
 
     for k in range(4):
 
         @dp.tasklet
         def do():
-            inp << input
             oin << output
             out >> output
-            out = oin * inp
+            out = oin * input
 
 
 # Construct SDFG

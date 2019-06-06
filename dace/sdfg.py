@@ -140,15 +140,11 @@ class SDFG(OrderedDiGraph):
         `dace.graph.nodes` for a full list of available node types); edges in the multigraph represent data movement using memlets, as described in the `Memlet` class documentation.
     """
 
-    def __init__(self,
-                 name: str,
-                 symbols: Set[str] = set(),
-                 propagate: bool = True,
-                 parent=None):
+    def __init__(self, name: str, propagate: bool = True, parent=None):
         """ Constructs a new SDFG.
             @param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
-            @param symbols: Additional set of symbol names that the SDFG 
+            @param symbols: Additional dictionary of symbol names -> types that the SDFG
                             defines, apart from symbolic data sizes.
             @param propagate: If False, disables automatic propagation of
                               memlet subsets from scopes outwards. Saves
@@ -164,7 +160,7 @@ class SDFG(OrderedDiGraph):
         self._constants = {}  # type: Dict[str, Any]
         self._propagate = propagate
         self._parent = parent
-        self._symbols = symbols
+        self._symbols = {}  # type: Dict[str, dtypes.typeclass]
         self._parent_sdfg = None
         self._sdfg_list = [self]
         self._instrumented_parent = False  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
@@ -181,6 +177,12 @@ class SDFG(OrderedDiGraph):
         """
         return self._arrays
 
+    @property
+    def symbols(self):
+        """ Returns a dictionary of symbols (constant variables) used in this
+            SDFG. """
+        return self._symbols
+
     def add_symbol(self, name, stype, override_dtype=False):
         """ Adds a symbol to the SDFG.
             @param name: Symbol name.
@@ -190,8 +192,11 @@ class SDFG(OrderedDiGraph):
         """
         if name in self._symbols:
             raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
+        if not isinstance(stype, dtypes.typeclass):
+            stype = dtypes.DTYPE_TO_TYPECLASS[stype]
+
         symbolic.symbol(name, stype, override_dtype=override_dtype)
-        self._symbols.add(name)
+        self._symbols[name] = stype
 
     @property
     def start_state(self):
@@ -400,8 +405,7 @@ class SDFG(OrderedDiGraph):
         """ Returns all scalar data arguments to the SDFG (this excludes
             symbols used to define array sizes)."""
         return [
-            (name, dt.Scalar(symbolic.symbol(name).dtype))
-            for name in self._symbols
+            (name, dt.Scalar(stype)) for name, stype in self._symbols.items()
             # Exclude constant variables if requested
             if (include_constants or (name not in self.constants))
         ]
@@ -1016,6 +1020,16 @@ subgraph cluster_state_{state} {{
             allow_conflicts=allow_conflicts,
             access_order=access_order)
 
+    def temp_data_name(self):
+        """ Returns a temporary data descriptor name that can be used in this SDFG. """
+
+        name = '__tmp%d' % self._temp_transients
+        while name in self._arrays:
+            self._temp_transients += 1
+            name = '__tmp%d' % self._temp_transients
+
+        return name
+
     def add_temp_transient(self,
                            shape,
                            dtype,
@@ -1029,10 +1043,7 @@ subgraph cluster_state_{state} {{
                            access_order=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
-        name = '__tmp%d' % self._temp_transients
-        while name in self._arrays:
-            self._temp_transients += 1
-            name = '__tmp%d' % self._temp_transients
+        name = self.temp_data_name()
 
         return name, self.add_array(
             name,
@@ -1429,8 +1440,8 @@ subgraph cluster_state_{state} {{
         opt = optimizer.SDFGOptimizer(self, inplace=True)
         applied = {k.__name__: 0 for k in strict_transformations}
         options = [
-            match for match in opt.get_pattern_matches(strict=True)
-            if isinstance(match, strict_transformations)
+            match for match in opt.get_pattern_matches(
+                strict=True, patterns=strict_transformations)
         ]
 
         while options:
@@ -1442,8 +1453,8 @@ subgraph cluster_state_{state} {{
             applied[applying] += 1
 
             options = [
-                match for match in opt.get_pattern_matches(strict=True)
-                if isinstance(match, strict_transformations)
+                match for match in opt.get_pattern_matches(
+                    strict=True, patterns=strict_transformations)
             ]
 
         if Config.get_bool('debugprint') and any(v > 0
@@ -3089,7 +3100,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Verify that source and destination subsets contain the same
             # number of elements
-            if e.data.other_subset is not None:
+            if e.data.other_subset is not None and not (
+                (isinstance(src_node, nd.AccessNode)
+                 and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
+                (isinstance(dst_node, nd.AccessNode)
+                 and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
                 if (e.data.subset.num_elements() !=
                         e.data.other_subset.num_elements()):
                     raise InvalidSDFGEdgeError(

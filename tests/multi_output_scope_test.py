@@ -10,8 +10,8 @@ def prog(A, stats):
     @dace.map(_[0:W])
     def compute(i):
         inp << A[i]
-        sum >> stats(1, lambda x, y: x + y, 0)[0]
-        ssq >> stats(1, lambda x, y: x + y, 0)[1]
+        sum >> stats(1, lambda x, y: x + y)[0]
+        ssq >> stats(1, lambda x, y: x + y)[1]
 
         sum = inp
         ssq = inp * inp
@@ -24,6 +24,7 @@ if __name__ == '__main__':
     stats = dace.ndarray([2])
 
     A[:] = np.random.normal(3.0, 5.0, W.get())
+    stats[:] = 0.0
 
     prog(A, stats)
 

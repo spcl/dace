@@ -332,6 +332,26 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
+DTYPE_TO_TYPECLASS = {
+    int: int32,
+    float: float32,
+    bool: uint8,
+    numpy.bool: uint8,
+    numpy.int8: int8,
+    numpy.int16: int16,
+    numpy.int32: int32,
+    numpy.int64: int64,
+    numpy.uint8: uint8,
+    numpy.uint16: uint16,
+    numpy.uint32: uint32,
+    numpy.uint64: uint64,
+    numpy.float16: float16,
+    numpy.float32: float32,
+    numpy.float64: float64,
+    numpy.complex64: complex64,
+    numpy.complex128: complex128
+}
+
 TYPECLASS_STRINGS = [
     'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64',
     'float16', 'float32', 'float64', 'complex64', 'complex128'

@@ -17,12 +17,7 @@ nnz = dace.symbol('nnz')
 def spmv(A_row, A_col, A_val, x, b):
     @dace.mapscope(_[0:H])
     def compute_row(i):
-        rowptr = dace.define_local_scalar(dace.uint32)
-        rowend = dace.define_local_scalar(dace.uint32)
-        rowptr << A_row[i]
-        rowend << A_row[i + 1]
-
-        @dace.map(_[rowptr:rowend])
+        @dace.map(_[A_row[i]:A_row[i + 1]])
         def compute(j):
             a << A_val[j]
             in_x << x[A_col[j]]
