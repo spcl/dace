@@ -216,7 +216,8 @@ class Executor:
                          use_mpi=True,
                          fail_on_nonzero=False,
                          omp_num_threads=None,
-                         additional_options_dict={}):
+                         additional_options_dict=None):
+        additional_options_dict = additional_options_dict or {}
         run = "${command} "
         if use_mpi == True:
             run = Config.get("execution", "mpi", "mpiexec")
@@ -228,7 +229,7 @@ class Executor:
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
         perf_instrumentation_result_marker = ""
-        if (omp_num_threads != None):
+        if omp_num_threads != None:
             omp_num_threads_str = "export OMP_NUM_THREADS=" + str(
                 omp_num_threads) + "\n"
             omp_num_threads_unset_str = "unset OMP_NUM_THREADS\n"

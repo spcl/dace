@@ -1432,9 +1432,9 @@ class FunctionInliner(ExtNodeTransformer):
     """ A Python AST transformer that inlines functions called (e.g., with 
         "dace.call") in an existing AST. """
 
-    def __init__(self, global_vars, modules, local_vars={}):
+    def __init__(self, global_vars, modules, local_vars=None):
         self.globals = global_vars
-        self.locals = local_vars
+        self.locals = local_vars or {}
         self.modules = modules
         self.function_inline_counter = CounterDict()
 

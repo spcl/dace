@@ -1187,7 +1187,7 @@ subgraph cluster_state_{state} {{
         state = self.find_state(state_id_or_label)
         return state.find_node(node_id_or_label)
 
-    def specialize(self, additional_symbols={}, specialize_all_symbols=True):
+    def specialize(self, additional_symbols=None, specialize_all_symbols=True):
         """ Sets symbolic values in this SDFG to constants.
             @param additional_symbols: Additional values to specialize.
             @param specialize_all_symbols: If True, raises an
@@ -1195,6 +1195,7 @@ subgraph cluster_state_{state} {{
                    SDFG is unset.
         """
         syms = {}
+        additional_symbols = additional_symbols or {}
         undefined_symbols = self.undefined_symbols(False)
         #scalar_arguments = self.scalar_parameters(False)
         for symname in undefined_symbols:  #itertools.chain(undefined_symbols, scalar_arguments):

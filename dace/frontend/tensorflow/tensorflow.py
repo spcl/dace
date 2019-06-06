@@ -416,13 +416,16 @@ class TFSession:
 
         ############################
         # Create the function that invokes the SDFG
-        def call_func(feed_dict={}):
-            invoke_args = dict(
-                sdfg_args, **{(k if isinstance(k, str) else
-                               _string_builder(k.name)): v
-                              for k, v in feed_dict.items()})
+        def call_func(feed_dict=None):
+            if feed_dict is not None:
+                invoke_args = dict(
+                    sdfg_args, **{(k if isinstance(k, str) else
+                                   _string_builder(k.name)): v
+                                  for k, v in feed_dict.items()})
 
-            compiled_sdfg(**invoke_args)
+                compiled_sdfg(**invoke_args)
+            else:
+                compiled_sdfg(**sdfg_args)
 
             # Single output
             if output_type is object:
@@ -448,7 +451,7 @@ class TFSession:
         # Return the function
         return call_func
 
-    def run(self, nodes, feed_dict={}, name=None):
+    def run(self, nodes, feed_dict=None, name=None):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
             @param nodes: Node or an iterable (e.g. list) of nodes to evaluate.

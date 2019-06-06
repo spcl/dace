@@ -27,9 +27,9 @@ class Node(object):
     out_connectors = SetProperty(
         str, default=set(), desc="A set of output connectors for this node.")
 
-    def __init__(self, in_connectors=set(), out_connectors=set()):
-        self.in_connectors = in_connectors
-        self.out_connectors = out_connectors
+    def __init__(self, in_connectors=None, out_connectors=None):
+        self.in_connectors = in_connectors or set()
+        self.out_connectors = out_connectors or set()
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -245,8 +245,8 @@ class Tasklet(CodeNode):
 
     def __init__(self,
                  label,
-                 inputs=set(),
-                 outputs=set(),
+                 inputs=None,
+                 outputs=None,
                  code="",
                  language=dtypes.Language.Python,
                  code_global="",
@@ -254,7 +254,7 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location="-1",
                  debuginfo=None):
-        super(Tasklet, self).__init__(inputs, outputs)
+        super(Tasklet, self).__init__(inputs or set(), outputs or set())
 
         # Properties
         self.label = label
@@ -403,8 +403,8 @@ class MapEntry(EntryNode):
         @see: Map
     """
 
-    def __init__(self, map, dynamic_inputs=set()):
-        super(MapEntry, self).__init__(dynamic_inputs)
+    def __init__(self, map, dynamic_inputs=None):
+        super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
             raise ValueError("Map for MapEntry can not be None.")
         self._map = map
@@ -545,8 +545,8 @@ class ConsumeEntry(EntryNode):
         @see: Consume
     """
 
-    def __init__(self, consume, dynamic_inputs=set()):
-        super(ConsumeEntry, self).__init__(dynamic_inputs)
+    def __init__(self, consume, dynamic_inputs=None):
+        super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
         self._consume = consume

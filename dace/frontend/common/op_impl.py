@@ -1539,7 +1539,7 @@ def matrix_transpose_s(A_label: str,
             B_label = A_label + '^T'
         if B_type is None:
             B_type = A_type
-        B_shape = list(A_shape).reverse()
+        B_shape = list(A_shape)[::-1]
     else:
         if B_shape is None:
             raise ValidationError(

@@ -272,9 +272,10 @@ def symtype(expr):
 def eval(expr,
          uninitialized_value=None,
          keep_uninitialized=False,
-         constants={}):
+         constants=None):
     """ Evaluates a complex expression with symbols, replacing all
         symbols with their values. """
+    constants = constants or {}
     if isinstance(expr, SymExpr):
         return eval(expr.expr, uninitialized_value, keep_uninitialized)
     if not isinstance(expr, sympy.Expr):
@@ -342,9 +343,10 @@ def symbols_in_sympy_expr(expr):
     return map(str, symbols)
 
 
-def issymbolic(value, constants={}):
+def issymbolic(value, constants=None):
     """ Returns True if an expression is symbolic with respect to its contents
         and a given dictionary of constant values. """
+    constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
     if isinstance(value, symbol) and value.name not in constants:
@@ -445,10 +447,11 @@ def symbol_name_or_value(val):
     return str(val)
 
 
-def sympy_to_dace(exprs, symbol_map={}):
+def sympy_to_dace(exprs, symbol_map=None):
     """ Convert all `sympy.Symbol`s to DaCe symbols, according to 
         `symbol_map`. """
     repl = {}
+    symbol_map = symbol_map or {}
 
     oneelem = False
     try:
@@ -603,11 +606,12 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
-def pystr_to_symbolic(expr, symbol_map={}):
+def pystr_to_symbolic(expr, symbol_map=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     if isinstance(expr, SymExpr):
         return expr
 
+    symbol_map = symbol_map or {}
     locals = {'min': sympy.Min, 'max': sympy.Max}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

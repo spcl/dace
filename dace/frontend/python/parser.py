@@ -1,18 +1,12 @@
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
-from collections import OrderedDict
-from functools import wraps
 import inspect
-import ast
-import copy
-import sys
 import numpy
 
 from dace import data, symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import newast
 from dace.sdfg import SDFG
-from dace.graph import labeling
 
 
 def _create_datadescriptor(obj):
