@@ -1237,29 +1237,20 @@ class TFSession:
                 None,
                 Memlet.simple(tempNodeVar, "0"),
             )
-            hack_mean = self.state.add_read("temp_mean_scalar" + local_ctr)  # jugaad 2
             self.state.add_edge(
                 tempNodeMean,
                 None,
-                hack_mean,
-                None,
-                Memlet.simple(hack_mean, ",".join(["0"])),
-            )
-            self.state.add_edge(
-                hack_mean,
-                None,
                 fbnormMapEntry,
                 None,
-                Memlet.simple(hack_mean, ",".join(["0"])),
+                Memlet.simple(tempNodeMean, ",".join(["0"])),
             )
             self.state.add_edge(
                 fbnormMapEntry,
                 None,
                 fbnormTasklet,
                 "mean",
-                Memlet.simple(hack_mean, ",".join(["0"])),
+                Memlet.simple(tempNodeMean, ",".join(["0"])),
             )
-
             self.state.add_edge(
                 tempNodeVar,
                 None,
@@ -1267,18 +1258,8 @@ class TFSession:
                 "var",
                 Memlet.simple(tempNodeVar, ",".join(["0"])),
             )
-            hack_mean_1 = self.state.add_read(
-                "temp_mean_scalar" + local_ctr
-            )  # jugaad 2
             self.state.add_edge(
                 tempNodeMean,
-                None,
-                hack_mean_1,
-                None,
-                Memlet.simple(hack_mean_1, ",".join(["0"])),
-            )
-            self.state.add_edge(
-                hack_mean_1,
                 None,
                 outerMapExit,
                 None,
@@ -1291,18 +1272,8 @@ class TFSession:
                 None,
                 Memlet.simple(meanTensorNode, ",".join(meanDims)),
             )
-            hack_variance_1 = self.state.add_read(
-                "temp_variance_scalar" + local_ctr
-            )  # jugaad 2
             self.state.add_edge(
                 tempNodeVar,
-                None,
-                hack_variance_1,
-                None,
-                Memlet.simple(hack_variance_1, ",".join(["0"])),
-            )
-            self.state.add_edge(
-                hack_variance_1,
                 None,
                 outerMapExit,
                 None,
@@ -1315,29 +1286,20 @@ class TFSession:
                 None,
                 Memlet.simple(varianceTensorNode, ",".join(meanDims)),
             )
-            # Caching value for backpass
-            varSqrtRead = self.state.add_read("variance_sqrt" + local_ctr)
-            self.state.add_edge(
-                hack_variance,
-                None,
-                varSqrtRead,
-                None,
-                Memlet.simple(hack_variance, "0"),
-            )
             self.add_out_memlets(
                 [outputList[4]],
                 outerMapExit,
-                varSqrtRead,
+                hack_variance,
                 [meanDims],
                 [[inpTensorParams[-1]]],
             )
-            self.state.add_edge(
-                meanTensorNode,
-                None,
-                outputList[3],
-                None,
-                Memlet.simple(meanTensorNode, ",".join(meanDims)),
-            )
+            #self.state.add_edge(
+            #    meanTensorNode,
+            #    None,
+            #    outputList[3],
+            #    None,
+            #    Memlet.simple(meanTensorNode, ",".join(meanDims)),
+            #)
 
         else:
             # Input and output edges have been added through the two maps and
@@ -1413,7 +1375,6 @@ class TFSession:
             transient=True,
             toplevel=False,
         )
-        read_betaprime = self.state.add_read("beta_prime" + local_ctr)
         ###############################MAPS##############################################
         channelMapLabel = _string_builder(node.type) + "_outer"
         channelMapEntry, channelMapExit = self.state.add_map(
@@ -1544,7 +1505,7 @@ class TFSession:
             gammaPrime, None, innerMap2Entry, None, Memlet.simple(gammaPrime, "0")
         )
         self.state.add_edge(
-            read_betaprime, None, innerMap2Entry, None, Memlet.simple(betaPrime, "0")
+            betaPrime, None, innerMap2Entry, None, Memlet.simple(betaPrime, "0")
         )
         # inputGradsTasklet in-edges
         self.state.add_edge(
@@ -1559,7 +1520,7 @@ class TFSession:
             None,
             inputGradsTasklet,
             "beta_prime",
-            Memlet.simple(read_betaprime, "0"),
+            Memlet.simple(betaPrime, "0"),
         )
         self.state.add_edge(
             innerMap2Entry,
@@ -1612,17 +1573,10 @@ class TFSession:
             [backpropDims[:-1] + [backpropParams[-1]]],
         )
         # Add reads and edges. Can't directly add out memlets.
-        read_gammaprime = self.state.add_read("gamma_prime" + local_ctr)
-        self.state.add_edge(
-            gammaPrime, None, read_gammaprime, None, Memlet.simple(gammaPrime, "0")
-        )
-        self.state.add_edge(
-            betaPrime, None, read_betaprime, None, Memlet.simple(betaPrime, "0")
-        )
         self.add_out_memlets(
             [gammaGrads],
             channelMapExit,
-            read_gammaprime,
+            gammaPrime,
             [gammaDims],
             [[backpropParams[-1]]],
         )
