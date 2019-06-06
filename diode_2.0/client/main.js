@@ -332,6 +332,14 @@ function start_DIODE() {
                 { text: 'Run', id: 'run', icon: 'material-icons-outlined gmat-play' }, 
                 { text: 'Discard changes and compile source', id: 'compile-clean', icon: 'material-icons-outlined gmat-clear' }, 
             ]},
+            { type: 'menu-radio', id: 'runconfig', text: function(item) {
+                let t = (typeof(item.selected) == 'string') ? item.selected : item.selected(); let el = this.get('runconfig:' + t); return "Config: " + ((el == null) ? diode.getCurrentRunConfigName() : el.text);
+            }, selected: function(item) {
+                return diode.getCurrentRunConfigName();
+            }, items: [{
+                id: 'default', text: "default"
+            }
+            ]},
             { type: 'menu',  id: 'transformation-menu', caption: 'Transformations', items: [
                 { text: 'History', id: 'history' },
                 { text: 'Available Transformations', id: 'available' }, 
@@ -383,6 +391,22 @@ function start_DIODE() {
             }
             if(event.target == "group-menu:group-diode1") {
                 diode.groupLikeDIODE1();
+            }
+            if(event.target == "runconfig") {
+                let m = this.get(event.target);
+
+                let configs = diode.getRunConfigs();
+
+                m.items = [];
+
+                for(let c of configs) {
+                    let cname = c['Configuration name'];
+                    m.items.push({id: cname, text: cname});
+                }
+            }
+            if(event.target.startsWith("runconfig:")) {
+                let name = event.target.substr("runconfig:".length);
+                diode.setCurrentRunConfig(name);
             }
             if(event.target == "transformation-menu:history") {
                 diode.addContentItem({

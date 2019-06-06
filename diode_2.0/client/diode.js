@@ -1881,10 +1881,39 @@ class DIODE_Context_RunConfig extends DIODE_Context {
         
         let runopts_general_container = document.createElement("div");
 
+        let values = {
+            "Configuration name": "",
+            "Host": "localhost",
+            "Use SSH": true,
+            "SSH Key": this.diode.pubSSH(),
+            "SSH Key override": "",
+            "Instrumentation": "off",
+            "Number of threads": "[0]"
+        };
+
+        let params = [];
+        let node = null;
+        let transthis = null;
+
         // Build the callback object
-        let transthis = {
-            propertyChanged: (a, b, c) => {
-                console.log("propertyChanged called", a, b, c);
+        transthis = {
+            propertyChanged: (node, name, value) => {
+                if(name == "Configuration name") {
+                    if(this.diode.getRunConfigs().map(x => x['Configuration name']).includes(value)) {
+                        // Load values and reset inputs
+                        let copy = this.diode.getRunConfigs(value);
+                        for(let x of Object.keys(copy)) {
+                            let v = copy[x];
+                            let ps = params.find(y => y.name == x);
+                            ps.value = v;
+                        }
+                        values = copy;
+                        runopts_general_container.innerHTML = "";
+                        this.diode.renderProperties(transthis, node, params, runopts_general_container, {});
+                        return;
+                    }
+                }
+                values[name] = value;
             }
         };
         /*
@@ -1898,15 +1927,16 @@ class DIODE_Context_RunConfig extends DIODE_Context {
         }
         */
         {
-            let params = [{
+            params = [{
                     name: "Configuration name",
-                    type: "str",
-                    value: "",
+                    type: "combobox",
+                    value: values['Configuration name'],
+                    options: this.diode.getRunConfigs().map(x => x['Configuration name']),
                     desc: "Name of this configuration",
                 }, {
                     name: "Host",
                     type: "hosttype",
-                    value: "localhost",
+                    value: values['Host'],
                     desc: "Host executing the programs",
                 },
             ]; // Array of elements
@@ -1917,17 +1947,17 @@ class DIODE_Context_RunConfig extends DIODE_Context {
             let remoteparams = [{
                     name: "Use SSH",
                     type: "bool",
-                    value: true,
+                    value: values['Use SSH'],
                     desc: "Use SSH. Mandatory for remote hosts, optional for localhost.",
                 }, {
                     name: "SSH Key",
                     type: "str",
-                    value: this.diode.pubSSH(),
+                    value: values['SSH Key'],
                     desc: "Public SSH key (id_rsa.pub) to add to remote authorized_keys. This key must not be password-protected!",
                 }, {
                     name: "SSH Key override",
                     type: "str",
-                    value: "",
+                    value: values['SSH Key override'],
                     desc: "Override the identity key file (ssh option -i) with this value if your password-free key is not id_rsa"
                 }
             ];
@@ -1938,14 +1968,14 @@ class DIODE_Context_RunConfig extends DIODE_Context {
             let instrumentationparams = [{
                     name: "Instrumentation",
                     type: "selectinput",
-                    value: 'off',
+                    value: values['Instrumentation'],
                     options: ['off', 'minimal', 'full'],
                     desc: "Set instrumentation mode (CPU only)",
                 },
                 {
                     name: "Number of threads",
                     type: "list",
-                    value: '[0]',
+                    value: values['Number of threads'],
                     desc: "Sets the number of OpenMP threads." +
                            "If multiple numbers are specified, the program is executed once for every number of threads specified. Specify 0 to use system default"
                 },
@@ -1974,10 +2004,10 @@ class DIODE_Context_RunConfig extends DIODE_Context {
 
         parent.appendChild(runopts_container);
 
-        let apply_button = document.createElement("div");
+        let apply_button = document.createElement("button");
         apply_button.innerText = "Save";
         apply_button.addEventListener('click', _x => {
-
+            this.diode.addToRunConfigs(values);
         });
         parent.appendChild(apply_button);
     }
@@ -2771,6 +2801,127 @@ class DIODE {
 
             this.hint(ev);
         });
+    }
+
+    getRunConfigs(name=undefined) {
+        let tmp = localStorage.getItem("diode2_run_configs");
+        if(tmp != null) {
+            tmp = JSON.parse(tmp);
+        }
+        else {
+            // Create a default
+            tmp = [{
+                "Configuration name": "default",
+                "Host": "localhost",
+                "Use SSH": true,
+                "SSH Key": this.pubSSH(),
+                "SSH Key override": "",
+                "Instrumentation": "off",
+                "Number of threads": "[0]"
+            }];
+        }
+
+        if(name != undefined) {
+            let ret = tmp.filter(x => x['Configuration name'] == name);
+            if(ret.length == 0) {
+                // Error
+                console.error("Could not find a configuration with that name", name);
+            }
+            else {
+                return ret[0];
+            }
+        }
+        return tmp;
+    }
+
+    addToRunConfigs(config) {
+        delete config['SSH Key']; // Don't save large, unnecessary data
+        let existing = this.getRunConfigs();
+
+        let i = 0;
+        for(let x of existing) {
+            if(x['Configuration name'] == config['Configuration name']) {
+                // Replace
+                existing[i] = config;
+                break;
+            }
+            ++i;
+        }
+        if(i >= existing.length) {
+            existing.push(config);
+        }
+        existing.sort((a, b) => a['Configuration name'].localeCompare(b['Configuration name']));
+        localStorage.setItem("diode2_run_configs", JSON.stringify(existing));
+    }
+
+    setCurrentRunConfig(name) {
+        sessionStorage.setItem("diode2_current_run_config", name);
+    }
+    
+    getCurrentRunConfigName() {
+        let tmp = sessionStorage.getItem("diode2_current_run_config");
+        if(tmp == null) {
+            return "default";
+        }
+        else {
+            return tmp;
+        }
+    }
+
+    getCurrentRunConfig() {
+        let config = this.getRunConfigs(this.getCurrentRunConfigName());
+        return config;
+    }
+
+    applyCurrentRunConfig() {
+        let config = this.getCurrentRunConfig();
+
+        let new_settings = {};
+
+        new_settings = {...new_settings, ...{
+            "execution/general/host": config['Host']
+        }};
+
+        // Apply the runconfig values to the dace config
+        if(config['Use SSH']) {
+
+
+            let keyfile_string = /\S/.test(config['SSH Key override']) ? (" -i " + config['SSH Key override'] + " ") : " ";
+            new_settings = {...new_settings, ...{
+                "execution/general/execcmd": ("ssh " + keyfile_string + "${host} ${command}"),
+                "execution/general/copycmd_l2r": ("scp " + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
+                "execution/general/copycmd_l2r": ("scp " + keyfile_string + " ${srcfile} ${host}:${dstfile}"),
+            }
+            };
+        }
+        else {
+            // Use standard / local commands
+            new_settings = {...new_settings, ...{
+                "execution/general/execcmd": "${command}",
+                "execution/general/copycmd_l2r": "cp ${srcfile} ${dstfile}",
+                "execution/general/copycmd_l2r": "cp ${srcfile} ${dstfile}",
+            }
+            };
+        }
+
+        // Instrumentation settings are not to be applied here, but later when the run request is actually sent
+
+        let ret = new Promise((resolve, reject) => {
+            let post_params = {
+                client_id: this.getClientID(),
+                ...new_settings
+            };
+            REST_request("/dace/api/v1.0/preferences/set", post_params, (xhr) => {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    resolve(config);
+                }
+                else if(xhr.status !== 0 && !(xhr.status + "_").startsWith("2")) {
+                    reject();
+                }
+            });
+        });
+
+        return ret;
     }
 
     pubSSH() {
@@ -4095,7 +4246,7 @@ class DIODE {
         }
         else if(x.type == "int") {
             elem = FormBuilder.createIntInput("prop_" + x.name, (elem) => {
-                transthis.propertyChanged(node, x.name, elem.value);
+                transthis.propertyChanged(node, x.name, parseInt(elem.value));
             }, x.value);
         }
         else if(x.type == 'ScheduleType') {
@@ -4176,6 +4327,11 @@ class DIODE {
         }
         else if(x.type == "selectinput") {
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, x.options, x.value);
+        }
+        else if(x.type == "combobox") {
+            elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.options, x.value);
         }
@@ -4907,7 +5063,7 @@ class DIODE {
         let newconf = {
             type: "component",
             componentName: "RunConfigComponent",
-
+            title: "Run Configuration"
         };
 
         this.addContentItem(newconf);
@@ -4931,21 +5087,41 @@ class DIODE {
         if(sdfg_node_properties != undefined) {
             post_params['sdfg_props'] = sdfg_node_properties;
         }
-        let client_id = this.getClientID();
-        post_params['client_id'] = client_id;
-        post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
-        post_params['corecounts'] = [1,2,3,4];
-        let version_string = "1.0";
-        REST_request("/dace/api/v" + version_string + "/run/", post_params, (xhr) => {
-            if (xhr.readyState === 4 && xhr.status === 200) {
-
-                let tmp = xhr.response;
-                if(typeof(tmp) == 'string') tmp = JSON.parse(tmp);
-                if(tmp['error']) {
-                    // Normal, users should poll on a different channel now.
-                    this.display_current_execution_status(calling_context, terminal_identifier, client_id);
-                }
+        this.applyCurrentRunConfig().then((remaining_settings) => {
+            let client_id = this.getClientID();
+            post_params['client_id'] = client_id;
+            if(remaining_settings['Instrumentation'] == 'off') {
+                post_params['perfmodes'] = undefined;
             }
+            else if(remaining_settings['Instrumentation'] == 'minimal') {
+                post_params['perfmodes'] = ["default"];
+            }
+            else if(remaining_settings['Instrumentation'] == 'full') {
+                post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
+            }
+            else {
+                alert("Error! Check console");
+                console.error("Unknown instrumentation mode", remaining_settings['Instrumentation']);
+            }
+            //post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
+            let not = remaining_settings['Number of threads'];
+            if(typeof(not) == "string") {
+                not = JSON.parse(not);
+            }
+            post_params['corecounts'] = not.map(x => parseInt(x));
+            //post_params['corecounts'] = [1,2,3,4];
+            let version_string = "1.0";
+            REST_request("/dace/api/v" + version_string + "/run/", post_params, (xhr) => {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+
+                    let tmp = xhr.response;
+                    if(typeof(tmp) == 'string') tmp = JSON.parse(tmp);
+                    if(tmp['error']) {
+                        // Normal, users should poll on a different channel now.
+                        this.display_current_execution_status(calling_context, terminal_identifier, client_id);
+                    }
+                }
+            });
         });
     }
 

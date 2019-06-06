@@ -751,8 +751,8 @@ class SdfgState {
 
         // Draw the performance information for each node in the sorted list
         for(let k of sa) {
-            if(k == null) break;
-            if(k == "null") break;
+            if(k == null) continue;
+            if(k == "null") continue;
 
             if(!all_entry_nodes.map(x => x.toString()).includes(k.toString())) {
                 continue; // Skip nodes for which we don't have performance data.

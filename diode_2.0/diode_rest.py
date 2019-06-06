@@ -54,6 +54,17 @@ class ConfigCopy:
         raise Exception("ConfigCopy does not allow setting values!")
 
 
+    def save(self, path=None):
+        """ Nonstatic version of Config::save()
+        """
+        if path is None:
+            path = Config._cfg_filename
+        # Write configuration file
+        with open(path, 'w') as f:
+            import yaml
+            yaml.dump(self._config, f, default_flow_style=False)
+
+
 class ExecutorServer:
     """
        Implements a server scheduling execution of dace programs 

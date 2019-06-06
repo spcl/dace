@@ -62,7 +62,7 @@ class Executor:
                 self.async_host.notify("Generating remote workspace")
             tmpfolder = tempfile.mkdtemp()
             generate_program_folder(dace_state.get_sdfg(), code_objects,
-                                    tmpfolder)
+                                    tmpfolder, config=self._config)
             self.create_remote_directory(remote_dace_dir)
             self.copy_folder_to_remote(tmpfolder, remote_dace_dir)
 
