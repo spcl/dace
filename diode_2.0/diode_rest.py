@@ -198,7 +198,7 @@ class ExecutorServer:
                             for x in runner():
                                 self._orphaned_runs[cmd['cid']][-1] += x
 
-                        # Because this holds locks (and the output should be generated even if nobody asks for it immediately), this is run when the timeout for direct interception
+                        # Because this holds locks (and the output should be generated even if nobody asks for it immediately), this is run when the timeout for direct interception expires
                         tmp()
             elif cmd['cmd'] == 'control':
                 # Control operations that must be synchronous with execution (e.g. for cleanup, storage operations)
@@ -336,7 +336,7 @@ class ExecutorServer:
                     del self._current_runs[client_id]
                 except:
                     err_count += 1
-                    if err_count < 10:  # Give 10 seconds of space for compilation and distribution
+                    if err_count < 20:  # Give 20 seconds of space for compilation and distribution
                         time.sleep(1)
                         continue
 
@@ -487,6 +487,17 @@ class ExecutorServer:
                             "instrumentation",
                             "thread_nums",
                             value=str(perfcores))
+
+                        # Check if perfcounters are available
+                        from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfPAPIInfo
+                        ppi = PerfPAPIInfo()
+                        ppi.load_info()
+                        if not ppi.check_counters([PerfSettings.perf_default_papi_counters()]):
+                            yield '{"error": "PAPI Counter check failed. Either your machine does not provide the required counters or /proc/sys/kernel/perf_event_paranoid is not set correctly"}'
+                            del self._task_dict[runindex]
+                            self._slot_available = True
+                            return
+                        
 
                     # Copy the config - this allows releasing the config lock without suffering from potential side effects
                     copied_config = ConfigCopy(Config._config)
@@ -1078,6 +1089,18 @@ def execution_queue_query(op):
     if op == "list":
         # List the currently waiting tasks
         retlist = []
+        for key, val in es._orphaned_runs.items():
+            tmp = [''.join(x) for x in val]
+            print("orphan " + str(key) + ":")
+            for x in tmp:
+                d = {}
+                d['index'] = '(done)'
+                d['type'] = 'orphan'
+                d['client_id'] = key
+                d['state'] = 'orphaned'
+                d['output'] = str(x)
+                retlist.append(d)
+
         for key, val in es._task_dict.items():
             d = {}
             if val['cmd'] == 'run':

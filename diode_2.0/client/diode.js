@@ -2698,6 +2698,23 @@ class DIODE_Context_Runqueue extends DIODE_Context {
             if(typeof(optparse) == 'string') {
 
             }
+            else if(optparse == undefined) {
+                console.log("output", x.output);
+                if(x.output != undefined && x.type == "orphan") {
+                    optparse = document.createElement("button");
+                    optparse.onclick = click => {
+                        this.diode.addContentItem({
+                            'type': 'component',
+                            'componentName': 'TerminalComponent',
+                            'componentState': {
+                                current_value: x.output
+                            },
+                            'title': 'Output'
+                        });
+                    }
+                    optparse.innerText = "Output";
+                }
+            }
             else {
                 if(optparse.type == undefined) {
                     optparse = optparse.perfopts;
@@ -2713,7 +2730,11 @@ class DIODE_Context_Runqueue extends DIODE_Context {
             let row = document.createElement("tr");
             values.map(y => {
                 let c = document.createElement("td");
-                c.innerText = y;
+                if(typeof(y) == 'string' || typeof(y) == 'number')
+                    c.innerText = y;
+                else {
+                    c.appendChild(y);
+                }
                 return c;
             }).forEach(y => row.appendChild(y));
             tbody.appendChild(row);

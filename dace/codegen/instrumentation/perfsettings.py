@@ -2216,6 +2216,13 @@ class PerfPAPIInfo:
             sum_counters = 0
             for c in counter_list:
                 try:
+                    int_val = int(c, 16)
+                    # Integer values are not checked - they get a pass (which might be wrong)
+                    sum_counters += 1
+                    continue
+                except:
+                    pass
+                try:
                     sum_counters += self.preset_cost[c]
                 except:
                     # This should only happen with Native Events
