@@ -253,6 +253,13 @@ class DaceProgram:
             for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
 
+        # Allow SDFGs and DaceProgram objects
+        other_sdfgs = {
+            k: v
+            for k, v in dace_func.__globals__.items()
+            if isinstance(v, (SDFG, DaceProgram))
+        }
+
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules, self.kwargs)
+                                         modules, other_sdfgs, self.kwargs)
