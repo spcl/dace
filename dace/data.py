@@ -1,16 +1,14 @@
 import functools
-import operator
 import re
 import copy as cp
 import sympy as sp
+import numpy
 
 import dace
 from dace.codegen import cppunparse
 from dace import symbolic
-from dace.properties import (Property, make_properties, ReferenceProperty,
-                             ShapeProperty, SubsetProperty, SymbolicProperty,
-                             TypeClassProperty, DebugInfoProperty,
-                             CodeProperty)
+from dace.properties import (Property, make_properties, ShapeProperty,
+                             TypeClassProperty, DebugInfoProperty)
 
 
 def validate_name(name):
@@ -19,6 +17,27 @@ def validate_name(name):
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
+
+
+def create_datadescriptor(obj):
+    """ Creates a data descriptor from various types of objects.
+        @see: dace.data.Data
+    """
+    from dace import dtypes  # Avoiding import loops
+    if isinstance(obj, Data):
+        return obj
+
+    try:
+        return obj.descriptor
+    except AttributeError:
+        if isinstance(obj, numpy.ndarray):
+            return Array(
+                dtype=dtypes.typeclass(obj.dtype.type), shape=obj.shape)
+        if symbolic.issymbolic(obj):
+            return Scalar(symbolic.symtype(obj))
+        if isinstance(obj, dtypes.typeclass):
+            return Scalar(obj)
+        return Scalar(dtypes.typeclass(type(obj)))
 
 
 @make_properties
@@ -294,7 +313,7 @@ class Array(Data):
             return False
 
         # Test type
-        if self.dtype != other.type:
+        if self.dtype != other.dtype:
             return False
 
         # Test dimensionality

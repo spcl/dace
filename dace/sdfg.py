@@ -183,6 +183,48 @@ class SDFG(OrderedDiGraph):
             SDFG. """
         return self._symbols
 
+    def data(self, dataname: str):
+        """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
+        if dataname in self._arrays:
+            return self._arrays[dataname]
+        if dataname in self._symbols:
+            return self._symbols[dataname]
+        raise KeyError(
+            'Data descriptor with name "%s" not found in SDFG' % dataname)
+
+    def replace(self, name: str, new_name: str):
+        """ Finds and replaces all occurrences of a symbol or array name in SDFG.
+            @param name: Name to find.
+            @param new_name: Name to replace.
+            @raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
+        """
+
+        def replace_dict(d, old, new):
+            if old in d:
+                if new in d:
+                    raise FileExistsError('"%s" already exists in SDFG' % new)
+                d[new] = d[old]
+                del d[old]
+
+        if name == new_name:
+            return
+
+        # Replace in arrays and symbols
+        replace_dict(self._arrays, name, new_name)
+        replace_dict(self._symbols, name, new_name)
+
+        # Replace in inter-state edges
+        for edge in self.edges():
+            replace_dict(edge.data.assignments, name, new_name)
+            for k, v in edge.data.assignments.items():
+                edge.data.assignments[k] = v.replace(name, new_name)
+            for k, v in edge.data.conditions.items():
+                edge.data.conditions[k] = v.replace(name, new_name)
+
+        # Replace in states
+        for state in self.nodes():
+            state.replace(name, new_name)
+
     def add_symbol(self, name, stype, override_dtype=False):
         """ Adds a symbol to the SDFG.
             @param name: Symbol name.
@@ -1280,6 +1322,76 @@ subgraph cluster_state_{state} {{
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)
 
+    def argument_typecheck(self, args, kwargs, types_only=False):
+        """ Checks if arguments and keyword arguments match the SDFG
+            types. Raises RuntimeError otherwise.
+
+            @raise RuntimeError: Argument count mismatch.
+            @raise TypeError: Argument type mismatch.
+            @raise NotImplementedError: Unsupported argument type.
+        """
+        expected_args = self.arglist()
+        num_args_passed = len(args) + len(kwargs)
+        num_args_expected = len(expected_args)
+        if num_args_passed < num_args_expected:
+            expected_kwargs = list(expected_args.keys())[len(args):]
+            missing_args = [k for k in expected_kwargs if k not in kwargs]
+            raise RuntimeError(
+                "Missing arguments to SDFG: '%s'" % (', '.join(missing_args)))
+        elif num_args_passed > num_args_expected:
+            unnecessary_args = []
+            extra_args = len(args) - len(expected_args)
+            if extra_args > 0:
+                unnecessary_args.extend(
+                    'Argument #%d' % (i + len(expected_args) + 1)
+                    for i in range(extra_args))
+                unnecessary_args.extend(kwargs.keys())
+            else:
+                unnecessary_args = [
+                    k for k in kwargs.keys() if k not in expected_args
+                ]
+            raise RuntimeError("Too many arguments to SDFG. Unnecessary "
+                               "arguments: %s" % ', '.join(unnecessary_args))
+        positional_args = list(args)
+        for i, arg in enumerate(expected_args):
+            expected = expected_args[arg]
+            if i < len(positional_args):
+                passed = positional_args[i]
+            else:
+                if arg not in kwargs:
+                    raise RuntimeError(
+                        "Missing argument to DaCe program: {}".format(arg))
+                passed = kwargs[arg]
+            if types_only:
+                desc = dt.create_datadescriptor(passed)
+                if not expected.is_equivalent(desc):
+                    raise TypeError("Type mismatch for argument: "
+                                    "expected %s, got %s" % (expected, desc))
+                else:
+                    continue
+            if isinstance(expected, dace.data.Array):
+                if (not isinstance(passed, ndarray.ndarray)
+                        and not isinstance(passed, np.ndarray)):
+                    raise TypeError("Type mismatch for argument {}: "
+                                    "expected array type, got {}".format(
+                                        arg, type(passed)))
+            elif (isinstance(expected, dace.data.Scalar)
+                  or isinstance(expected, dace.dtypes.typeclass)):
+                if (not dace.dtypes.isconstant(passed)
+                        and not isinstance(passed, dace.symbolic.symbol)):
+                    raise TypeError("Type mismatch for argument {}: "
+                                    "expected scalar type, got {}".format(
+                                        arg, type(passed)))
+            elif isinstance(expected, dace.data.Stream):
+                if not isinstance(passed, dace.dtypes.stream):
+                    raise TypeError("Type mismatch for argument {}: "
+                                    "expected stream type, got {}".format(
+                                        arg, type(passed)))
+            else:
+                raise NotImplementedError(
+                    "Type checking not implemented for type {} (argument "
+                    "{})".format(type(expected).__name__, arg))
+
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
 
@@ -1287,62 +1399,7 @@ subgraph cluster_state_{state} {{
 
         # Verify passed arguments (unless disabled by the user)
         if dace.config.Config.get_bool("execution", "general", "check_args"):
-            expected_args = self.arglist()
-            num_args_passed = len(args) + len(kwargs)
-            num_args_expected = len(expected_args)
-            if num_args_passed < num_args_expected:
-                expected_kwargs = list(expected_args.keys())[len(args):]
-                missing_args = [k for k in expected_kwargs if k not in kwargs]
-                raise RuntimeError("Missing arguments to SDFG: '%s'" %
-                                   (', '.join(missing_args)))
-            elif num_args_passed > num_args_expected:
-                unnecessary_args = []
-                extra_args = len(args) - len(expected_args)
-                if extra_args > 0:
-                    unnecessary_args.extend(
-                        'Argument #%d' % (i + len(expected_args) + 1)
-                        for i in range(extra_args))
-                    unnecessary_args.extend(kwargs.keys())
-                else:
-                    unnecessary_args = [
-                        k for k in kwargs.keys() if k not in expected_args
-                    ]
-                raise RuntimeError(
-                    "Too many arguments to SDFG. Unnecessary "
-                    "arguments: %s" % ', '.join(unnecessary_args))
-            positional_args = list(args)
-            for i, arg in enumerate(expected_args):
-                expected = expected_args[arg]
-                if i < len(positional_args):
-                    passed = positional_args[i]
-                else:
-                    if arg not in kwargs:
-                        raise RuntimeError(
-                            "Missing argument to DaCe program: {}".format(arg))
-                    passed = kwargs[arg]
-                if isinstance(expected, dace.data.Array):
-                    if (not isinstance(passed, ndarray.ndarray)
-                            and not isinstance(passed, np.ndarray)):
-                        raise TypeError("Type mismatch for argument {}: "
-                                        "expected array type, got {}".format(
-                                            arg, type(passed)))
-                elif (isinstance(expected, dace.data.Scalar)
-                      or isinstance(expected, dace.dtypes.typeclass)):
-                    if (not dace.dtypes.isconstant(passed)
-                            and not isinstance(passed, dace.symbolic.symbol)):
-                        raise TypeError("Type mismatch for argument {}: "
-                                        "expected scalar type, got {}".format(
-                                            arg, type(passed)))
-                elif isinstance(expected, dace.data.Stream):
-                    if not isinstance(passed, dace.dtypes.stream):
-                        raise TypeError("Type mismatch for argument {}: "
-                                        "expected stream type, got {}".format(
-                                            arg, type(passed)))
-                else:
-                    raise NotImplementedError(
-                        "Type checking not implemented for type {} (argument "
-                        "{})".format(type(expected).__name__, arg))
-
+            self.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
     def fill_scope_connectors(self):
@@ -1909,6 +1966,55 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     def set_label(self, label):
         self._label = label
+
+    def replace(self, name: str, new_name: str):
+        """ Finds and replaces all occurrences of a symbol or array in this state.
+            @param name: Name to find.
+            @param new_name: Name to replace.
+        """
+        from dace.frontend.python.astutils import ASTFindReplace
+        import sympy as sp
+        symrepl = {
+            symbolic.symbol(name):
+            symbolic.symbol(new_name)
+            if isinstance(new_name, str) else new_name
+        }
+
+        def replsym(symlist):
+            if symlist is None:
+                return None
+            if isinstance(symlist,
+                          (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
+                return symlist.subs(symrepl)
+            for i, dim in enumerate(symlist):
+                try:
+                    symlist[i] = tuple(d.subs(symrepl) for d in dim)
+                except TypeError:
+                    symlist[i] = dim.subs(symrepl)
+            return symlist
+
+            # Replace in node properties
+
+        for node in self.nodes():
+            for propclass, propval in node.properties():
+                pname = propclass.attr_name
+                if isinstance(propclass, properties.SymbolicProperty):
+                    setattr(node, pname, propval.subs({name: new_name}))
+                if isinstance(propclass, properties.DataProperty):
+                    if propval == name:
+                        setattr(node, pname, new_name)
+                if isinstance(propclass, properties.RangeProperty):
+                    setattr(node, pname, replsym(propval))
+                if isinstance(propclass, properties.CodeProperty):
+                    for stmt in propval:
+                        ASTFindReplace({name: new_name}).visit(stmt)
+
+        # Replace in memlets
+        for edge in self.edges():
+            if edge.data.data == name:
+                edge.data.data = new_name
+            replsym(edge.data.subset)
+            replsym(edge.data.other_subset)
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
@@ -2834,13 +2940,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Isolated nodes
             ########################################
             if self.in_degree(node) + self.out_degree(node) == 0:
-                # One corner case: OK if this is an empty state and there
-                # is only one empty tasklet
-                if isinstance(node, nd.EmptyTasklet):
-                    pass
-                # Another corner case: a tasklet with external code
-                elif (isinstance(node, nd.Tasklet)
-                      and node.language != dtypes.Language.Python):
+                # One corner case: OK if this is a code node
+                if isinstance(node, nd.CodeNode):
                     pass
                 else:
                     raise InvalidSDFGNodeError('Isolated node', sdfg, state_id,

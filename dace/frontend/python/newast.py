@@ -1772,15 +1772,21 @@ class ProgramVisitor(ExtNodeVisitor):
             from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
             func = self.other_sdfgs[funcname]
             if isinstance(func, SDFG):
-                # TODO: Validate argument types and sizes
-                sdfg = func
+                sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
+                # Validate argument types and sizes
+                sdfg.argument_typecheck(
+                    [], {k: self.sdfg.data(v)
+                         for k, v in args},
+                    types_only=True)
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
-                sdfg = func.to_sdfg(*(self.defined[arg]
-                                      for aname, arg in args))
+
+                sdfg = func.to_sdfg(*(
+                    self.defined[arg] if isinstance(arg, str) else arg
+                    for aname, arg in args))
             else:
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
@@ -1800,9 +1806,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
 
-            # TODO: Map internal SDFG symbols to external symbols
-            # TODO: Disallow memlets/nodes to symbol parameters
-
+            # Map internal SDFG symbols to external symbols (find_and_replace?)
+            for aname, arg in args:
+                if arg in self.sdfg.symbols or not isinstance(arg, str):
+                    sdfg.replace(aname, arg)
+                # Disallow memlets/nodes to symbol parameters
+                elif aname in sdfg.symbols:
+                    raise DaceSyntaxError(
+                        self, node, 'Array nodes cannot be '
+                        'passed as scalars to nested SDFG '
+                        '(passing "%s" as "%s")' % (aname, arg))
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys())
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
