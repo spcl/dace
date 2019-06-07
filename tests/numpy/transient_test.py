@@ -1,16 +1,20 @@
 import numpy as np
 import dace
 
-M, K = (dace.symbol(name) for name in ['M', 'K'])
+M, N, K = (dace.symbol(name) for name in ['M', 'N', 'K'])
 
 
 @dace.program
-def ttest(A: dace.float32[M, K], B: dace.float32[M, K]):
-    s = np.ndarray(shape=(K, M), dtype=np.int32)
+def ttest(A: dace.float32[M, N, K], B: dace.float32[M, N, K]):
+    s = np.ndarray(shape=(K, N, M), dtype=np.int32)
     t = np.ndarray(A.shape, A.dtype)
 
-    for i, j in dace.map[0:M, 0:K]:
-        t[i, j] = 1.0
+    for i in dace.map[0:M]:
+        for j in dace.map[0:N]:
+            for k in dace.map[0:K]:
+                s[k, j, i] = t[i, j, k]
+                t[i, j, k] = 1.0
+                s[k, j, i] = t[i, j, k]
 
     t += 5 * A
     B -= t
