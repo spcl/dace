@@ -246,7 +246,8 @@ def _reduce(sdfg: SDFG,
 ############################################
 
 
-def parse_dace_program(f, argtypes, global_vars, modules, constants):
+def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
+                       constants):
     """ Parses a `@dace.program` function into a _ProgramNode object.
         @param f: A Python function to parse.
         @param argtypes: An dictionary of (name, type) for the given
@@ -256,10 +257,12 @@ def parse_dace_program(f, argtypes, global_vars, modules, constants):
                             of `f`.
         @param modules: A dictionary from an imported module name to the
                         module itself.
+        @param other_sdfgs: Other SDFG and DaceProgram objects in the context
+                            of this function.
         @param constants: A dictionary from a name to a constant value.
         @return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
-        @rtype: astnodes._ProgramNode
+        @rtype: SDFG
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
@@ -285,13 +288,8 @@ def parse_dace_program(f, argtypes, global_vars, modules, constants):
          for k, v in global_vars.items()
          if dtypes.isconstant(v)}).visit(src_ast)
 
-    pv = ProgramVisitor(
-        f.__name__,
-        src_file,
-        src_line,
-        argtypes,
-        global_vars,
-        constants=constants)
+    pv = ProgramVisitor(f.__name__, src_file, src_line, argtypes, global_vars,
+                        {}, constants, other_sdfgs)
 
     sdfg, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
@@ -937,14 +935,16 @@ class ProgramVisitor(ExtNodeVisitor):
                  lineoffset: int,
                  arrays: Dict[str, data.Data],
                  global_vars: Dict[str, Any],
-                 nested: bool = False,
-                 variables: Dict[str, str] = dict(),
-                 constants: Dict[str, Any] = dict()):
+                 variables: Dict[str, str],
+                 constants: Dict[str, Any],
+                 other_sdfgs: Dict[str, Any],
+                 nested: bool = False):  # Actually Union[SDFG, DaceProgram]
         self.curnode = None
         self.filename = filename
         self.lineoffset = lineoffset
         self.globals = global_vars
         self.nested = nested
+        self.other_sdfgs = other_sdfgs
 
         self.scope_arrays = OrderedDict()  # type: Dict[str, data.Data]
         self.scope_arrays.update(arrays)
@@ -1036,6 +1036,10 @@ class ProgramVisitor(ExtNodeVisitor):
             k: self.sdfg.arrays[v]
             for k, v in self.scope_vars.items() if v in self.sdfg.arrays
         })
+        result.update({
+            k: self.sdfg.symbols[v]
+            for k, v in self.variables.items() if v in self.sdfg.symbols
+        })
 
         return result
 
@@ -1096,8 +1100,16 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_subprogram(self, name, node):
         scope_arrays = {**self.scope_arrays, **self.sdfg.arrays}
         scope_vars = {**self.scope_vars, **self.variables}
-        pv = ProgramVisitor(name, self.filename, self.lineoffset,
-                            scope_arrays, self.globals, True, scope_vars)
+        pv = ProgramVisitor(
+            name,
+            self.filename,
+            self.lineoffset,
+            scope_arrays,
+            self.globals,
+            scope_vars,
+            {},
+            self.other_sdfgs,
+            nested=True)
 
         return pv.parse_program(node)
 
@@ -1990,9 +2002,68 @@ class ProgramVisitor(ExtNodeVisitor):
         # Obtain a string representation
         return self.visit(arg)
 
-    def visit_Call(self, node):
+    def _is_inputnode(self, sdfg: SDFG, name: str):
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and node.data == name:
+                    if state.out_degree(node) > 0:
+                        return True
+
+    def _is_outputnode(self, sdfg: SDFG, name: str):
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and node.data == name:
+                    if state.in_degree(node) > 0:
+                        return True
+
+    def visit_Call(self, node: ast.Call):
         default_impl = Config.get('frontend', 'implementation')
         funcname = rname(node)
+
+        # If the function exists as a global SDFG or @dace.program, use it
+        if funcname in self.other_sdfgs:
+            from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
+            func = self.other_sdfgs[funcname]
+            if isinstance(func, SDFG):
+                # TODO: Validate argument types and sizes
+                sdfg = func
+                args = [(arg.arg, self._parse_function_arg(arg.value))
+                        for arg in node.keywords]
+            elif isinstance(func, DaceProgram):
+                args = [(aname, self._parse_function_arg(arg))
+                        for aname, arg in zip(func.argnames, node.args)]
+                sdfg = func.to_sdfg(*(self.defined[arg]
+                                      for aname, arg in args))
+            else:
+                raise DaceSyntaxError(
+                    self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
+                    (type(func).__name__, funcname))
+
+            state = self._add_state('call_%s_%d' % (funcname, node.lineno))
+            argdict = {
+                conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
+                for conn, arg in args if arg in self.sdfg.arrays
+            }
+            inputs = {
+                k: v
+                for k, v in argdict.items() if self._is_inputnode(sdfg, k)
+            }
+            outputs = {
+                k: v
+                for k, v in argdict.items() if self._is_outputnode(sdfg, k)
+            }
+
+            # TODO: Map internal SDFG symbols to external symbols
+            # TODO: Disallow memlets/nodes to symbol parameters
+
+            nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
+                                          outputs.keys())
+            self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
+
+            # No return values from SDFGs
+            return []
+
+        # Otherwise, try to find a default implementation for the SDFG
         func = oprepo.Replacements.get(funcname, default_impl)
         if func is None:
             # Check for SDFG as fallback
@@ -2124,8 +2195,14 @@ class ProgramVisitor(ExtNodeVisitor):
         # If visiting an attribute, return attribute value if it's of an array or global
         name = until(astutils.unparse(node), '.')
         result = self._visitname(name, node)
+        if result in self.sdfg.arrays:
+            arr = self.sdfg.arrays[result]
+        elif result in self.scope_arrays:
+            arr = self.scope_arrays[result]
+        else:
+            return result
         try:
-            return getattr(self.sdfg.arrays[result], node.attr)
+            return getattr(arr, node.attr)
         except KeyError:
             return result
 

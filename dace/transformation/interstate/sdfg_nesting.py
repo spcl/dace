@@ -189,12 +189,33 @@ class InlineSDFG(pattern_matching.Transformation):
         for e in graph.out_edges(nsdfg_node):
             outputs[e.src_conn] = (e.dst, e.dst_conn, e.data.data)
 
+        torename = {}
+        torename.update({k: v[2] for k, v in inputs.items()})
+        torename.update({k: v[2] for k, v in outputs.items()})
+
         # Add SDFG nodes to top-level SDFG
         state = nsdfg.nodes()[0]
         for node in state.nodes():
-            if (isinstance(node, nodes.AccessNode)
-                    and (node.data in inputs or node.data in outputs)):
-                continue
+            # Data access nodes
+            if isinstance(node, nodes.AccessNode):
+                # External node
+                if node.data in inputs or node.data in outputs:
+                    continue
+                # Internal node (e.g., transient)
+                if node.data not in torename:
+                    name = node.data
+                    # Name already exists
+                    if name in sdfg.arrays:
+                        name = '%s_%s' % (nsdfg.label, node.data)
+                        i = 0
+                        while name in sdfg.arrays:
+                            name = '%s_%s_%d' % (nsdfg.label, node.data, i)
+                            i += 1
+                    # Add transient
+                    sdfg.arrays[name] = nsdfg.arrays[node.data]
+                    # Rename all internal uses
+                    torename[node.data] = name
+
             graph.add_node(node)
 
         # Reconnect edges to their original source
@@ -212,15 +233,9 @@ class InlineSDFG(pattern_matching.Transformation):
                 newmemlet = dc(e.data)
                 newmemlet.data = cdata
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
-            elif e.data.data in inputs:
+            elif e.data.data in torename:
                 # Rename data
-                cdata = inputs[e.data.data][2]
-                newmemlet = dc(e.data)
-                newmemlet.data = cdata
-                graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, newmemlet)
-            elif e.data.data in outputs:
-                # Rename data
-                cdata = outputs[e.data.data][2]
+                cdata = torename[e.data.data]
                 newmemlet = dc(e.data)
                 newmemlet.data = cdata
                 graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, newmemlet)
@@ -228,8 +243,19 @@ class InlineSDFG(pattern_matching.Transformation):
                 # Do nothing
                 graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
+        # Rename all access nodes
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data in torename:
+                node.data = torename[node.data]
+
         # Remove the nested SDFG node
         graph.remove_node(nsdfg_node)
+
+        # Remove input/output nodes from top-level graph if not connected to
+        # any internal node
+        for node, _, _ in list(inputs.values()) + list(outputs.values()):
+            if len(graph.all_edges(node)) == 0:
+                graph.remove_node(node)
 
         # TODO: We may want to re-propagate memlets here
 

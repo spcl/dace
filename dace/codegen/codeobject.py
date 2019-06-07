@@ -36,9 +36,9 @@ class CodeObject(object):
                  language,
                  target,
                  title,
-                 additional_compiler_kwargs={},
+                 additional_compiler_kwargs=None,
                  linkable=True,
-                 meta_info=PerfMetaInfo()):
+                 meta_info=None):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -46,6 +46,6 @@ class CodeObject(object):
         self.language = language
         self.target = target
         self.title = title
-        self.extra_compiler_kwargs = additional_compiler_kwargs
+        self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
-        self.perf_meta_info = meta_info
+        self.perf_meta_info = meta_info or PerfMetaInfo()

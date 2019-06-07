@@ -1,18 +1,12 @@
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
-from collections import OrderedDict
-from functools import wraps
 import inspect
-import ast
-import copy
-import sys
 import numpy
 
 from dace import data, symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import newast
 from dace.sdfg import SDFG
-from dace.graph import labeling
 
 
 def _create_datadescriptor(obj):
@@ -259,6 +253,13 @@ class DaceProgram:
             for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
 
+        # Allow SDFGs and DaceProgram objects
+        other_sdfgs = {
+            k: v
+            for k, v in dace_func.__globals__.items()
+            if isinstance(v, (SDFG, DaceProgram))
+        }
+
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules, self.kwargs)
+                                         modules, other_sdfgs, self.kwargs)

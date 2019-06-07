@@ -338,7 +338,7 @@ class CPPUnparser:
             if len(t.target.elts) > 1:
                 self.dispatch_lhs_tuple(t.target.elts)
             else:
-                target = target.elts[0]
+                target = t.target.elts[0]
         else:
             target = t.target
 
