@@ -1,32 +1,12 @@
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
 import inspect
-import numpy
 
-from dace import data, symbolic, dtypes
+from dace import symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import newast
 from dace.sdfg import SDFG
-
-
-def _create_datadescriptor(obj):
-    """ Creates a data descriptor from various types of objects.
-        @see: dace.data.Data
-    """
-    if isinstance(obj, data.Data):
-        return obj
-
-    try:
-        return obj.descriptor
-    except AttributeError:
-        if isinstance(obj, numpy.ndarray):
-            return data.Array(
-                dtype=dtypes.typeclass(obj.dtype.type), shape=obj.shape)
-        if symbolic.issymbolic(obj):
-            return data.Scalar(symbolic.symtype(obj))
-        if isinstance(obj, dtypes.typeclass):
-            return data.Scalar(obj)
-        return data.Scalar(dtypes.typeclass(type(obj)))
+from dace.data import create_datadescriptor
 
 
 def _get_type_annotations(f, f_argnames, decorator_args):
@@ -55,7 +35,7 @@ def _get_type_annotations(f, f_argnames, decorator_args):
                 'program parameters (expecting ' + str(len(f_argnames)) + ')')
         # Return arguments and their matched decorator annotation
         return {
-            k: _create_datadescriptor(v)
+            k: create_datadescriptor(v)
             for k, v in zip(f_argnames, decorator_args)
         }
     elif has_annotations:
@@ -64,7 +44,7 @@ def _get_type_annotations(f, f_argnames, decorator_args):
             raise SyntaxError(
                 'Either none or all DaCe program parameters must ' +
                 'have type annotations')
-    return {k: _create_datadescriptor(v) for k, v in type_annotations.items()}
+    return {k: create_datadescriptor(v) for k, v in type_annotations.items()}
 
 
 def _get_argnames(f):
@@ -218,21 +198,22 @@ class DaceProgram:
         argtypes = _get_type_annotations(dace_func, self.argnames, args)
 
         # Parse argument types from call
-        if not argtypes:
-            if not compilation_args:
-                raise SyntaxError(
-                    'DaCe program compilation requires either type annotations '
-                    'or arrays')
+        if len(inspect.getfullargspec(dace_func).args) > 0:
+            if not argtypes:
+                if not compilation_args:
+                    raise SyntaxError(
+                        'DaCe program compilation requires either type annotations '
+                        'or arrays')
 
-            # Parse compilation arguments
-            if len(compilation_args) != len(self.argnames):
-                raise SyntaxError(
-                    'Arguments must match DaCe program parameters (expecting '
-                    '%d)' % len(self.argnames))
-            argtypes = {
-                k: _create_datadescriptor(v)
-                for k, v in zip(self.argnames, compilation_args)
-            }
+                # Parse compilation arguments
+                if len(compilation_args) != len(self.argnames):
+                    raise SyntaxError(
+                        'Arguments must match DaCe program parameters (expecting '
+                        '%d)' % len(self.argnames))
+                argtypes = {
+                    k: create_datadescriptor(v)
+                    for k, v in zip(self.argnames, compilation_args)
+                }
         #############################################
 
         # Parse allowed global variables
