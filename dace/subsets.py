@@ -175,13 +175,19 @@ class Range(Subset):
                 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
                                                     for ts in self.tile_sizes))
 
-    def offset(self, other, negative):
+    def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
             other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
-        for i, off in enumerate(other.min_element()):
+        if not indices:
+            indices = set(range(len(self.ranges)))
+        off = other.min_element()
+        for i in indices:
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off, re + mult * off, rs)
+            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+        # for i, off in enumerate(other.min_element()):
+        #     rb, re, rs = self.ranges[i]
+        #     self.ranges[i] = (rb + mult * off, re + mult * off, rs)
 
     def dims(self):
         return len(self.ranges)
