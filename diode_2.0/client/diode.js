@@ -4,7 +4,6 @@ import { Appearance } from "./diode_appearance.js"
 import { SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser } from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 
-
 class DIODE_Settings {
     constructor(denormalized = {}) {
         this.settings_values = denormalized;
@@ -362,14 +361,30 @@ class DIODE_Context_SDFG extends DIODE_Context {
     render_free_variables() {
         let sdfg_dat = this.getSDFGDataFromState();
         if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
-        this.project().request(['render-free-vars'], x => {
+        this.diode.replaceOrCreate(['render-free-vars'], {
+            data: sdfg_dat,
+            calling_context: this.created
+        },
+        () => {
+            console.log("Calling recreation function");
+            let config = {
+                type: 'component',
+                componentName: 'PropWinComponent',
+                componentState: {
+                }
+            };
+
+            this.diode.addContentItem(config);
+            setTimeout(() => this.render_free_variables(), 1);
+        });
+        /*this.project().request(['render-free-vars'], x => {
 
         }, {
             params: {
                 data: sdfg_dat,
                 calling_context: this.created
             }
-        });
+        });*/
     }
 
     sdfg_element_selected(msg) {
@@ -1568,6 +1583,98 @@ class DIODE_Context_Error extends DIODE_Context {
     }
 }
 
+
+class DIODE_Context_PerfTimes extends DIODE_Context {
+    constructor(diode, gl_container, state) {
+        super(diode, gl_container, state);
+        this._chart = null;
+    }
+
+    setupEvents(project) {
+        super.setupEvents(project);
+
+        let eh = this.diode.goldenlayout.eventHub;
+        let transthis = this;
+
+        this.on(this.project().eventString('-req-new-time'), (msg) => {
+            setTimeout(x => eh.emit(transthis.project().eventString('new-time'), 'ok'), 1);
+            this.addTime(msg.time);
+        });
+    }
+
+    create() {
+        let elem = this.container.getElement()[0];
+        elem.innerHTML = "";
+
+        // Create the graph
+        let canvas = document.createElement("canvas");
+        elem.appendChild(canvas);
+
+        let oldstate = this.getState();
+        if(oldstate.runtimes === undefined) {
+            oldstate.runtimes = [];
+        }
+
+        console.log("Execution times loaded", oldstate.runtimes)
+
+        let labels = [];
+        for(let i = 0; i < oldstate.runtimes.length; ++i) {
+            labels.push(i);
+        }
+
+        this._chart = new Chart(canvas.getContext("2d"), {
+            type: 'bar',
+            
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Exec. times in s',
+                    backgroundColor: "blue",
+                    data: oldstate.runtimes.map(x => x)
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    yAxes: [{
+                        display: true,
+                        ticks: {
+                            beginAtZero: true
+                        }
+                    }],
+                    xAxes: [{
+                        display: true,
+                        ticks: {
+                            autoSkip: true
+                        }
+                    }]
+                },
+                legend: {
+                    //display: false,
+                    position: 'top',
+                },
+                title: {
+                    display: true,
+                    text: 'Execution times'
+                }
+            }
+        });
+        this._chart.update();
+    }
+
+    addTime(runtime) {
+        let oldstate = this.getState();
+        if(oldstate.runtimes === undefined) {
+            oldstate.runtimes = [];
+        }
+        oldstate.runtimes.push(runtime);
+        this.resetState(oldstate);
+
+        this.create();
+    }
+
+}
+
 class DIODE_Context_Terminal extends DIODE_Context {
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
@@ -1580,12 +1687,35 @@ class DIODE_Context_Terminal extends DIODE_Context {
     append(output) {
         let session = this.editor.getSession();
         session.insert({
-            row: session.getLength(),
-            column: 0
-         }, output);
+           row: session.getLength(),
+           column: 0
+        }, output);
+
+        let curr_str = session.getValue();
+
+        // Extract performance information if available
+        let re = /~#~#([^\n]+)/gm;
+        let matches = [...curr_str.matchAll(re)];
+        for(let m of matches) {
+            console.log("Got match", m);
+            // We want to access the second element (index 1) because it contains the list
+            let perflist = m[1];
+            // Because this is a python list, it may contain "'" (single quotes), which is invalid json
+            perflist = perflist.replace(/\'/g, '');
+            perflist = JSON.parse(perflist);
+            perflist.sort((a,b) => a - b);
+            let median_val = perflist[Math.floor(perflist.length / 2)];
+
+            console.log("Got median execution time", median_val);
+            this.project().request(['new-time'], () => {}, {
+                params: {
+                    time: median_val
+                }
+            });
+        }
 
         this.container.extendState({
-             "current_value": session.getValue()
+             "current_value": curr_str
         });
         this.editor.clearSelection();
     }
@@ -2554,6 +2684,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         });
 
         this.on(this.project().eventString('-req-render-free-vars'), msg => {
+            setTimeout(() => eh.emit(this.project().eventString("render-free-vars"), 'ok'), 1);
             this.renderDataSymbols(msg.calling_context, msg.data);
         });
     }
@@ -2579,7 +2710,10 @@ class DIODE_Context_PropWindow extends DIODE_Context {
 
     renderDataSymbols(calling_context, data) {
         // #TODO: This creates the default state (as in same as render_free_symbols() in the old DIODE)
-        
+        if(data == null) {
+            console.warn("Data has not been set - creating empty window");
+            return;
+        }
         let free_symbol_table = new DiodeTables.Table();
         free_symbol_table.setHeaders("Symbol", "Type", "Dimensions", "Controls");
 
@@ -2632,7 +2766,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         let p = this.getHTMLContainer();
         p.setAttribute("data-hint", '{"type": "DIODE2", "name": "Property_Window"}');
         let state = this.getState();
-        if(state.params != undefined) {
+        if(state.params != undefined && state.params.params != null) {
             let p = state.params;
             this.diode.renderProperties(p.transthis, p.node, p.params, this.getHTMLContainer());
         }
@@ -3159,7 +3293,21 @@ class DIODE {
                 this.goldenlayout.eventHub.emit('create-window-in-main', JSON.stringify(config));
             }
             else {
-                root.contentItems[0].addChild(config);
+                for(let ci of root.contentItems) {
+                    if(ci.config.type != "stack") {
+                        ci.addChild(config);
+                        return;
+                    }
+                    
+                }
+                let copy = root.contentItems[0].contentItems.map(x => x.config);
+                root.contentItems[0].remove();
+                // retry with recursion
+                for(let ci of copy) {
+                    this.addContentItem(ci);
+                }
+                this.addContentItem(config);
+                //root.contentItems[0].addChild(config);
             }
         }
     }
@@ -3238,7 +3386,10 @@ class DIODE {
         /*
             Creates property visualizations in a 2-column table.
         */
-
+        if(params == null) {
+            console.warn("renderProperties as nothing to render");
+            return;
+        }
         if(!Array.isArray(params)) {
             // Format is different (diode to_json with seperate meta / value - fix before passing to renderer)
             let params_keys = Object.keys(params).filter(x => !x.startsWith('_meta_'));
@@ -4515,7 +4666,8 @@ class DIODE {
 
         // Collect the components to add to the layout later
         let code_ins = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "CodeInComponent");
-        let opttrees = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "OptGraphComponent");
+        let opttrees = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "AvailableTransformationsComponent");
+        let opthists = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "TransformationHistoryComponent");
         let sdfg_renderers = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "SDFGComponent");
         let code_outs = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "CodeOutComponent");
         let property_renderers = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "PropWinComponent");
@@ -4539,7 +4691,7 @@ class DIODE {
         }
 
         // Remove the contentItems already as a workaround for a goldenlayout bug(?) that calls destroy unpredictably
-        let to_remove = [code_ins, code_outs, opttrees, sdfg_renderers, property_renderers];
+        let to_remove = [code_ins, code_outs, opttrees, opthists, sdfg_renderers, property_renderers];
         for(let y of to_remove) {
             for(let x of y) {
                 if(x.componentName != undefined) {
@@ -4611,7 +4763,7 @@ class DIODE {
         property_renderers.forEach(x => property_stack.addChild(x.config));
         code_outs.forEach(x => code_out_stack.addChild(x.config));
         opttrees.forEach(x => opttree_stack.addChild(x.config));
-
+        opthists.forEach(x => opttree_stack.addChild(x.config));
         code_ins.forEach(x => code_in_stack.addChild(x.config));
 
         // Everything has been added, but maybe too much: There might be empty stacks.
@@ -5079,6 +5231,17 @@ class DIODE {
             }
         });
     }
+
+    show_exec_times() {
+        let config = {
+            type: 'component',
+            componentName: 'PerfTimesComponent',
+            componentState: {},
+            title: "Execution times",
+        };
+
+        this.addContentItem(config);
+    }
     
     show_run_options(calling_context) {
         let newconf = {
@@ -5281,7 +5444,7 @@ class DIODE {
         this.getCurrentProject().request(replace_request, (resp, tid) => {
             clearTimeout(tid);
         }, {
-            timeout: 500,
+            timeout: 100,
             params: replace_params,
             timeout_id: recreation_timeout
         });
@@ -5449,4 +5612,4 @@ class ContextMenu {
 
 export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODE2Settings,
     DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations,
-    DIODE_Context_Error, DIODE_Context_RunConfig}
+    DIODE_Context_Error, DIODE_Context_RunConfig, DIODE_Context_PerfTimes}

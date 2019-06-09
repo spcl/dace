@@ -165,8 +165,8 @@ class Executor:
                 except FileNotFoundError:
                     print("WARNING: results.log could not be read")
 
-            if not self.headless:
-                if self.running_async:
+            if not self.headless or self.perfplot == None:
+                if self.running_async and not self.headless:
                     self.async_host.run_sync(deferred)
                 else:
                     deferred()
@@ -199,9 +199,19 @@ class Executor:
     def update_performance_plot(self, resfile, name):
         # Each result.log will give us many runs of one size and optimization.
         # We ignore everything in the result log except the timing
-        times = self.perfplot.parse_result_log(resfile)
-        self.perfplot.add_run(name, times)
-        self.perfplot.render()
+
+        # If no perfplot is set, write it to the output as text with a prefix
+        if self.perfplot == None:
+            import re
+            with open(resfile) as f:
+                data = f.read()
+            p = re.compile('\s(\d+\.\d+)$', re.MULTILINE)
+            times = p.findall(data)
+            self.show_output("\n~#~#" + str(times))
+        else:
+            times = self.perfplot.parse_result_log(resfile)
+            self.perfplot.add_run(name, times)
+            self.perfplot.render()
         t = sorted([float(s) for s in times])
         print(t)
         return t[int(len(t) / 2)]

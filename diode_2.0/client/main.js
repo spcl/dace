@@ -14,6 +14,7 @@ import {
     DIODE_Context_AvailableTransformations,
     DIODE_Context_Error,
     DIODE_Context_RunConfig,
+    DIODE_Context_PerfTimes,
 } from "./diode.js"
 
 function find_object_cycles(obj) {
@@ -122,6 +123,10 @@ function REST_request(command, payload, callback, method="POST") {
     xhr.setRequestHeader("Content-Type", "application/json");
     xhr.onreadystatechange = () => {
         callback(xhr);
+    };
+    xhr.onerror = (e) => {
+        console.warn("Connection error", e);
+        alert("Connection error");
     };
     if(payload != undefined) {
         let data = JSON.stringify(payload);
@@ -326,6 +331,7 @@ function start_DIODE() {
                 { text: 'Run Configurations', icon: 'material-icons-outlined gmat-playlist_play', id: 'runoptions' }, 
                 { text: 'Runqueue', icon: 'material-icons-outlined gmat-view_list', id: 'runqueue' }, 
                 { text: 'Perfdata', id: 'perfdata' },
+                { text: 'Perftimes', id: 'perftimes' },
             ]},
             { type: 'menu',  icon: 'material-icons-outlined gmat-build', id: 'compile-menu', caption: 'Compile', items: [
                 { text: 'Compile', id: 'compile' , icon: 'material-icons-outlined gmat-gavel' }, 
@@ -346,7 +352,7 @@ function start_DIODE() {
                 
             ]},
             { type: 'menu',   id: 'group-menu', caption: 'Group', icon: 'material-icons-outlined gmat-apps', items: [
-                { text: 'Group by SDFGs', id: 'group-sdfgs' }, 
+                //{ text: 'Group by SDFGs', id: 'group-sdfgs' }, 
                 { text: 'Group default', id: 'group-diode1' }
             ]},
             { type: 'menu',   id: 'closed-windows', caption: 'Closed windows', icon: 'material-icons-outlined gmat-reopen', items: []},
@@ -385,6 +391,9 @@ function start_DIODE() {
             }
             if(event.target == "settings-menu:perfdata") {
                 diode.load_perfdata();
+            }
+            if(event.target == "settings-menu:perftimes") {
+                diode.show_exec_times();
             }
             if(event.target == "group-menu:group-sdfgs") {
                 diode.groupOptGraph(); diode.groupSDFGsAndCodeOutsTogether();
@@ -533,6 +542,12 @@ function start_DIODE() {
             diode_context.get_settings();
         });
         
+    });
+    goldenlayout.registerComponent( 'PerfTimesComponent', function( container, componentState ){
+        // Wrap the component in a context 
+        let diode_context = new DIODE_Context_PerfTimes(diode, container, componentState);
+        diode_context.setupEvents(diode.getCurrentProject());
+        diode_context.create();
     });
     goldenlayout.registerComponent( 'SDFGComponent', function( container, componentState ){
         // Wrap the component in a context 
