@@ -1,4 +1,5 @@
-FROM python:3-stretch
+#FROM python:3-stretch
+FROM debian:latest
 
 
 
@@ -7,15 +8,17 @@ RUN apt update && apt install sudo nano ssh openssh-client openssh-server apt-ut
 RUN pip3 install --upgrade pip
 RUN pip3 install setuptools flask requests
 
-# Install PAPI
-RUN apt update && apt install libpapi-dev -y
+# Install PAPI and OpenMP
+RUN apt update && apt install libpapi-dev libomp-dev -y
+
+# Unlock perfcounter interface
+#RUN echo -1 > /proc/sys/kernel/perf_event_paranoid
 
 COPY . /home/daceuser
 
-#RUN rm /home/daceuser/diode_2.0/client/renderer_dir
 COPY ./diode/ /home/daceuser/diode_2.0/client/renderer_dir
 
-RUN echo "daceuser ALL = NOPASSWD: /usr/sbin/service" >> /etc/sudoers
+RUN echo "daceuser ALL = NOPASSWD: ALL" >> /etc/sudoers
 
 USER daceuser
 WORKDIR /home/daceuser
@@ -35,16 +38,20 @@ USER root
 RUN cd /home/daceuser && pip3 install --upgrade .
 
 # Install DaCe dependencies (might be too much)
-RUN apt install libyaml-dev libgirepository1.0-dev xdot python3-gi -y
+RUN apt install libgirepository1.0-dev xdot python3-gi -y
 
 
-# Theoretically unnecessary - there is a include issue in DIODE1
-RUN apt install libgtksourceviewmm-3.0-dev python3-cairo python3-gi-cairo -y
+# Theoretically unnecessary - there is an include issue in DIODE1
 RUN pip3 install pygobject matplotlib
 
+# Avoid permission errors
+RUN chmod -R 777 /tmp && chmod -R o+t /tmp
+RUN chown -R daceuser:daceuser /tmp
 
 USER daceuser
 WORKDIR /home/daceuser/rundir
 
-ENTRYPOINT sudo service ssh start && cd ~/rundir && python3 ~/diode_2.0/diode_rest.py
-#ENTRYPOINT service ssh start && python3 /home/daceuser/diode_2.0/diode_rest.py
+# Adjust the default linker flags (add libpapi to default)
+RUN python3 ../diode_2.0/adjust_settings.py
+
+ENTRYPOINT sudo sh -c "echo -1 > /proc/sys/kernel/perf_event_paranoid"; sudo service ssh start && cd ~/rundir && python3 ~/diode_2.0/diode_rest.py
