@@ -17,6 +17,8 @@ import re
 from typing import List
 import numpy as np
 
+from inspect import isfunction
+
 import dace
 from dace.frontend import operations
 from dace.frontend.python import ndarray
@@ -210,12 +212,18 @@ class CompiledSDFG(object):
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
             if not isinstance(atype, dt.Array) and not isinstance(
-                    arg, atype.dtype.type):
+                    atype.dtype, dace.callback) and not isinstance(
+                        arg, atype.dtype.type):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
+        # Call a wrapper function to make NumPy arrays from pointers.
+        for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
+            if isinstance(argtype.dtype, dace.callback):
+                arglist[index] = argtype.dtype.get_trampoline(arg)
+
         # Retain only the element datatype for upcoming checks and casts
-        argtypes = [t.dtype.type for t in argtypes]
+        argtypes = [t.dtype.as_ctypes() for t in argtypes]
 
         sdfg = self._sdfg
 
@@ -229,7 +237,7 @@ class CompiledSDFG(object):
             try:
                 symval = symbolic.symbol(symname)
                 symparams[symname] = symval.get()
-                symtypes[symname] = symval.dtype.type
+                symtypes[symname] = symval.dtype.as_ctypes()
             except UnboundLocalError:
                 try:
                     symparams[symname] = kwargs[symname]
@@ -256,17 +264,16 @@ class CompiledSDFG(object):
              atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
             for arg, atype in callparams)
 
-        # Replace arrays with their pointers
+       # Replace arrays with their pointers
         newargs = tuple(
             (ctypes.c_void_p(arg.__array_interface__['data'][0]),
              atype) if (isinstance(arg, ndarray.ndarray)
                         or isinstance(arg, np.ndarray)) else (arg, atype)
             for arg, atype in callparams)
 
-        newargs = tuple(types._FFI_CTYPES[atype](arg) if (
-            atype in types._FFI_CTYPES
-            and not isinstance(arg, ctypes.c_void_p)) else arg
-                        for arg, atype in newargs)
+        newargs = tuple(
+            atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, atype in newargs)
 
         self._lastargs = newargs
         return self._lastargs

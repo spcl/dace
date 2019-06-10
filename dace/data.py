@@ -155,6 +155,9 @@ class Scalar(Data):
 
     def signature(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
+        if isinstance(self.dtype, dace.callback):
+            assert name is not None
+            return self.dtype.signature(name)
         return str(self.dtype.ctype) + ' ' + name
 
     def sizes(self):
