@@ -1,5 +1,7 @@
 var base_url = "//" + window.location.host;
 
+window.base_url = base_url;
+
 import {
     DIODE, DIODE_Context_Settings,
     DIODE_Context_DIODE2Settings,
@@ -15,6 +17,8 @@ import {
     DIODE_Context_Error,
     DIODE_Context_RunConfig,
     DIODE_Context_PerfTimes,
+    DIODE_Context_InstrumentationControl,
+    DIODE_Context_Roofline
 } from "./diode.js"
 
 function find_object_cycles(obj) {
@@ -390,7 +394,8 @@ function start_DIODE() {
                 diode.open_runqueue();
             }
             if(event.target == "settings-menu:perfdata") {
-                diode.load_perfdata();
+                //diode.load_perfdata();
+                diode.show_inst_options();
             }
             if(event.target == "settings-menu:perftimes") {
                 diode.show_exec_times();
@@ -546,6 +551,18 @@ function start_DIODE() {
     goldenlayout.registerComponent( 'PerfTimesComponent', function( container, componentState ){
         // Wrap the component in a context 
         let diode_context = new DIODE_Context_PerfTimes(diode, container, componentState);
+        diode_context.setupEvents(diode.getCurrentProject());
+        diode_context.create();
+    });
+    goldenlayout.registerComponent( 'InstControlComponent', function( container, componentState ){
+        // Wrap the component in a context 
+        let diode_context = new DIODE_Context_InstrumentationControl(diode, container, componentState);
+        diode_context.setupEvents(diode.getCurrentProject());
+        diode_context.create();
+    });
+    goldenlayout.registerComponent( 'RooflineComponent', function( container, componentState ){
+        // Wrap the component in a context 
+        let diode_context = new DIODE_Context_Roofline(diode, container, componentState);
         diode_context.setupEvents(diode.getCurrentProject());
         diode_context.create();
     });

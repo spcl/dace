@@ -1,3 +1,5 @@
+import {ObjectHelper} from "../datahelper.js";
+
 
 var roofline_socket = 0;
 
@@ -410,6 +412,8 @@ class RooflinePainter {
         }
 
         for(let elem of highlights) {
+            elem.x = getXPixel(this.ctx, this.xoptions, this.margin(), elem.flopperbyte);
+            elem.y = getYPixel(this.ctx, this.yoptions, this.margin(), elem.floppercyc);
             drawInfoBox(this.ctx, elem.x, elem.y, 200, elem.id);
         }
     }
@@ -457,9 +461,9 @@ class RooflinePainter {
 
 
 
-function main() {
+function main(canvas=undefined, message_source=undefined) {
 
-    let canvas = document.getElementById("myCanvas");
+    if(canvas == undefined) canvas = document.getElementById("myCanvas");
     let ctx = canvas.getContext("2d");
 
     
@@ -508,6 +512,8 @@ function main() {
         
         for(let elem of dotdata)
         {
+            elem.x = getXPixel(ctx, xoptions, margin(), elem.flopperbyte);
+            elem.y = getYPixel(ctx, yoptions, margin(), elem.floppercyc);
             if(pow2(elem.x - x) + pow2(elem.y - y) <= pow2(tol))
             {
                 elem.highlight = true;
@@ -557,7 +563,28 @@ function main() {
 
     draw_full(ctx, painter);
 
+    let data_proc = msg => {
+        if(msg["msg_type"] == "roofline-data") {
 
+            dotdata = [];
+
+            let data = msg["data"];
+
+            for(let x of data) {
+                let pid = x["ProgramID"];
+                let flop_per_c = x["FLOP_C"];
+                let in_b_per_c = x["INPUT_B_C"];
+                let proc_b_per_c = x["PROC_B_C"];
+                let mem_b_per_c = x["MEM_B_C"];
+
+
+                let flop_per_byte = flop_per_c / mem_b_per_c;
+
+                // We'll use the in-memory (which is not quite accurate, since out-data usually has to be loaded as well)
+                setDot(ctx, xoptions, yoptions, margin(), flop_per_c, flop_per_byte, pid);
+            }
+        }
+    };
     
     let socksetup = () => {
         roofline_socket = new WebSocket('ws://localhost:8024/');
@@ -568,26 +595,7 @@ function main() {
         roofline_socket.onmessage = function (event) {
 
             msg = JSON.parse(event.data);
-            if(msg["msg_type"] == "roofline-data") {
-
-                dotdata = [];
-
-                let data = msg["data"];
-
-                for(let x of data) {
-                    let pid = x["ProgramID"];
-                    let flop_per_c = x["FLOP_C"];
-                    let in_b_per_c = x["INPUT_B_C"];
-                    let proc_b_per_c = x["PROC_B_C"];
-                    let mem_b_per_c = x["MEM_B_C"];
-
-
-                    let flop_per_byte = flop_per_c / mem_b_per_c;
-
-                    // We'll use the in-memory (which is not quite accurate, since out-data usually has to be loaded as well)
-                    setDot(ctx, xoptions, yoptions, margin(), flop_per_c, flop_per_byte, pid);
-                }
-            }
+            data_proc(msg);
         }
         roofline_socket.onclose = function (event) {
             console.log("ERROR: Connection closed!");
@@ -598,5 +606,13 @@ function main() {
         
     };
 
-    socksetup();
+    if(message_source == undefined)
+        socksetup();
+    else {
+        message_source(data_proc);
+    }
+
+    return () => draw_full(ctx, painter);
 }
+
+export {main as main};

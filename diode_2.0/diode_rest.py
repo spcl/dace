@@ -5,7 +5,7 @@ import dace.frontend.octave.parse as octave_frontend
 import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
-from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory
+from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory, send_file
 import json
 import re
 from diode.remote_execution import Executor, AsyncExecutor
@@ -207,14 +207,14 @@ class ExecutorServer:
 
                 if cmd['operation'] == 'startgroup':
                     from diode.db_scripts.db_setup import db_setup
-                    perf_tmp_dir = self.getPerfdataDir(cmd['cid'])
+                    perf_tmp_dir = ExecutorServer.getPerfdataDir(cmd['cid'])
                     perfdata_path = os.path.join(perf_tmp_dir, "perfdata.db")
 
                     # Clean database and create tables
                     db_setup(perf_tmp_dir)
 
                 elif cmd['operation'] == 'remove_group':
-                    perfdir = self.getPerfdataDir(cmd['cid'])
+                    perfdir = ExecutorServer.getPerfdataDir(cmd['cid'])
                     perfdata_path = os.path.join(perfdir, "perfdata.db")
                     os.remove(perfdata_path)
                     os.rmdir(perf_tmp_dir)
@@ -231,7 +231,7 @@ class ExecutorServer:
                         repetitions = Config.get("execution", "general",
                                                  "repetitions")
 
-                    perf_tmp_dir = self.getPerfdataDir(cmd['cid'])
+                    perf_tmp_dir = ExecutorServer.getPerfdataDir(cmd['cid'])
                     perfdata_path = os.path.join(perf_tmp_dir, "perfdata.db")
                     can_path = os.path.join(perf_tmp_dir, 'current.can')
 
@@ -355,7 +355,8 @@ class ExecutorServer:
     def unlock(self):
         self._oplock.release()
 
-    def getPerfdataDir(self, client_id):
+    @staticmethod
+    def getPerfdataDir(client_id):
         import tempfile
 
         if not os.path.isdir("perfdata-dir/"):
@@ -481,7 +482,7 @@ class ExecutorServer:
                         Config.set(
                             "instrumentation",
                             "sql_database_file",
-                            value=self.getPerfdataDir(client_id) +
+                            value=ExecutorServer.getPerfdataDir(client_id) +
                             "/perfdata.db")
                         Config.set(
                             "instrumentation",
@@ -1014,6 +1015,61 @@ def get_transformations(sdfgs):
     return opt_per_sdfg
 
 
+@app.route("/dace/api/v1.0/<string:filegroup>/download/<string:client_id>/", methods=['GET'])
+def perfdata_download(filegroup, client_id):
+    """
+        This function returns the perfdata as a download
+    """
+    
+    filepath = ExecutorServer.getPerfdataDir(client_id) + ("/perfdata.db" if filegroup == "perfdata" else "/current.can")
+    if not os.path.isfile(filepath):
+        print("File not existent, cannot download")
+        abort(400)
+
+    return send_file(filepath, "application/x-sqlite3", as_attachment=True, attachment_filename="perfdata.sqlite3" if filegroup == "perfdata" else "current.can.sqlite3", conditional=True)
+
+
+@app.route("/dace/api/v1.0/<string:filegroup>/reset/", methods=['POST'])
+def perfdata_delete(filegroup):
+    """
+        Resets (deletes) the currently accumulated perfdata.
+        POST-Parameters:
+            client_id: string. The client id
+    """
+    try:
+        client_id = request.json['client_id']
+    except:
+        print("Client id not specified, cannot continue")
+        abort(400)
+
+    filepath = ExecutorServer.getPerfdataDir(client_id) + ("/perfdata.db" if filegroup == "perfdata" else "/current.can")
+    if os.path.isfile(filepath):
+        os.remove(filepath)
+
+    return Response("ok")
+
+@app.route("/dace/api/v1.0/perfdata/roofline/", methods=['POST'])
+def perfdata_roofline():
+    """
+        Returns data for roofline from the accumulated data.
+        POST-Parameters:
+            client_id: string. The client id
+
+    """
+    from dace.codegen.instrumentation.perfsettings import PerfUtils
+
+    try:
+        client_id = request.json['client_id']
+    except:
+        print("Client id not specified, cannot continue")
+        abort(400)
+
+
+    filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
+    retdict = PerfUtils.get_roofline_data(filepath)
+    return jsonify(retdict)
+
+
 @app.route("/dace/api/v1.0/perfdata/get/", methods=['POST'])
 def perfdata_query():
     """
@@ -1091,7 +1147,6 @@ def execution_queue_query(op):
         retlist = []
         for key, val in es._orphaned_runs.items():
             tmp = [''.join(x) for x in val]
-            print("orphan " + str(key) + ":")
             for x in tmp:
                 d = {}
                 d['index'] = '(done)'
@@ -1195,9 +1250,6 @@ def run():
 def optimize():
     """
         Returns a list of possible optimizations (transformations) and their properties.
-        #TODO: By sending the input code, we force the server to recalculate very often.
-        # It might be better to send a serialized SDFG and de-serializing it at the server,
-        # or using a (stateful) aging server cache to avoid frequent recalculations
 
 
         POST-Parameters:
