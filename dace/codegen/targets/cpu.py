@@ -2059,7 +2059,9 @@ def ndcopy_to_strided_copy(copy_shape, src_shape, src_strides, dst_shape,
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if src_copylen == copy_length and dst_copylen == copy_length:
+    if ((tuple(copy_shape) == tuple(src_shape)
+         and tuple(copy_shape) == tuple(dst_shape))
+            or (src_copylen == copy_length and dst_copylen == copy_length)):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
