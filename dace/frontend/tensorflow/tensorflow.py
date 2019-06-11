@@ -138,9 +138,7 @@ class TFSession:
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.dataflow import (
-            TensorflowRedundantArray,
-        )
+        from dace.transformation.dataflow import TensorflowRedundantArray
 
         # Apply strict state fusions greedily.
         opt = optimizer.SDFGOptimizer(self.graph, inplace=True)
@@ -150,10 +148,7 @@ class TFSession:
             applied = False
             # Find and apply immediately
             for match in opt.get_pattern_matches(
-                strict=False,
-                patterns=(
-                    TensorflowRedundantArray,
-                ),
+                strict=False, patterns=(TensorflowRedundantArray,)
             ):
                 sdfg = self.graph.sdfg_list[match.sdfg_id]
                 match.apply(sdfg)
@@ -165,6 +160,7 @@ class TFSession:
                 break
 
         from dace.config import Config
+
         if Config.get_bool("debugprint") and arrays > 0:
             print(
                 "Automatically removed"
@@ -363,7 +359,7 @@ class TFSession:
         print("Adding connectors")
         self.graph.fill_scope_connectors()
         print("Applying Tensorflow transformations")
-        #self.graph.apply_strict_transformations(validate=False)
+        # self.graph.apply_strict_transformations(validate=False)
         self.apply_tensorflow_transform(validate=False)
 
         # Compile and call the SDFG
@@ -497,11 +493,11 @@ class TFSession:
 
         # Compile the SDFG
         self.graph.fill_scope_connectors()
-        self.apply_tensorflow_transform(validate=False)
-        #self.graph.apply_strict_transformations(validate=False)
-        #self.graph.validate()
-        self.graph.draw_to_file()
+        # self.apply_tensorflow_transform(validate=False)
+        # self.graph.apply_strict_transformations(validate=False)
+        # self.graph.validate()
         compiled_sdfg = self.graph.compile(optimizer=False)
+        self.graph.draw_to_file()
 
         ############################
         # Create the function that invokes the SDFG
@@ -1293,13 +1289,13 @@ class TFSession:
                 [meanDims],
                 [[inpTensorParams[-1]]],
             )
-            #self.state.add_edge(
+            # self.state.add_edge(
             #    meanTensorNode,
             #    None,
             #    outputList[3],
             #    None,
             #    Memlet.simple(meanTensorNode, ",".join(meanDims)),
-            #)
+            # )
 
         else:
             # Input and output edges have been added through the two maps and
@@ -2133,7 +2129,9 @@ class TFSession:
             mapLabel + "_outer", dict(zip(mapParams1, mapRange1))
         )
         mapEntry2, mapExit2 = state.add_map(
-            mapLabel + "_inner", dict(zip(mapParams2, mapRange2))
+            mapLabel + "_inner",
+            dict(zip(mapParams2, mapRange2)),
+            schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
         self.reinitCR(outputList[0], outputParams, outputDims, "-99999999999")
