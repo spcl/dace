@@ -331,7 +331,7 @@ ul.tree_view .selected {
     border: 1px solid darkslategray;
 }
 .transformation_history_list:empty::after {
-    content: "No revertable transformation found."
+    content: "No revertible transformation found."
 }
 .transformation_history_list_element {
     width: 100%;

@@ -1231,6 +1231,8 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
             this.applyTransformation(x, pos, _title);
         });
+
+        title.setAttribute('data-hint', '{"type": "transformation", "name": "' + x.opt_name + '"}');
         x.representative = title;
 
         // Add a control-div
@@ -1249,6 +1251,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             ctrl.appendChild(adv_button);
         }
         // Help button
+        /*
         {
             let help_button = document.createElement('i');
             help_button.classList = "";
@@ -1256,7 +1259,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             help_button.setAttribute("data-hint", '{"type": "transformation", "name": "' + x.opt_name + '"}');
             help_button.addEventListener("click", _ev => this.diode.hint(_ev));
             ctrl.appendChild(help_button);
-        }
+        }*/
 
         list_elem.appendChild(title);
         list_elem.appendChild(ctrl);
