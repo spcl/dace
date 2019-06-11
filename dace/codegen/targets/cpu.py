@@ -1034,7 +1034,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Try to turn into degenerate/strided ND copies
         result = ndcopy_to_strided_copy(copy_shape, src_nodedesc.strides,
                                         src_strides, dst_nodedesc.strides,
-                                        dst_strides, memlet.subset)
+                                        dst_strides, memlet.subset, src_subset,
+                                        dst_subset)
         if result is not None:
             copy_shape, src_strides, dst_strides = result
         else:
@@ -2036,7 +2037,7 @@ def _reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def ndcopy_to_strided_copy(copy_shape, src_shape, src_strides, dst_shape,
-                           dst_strides, subset):
+                           dst_strides, subset, src_subset, dst_subset):
     """ Detects situations where an N-dimensional copy can be degenerated into
         a (faster) 1D copy or 2D strided copy. Returns new copy
         dimensions and offsets to emulate the requested copy.
@@ -2049,9 +2050,17 @@ def ndcopy_to_strided_copy(copy_shape, src_shape, src_strides, dst_shape,
     if any(ts != 1 for ts in subset.tile_sizes):
         return None
 
-    # 1D copy of the whole array
-    if (tuple(copy_shape) == tuple(src_shape)
-            and tuple(copy_shape) == tuple(dst_shape)):
+    # If the copy is contiguous, the difference between the first and last
+    # pointers should be the shape of the copy
+    first_src_index = src_subset.at(src_subset.min_element(), src_shape)
+    first_dst_index = dst_subset.at(dst_subset.min_element(), dst_shape)
+    last_src_index = src_subset.at(src_subset.max_element(), src_shape)
+    last_dst_index = dst_subset.at(dst_subset.max_element(), dst_shape)
+    copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
+    src_copylen = last_src_index - first_src_index + 1
+    dst_copylen = last_dst_index - first_dst_index + 1
+    if src_copylen == copy_length and dst_copylen == copy_length:
+        # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
     # 1D strided copy
