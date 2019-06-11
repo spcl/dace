@@ -59,9 +59,16 @@ namespace dace {
     struct _wcr_fixed<ReductionType::Sum, T> {
         static DACE_HDFI void reduce(T *ptr, const T& value) { *ptr += value; }
         
-        static DACE_HDFI void reduce_atomic(T *ptr, const T& value) { 
-            #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
+        static DACE_HDFI void reduce_atomic(T *ptr, const T& value) {
+            #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600
                 atomicAdd(ptr, value);
+            #elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
+                // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+                T old = *ptr, assumed;
+                do {
+                    assumed = old;
+                    old = atomicCAS(ptr, assumed, assumed + value);
+                } while (assumed != old);
             #else
                 #pragma omp atomic
                 *ptr += value; 
