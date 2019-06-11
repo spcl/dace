@@ -1521,7 +1521,6 @@ subgraph cluster_state_{state} {{
         while options:
             sdfg = self.sdfg_list[options[0].sdfg_id]
             options[0].apply(sdfg)
-            self.validate()
             gpu_maps += 1
 
             options = [
@@ -1541,7 +1540,6 @@ subgraph cluster_state_{state} {{
             while options:
                 sdfg = self.sdfg_list[options[0].sdfg_id]
                 options[0].apply(sdfg)
-                self.validate()
                 arrays += 1
 
                 options = [
@@ -1559,7 +1557,6 @@ subgraph cluster_state_{state} {{
             while options:
                 sdfg = self.sdfg_list[options[0].sdfg_id]
                 options[0].apply(sdfg)
-                self.validate()
                 arrays += 1
 
                 options = [
@@ -1577,7 +1574,6 @@ subgraph cluster_state_{state} {{
             while options:
                 sdfg = self.sdfg_list[options[0].sdfg_id]
                 options[0].apply(sdfg)
-                self.validate()
                 arrays += 1
 
                 options = [

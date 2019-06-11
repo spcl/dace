@@ -496,8 +496,8 @@ class TFSession:
         # self.apply_tensorflow_transform(validate=False)
         # self.graph.apply_strict_transformations(validate=False)
         # self.graph.validate()
-        self.graph.draw_to_file()
         compiled_sdfg = self.graph.compile(optimizer=False)
+        self.graph.draw_to_file()
 
         ############################
         # Create the function that invokes the SDFG
