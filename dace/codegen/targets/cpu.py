@@ -2052,10 +2052,12 @@ def ndcopy_to_strided_copy(copy_shape, src_shape, src_strides, dst_shape,
 
     # If the copy is contiguous, the difference between the first and last
     # pointers should be the shape of the copy
-    first_src_index = src_subset.at(src_subset.min_element(), src_shape)
-    first_dst_index = dst_subset.at(dst_subset.min_element(), dst_shape)
-    last_src_index = src_subset.at(src_subset.max_element(), src_shape)
-    last_dst_index = dst_subset.at(dst_subset.max_element(), dst_shape)
+    first_src_index = src_subset.at([0] * src_subset.dims(), src_shape)
+    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_shape)
+    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
+                                   src_shape)
+    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
+                                   dst_shape)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
