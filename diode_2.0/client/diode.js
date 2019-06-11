@@ -3231,7 +3231,7 @@ class DIODE {
             let keyfile_string = /\S/.test(config['SSH Key override']) ? (" -i " + config['SSH Key override'] + " ") : " ";
             new_settings = {...new_settings, ...{
                 "execution/general/execcmd": ("ssh " + keyfile_string + "${host} ${command}"),
-                "execution/general/copycmd_l2r": ("scp " + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
+                "execution/general/copycmd_r2l": ("scp " + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
                 "execution/general/copycmd_l2r": ("scp " + keyfile_string + " ${srcfile} ${host}:${dstfile}"),
             }
             };
@@ -3240,7 +3240,7 @@ class DIODE {
             // Use standard / local commands
             new_settings = {...new_settings, ...{
                 "execution/general/execcmd": "${command}",
-                "execution/general/copycmd_l2r": "cp ${srcfile} ${dstfile}",
+                "execution/general/copycmd_r2l": "cp ${srcfile} ${dstfile}",
                 "execution/general/copycmd_l2r": "cp ${srcfile} ${dstfile}",
             }
             };
