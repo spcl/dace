@@ -822,13 +822,18 @@ class TaskletTransformer(ExtNodeTransformer):
             if isinstance(node.value.op, (ast.LShift, ast.RShift)):
                 if isinstance(node.value.op, ast.LShift):
                     target = node.value.right
-                    if self.nested and isinstance(target, ast.Subscript):
+                    if self.nested: # and isinstance(target, ast.Subscript):
                         name = rname(target)
                         real_name = {**self.variables, **self.scope_vars}[name]
-                        real_target = copy.deepcopy(target)
-                        real_target.value.id = real_name
-                        rng = dace.subsets.Range(astutils.subscript_to_slice(
-                            real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+                        if isinstance(target, ast.Subscript):
+                            real_target = copy.deepcopy(target)
+                            real_target.value.id = real_name
+                            rng = dace.subsets.Range(astutils.subscript_to_slice(
+                                real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+                        elif isinstance(target, ast.Call):
+                            rng = dace.subsets.Range.from_array({**self.sdfg.arrays, **self.scope_arrays}[real_name])
+                        else:
+                            raise NotImplementedError
                         if (name, rng, 'w') in self.accesses:
                             node.value.right = ast.Name(id=self.accesses[(name, rng, 'w')][0])
                         elif (name, rng, 'r') in self.accesses:
@@ -848,7 +853,12 @@ class TaskletTransformer(ExtNodeTransformer):
                             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                             self.sdfg_inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
-                            node.value.right = ast.Name(id=vname)
+                            if isinstance(target, ast.Subscript):
+                                node.value.right = ast.Name(id=vname)
+                            elif isinstance(target, ast.Call):
+                                node.value.right.func = ast.Name(id=vname)
+                            else:
+                                raise NotImplementedError
                         else:
                             raise DaceSyntaxError(
                                 self, target,
@@ -863,13 +873,18 @@ class TaskletTransformer(ExtNodeTransformer):
                     self.inputs[connector] = memlet
                 elif isinstance(node.value.op, ast.RShift):
                     target = node.value.right
-                    if self.nested and isinstance(target, ast.Subscript):
+                    if self.nested: # and isinstance(target, ast.Subscript):
                         name = rname(target)
                         real_name = {**self.variables, **self.scope_vars}[name]
-                        real_target = copy.deepcopy(target)
-                        real_target.value.id = real_name
-                        rng = dace.subsets.Range(astutils.subscript_to_slice(
-                            real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+                        if isinstance(target, ast.Subscript):
+                            real_target = copy.deepcopy(target)
+                            real_target.value.id = real_name
+                            rng = dace.subsets.Range(astutils.subscript_to_slice(
+                                real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
+                        elif isinstance(target, ast.Call):
+                            rng = dace.subsets.Range.from_array({**self.sdfg.arrays, **self.scope_arrays}[real_name])
+                        else:
+                            raise NotImplementedError
                         if (name, rng, 'w') in self.accesses:
                             node.value.right = ast.Name(id=self.accesses[(name, rng, 'w')][0])
                         elif name in self.variables:
@@ -888,7 +903,12 @@ class TaskletTransformer(ExtNodeTransformer):
                             self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                             self.sdfg_outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
-                            node.value.right = ast.Name(id=vname)
+                            if isinstance(target, ast.Subscript):
+                                node.value.right = ast.Name(id=vname)
+                            elif isinstance(target, ast.Call):
+                                node.value.right.func = ast.Name(id=vname)
+                            else:
+                                raise NotImplementedError
                         else:
                             raise DaceSyntaxError(
                                 self, target,
@@ -1176,7 +1196,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 # internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(
                 #     state, node)
                 # dummy = True
-                body, inputs, outputs = self._parse_subprogram('MapBody', node, True)
+                name = "{}_{}_{}_body".format(self.sdfg.label, state.label, state.node_id(entry))
+                body, inputs, outputs = self._parse_subprogram(name, node, True)
                 internal_node = state.add_nested_sdfg(
                     body, self.sdfg, inputs.keys(), outputs.keys())
 
