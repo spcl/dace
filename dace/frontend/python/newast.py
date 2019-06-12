@@ -838,7 +838,6 @@ class TaskletTransformer(ExtNodeTransformer):
                         elif name in self.scope_vars:
                             vname = "__tmp_{l}_{c}".format(
                                 l=target.lineno, c=target.col_offset)
-                            self.accesses[(name, rng, 'r')] = vname
                             parent_name = self.scope_vars[name]
                             parent_array = self.scope_arrays[parent_name]
                             sqz_rng = copy.deepcopy(rng)
@@ -1430,7 +1429,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         shape = [1]
                     # shape = arr.shape
                     dtype = arr.dtype
-                    self.sdfg.add_array(vname, shape, dtype)
+                    self.sdfg.add_array(vname, shape, dtype, strides=arr.strides)
                     self.inputs[vname] = (scope_memlet, inner_indices)
                     # self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
@@ -1496,7 +1495,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         shape = [1]
                     # shape = arr.shape
                     dtype = arr.dtype
-                    self.sdfg.add_array(vname, shape, dtype)
+                    self.sdfg.add_array(vname, shape, dtype, strides=arr.strides)
                     self.outputs[vname] = (scope_memlet, inner_indices)
                     # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
@@ -1807,7 +1806,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         sqz_rng.squeeze()
                         shape = sqz_rng.size()
                         dtype = parent_array.dtype
-                        self.sdfg.add_array(vname, shape, dtype)
+                        self.sdfg.add_array(vname, shape, dtype, strides=parent_array.strides)
                         self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                         self.variables[vname] = parent_name
                         self.outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
@@ -2351,7 +2350,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 sqz_rng.squeeze()
                 shape = sqz_rng.size()
                 dtype = parent_array.dtype
-                self.sdfg.add_array(vname, shape, dtype)
+                self.sdfg.add_array(vname, shape, dtype, strides=parent_array.strides)
                 self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                 self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                 return (vname, sqz_rng)
