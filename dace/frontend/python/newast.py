@@ -830,9 +830,9 @@ class TaskletTransformer(ExtNodeTransformer):
                         rng = dace.subsets.Range(astutils.subscript_to_slice(
                             real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
                         if (name, rng, 'w') in self.accesses:
-                            node.value.right = ast.Name(id=self.accesses[(name, rng, 'w')])
+                            node.value.right = ast.Name(id=self.accesses[(name, rng, 'w')][0])
                         elif (name, rng, 'r') in self.accesses:
-                            node.value.right = ast.Name(id=self.accesses[(name, rng, 'r')])
+                            node.value.right = ast.Name(id=self.accesses[(name, rng, 'r')][0])
                         elif name in self.variables:
                             pass
                         elif name in self.scope_vars:
@@ -841,13 +841,13 @@ class TaskletTransformer(ExtNodeTransformer):
                             self.accesses[(name, rng, 'r')] = vname
                             parent_name = self.scope_vars[name]
                             parent_array = self.scope_arrays[parent_name]
-                            shape = rng.size()
-                            shape = [d for d in shape if d != 1]
-                            if not shape:
-                                shape = [1]
+                            sqz_rng = copy.deepcopy(rng)
+                            sqz_rng.squeeze()
+                            shape = sqz_rng.size()
                             dtype = parent_array.dtype
                             self.sdfg.add_array(vname, shape, dtype)
-                            self.sdfg_inputs[vname] = (parent_name, rng, set())
+                            self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
+                            self.sdfg_inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
                             node.value.right = ast.Name(id=vname)
                         else:
@@ -872,23 +872,22 @@ class TaskletTransformer(ExtNodeTransformer):
                         rng = dace.subsets.Range(astutils.subscript_to_slice(
                             real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
                         if (name, rng, 'w') in self.accesses:
-                            node.value.right = ast.Name(id=self.accesses[(name, rng, 'w')])
+                            node.value.right = ast.Name(id=self.accesses[(name, rng, 'w')][0])
                         elif name in self.variables:
                             pass
                         elif ((name, rng, 'r') in self.accesses
                                 or name in self.scope_vars):
                             vname = "__tmp_{l}_{c}".format(
                                 l=target.lineno, c=target.col_offset)
-                            self.accesses[(name, rng, 'w')] = vname
                             parent_name = self.scope_vars[name]
                             parent_array = self.scope_arrays[parent_name]
-                            shape = rng.size()
-                            shape = [d for d in shape if d != 1]
-                            if not shape:
-                                shape = [1]
+                            sqz_rng = copy.deepcopy(rng)
+                            sqz_rng.squeeze()
+                            shape = sqz_rng.size()
                             dtype = parent_array.dtype
                             self.sdfg.add_array(vname, shape, dtype)
-                            self.sdfg_outputs[vname] = (parent_name, rng, set())
+                            self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
+                            self.sdfg_outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
                             node.value.right = ast.Name(id=vname)
                         else:
@@ -988,9 +987,13 @@ class ProgramVisitor(ExtNodeVisitor):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
-    def parse_program(self, program: ast.FunctionDef):
-        for stmt in program.body:
-            self.visit_TopLevel(stmt)
+    def parse_program(self, program: ast.FunctionDef, is_tasklet=False):
+        if is_tasklet:
+            program.decorator_list = []
+            self.visit_FunctionDef(program)
+        else:
+            for stmt in program.body:
+                self.visit_TopLevel(stmt)
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
         
@@ -1109,7 +1112,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 'All arguments in primitive %s must be annotated' % node.name)
         return result
 
-    def _parse_subprogram(self, name, node):
+    def _parse_subprogram(self, name, node, is_tasklet=False):
         scope_arrays = {**self.scope_arrays, **self.sdfg.arrays}
         scope_vars = {**self.scope_vars, **self.variables}
         pv = ProgramVisitor(
@@ -1123,17 +1126,20 @@ class ProgramVisitor(ExtNodeVisitor):
             self.other_sdfgs,
             nested=True)
 
-        return pv.parse_program(node)
+        return pv.parse_program(node, is_tasklet)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         # Supported decorated function types: map, mapscope, consume,
         # consumescope, tasklet, program
 
-        if len(node.decorator_list) != 1:
+        if len(node.decorator_list) > 1:
             raise DaceSyntaxError(
                 self, node,
                 'Exactly one DaCe decorator is allowed on a function')
-        dec = rname(node.decorator_list[0])
+        if len(node.decorator_list) == 0:
+            dec = 'dace.tasklet'
+        else:
+            dec = rname(node.decorator_list[0])
 
         # Create a new state for the statement
         state = self._add_state('s' + str(self.lineoffset))
@@ -1168,9 +1174,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                                       set(inputs.keys()),
                                                       set(outputs.keys()))
             else:  # Scope + tasklet (e.g., @dace.map)
-                internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(
-                    state, node)
-                dummy = True
+                # internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(
+                #     state, node)
+                # dummy = True
+                body, inputs, outputs = self._parse_subprogram('MapBody', node, True)
+                internal_node = state.add_nested_sdfg(
+                    body, self.sdfg, inputs.keys(), outputs.keys())
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs,
@@ -1410,6 +1419,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for n in reversed(outer_indices):
                         irng.ranges.pop(n)
                         orng.ranges.pop(n)
+                    irng.offset(orng, True)
                     vname = "{c}_in_from_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(entry_node))
@@ -1475,6 +1485,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for n in reversed(outer_indices):
                         irng.ranges.pop(n)
                         orng.ranges.pop(n)
+                    irng.offset(orng, True)
                     vname = "{c}_out_of_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(exit_node))
@@ -1493,26 +1504,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     vname = memlet.data
                 write_node = state.add_write(vname)
-                state.add_memlet_path(
-                    internal_node,
-                    exit_node,
-                    write_node,
-                    memlet=memlet,
-                    src_conn=conn,
-                    dst_conn=None)
-            # for conn, memlet in outputs.items():
-            #     write_node = state.add_write(memlet.data)
-            #     if exit_node is not None:
-            #         state.add_memlet_path(
-            #             internal_node,
-            #             exit_node,
-            #             write_node,
-            #             memlet=memlet,
-            #             src_conn=conn,
-            #             dst_conn=None)
-            #     else:
-            #         state.add_edge(internal_node, conn, write_node, None,
-            #                        memlet)
+                if exit_node is not None:
+                    state.add_memlet_path(
+                        internal_node,
+                        exit_node,
+                        write_node,
+                        memlet=memlet,
+                        src_conn=conn,
+                        dst_conn=None)
+                else:
+                    state.add_edge(internal_node, conn, write_node, None,
+                                   memlet)
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
