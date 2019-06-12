@@ -161,3 +161,6 @@ sdaccel_timeline_*
 *~
 
 perfdata.db
+
+.idea/
+_dotgraphs/
