@@ -435,6 +435,15 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
+    def squeeze(self):
+        shape = self.size()
+        non_ones = [i for i, d in enumerate(shape) if d != 1]
+        squeezed_ranges = [self.ranges[i] for i in non_ones]
+        if not squeezed_ranges:
+            squeezed_ranges = [(0, 0, 1)]
+        self.ranges = squeezed_ranges
+        self.offset(self, True)
+
 
 class Indices(Subset):
     """ A subset of one element representing a single index in an
