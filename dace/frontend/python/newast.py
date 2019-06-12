@@ -1400,31 +1400,31 @@ class ProgramVisitor(ExtNodeVisitor):
                     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
                     name = memlet.data
                     irng = memlet.subset
-                    orng = scope_memlet.subset
+                    orng = copy.deepcopy(scope_memlet.subset)
                     outer_indices = []
                     for n, (i, o) in enumerate(zip(irng, orng)):
                         if i == o and n not in inner_indices:
                             outer_indices.append(n)
                         elif n not in inner_indices:
                             inner_indices.add(n)
-                    # for n in reversed(outer_indices):
-                    #     irng.ranges.pop(n)
-                    #     orng.ranges.pop(n)
+                    for n in reversed(outer_indices):
+                        irng.ranges.pop(n)
+                        orng.ranges.pop(n)
                     vname = "{c}_in_from_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(entry_node))
                     self.accesses[(name, scope_memlet.subset, 'r')] = vname
-                    # shape = orng.size()
-                    # shape = [d for d in shape if d != 1]
-                    # if not shape:
-                    #     shape = [1]
-                    shape = arr.shape
+                    shape = orng.size()
+                    shape = [d for d in shape if d != 1]
+                    if not shape:
+                        shape = [1]
+                    # shape = arr.shape
                     dtype = arr.dtype
                     self.sdfg.add_array(vname, shape, dtype)
                     self.inputs[vname] = (scope_memlet, inner_indices)
                     # self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
-                    memlet.subset.offset(memlet.subset, True, outer_indices)
+                    # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
             # for conn, memlet in inputs.items():
@@ -1465,31 +1465,31 @@ class ProgramVisitor(ExtNodeVisitor):
                     scope_memlet = propagate_memlet(state, memlet, exit_node, True, arr)
                     name = memlet.data
                     irng = memlet.subset
-                    orng = scope_memlet.subset
+                    orng = copy.deepcopy(scope_memlet.subset)
                     outer_indices = []
                     for n, (i, o) in enumerate(zip(irng, orng)):
                         if i == o and n not in inner_indices:
                             outer_indices.append(n)
                         elif n not in inner_indices:
                             inner_indices.add(n)
-                    # for n in reversed(outer_indices):
-                    #     irng.ranges.pop(n)
-                    #     orng.ranges.pop(n)
+                    for n in reversed(outer_indices):
+                        irng.ranges.pop(n)
+                        orng.ranges.pop(n)
                     vname = "{c}_out_of_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(exit_node))
                     self.accesses[(name, scope_memlet.subset, 'w')] = vname
-                    # shape = orng.size()
-                    # shape = [d for d in shape if d != 1]
-                    # if not shape:
-                    #     shape = [1]
-                    shape = arr.shape
+                    shape = orng.size()
+                    shape = [d for d in shape if d != 1]
+                    if not shape:
+                        shape = [1]
+                    # shape = arr.shape
                     dtype = arr.dtype
                     self.sdfg.add_array(vname, shape, dtype)
                     self.outputs[vname] = (scope_memlet, inner_indices)
                     # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
-                    memlet.subset.offset(memlet.subset, True, outer_indices)
+                    # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
                 write_node = state.add_write(vname)
@@ -1791,8 +1791,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
                 if self.nested:
                     if (name, rng, 'w') in self.accesses:
-                        rng.offset(rng, True)
-                        self._add_tasklet((self.accesses[(name, rng, 'w')], rng), result)
+                        self._add_tasklet(self.accesses[(name, rng, 'w')], result)
                     elif name in self.variables:
                         aname = self.variables[name]
                         self._add_tasklet((aname, rng), result)
@@ -1800,15 +1799,16 @@ class ProgramVisitor(ExtNodeVisitor):
                             or name in self.scope_vars):
                         vname = "__tmp_{l}_{c}".format(
                             l=target.lineno, c=target.col_offset)
-                        self.accesses[(name, rng, 'w')] = vname
                         parent_name = self.scope_vars[name]
                         parent_array = self.scope_arrays[parent_name]
-                        shape = parent_array.shape
+                        sqz_rng = copy.deepcopy(rng)
+                        sqz_rng.squeeze()
+                        shape = sqz_rng.size()
                         dtype = parent_array.dtype
                         self.sdfg.add_array(vname, shape, dtype)
+                        self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                         self.variables[vname] = parent_name
-                        self.outputs[vname] = dace.Memlet(parent_name, rng.num_elements(), copy.deepcopy(rng), 1)
-                        rng.offset(rng, True)
+                        self.outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                         if isinstance(result, tuple):
                             arr, subset = result
                         else:
@@ -1820,11 +1820,11 @@ class ProgramVisitor(ExtNodeVisitor):
                                 result_size = np.prod(self.sdfg.arrays[arr].shape)
                         else:
                             result_size = 1
-                        if rng.num_elements() == result_size:
-                            if rng.num_elements() == 1:
-                                self._add_tasklet((vname, rng), result)
+                        if sqz_rng.num_elements() == result_size:
+                            if sqz_rng.num_elements() == 1:
+                                self._add_tasklet((vname, sqz_rng), result)
                             else:
-                                self._add_copy((vname, rng), result)
+                                self._add_copy((vname, sqz_rng), result)
                         else:
                             if result_size == 1:
                                 self._add_mapped_copy(target, vname, result)
@@ -2334,11 +2334,9 @@ class ProgramVisitor(ExtNodeVisitor):
             rng = dace.subsets.Range(astutils.subscript_to_slice(
                 real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
             if (name, rng, 'w') in self.accesses:
-                rng.offset(rng, True)
-                return (self.accesses[(name, rng, 'w')], rng)
+                return self.accesses[(name, rng, 'w')]
             elif (name, rng, 'r') in self.accesses:
-                rng.offset(rng, True)
-                return (self.accesses[(name, rng, 'r')], rng)
+                return self.accesses[(name, rng, 'r')]
             elif name in self.variables:
                 return (name, rng)
             elif name in self.scope_vars:
@@ -2347,12 +2345,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.accesses[(name, rng, 'r')] = vname
                 parent_name = self.scope_vars[name]
                 parent_array = self.scope_arrays[parent_name]
-                shape = parent_array.shape
+                sqz_rng = copy.deepcopy(rng)
+                sqz_rng.squeeze()
+                shape = sqz_rng.size()
                 dtype = parent_array.dtype
                 self.sdfg.add_array(vname, shape, dtype)
-                self.inputs[vname] = dace.Memlet(parent_name, rng.num_elements(), copy.deepcopy(rng), 1)
-                rng.offset(rng, True)
-                return (vname, rng)
+                self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
+                self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
+                return (vname, sqz_rng)
             else:
                 raise DaceSyntaxError(
                     self, target,
