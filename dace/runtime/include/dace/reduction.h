@@ -71,6 +71,26 @@ namespace dace {
         DACE_HDFI T operator()(const T &a, const T &b) const { return a + b; }
     };
 
+// Implementation of double atomicAdd for CUDA architectures prior to 6.0
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 600
+    template <>
+    struct _wcr_fixed<ReductionType::Sum, double> {
+        static DACE_HDFI void reduce(double *ptr, const double& value) { *ptr += value; }
+
+        static DACE_HDFI void reduce_atomic(double *ptr, const double& value) {
+            unsigned long long int* address_as_ull = (unsigned long long int*)ptr;
+            unsigned long long int old = *address_as_ull, assumed;
+            do {
+                assumed = old;
+                old = atomicCAS(address_as_ull, assumed,
+                __double_as_longlong(value + __longlong_as_double(assumed)));
+            } while (assumed != old);
+        }
+
+        DACE_HDFI double operator()(const double &a, const double &b) const { return a + b; }
+    };
+#endif
+
     template <typename T>
     struct _wcr_fixed<ReductionType::Product, T> {
 

@@ -1246,8 +1246,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 # Optimize conditions if they are always true
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if i >= 3 or ((dsym_end[i] < maxel) != False and (
-                    (dsym_end[i] % self._block_dims[i]) != 0) == True):
+                if (i >= 3
+                        or ((dsym_end[i] < maxel) != False and
+                            ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                        or (self._block_dims[i] > maxel) == True):
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))

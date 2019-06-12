@@ -2144,6 +2144,7 @@ class TFSession:
             outputParams,
             "lambda a, b: max(a,b)",
             -99999999999,
+            wcr_conflict=False
         )
         self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
         # add memlets from inner map to tasklet
@@ -2159,6 +2160,7 @@ class TFSession:
                 ",".join(outputParams[i]),
                 wcr_str="lambda a, b: max(a,b)",
                 wcr_identity=-99999999999,
+                wcr_conflict=False,
             )
             state.add_edge(tasklet, name, mapExit2, None, memlet)
 
@@ -3732,6 +3734,7 @@ class TFSession:
         wcr=None,
         wcr_identity=None,
         identifier="out",
+        wcr_conflict=True
     ):
         """ Convenience function that adds two memlets for each output of the 
             node: external and internal to a given map.
@@ -3751,6 +3754,9 @@ class TFSession:
             @param identifier: This is the base identifier for the out connector
                                 of the tasklet. Default value is "out". If there are
                                 multiple out connectors, each is numbered from zero.
+            @param wcr_conflict: (optional) If False, specifies that this
+                                 write-conflict resolution does not incur an
+                                 atomic operation.
         """
 
         connected_nodes = set()
@@ -3765,12 +3771,14 @@ class TFSession:
 
             if out.data not in connected_nodes:
                 outerMemlet = Memlet.simple(
-                    out, ",".join(outputDims[i]), wcr_str=wcr, wcr_identity=wcr_identity
+                    out, ",".join(outputDims[i]), wcr_str=wcr, wcr_identity=wcr_identity,
+                    wcr_conflict=wcr_conflict
                 )
                 state.add_edge(otherNode, None, out, None, outerMemlet)
                 connected_nodes.add(out.data)
             innerMemlet = Memlet.simple(
-                out, ",".join(outputParams[i]), wcr_str=wcr, wcr_identity=wcr_identity
+                out, ",".join(outputParams[i]), wcr_str=wcr, wcr_identity=wcr_identity,
+                wcr_conflict=wcr_conflict
             )
 
             if isinstance(tasklet, (Tasklet, NestedSDFG)):
