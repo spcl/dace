@@ -493,6 +493,7 @@ class TFSession:
 
         # Compile the SDFG
         self.graph.fill_scope_connectors()
+        self.graph.apply_gpu_transformations()
         # self.apply_tensorflow_transform(validate=False)
         # self.graph.apply_strict_transformations(validate=False)
         # self.graph.validate()
