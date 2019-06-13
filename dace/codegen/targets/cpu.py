@@ -1205,7 +1205,7 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
-        node.sdfg._parent = sdfg
+        node.sdfg._parent_sdfg = sdfg
         state_dfg = sdfg.nodes()[state_id]
 
         # Take care of nested SDFG I/O
