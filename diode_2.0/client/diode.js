@@ -3611,7 +3611,8 @@ class DIODE {
                             value: value,
                             type: options ? options.type : options
                         }
-                    })
+                    });
+                    this.showStaleDataButton();
                 },
                 applyTransformation: () => {
                     this.project().request(['apply-adv-transformation-' + target_name], x => {
