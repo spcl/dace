@@ -2868,7 +2868,9 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         this.on(this.project().eventString('-req-display-properties'), (msg) => {
             setTimeout(() => eh.emit(this.project().eventString("display-properties"), 'ok'), 1);
             this.getHTMLContainer().innerHTML = "";
-            this.diode.renderProperties(msg.transthis, msg.node, msg.params, this.getHTMLContainer(), msg.options);
+            let p = msg.params;
+            if(typeof(p) == 'string') p = JSON.parse(p);
+            this.diode.renderProperties(msg.transthis, msg.node, p, this.getHTMLContainer(), msg.options);
         });
 
         this.on(this.project().eventString('-req-render-free-vars'), msg => {
@@ -2956,7 +2958,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         let state = this.getState();
         if(state.params != undefined && state.params.params != null) {
             let p = state.params;
-            this.diode.renderProperties(p.transthis, p.node, p.params, this.getHTMLContainer());
+            this.diode.renderProperties(p.transthis, p.node, JSON.parse(p.params), this.getHTMLContainer());
         }
     }
 
@@ -4729,7 +4731,7 @@ class DIODE {
         let dobj = {
             transthis: typeof(transthis) == 'string' ? transthis : transthis.created,
             node: node,
-            params: params,
+            params: params ? JSON.stringify(params) : undefined,
             options: options
         };
         this.replaceOrCreate(['display-properties'], dobj,
