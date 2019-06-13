@@ -324,7 +324,16 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // This pseudo-element returns a filter function that returns only elements from the "default" run configuration
             // #TODO: Make the default run configurable.
             // For now, the default run is the run with the most committed cores
-            return x => x.filter(y => y.runopts == '# ;export OMP_NUM_THREADS=4; Running in multirun config');
+            //return x => x.filter(y => y.runopts == '# ;export OMP_NUM_THREADS=4; Running in multirun config');
+            return x => {
+                let tmp = x.map(y => {
+                    let r = [];
+                    y.runopts.replace(/OMP_NUM_THREADS=(\d+)/gm, (m, p) => r.push(p));
+                    return r;
+                });
+                let max_num = Math.max(...tmp.map(x => parseInt(x)));
+                return x.filter(z => z.runopts == '# ;export OMP_NUM_THREADS=' + max_num + '; Running in multirun config');
+            };
         }
         else {
             throw "#TODO";
