@@ -873,6 +873,7 @@ class TaskletTransformer(ExtNodeTransformer):
                     self.inputs[connector] = memlet
                 elif isinstance(node.value.op, ast.RShift):
                     target = node.value.right
+                    new_output = False
                     if self.nested: # and isinstance(target, ast.Subscript):
                         name = rname(target)
                         real_name = {**self.variables, **self.scope_vars}[name]
@@ -903,6 +904,7 @@ class TaskletTransformer(ExtNodeTransformer):
                             self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                             self.sdfg_outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
+                            new_output = True
                             if isinstance(target, ast.Subscript):
                                 node.value.right = ast.Name(id=vname)
                             elif isinstance(target, ast.Call):
@@ -915,6 +917,11 @@ class TaskletTransformer(ExtNodeTransformer):
                                 'Array "{}" used before definition'.format(name))
                     connector, memlet = _parse_memlet(
                         self, node.value.left, node.value.right, self.defined)
+                    if new_output:
+                        out_memlet = self.sdfg_outputs[vname][0]
+                        out_memlet.wcr = memlet.wcr
+                        out_memlet.wcr_identity = memlet.wcr_identity
+                        out_memlet.wcr_conflict = memlet.wcr_conflict
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
                             self, node,
