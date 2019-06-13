@@ -284,7 +284,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
             if end is None and arrname is None:
                 raise SyntaxError('Cannot define range without end')
             elif end is not None:
-                end = symbolic.pystr_to_symbolic(unparse(end))
+                end = symbolic.pystr_to_symbolic(unparse(end)) - 1
             else:
                 end = symbolic.pystr_to_symbolic(
                     symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1

@@ -1088,10 +1088,13 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parse possible values to slices or objects that can be used in
             the SDFG API. """
         if isinstance(arg, ast.Subscript) and rname(arg) == '_':
-            result = [
-                ':'.join([str(d) for d in dim]) for dim in
-                astutils.subscript_to_slice(arg, self.sdfg.arrays)[1]
-            ]
+            # result = [
+            #     ':'.join([str(d) for d in dim]) for dim in
+            #     astutils.subscript_to_slice(arg, self.sdfg.arrays)[1]
+            # ]
+            rng = dace.subsets.Range(
+                astutils.subscript_to_slice(arg, self.sdfg.arrays)[1])
+            result = str(rng).split(',')
             if as_list is False and len(result) == 1:
                 return result[0]
             return result
