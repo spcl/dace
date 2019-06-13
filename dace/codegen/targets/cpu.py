@@ -61,7 +61,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of traversed nodes
         self._generated_nodes = set()
-        self._allocated_arrays = set()
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
@@ -158,11 +157,16 @@ class CPUCodeGen(TargetCodeGenerator):
                        callsite_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
-        if ((state_id, node.data) in self._allocated_arrays
-                or (None, node.data) in self._allocated_arrays
-                or nodedesc.transient == False):
+
+        if nodedesc.transient == False:
             return
-        self._allocated_arrays.add((state_id, node.data))
+
+        # Check if array is already allocated
+        try:
+            self._dispatcher.defined_vars.get(name)
+            return  # Array was already allocated in this or upper scopes
+        except KeyError:  # Array not allocated yet
+            pass
 
         # Compute array size
         arrsize = ' * '.join([sym2cpp(s) for s in nodedesc.strides])
