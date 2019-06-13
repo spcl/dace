@@ -308,7 +308,12 @@ class SDFG(OrderedDiGraph):
     @property
     def name(self):
         """ The name of this SDFG. """
-        return self._name
+        fullname = self._name
+        parent = self._parent
+        while parent:
+            fullname = "{}_{}".format(parent.name, fullname)
+            parent = parent.parent
+        return fullname
 
     @property
     def label(self):
@@ -503,7 +508,7 @@ class SDFG(OrderedDiGraph):
 
         # Call recursively on parents
         if self.parent is not None:
-            symbols.update(self.parent.symbols_defined_at(self))
+            symbols.update(self._parent_sdfg.symbols_defined_at(self))
 
         symbols.update(self.constants)
 
