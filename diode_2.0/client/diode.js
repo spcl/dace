@@ -210,7 +210,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 // #TODO: This means that renamed SDFGs will not work as expected.
                 return;
             }
-            eh.emit(this.project().eventString('new-sdfg'), 'ok');
+            setTimeout(() => eh.emit(this.project().eventString('new-sdfg'), 'ok'), 1);
             this.render_sdfg(msg, true);
         });
 
@@ -222,7 +222,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             if(ret === undefined) {
                 ret = 'ok';
             }
-            eh.emit(transthis._project.eventString('sdfg-msg'), ret);
+            setTimeout(() => eh.emit(transthis._project.eventString('sdfg-msg'), ret), 1);
         });
 
         this.on(this._project.eventString('-req-sdfg_props'), msg => {
@@ -233,12 +233,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
             let resp = this.getChangedSDFGPropertiesFromState();
             let named = {};
             named[this.getState()['sdfg_name']] = resp;
-            eh.emit(transthis._project.eventString('sdfg_props'), named);
+            setTimeout(() => eh.emit(transthis._project.eventString('sdfg_props'), named), 1);
         });
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
             // Emit ok directly (to avoid caller timing out)
-            eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok");
+            setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
             
             if(msg.type == "symbol-properties") {
                 this.symbolPropertyChanged(msg.node, msg.name, msg.value);
@@ -270,7 +270,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             let named = {};
             named[this.getState()['sdfg_name']] = sdfg;
             named = JSON.stringify(named);
-            eh.emit(this.project().eventString("sdfg_object"), named);
+            setTimeout(() => eh.emit(this.project().eventString("sdfg_object"), named), 1);
         });
     }
 
@@ -936,7 +936,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         this.on(this._project.eventString('-req-optpath'), msg => {
             let named = {};
             named[this.getState()['for_sdfg']] = [];
-            eh.emit(transthis._project.eventString('optpath'), named);
+            setTimeout(() => eh.emit(transthis._project.eventString('optpath'), named), 1);
         });
 
         let sname = this.getState()['for_sdfg'];
@@ -963,7 +963,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
             let transforms = this.getTransformations(msg);
 
-            eh.emit(transthis._project.eventString('get-transformations-' + sname), transforms);
+            setTimeout(() => eh.emit(transthis._project.eventString('get-transformations-' + sname), transforms), 1);
         });
         
         this.on(this.project().eventString('-req-apply-transformation-' + sname), msg => {
@@ -995,7 +995,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
             this.propertyChanged(msg.node, msg.name, msg.value);
-            eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok");
+            setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
         });
     }
 
@@ -1324,7 +1324,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-input_code'), (msg) => {
             // Echo with data
-            eh.emit(transthis._project.eventString('input_code'),transthis.editor.getValue());
+            setTimeout(() => eh.emit(transthis._project.eventString('input_code'),transthis.editor.getValue()), 1);
             transthis.editor.clearSelection();
         });
 
