@@ -2079,7 +2079,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         for aname, arg in zip(func.argnames, node.args)]
 
                 sdfg = func.to_sdfg(*(
-                    self.defined[arg] if isinstance(arg, str) else arg
+                    {**self.defined, **self.sdfg.arrays}[arg] if isinstance(arg, str) else arg
                     for aname, arg in args))
             else:
                 raise DaceSyntaxError(
