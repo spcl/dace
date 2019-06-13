@@ -270,6 +270,17 @@ class FormBuilder {
         return $(elem);
     }
 
+    static createLongTextInput(id, onchange, initial = '') {
+        let elem = document.createElement("textarea");
+        // oninput triggers on every change (as opposed to onchange, which only changes on deselection)
+        elem.onchange = () => {
+            onchange(elem.innerHTML);
+        }
+        elem.id = id;
+        elem.innerHTML = initial
+        return $(elem);
+    }
+
     static createSelectInput(id, onchange, options, initial = '') {
         let elem = document.createElement("select");
 

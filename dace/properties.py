@@ -160,7 +160,7 @@ class Property:
         if meta_to_json == None:
             import json
 
-            def tmp_func():
+            def tmp_func(self):
                 typestr = ""
                 try:
                     typestr = self.dtype.__name__
@@ -176,12 +176,15 @@ class Property:
 
                 _default = self.to_json(self.default)
 
-                return json.dumps({
+                mdict = {
                     "type": typestr,
                     "desc": self.desc,
                     "category": self.category,
                     "default": json.loads(_default),
-                })
+                }
+                if self.indirected:
+                    mdict['indirected'] = True
+                return json.dumps(mdict)
 
             self._meta_to_json = tmp_func
         else:
@@ -338,7 +341,7 @@ class Property:
             # Add the meta elements decoupled from key/value to facilitate value usage
             # (The meta is only used when rendering the values)
             if not options['no_meta']:
-                retdict['_meta_' + x.attr_name] = json.loads(x.meta_to_json())
+                retdict['_meta_' + x.attr_name] = json.loads(x.meta_to_json(x))
 
         # Stringify using the default interface
         return json.dumps(retdict)
@@ -1040,10 +1043,16 @@ class CodeProperty(Property):
     def from_json(l, sdfg=None):
         tmp = json.loads(l)
 
+        if tmp == None:
+            return None
+
         try:
             lang = tmp['language']
         except:
             lang = None
+
+        if lang == "NoCode":
+            return None
         
         if lang == None:
             lang = dace.types.Language.Python
@@ -1109,8 +1118,8 @@ class CodeProperty(Property):
         if val is None:
             # Keep as None. The "allow_none" check in the superclass
             # ensures that this is legal
-            pass
-            language = dace.types.Language.Python
+            super(CodeProperty, self).__set__(obj, None)
+            return
         elif isinstance(val, str):
             try:
                 language = getattr(obj, "_" + self.attr_name)['language']

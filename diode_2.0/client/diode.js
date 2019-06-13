@@ -1,7 +1,7 @@
 import {REST_request, FormBuilder, setup_drag_n_drop} from "./main.js"
 import * as renderer from "./renderer_dir/renderer_main.js"
 import { Appearance } from "./diode_appearance.js"
-import { SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser } from "./sdfg_parser.js"
+import { SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 import * as Roofline from "./renderer_dir/Roofline/main.js"
 
@@ -379,14 +379,61 @@ class DIODE_Context_SDFG extends DIODE_Context {
             this.diode.addContentItem(config);
             setTimeout(() => this.render_free_variables(), 1);
         });
-        /*this.project().request(['render-free-vars'], x => {
+    }
 
-        }, {
-            params: {
-                data: sdfg_dat,
-                calling_context: this.created
+    merge_scope_entry_exit_properties(entry_node, exit_node) {
+        /*  Merges entry_node and exit_node into a single node, such that the rendered properties are identical
+            when selecting either entry_node or exit_node.        
+        */
+        console.log("entry_node", entry_node);
+        console.log("exit_node", exit_node);
+
+        let en_attrs = SDFG_PropUtil.getAttributeNames(entry_node);
+        let ex_attrs = SDFG_PropUtil.getAttributeNames(exit_node);
+
+        let new_attrs = {};
+       
+        for(let na of en_attrs) {
+            let meta = SDFG_PropUtil.getMetaFor(entry_node, na);
+            if(meta.indirected) {
+                // Most likely shared. Don't change.
+                new_attrs['_meta_' + na] = meta;
+                new_attrs[na] = entry_node.attributes[na];
             }
-        });*/
+            else {
+                // Private. Add, but force-set a new Category (in this case, MapEntry)
+                let mcpy = JSON.parse(JSON.stringify(meta));
+                mcpy['category'] = entry_node.type + " - " + mcpy['category'];
+                new_attrs['_meta_' + "entry_" + na] = mcpy;
+                new_attrs["entry_" + na] = entry_node.attributes[na];
+            }
+            
+        }
+        // Same for ex_attrs, but don't add if shared
+        for(let xa of ex_attrs) {
+            let meta = SDFG_PropUtil.getMetaFor(exit_node, xa);
+            if(!meta.indirected) {
+                let mcpy = JSON.parse(JSON.stringify(meta));
+                mcpy['category'] = exit_node.type + " - " + mcpy['category'];
+                mcpy['_noderef'] = exit_node.node_id;
+                new_attrs['_meta_' + "exit_" + xa] = mcpy;
+                new_attrs["exit_" + xa] = exit_node.attributes[xa];
+            }
+        }
+        // Copy the entry node for good measure
+        let ecpy = JSON.parse(JSON.stringify(entry_node));
+        ecpy.attributes = new_attrs;
+        return ecpy;
+    }
+
+    find_exit_for_entry(nodes, entry_node) {
+        for(let n of nodes) {
+            if(n.type.endsWith("Exit") && parseInt(n.scope_entry) == entry_node.id) {
+                return n;
+            }
+        }
+        console.warn("Did not find corresponding exit");
+        return null;
     }
 
     sdfg_element_selected(msg) {
@@ -527,7 +574,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 proplist.push(pdata);
             }
             let propobj = {
-                node_id: node_id,
+                node_id: parseInt(n.id),
                 state_id: state_id,
                 data: () => ({props: proplist})
             };
@@ -540,10 +587,30 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
 
         let nodes = state.nodes;
-        for(let n of nodes) {
-
+        for(let ni = 0; ni < nodes.length; ++ni) {
+            let n = nodes[ni];
             if(n.id != node_id)
                 continue;
+
+            // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
+            if(n.type.endsWith("Entry")) {
+                // Find the matching exit node
+                console.log("Got entry", n);
+                let exit_node = this.find_exit_for_entry(nodes, n);
+                let tmp = this.merge_scope_entry_exit_properties(n, exit_node);
+                render_props(tmp);
+
+                break;
+            }
+            else if(n.type.endsWith("Exit")) {
+                // Find the matching entry node and continue with that
+                console.log("Got exit", n);
+                let entry_id = parseInt(n.scope_entry);
+                let entry_node = nodes[entry_id];
+                let tmp = this.merge_scope_entry_exit_properties(entry_node, n);
+                render_props(tmp);
+                break;
+            }
 
             render_props(n);
             break;
@@ -683,6 +750,16 @@ class DIODE_Context_SDFG extends DIODE_Context {
             into the state.
         */
         let nref = this.getSDFGElementReference(node.node_id, node.state_id);
+
+        // Special case: Entry nodes may contain properties of exit nodes
+        if(name.startsWith("exit_")) {
+            let exit_node = this.find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
+            nref = this.getSDFGElementReference(exit_node.id, node.state_id);
+            name = name.substr("exit_".length);
+        }
+        else if(name.startsWith("entry_")) {
+            name = name.substr("entry_".length);
+        }
 
         nref[0].attributes[name] = value;
 
@@ -3561,7 +3638,11 @@ class DIODE {
             REST_request("/dace/api/v1.0/getEnum/" + name, undefined, xhr => {
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     console.log(name, xhr.response);
-                    localStorage.setItem('Enumeration:' + name, xhr.response);
+                    let tmp = JSON.parse(xhr.response);
+                    if(name == "Language") {
+                        tmp.enum.push("NoCode");
+                    }
+                    localStorage.setItem('Enumeration:' + name, JSON.stringify(tmp));
                 }
             }, 'GET');
 
@@ -4599,7 +4680,12 @@ class DIODE {
                     'language': langelem[0].value
                 });
             };
-            codeelem = FormBuilder.createTextInput("prop_" + x.name, onchange, x.value.string_data);
+            if(x.value == null) {
+                x.value = {};
+                x.value.language = "NoCode";
+                x.value.string_data = "";
+            }
+            codeelem = FormBuilder.createLongTextInput("prop_" + x.name, onchange, x.value.string_data);
             elem.appendChild(codeelem[0]);
             langelem = create_language_input(x.value.language, onchange);
             elem.appendChild(langelem[0]);

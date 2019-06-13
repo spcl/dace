@@ -110,4 +110,16 @@ class SDFG_Node_Parser {
     }
 }
 
-export {SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser}
+class SDFG_PropUtil {
+    static getMetaFor(obj, attr_name) {
+        return obj.attributes['_meta_' + attr_name];
+    }
+
+    static getAttributeNames(obj) {
+        let keys = Object.keys(obj.attributes);
+        let list = keys.filter(x => keys.includes('_meta_' + x));
+        return list;
+    }
+}
+
+export {SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser, SDFG_PropUtil}

@@ -2105,25 +2105,26 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         import json
         for n in nodes:
-            #print("Pre-type: " + type(n).__name__)
             nret = json.loads(
                 json.dumps(n),
                 object_hook=lambda x: Property.json_loader(x, rec_ci))
-            #print("Post-type: " + type(nret).__name__)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            #print("Pre-type: " + type(e).__name__)
             eret = json.loads(
                 json.dumps(e),
                 object_hook=lambda x: Property.json_loader(x, rec_ci))
-            #print("Post-type: " + type(eret).__name__)
-
-            # There is no option to directly add this edge - why not?
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)
+
+        # Fix potentially broken scopes
+        for n in nodes:
+            if isinstance(n, dace.graph.nodes.MapExit):
+                n.map = ret.entry_node(n).map
+            elif isinstance(n, dace.graph.nodes.ConsumeExit):
+                n.consume = ret.entry_node(n).consume
 
         return ret
 

@@ -611,6 +611,14 @@ class ConsumeEntry(EntryNode):
         self.add_in_connector('IN_stream')
         self.add_out_connector('OUT_stream')
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        import dace.subsets
+        c = Consume("", ['i', 1], None)
+        ret = ConsumeEntry(consume=c)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     @property
     def map(self):
         return self._consume.as_map()
@@ -644,6 +652,13 @@ class ConsumeExit(ExitNode):
         if consume is None:
             raise ValueError("Consume for ConsumeExit can not be None.")
         self._consume = consume
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        c = Consume("", ['i', 1], None)
+        ret = ConsumeExit(consume=c)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     @property
     def map(self):
