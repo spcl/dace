@@ -4,6 +4,7 @@
   right: 0;
   width: 320px;
   font-family: 'Helvetica';
+  z-index: 100000;
 }
 
 .vanillatoasts-toast {

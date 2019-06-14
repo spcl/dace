@@ -953,9 +953,12 @@ def compileProgram(request, language, perfopts=None):
                 sdfg_prop_dict[n] = get_all_SDFG_node_properties(s)
 
         code_tuple_dict = {}
+        # Deep-copy the SDFG (codegen may change the SDFG it operates on)
+        import copy
+        codegen_sdfgs = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
             from dace.codegen import codegen
-            for n, s in sdfg_dict.items():
+            for n, s in codegen_sdfgs.items():
                 code_tuple_dict[n] = codegen.generate_code(s)
 
         if dace_state == None:
