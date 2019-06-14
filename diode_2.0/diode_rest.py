@@ -832,6 +832,7 @@ def compileProgram(request, language, perfopts=None):
     client_id = request.json['client_id']
 
     sdfg_dict = {}
+    sdfg_eval_order = []
 
     with config_lock:  # Lock the config - the config may be modified while holding this lock, but the config MUST be restored.
 
@@ -890,6 +891,7 @@ def compileProgram(request, language, perfopts=None):
                             'sdfg': None,
                             'callback': loader_callback
                         })
+                    sdfg_eval_order.append(name)
                     return sdfg_dict[name]
 
                 for k, v in in_sdfg.items():
@@ -901,6 +903,7 @@ def compileProgram(request, language, perfopts=None):
                             'sdfg': None,
                             'callback': loader_callback
                         })
+                    sdfg_eval_order.append(k)
             else:
                 in_sdfg = dace.SDFG.fromJSON_object(in_sdfg)
                 sdfg_dict[in_sdfg.name] = in_sdfg
@@ -958,8 +961,14 @@ def compileProgram(request, language, perfopts=None):
         codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
             from dace.codegen import codegen
-            for n, s in codegen_sdfgs.items():
-                code_tuple_dict[n] = codegen.generate_code(s)
+            if sdfg_eval_order != []:
+                sdfg_eval_order.reverse()
+                for x in sdfg_eval_order:
+                    s = codegen_sdfgs[x]
+                    code_tuple_dict[x] = codegen.generate_code(s)
+            else:
+                for n, s in codegen_sdfgs.items():
+                    code_tuple_dict[n] = codegen.generate_code(s)
 
         if dace_state == None:
             if "code" in request.json:
