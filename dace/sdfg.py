@@ -3448,7 +3448,7 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None:
+    if sdfg.parent is not None and isinstance(sdfg.parent, SDFG):
         defined |= sdfg.parent.symbols_defined_at(sdfg).keys()
     # Don't include iteration variables
     # (TODO: this is too lenient; take scope into account)

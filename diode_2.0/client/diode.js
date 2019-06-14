@@ -269,7 +269,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             let sdfg = _state.type == 'SDFG' ? _state : _state.sdfg;
             let named = {};
             named[this.getState()['sdfg_name']] = sdfg;
-            named = JSON.stringify(named);
+            //named = JSON.stringify(named);
             setTimeout(() => eh.emit(this.project().eventString("sdfg_object"), named), 1);
         });
     }
@@ -4747,7 +4747,9 @@ class DIODE {
         else if(x.type == 'DebugInfo') {
             // Special case: The DebugInfo contains information where this element was defined
             // (in the original source).
-            let info_obj = JSON.parse(x.value);
+            let info_obj = x.value;
+            if(typeof(info_obj) == 'string')
+                info_obj = JSON.parse(info_obj);
             elem = FormBuilder.createCodeReference("prop_" + x.name, (elem) => {
                 // Clicked => highlight the corresponding code
                 transthis.project().request(['highlight-code'], msg => {}, {
@@ -5366,7 +5368,8 @@ class DIODE {
 
             if(cis) {
                 cval = values['sdfg_object'];
-                cval = JSON.parse(cval);
+                if(typeof(cval) == 'string')
+                    cval = JSON.parse(cval);
             }
 
             calling_context.project().request(["clear-errors"], () => {});
@@ -5779,7 +5782,7 @@ class DIODE {
     static editorTheme() {
         let theme = localStorage.getItem('diode2_ace_editor_theme');
         if(theme === null) {
-            return "monokai";
+            return "github";
         }
         return theme;
     }

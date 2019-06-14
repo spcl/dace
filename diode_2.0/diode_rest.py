@@ -6,7 +6,7 @@ import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory, send_file
-import json
+import json, copy
 import re
 from diode.remote_execution import Executor, AsyncExecutor
 
@@ -954,8 +954,8 @@ def compileProgram(request, language, perfopts=None):
 
         code_tuple_dict = {}
         # Deep-copy the SDFG (codegen may change the SDFG it operates on)
-        import copy
         codegen_sdfgs = copy.deepcopy(sdfg_dict)
+        codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
             from dace.codegen import codegen
             for n, s in codegen_sdfgs.items():
@@ -968,7 +968,7 @@ def compileProgram(request, language, perfopts=None):
                 in_code = ""
             try:
                 dace_state = DaceState(in_code, "fake", headless=True)
-                dace_state.set_sdfg(list(sdfg_dict.values())[0], list(sdfg_dict.keys())[0])
+                dace_state.set_sdfg(list(codegen_sdfgs_dace_state.values())[0], list(codegen_sdfgs_dace_state.keys())[0])
                 if len(dace_state.errors) > 0:
                     print("ERRORS: " + str(dace_state.errors))
                     errors.extend(dace_state.errors)

@@ -818,8 +818,8 @@ class DebugInfoProperty(Property):
         s = json.loads(s)
         if s == None: return None
 
-        return DebugInfo(s['filename'], s['start_line'], s['start_col'],
-                         s['end_line'], s['end_col'])
+        return DebugInfo(s['start_line'], s['start_col'],
+                         s['end_line'], s['end_col'], s['filename'])
 
 
 class ParamsProperty(Property):
