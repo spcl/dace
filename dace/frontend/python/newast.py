@@ -1107,7 +1107,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # ]
             rng = dace.subsets.Range(
                 astutils.subscript_to_slice(arg, self.sdfg.arrays)[1])
-            result = str(rng).split(',')
+            result = rng.string_list()
             if as_list is False and len(result) == 1:
                 return result[0]
             return result
