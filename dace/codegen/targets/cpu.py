@@ -2599,7 +2599,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
                     '''cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
 cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);'''
                     .format(
-                        ev=edge._cuda_event,
+                        ev=edge._cuda_event
+                        if hasattr(edge, '_cuda_event') else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream), sdfg, state_id,
                     [edge.src, edge.dst])
@@ -2621,7 +2622,8 @@ cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{e
                         '''cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
     cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);'''
                         .format(
-                            ev=e._cuda_event,
+                            ev=e._cuda_event
+                            if hasattr(e, '_cuda_event') else 0,
                             src_stream=cudastream,
                             dst_stream=e.dst._cuda_stream), sdfg, state_id,
                         [e.src, e.dst])
