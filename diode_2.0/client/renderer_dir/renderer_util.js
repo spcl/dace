@@ -1945,6 +1945,8 @@ class CanvasDrawManager {
         this._destroying = false;
 
         this.scale_origin = {x: 0, y: 0};
+
+        this.contention = 0;
     }
 
     destroy() {
@@ -1969,16 +1971,35 @@ class CanvasDrawManager {
         this.indices = [];
     }
 
-    scale(diff) {
+    scale(diff, x=0, y=0) {
+        
+        if(this.request_scale || Math.abs(diff) < 0.0001 || this.contention > 0) {
+            console.log("Blocking potential race");
+            return;
+        }
+        this.contention++;
         this.request_scale = true;
 
+        this.scale_origin.x = x;
+        this.scale_origin.y = y;
         this.scale_factor.x += diff;
         this.scale_factor.y += diff;
+        
+        this.scale_factor.x = Math.max(0.001, this.scale_factor.x);
+        this.scale_factor.y = Math.max(0.001, this.scale_factor.y);
+        this.contention--;
     }
 
     setTranslation(x, y) {
         this.translation.x = x;
         this.translation.y = y;
+    }
+
+    getTranslation() {
+        return {
+            x: this.noJitter(this.translation.x),
+            y: this.noJitter(this.translation.y)
+        };
     }
 
     translate(x, y) {
@@ -1987,16 +2008,26 @@ class CanvasDrawManager {
     }
 
     mapPixelToCoordsX(xpos) {
-        return (xpos - this.translation.x) / this.getScale();
+        return (xpos - this.translation.x) / this.getLastScale();
     }
 
     mapPixelToCoordsY(ypos) {
-        return (ypos - this.translation.y) / this.getScale(); 
+        return (ypos - this.translation.y) / this.getLastScale(); 
     }
 
     getScale() {
         ObjectHelper.assert("Uniform scale", this.scale_factor.x == this.scale_factor.y);
-        return this.scale_factor.x; // We don't allow non-uniform scaling.
+        return this.noJitter(this.scale_factor.x); // We don't allow non-uniform scaling.
+    }
+
+    getLastScale() {
+        return this.noJitter(this.last_scale_factor.x); // We don't allow non-uniform scaling.
+    }
+
+    noJitter(x) {
+        x = parseFloat(x.toFixed(3));
+        x = Math.round(x * 100) / 100;
+        return x;
     }
 
 
@@ -2004,6 +2035,8 @@ class CanvasDrawManager {
         if(this._destroying) {
             return;
         }
+        if(this.contention > 0) return;
+        this.contention += 1;
         let ctx = this.ctx;
 
         // Clear with default transform
@@ -2012,27 +2045,30 @@ class CanvasDrawManager {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.restore();
 
-
-        if(this.request_scale) {
+        let mx = 0;
+        let my = 0;
+        if(this.request_scale && this.contention == 1) {
             
+            mx = this.mapPixelToCoordsX(this.scale_origin.x);
+            my = this.mapPixelToCoordsY(this.scale_origin.y);
 
-            let sosx = /*this.scale_origin.x + */this.translation.x;
-            let sosy = /*this.scale_origin.y + */this.translation.y;
+            // The following two lines are buggy
+            this.translation.x = this.noJitter(mx - this.getScale() * mx);
+            this.translation.y = this.noJitter(my - this.getScale() * my);
 
-            this.translation.x = sosx;
-            this.translation.y = sosy;
-            
-
-            ctx.setTransform(this.scale_factor.x,0,0, this.scale_factor.y, sosx, sosy);
+            console.assert(this.scale_factor.x != this.last_scale_factor.x);
+            this.last_scale_factor = {
+                x: this.scale_factor.x,
+                y: this.scale_factor.y
+            };
             this.request_scale = false;
-
-            this.last_scale_factor = this.scale_factor;
-
         }
-        else
+        //else
         {
+            mx = this.mapPixelToCoordsX(this.scale_origin.x);
+            my = this.mapPixelToCoordsY(this.scale_origin.y);
             // Translate here
-            ctx.setTransform(this.last_scale_factor.x,0,0, this.last_scale_factor.y, this.translation.x, this.translation.y);
+            ctx.setTransform(this.getLastScale(),0,0, this.getLastScale(), this.translation.x, this.translation.y);
         }
         
         
@@ -2042,11 +2078,15 @@ class CanvasDrawManager {
             d.draw();
         }
 
-        // Translate back
-        //ctx.translate(-this.translation.x/* * this.getScale()*/, -this.translation.y /** this.getScale()*/);
+        //if(false) // Comment this line to show debug values at cursor position
+        {
+            ctx.fillText("(" + mx.toFixed(1) + "|" + my.toFixed(1) + ")",  mx, my);
+            ctx.fillText("(" + this.translation.x.toFixed(1) + "|" + this.translation.y.toFixed(1) + ")",  mx, my + 10);
+            ctx.fillText("s:" + this.getScale().toFixed(1),  mx, my + 20);
+        }
         let _this = this;
-     
         window.requestAnimationFrame(() => _this.draw());
+        this.contention -= 1;
     }
 }
 

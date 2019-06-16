@@ -873,7 +873,12 @@ class SdfgState {
             e.stopPropagation();
             e.preventDefault();
 
-            this.canvas_manager.scale(e.wheelDeltaY / 1000.0);
+            let canvas = () => this.getCanvas();
+            let br = () => canvas().getBoundingClientRect();
+        
+            let comp_x = event => (event.clientX - br().left);
+            let comp_y = event => (event.clientY - br().top);
+            this.canvas_manager.scale(e.deltaY / 1000.0, comp_x(e), comp_y(e));
 
         });
     }
@@ -1110,7 +1115,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
     });
 
     sdfg.edges.forEach(function (edge) {
-        let label = edge.attributes
+        let label = edge.attributes.data.attributes.condition.string_data;
         let textmetrics = ctx.measureText(label);
         g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width });
     });
