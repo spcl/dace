@@ -1941,12 +1941,94 @@ class CanvasDrawManager {
         this.scale_factor = {x: 1, y: 1};
         this.last_scale_factor = {x: 1, y: 1};
         
-        this.translation = {x: 0, y: 0};
         this._destroying = false;
 
         this.scale_origin = {x: 0, y: 0};
 
         this.contention = 0;
+
+        this._svg = document.createElementNS("http://www.w3.org/2000/svg",'svg');
+
+        this.user_transform = this._svg.createSVGMatrix();
+
+        this.addCtxTransformTracking();
+    }
+
+    svgPoint(x, y) {
+        let pt  = this._svg.createSVGPoint();
+        pt.x=x; pt.y=y;
+        return pt;
+    }
+
+    applyUserTransform() {
+        let ut = this.user_transform;
+        this.ctx.setTransform(ut.a, ut.b, ut.c, ut.d, ut.e, ut.f);
+    }
+
+    get translation() {
+        return { x: this.user_transform.e, y: this.user_transform.f };
+    }
+
+    addCtxTransformTracking() {
+        /* This function is a hack to provide the non-standardized functionality
+        of getting the current transform from a RenderingContext.
+        When (if) this is standardized, the standard should be used instead.
+        This is made for "easy" transforms and does not support saving/restoring
+        */
+
+        let svg = document.createElementNS("http://www.w3.org/2000/svg",'svg');
+        this.ctx._custom_transform_matrix = svg.createSVGMatrix();
+        // Save/Restore is not supported.
+
+        let checker = () => {
+            console.assert(!isNaN(this.ctx._custom_transform_matrix.f));
+        };
+        let _ctx = this.ctx;
+        let scale_func = _ctx.scale;
+        _ctx.scale = function(sx,sy) {
+            _ctx._custom_transform_matrix = _ctx._custom_transform_matrix.scaleNonUniform(sx,sy);
+            checker();
+            return scale_func.call(_ctx, sx, sy);
+        };
+        let translate_func = _ctx.translate;
+        _ctx.translate = function(sx,sy) {
+            _ctx._custom_transform_matrix = _ctx._custom_transform_matrix.translate(sx,sy);
+            checker();
+            return translate_func.call(_ctx, sx, sy);
+        };
+        let rotate_func = _ctx.rotate;
+        _ctx.rotate = function(r) {
+            _ctx._custom_transform_matrix = _ctx._custom_transform_matrix.rotate(r * 180.0 / Math.PI);
+            checker();
+            return rotate_func.call(_ctx, r);
+        };
+        let transform_func = _ctx.scale;
+        _ctx.transform = function(a,b,c,d,e,f){
+			let m2 = svg.createSVGMatrix();
+			m2.a=a; m2.b=b; m2.c=c; m2.d=d; m2.e=e; m2.f=f;
+            _ctx._custom_transform_matrix = _ctx._custom_transform_matrix.multiply(m2);
+            checker();
+			return transform_func.call(_ctx,a,b,c,d,e,f);
+		};
+
+        let setTransform_func = _ctx.setTransform;
+		_ctx.setTransform = function(a,b,c,d,e,f){
+			_ctx._custom_transform_matrix.a = a;
+			_ctx._custom_transform_matrix.b = b;
+			_ctx._custom_transform_matrix.c = c;
+			_ctx._custom_transform_matrix.d = d;
+			_ctx._custom_transform_matrix.e = e;
+            _ctx._custom_transform_matrix.f = f;
+            checker();
+			return setTransform_func.call(_ctx,a,b,c,d,e,f);
+		};
+		
+		_ctx.custom_inverseTransformMultiply = function(x,y){
+            let pt  = svg.createSVGPoint();
+            pt.x=x; pt.y=y;
+            checker();
+			return pt.matrixTransform(_ctx._custom_transform_matrix.inverse());
+		}
     }
 
     destroy() {
@@ -1987,32 +2069,26 @@ class CanvasDrawManager {
         
         this.scale_factor.x = Math.max(0.001, this.scale_factor.x);
         this.scale_factor.y = Math.max(0.001, this.scale_factor.y);
+        {
+            let sv = diff < 0 ? 0.9 : 1.1;
+            let pt = this.svgPoint(this.scale_origin.x, this.scale_origin.y).matrixTransform(this.user_transform.inverse());
+            this.user_transform = this.user_transform.translate(pt.x, pt.y);
+            this.user_transform = this.user_transform.scale(sv, sv, 1, 0, 0, 0);
+            this.user_transform = this.user_transform.translate(-pt.x, -pt.y);
+        }
         this.contention--;
     }
 
-    setTranslation(x, y) {
-        this.translation.x = x;
-        this.translation.y = y;
-    }
-
-    getTranslation() {
-        return {
-            x: this.noJitter(this.translation.x),
-            y: this.noJitter(this.translation.y)
-        };
-    }
-
     translate(x, y) {
-        this.translation.x += x;
-        this.translation.y += y;
+        this.user_transform = this.user_transform.translate(x * this.user_transform.a, y * this.user_transform.d);
     }
 
     mapPixelToCoordsX(xpos) {
-        return (xpos - this.translation.x) / this.getLastScale();
+        return this.svgPoint(xpos, 0).matrixTransform(this.user_transform.inverse()).x;
     }
 
     mapPixelToCoordsY(ypos) {
-        return (ypos - this.translation.y) / this.getLastScale(); 
+        return this.svgPoint(0, ypos).matrixTransform(this.user_transform.inverse()).y;
     }
 
     getScale() {
@@ -2052,25 +2128,19 @@ class CanvasDrawManager {
             mx = this.mapPixelToCoordsX(this.scale_origin.x);
             my = this.mapPixelToCoordsY(this.scale_origin.y);
 
-            // The following two lines are buggy
-            this.translation.x = this.noJitter(mx - this.getScale() * mx);
-            this.translation.y = this.noJitter(my - this.getScale() * my);
-
-            console.assert(this.scale_factor.x != this.last_scale_factor.x);
-            this.last_scale_factor = {
-                x: this.scale_factor.x,
-                y: this.scale_factor.y
-            };
+            // Reset the translation
+            this.applyUserTransform();
             this.request_scale = false;
         }
-        //else
+        else
         {
             mx = this.mapPixelToCoordsX(this.scale_origin.x);
             my = this.mapPixelToCoordsY(this.scale_origin.y);
-            // Translate here
-            ctx.setTransform(this.getLastScale(),0,0, this.getLastScale(), this.translation.x, this.translation.y);
+            
+            
         }
-        
+        this.applyUserTransform();
+            
         
 
         this.ref_global_state.drawSDFG();
@@ -2078,7 +2148,7 @@ class CanvasDrawManager {
             d.draw();
         }
 
-        //if(false) // Comment this line to show debug values at cursor position
+        if(false) // Comment this line to show debug values at cursor position
         {
             ctx.fillText("(" + mx.toFixed(1) + "|" + my.toFixed(1) + ")",  mx, my);
             ctx.fillText("(" + this.translation.x.toFixed(1) + "|" + this.translation.y.toFixed(1) + ")",  mx, my + 10);
