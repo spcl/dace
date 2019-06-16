@@ -377,6 +377,12 @@ class Range(Subset):
         return ", ".join(
             [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)])
 
+    @staticmethod
+    def ndslice_to_string_list(slice, tile_sizes=None):
+        if tile_sizes is None:
+            return [Range.dim_to_string(s) for s in slice]
+        return [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)]
+
     def ndrange(self):
         return [(rb, re, rs) for rb, re, rs in self.ranges]
 
@@ -461,6 +467,9 @@ class Range(Subset):
             new_tsizes = [self.tile_sizes[-1]]
         self.ranges = new_ranges
         self.tile_sizes = new_tsizes
+
+    def string_list(self):
+        return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
 
 class Indices(Subset):
