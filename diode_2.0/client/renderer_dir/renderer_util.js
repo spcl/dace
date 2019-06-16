@@ -1897,32 +1897,6 @@ class Bracket extends Clickable {
 
 };
 
-function onDraw() {
-    let c = document.getElementById("canvas");
-
-    let ctx = c.getContext("2d");
-    let b = new Bracket(ctx);
-    let but1 = new Button(ctx);
-    but1.setOnEnterHover(p => { but1.color = "#00FF00"; but1.button_subwindow_state = 'open'; })
-    but1.setOnLeaveHover(p => { but1.color = "orange"; but1.button_subwindow_state = 'collapsed'; })
-    b.addButton(but1);
-    let but2 = new Button(ctx);
-    but2.setOnEnterHover(p => { but2.color = "#FF0000"; })
-    but2.setOnLeaveHover(p => { but2.color = "orange"; })
-    b.addButton(but2);
-    let but3 = new Button(ctx);
-    but3.setOnEnterHover(p => { but3.color = "#0000FF"; })
-    but3.setOnLeaveHover(p => { but3.color = "orange"; })
-    b.addButton(but3);
-
-    c.addEventListener('mousemove', e => {
-        b.onUpdateMove(new Pos(e.offsetX, e.offsetY));
-    });
-
-
-    b.drawEx(new Pos(10, 10), new Pos(10, 500), 100, 30);
-}
-
 var _canvas_manager_counter = 0;
 
 // Class to manage drawing of all resources. This ensures that one object 
@@ -2080,7 +2054,7 @@ class CanvasDrawManager {
     }
 
     translate(x, y) {
-        this.user_transform = this.user_transform.translate(x * this.user_transform.a, y * this.user_transform.d);
+        this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
     mapPixelToCoordsX(xpos) {
