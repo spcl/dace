@@ -439,10 +439,28 @@ class Range(Subset):
         shape = self.size()
         non_ones = [i for i, d in enumerate(shape) if d != 1]
         squeezed_ranges = [self.ranges[i] for i in non_ones]
+        squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
         if not squeezed_ranges:
             squeezed_ranges = [(0, 0, 1)]
+            squeezed_tsizes = [1]
+            non_ones = [len(shape) - 1]
         self.ranges = squeezed_ranges
+        self.tile_sizes = squeezed_tsizes
         self.offset(self, True)
+        return non_ones
+
+    def pop(self, dimensions):
+        new_ranges = []
+        new_tsizes = []
+        for i in range(len(self.ranges)):
+            if i not in dimensions:
+                new_ranges.append(self.ranges[i])
+                new_tsizes.append(self.tile_sizes[i])
+        if not new_ranges:
+            new_ranges = [self.ranges[-1]]
+            new_tsizes = [self.tile_sizes[-1]]
+        self.ranges = new_ranges
+        self.tile_sizes = new_tsizes
 
 
 class Indices(Subset):
