@@ -2226,11 +2226,13 @@ class ProgramVisitor(ExtNodeVisitor):
             if funcname == 'dace.tasklet':
                 # Parse as tasklet
                 state = self._add_state('with_%d' % node.lineno)
-                tasklet, inputs, outputs = self._parse_tasklet(state, node)
+                tasklet, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node)
 
                 # Add memlets
                 self._add_dependencies(state, tasklet, None, None, inputs,
                                        outputs)
+                self.inputs.update(sdfg_inp)
+                self.outputs.update(sdfg_out)
                 return
 
         raise DaceSyntaxError(
