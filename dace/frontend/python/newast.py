@@ -846,10 +846,11 @@ class TaskletTransformer(ExtNodeTransformer):
                             parent_name = self.scope_vars[name]
                             parent_array = self.scope_arrays[parent_name]
                             sqz_rng = copy.deepcopy(rng)
-                            sqz_rng.squeeze()
+                            non_sqz = sqz_rng.squeeze()
                             shape = sqz_rng.size()
                             dtype = parent_array.dtype
-                            self.sdfg.add_array(vname, shape, dtype)
+                            strides = [parent_array.strides[d] for d in non_sqz]
+                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
                             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                             self.sdfg_inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
@@ -897,16 +898,21 @@ class TaskletTransformer(ExtNodeTransformer):
                             parent_name = self.scope_vars[name]
                             parent_array = self.scope_arrays[parent_name]
                             sqz_rng = copy.deepcopy(rng)
-                            sqz_rng.squeeze()
+                            non_sqz = sqz_rng.squeeze()
                             shape = sqz_rng.size()
                             dtype = parent_array.dtype
-                            self.sdfg.add_array(vname, shape, dtype)
+                            strides = [parent_array.strides[d] for d in non_sqz]
+                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
                             self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                             self.sdfg_outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
                             new_output = True
                             if isinstance(target, ast.Subscript):
-                                node.value.right = ast.Name(id=vname)
+                                if isinstance(target.value, ast.Call):
+                                    node.value.right = node.value.right.value
+                                    node.value.right.func = ast.Name(id=vname)
+                                else:
+                                    node.value.right = ast.Name(id=vname)
                             elif isinstance(target, ast.Call):
                                 node.value.right.func = ast.Name(id=vname)
                             else:
@@ -1446,21 +1452,24 @@ class ProgramVisitor(ExtNodeVisitor):
                             outer_indices.append(n)
                         elif n not in inner_indices:
                             inner_indices.add(n)
-                    for n in reversed(outer_indices):
-                        irng.ranges.pop(n)
-                        orng.ranges.pop(n)
+                    # for n in reversed(outer_indices):
+                    #     irng.ranges.pop(n)
+                    #     orng.ranges.pop(n)
+                    irng.pop(outer_indices)
+                    orng.pop(outer_indices)
                     irng.offset(orng, True)
                     vname = "{c}_in_from_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(entry_node))
                     self.accesses[(name, scope_memlet.subset, 'r')] = vname
-                    shape = orng.size()
-                    shape = [d for d in shape if d != 1]
+                    orig_shape = orng.size()
+                    shape = [d for d in orig_shape if d != 1]
+                    strides = [s for d, s in zip(orig_shape, arr.strides) if d != 1]
                     if not shape:
                         shape = [1]
-                    # shape = arr.shape
+                        strides = [1]
                     dtype = arr.dtype
-                    self.sdfg.add_array(vname, shape, dtype, strides=arr.strides)
+                    self.sdfg.add_array(vname, shape, dtype, strides=strides)
                     self.inputs[vname] = (scope_memlet, inner_indices)
                     # self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
@@ -1512,21 +1521,24 @@ class ProgramVisitor(ExtNodeVisitor):
                             outer_indices.append(n)
                         elif n not in inner_indices:
                             inner_indices.add(n)
-                    for n in reversed(outer_indices):
-                        irng.ranges.pop(n)
-                        orng.ranges.pop(n)
+                    # for n in reversed(outer_indices):
+                    #     irng.ranges.pop(n)
+                    #     orng.ranges.pop(n)
+                    irng.pop(outer_indices)
+                    orng.pop(outer_indices)
                     irng.offset(orng, True)
                     vname = "{c}_out_of_{s}_{n}".format(
                         c=conn, s=self.sdfg.nodes().index(state),
                         n=state.node_id(exit_node))
                     self.accesses[(name, scope_memlet.subset, 'w')] = vname
-                    shape = orng.size()
-                    shape = [d for d in shape if d != 1]
+                    orig_shape = orng.size()
+                    shape = [d for d in orig_shape if d != 1]
+                    strides = [s for d, s in zip(orig_shape, arr.strides) if d != 1]
                     if not shape:
                         shape = [1]
-                    # shape = arr.shape
+                        strides = [1]
                     dtype = arr.dtype
-                    self.sdfg.add_array(vname, shape, dtype, strides=arr.strides)
+                    self.sdfg.add_array(vname, shape, dtype, strides=strides)
                     self.outputs[vname] = (scope_memlet, inner_indices)
                     # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
@@ -1837,7 +1849,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         sqz_rng.squeeze()
                         shape = sqz_rng.size()
                         dtype = parent_array.dtype
-                        self.sdfg.add_array(vname, shape, dtype, strides=parent_array.strides)
+                        self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides)
                         self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                         self.variables[vname] = parent_name
                         self.outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
@@ -2381,7 +2393,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 sqz_rng.squeeze()
                 shape = sqz_rng.size()
                 dtype = parent_array.dtype
-                self.sdfg.add_array(vname, shape, dtype, strides=parent_array.strides)
+                self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides)
                 self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                 self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                 return (vname, sqz_rng)
