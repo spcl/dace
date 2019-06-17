@@ -288,7 +288,7 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
     src_ast = GlobalResolver(
         {k: v
          for k, v in global_vars.items()
-         if dtypes.isconstant(v)}).visit(src_ast)
+         if dtypes.isconstant(v) and not k in argtypes}).visit(src_ast)
 
     pv = ProgramVisitor(f.__name__, src_file, src_line, argtypes, global_vars,
                         {}, constants, other_sdfgs)
