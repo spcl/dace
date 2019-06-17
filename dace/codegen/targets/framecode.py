@@ -296,7 +296,10 @@ DACE_EXPORTED void __dace_exit(%s)
             # Emit internal transient array deallocation
             deallocated = set()
             for node in state.data_nodes():
-                if node.data not in data_to_allocate or node.data in deallocated:
+                if (node.data not in data_to_allocate or
+                        node.data in deallocated or
+                        (node.data in sdfg.arrays and
+                        sdfg.arrays[node.data].transient == False)):
                     continue
                 deallocated.add(node.data)
                 self._dispatcher.dispatch_deallocate(
