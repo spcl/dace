@@ -1270,7 +1270,8 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
         this.project().request(['sdfg_object'], x => {
             console.log("Got snapshot", x);
-            x.sdfg_object = JSON.parse(x.sdfg_object);
+            if(typeof(x.sdfg_object) == 'string')
+                x.sdfg_object = JSON.parse(x.sdfg_object);
 
             this.project().saveSnapshot(x['sdfg_object'], named);
 
@@ -1909,7 +1910,7 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
         let delete_but = document.createElement("button");
         delete_but.innerText = "Delete remote database";
         delete_but.addEventListener("click", () => {
-            REST_request("/dace/api/1.0/perfdata/reset/", {
+            REST_request("/dace/api/v1.0/perfdata/reset/", {
                 client_id: this.diode.getClientID()
             }, x => {})
         });
@@ -1917,7 +1918,7 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
         let delete_can_but = document.createElement("button");
         delete_can_but.innerText = "Delete remote CAN";
         delete_can_but.addEventListener("click", () => {
-            REST_request("/dace/api/1.0/can/reset/", {
+            REST_request("/dace/api/v1.0/can/reset/", {
                 client_id: this.diode.getClientID()
             }, x => {})
         });
