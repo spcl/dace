@@ -217,7 +217,7 @@ class CompiledSDFG(object):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
-        # Replace python function object with a man-in-the middle
+        # Replace python function object with a trampoline
 
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             if isinstance(argtype.dtype, dace.callback):
