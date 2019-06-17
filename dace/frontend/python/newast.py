@@ -611,6 +611,9 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
         if not isinstance(dim, tuple):
             dim = [dim]
             direct_assignment = True
+        elif dim[0] == dim[1]:
+            dim = [dim[0]]
+            direct_assignment = True
 
         for i, r in enumerate(dim):
             for expr in symbolic.swalk(r, enter_functions=True):
@@ -631,7 +634,10 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
                     if direct_assignment:
                         newsubset[dimidx] = r.subs(expr, toreplace)
                     else:
-                        newsubset[dimidx][i] = r.subs(expr, toreplace)
+                        rng = list(newsubset[dimidx])
+                        rng[i] = r.subs(expr, toreplace)
+                        newsubset[dimidx] = tuple(rng)
+                        # newsubset[dimidx][i] = r.subs(expr, toreplace)
     #########################
     # Step 2
     ind_inputs = {'__ind_' + local_name}
@@ -1440,6 +1446,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                if _subset_has_indirection(memlet.subset):
+                    read_node = entry_node
+                    if entry_node is None:
+                        read_node = state.add_read(memlet.data)
+                    add_indirection_subgraph(self.sdfg, state, read_node,
+                                             internal_node, memlet, conn)
+                    continue
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
