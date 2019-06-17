@@ -725,7 +725,6 @@ def applySDFGProperties(sdfg, properties, step=None):
 
 def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
     # Iterate over the path, applying the transformations
-    print("optpath" + str(optpath))
     global_counter = {}
     if sdfg_props == None: sdfg_props = []
     step = 0

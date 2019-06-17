@@ -3,17 +3,11 @@
 <head>
     <meta charset="utf-8" />
     <script src="dagre.js"></script> <!-- Graph library -->
-    <script src="renderer_util.js"></script> <!-- Offloaded display functions and classes -->
-    <script src="sdfg_renderer.js"></script> <!-- Offloaded SDFG drawing functions -->
-    <script src="datahelper.js"></script> <!-- Offloaded data analysis functions and classes -->
     <script src="Chart.bundle.min.js"></script> <!-- Library for charts -->
 
 
-    <script src="parallelization_button.js"></script>
-    <script src="memory_button.js"></script>
-    <script src="windowing.js"></script>
-    <script src="DataViewSettings.js"></script>
-    <script>
+    <script type="module">
+        import {SettingsWindow} from "./DataViewSettings.js";
         window.onload = () => {
             console.log("Creating settings window");
             let _thisclient = new SettingsWindow(window);

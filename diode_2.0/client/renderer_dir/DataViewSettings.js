@@ -1,4 +1,6 @@
 // This is a file that provides functionality of View Settings
+import { ClientSide } from "./windowing.js";
+import {ObjectHelper, MathHelper} from "./datahelper.js";
 
 class SettingsWindow extends ClientSide {
 

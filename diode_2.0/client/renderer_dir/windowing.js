@@ -14,7 +14,7 @@ class DiodeWindow {
     }
 
     open(url = '', target = '', features = '', replace = false) {
-        this.window = parent.open(url, target, features, replace);
+        this.window = parent.open(url, target, features + "width=800,height=600", replace);
 
         if(!this.window) return this.window; // some error occurred
 
@@ -197,32 +197,45 @@ class ClientSide {
             let dataparams = content.dataParams;
 
             let class_obj = null;
+            let loaded_module = null;
             if(classname == "ParallelizationButton") {
-                class_obj = ParallelizationButton;
+                loaded_module = import("./parallelization_button.js").then(mod => {
+                    class_obj = mod.ParallelizationButton;
+                });
             }
             else if(classname == "MemoryButton") {
-                class_obj = MemoryButton;
+                loaded_module = import("./memory_button.js").then(mod => {
+                    class_obj = mod.MemoryButton;
+                });
             }
             else if(classname == "VectorizationButton") {
-                class_obj = VectorizationButton;
+                loaded_module = import("./vectorization_button.js").then(mod => {
+                    class_obj = mod.VectorizationButton;
+                });
             }
             else if(classname == "MemoryOpButton") {
-                class_obj = MemoryOpButton;
+                loaded_module = import("./memop_button.js").then(mod => {
+                    class_obj = mod.MemoryOpButton;
+                });
             }
             else if(classname == "CacheOpButton") {
-                class_obj = CacheOpButton;
+                loaded_module = import("./cache_button.js").then(mod => {
+                    class_obj = mod.CacheOpButton;
+                });
             }
             else {
                 ObjectHelper.assert("Missing definition", false);
             }
             
-            let new_obj = new class_obj(ctx, ...(dataparams));
+            
 
-            if(!new_obj) {
-                alert("Failed to instantiate class " + classname);
-            }
-
+            loaded_module.then(x =>
             {
+                let new_obj = new class_obj(ctx, ...(dataparams));
+
+                if(!new_obj) {
+                    alert("Failed to instantiate class " + classname);
+                }
                 let subwindow_width = new_obj.button_subwindow.targetwidth;
                 let subwindow_height = new_obj.button_subwindow.targetheight;
                 let subwindow_left = new_obj.topleft.x;
@@ -231,18 +244,22 @@ class ClientSide {
                 ctx.canvas.width = subwindow_width;
                 ctx.canvas.height = subwindow_height;
 
-                window.resizeTo(subwindow_width, subwindow_height);
+                // The width is specified in outer-width. This code adjusts the differences accordingly.
+                // magic +10 (px): Avoid scrollbars
+                let diff_x = window.outerWidth - window.innerWidth + 10;
+                let diff_y = window.outerHeight - window.innerHeight + 10;
+                window.resizeTo(subwindow_width + diff_x, subwindow_height + diff_y);
 
                 new_obj.button_subwindow_state = 'open'; // Open Sesame
                 new_obj.is_locked_open = true;
-                let b = new Bracket(ctx);
 
-                b.setupEventListeners();
-
-                b.addButton(new_obj);
-
-                b.drawEx(new Pos(-20, 0), new Pos(0, 0), 0, 0, true);
-            }
+                import("./renderer_util.js").then(mod => {
+                    let b = new mod.Bracket(ctx);
+                    b.setupEventListeners();
+                    b.addButton(new_obj);
+                    b.drawEx(new mod.Pos(-20, 0), new mod.Pos(0, 0), 0, 0, true);
+                });
+            });
         }
         else if(this.message_userdef != null) {
             this.message_userdef(data);

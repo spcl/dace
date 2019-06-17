@@ -1,4 +1,4 @@
-import {ObjectHelper} from "./datahelper.js"
+import {ObjectHelper, MathHelper} from "./datahelper.js"
 import { DiodeWindow } from "./windowing.js";
 
 // Renderer utilities.
@@ -820,8 +820,7 @@ class RU_DataView {
     showOptimizationHints() {
         
         console.log("Opening " + this.optimization_hint_path);
-        let win = window.open(this.optimization_hint_path);
-
+        let win = window.open(this.optimization_hint_path, "", "width=800,height=600");
         
         ObjectHelper.assert("win valid", win != null);
 
