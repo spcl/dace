@@ -1,6 +1,7 @@
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
 import inspect
+import copy
 
 from dace import symbolic, dtypes
 from dace.config import Config
@@ -214,6 +215,11 @@ class DaceProgram:
                     k: create_datadescriptor(v)
                     for k, v in zip(self.argnames, compilation_args)
                 }
+        for k, v in argtypes.items():
+            if v.transient:  # Arguments to (nested) SDFGs cannot be transient
+                v_cpy = copy.deepcopy(v)
+                v_cpy.transient = False
+                argtypes[k] = v_cpy
         #############################################
 
         # Parse allowed global variables
