@@ -2052,14 +2052,18 @@ def ndcopy_to_strided_copy(copy_shape, src_shape, src_strides, dst_shape,
 
     # If the copy is contiguous, the difference between the first and last
     # pointers should be the shape of the copy
-    first_src_index = src_subset.at(src_subset.min_element(), src_shape)
-    first_dst_index = dst_subset.at(dst_subset.min_element(), dst_shape)
-    last_src_index = src_subset.at(src_subset.max_element(), src_shape)
-    last_dst_index = dst_subset.at(dst_subset.max_element(), dst_shape)
+    first_src_index = src_subset.at([0] * src_subset.dims(), src_shape)
+    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_shape)
+    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
+                                   src_shape)
+    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
+                                   dst_shape)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if src_copylen == copy_length and dst_copylen == copy_length:
+    if ((tuple(copy_shape) == tuple(src_shape)
+         and tuple(copy_shape) == tuple(dst_shape))
+            or (src_copylen == copy_length and dst_copylen == copy_length)):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
@@ -2595,7 +2599,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
                     '''cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
 cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);'''
                     .format(
-                        ev=edge._cuda_event,
+                        ev=edge._cuda_event
+                        if hasattr(edge, '_cuda_event') else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream), sdfg, state_id,
                     [edge.src, edge.dst])
@@ -2617,7 +2622,8 @@ cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{e
                         '''cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
     cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);'''
                         .format(
-                            ev=e._cuda_event,
+                            ev=e._cuda_event
+                            if hasattr(e, '_cuda_event') else 0,
                             src_stream=cudastream,
                             dst_stream=e.dst._cuda_stream), sdfg, state_id,
                         [e.src, e.dst])
