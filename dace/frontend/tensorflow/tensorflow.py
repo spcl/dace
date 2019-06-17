@@ -497,8 +497,8 @@ class TFSession:
         # self.apply_tensorflow_transform(validate=False)
         # self.graph.apply_strict_transformations(validate=False)
         # self.graph.validate()
-        compiled_sdfg = self.graph.compile(optimizer=False)
         self.graph.draw_to_file()
+        compiled_sdfg = self.graph.compile(optimizer=False)
 
         ############################
         # Create the function that invokes the SDFG
@@ -2144,7 +2144,7 @@ class TFSession:
             outputParams,
             "lambda a, b: max(a,b)",
             -99999999999,
-            wcr_conflict=False
+            wcr_conflict=False,
         )
         self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
         # add memlets from inner map to tasklet
@@ -2220,7 +2220,9 @@ class TFSession:
             mapLabel + "_outer", dict(zip(mapParams1, mapRange1))
         )
         mapEntry2, mapExit2 = state.add_map(
-            mapLabel + "_inner", dict(zip(mapParams2, mapRange2))
+            mapLabel + "_inner",
+            dict(zip(mapParams2, mapRange2)),
+            schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(mapLabel + "_sum", {"j0"}, {"out"}, "out = j0")
         imgH = node.inputs[0].shape[1]
@@ -2248,9 +2250,13 @@ class TFSession:
             dace.typeclass(_tensortype(node.outputs[0])),
             transient=True,
             toplevel=False,
+            storage = dace.StorageType.Register
         )
         memletTempNode = Memlet.simple(
-            str(temp_node), "0", wcr_str="lambda a, b: a+b", wcr_identity=0
+            str(temp_node),
+            "0",
+            wcr_str="lambda a, b: a+b",
+            wcr_identity=0,
         )
         memletTempNode_nocr = Memlet.simple(str(temp_node), "0")
         memletOutputInner = Memlet.simple(outputList[0], ",".join(outputParams[0]))
@@ -2295,7 +2301,7 @@ class TFSession:
         innerMapParams = ["i4", "i5"]
         innerMapDims = ["0:" + str(ksize_0), "0:" + str(ksize_1)]
         innerMapEntry, innerMapExit = self.state.add_map(
-            innerMapLabel, dict(zip(innerMapParams, innerMapDims))
+            innerMapLabel, dict(zip(innerMapParams, innerMapDims)), schedule = dace.ScheduleType.Sequential
         )
         normalisationScalar = ksize_0 * ksize_1
         tasklet = self.state.add_tasklet(
@@ -3734,7 +3740,7 @@ class TFSession:
         wcr=None,
         wcr_identity=None,
         identifier="out",
-        wcr_conflict=True
+        wcr_conflict=True,
     ):
         """ Convenience function that adds two memlets for each output of the 
             node: external and internal to a given map.
@@ -3771,14 +3777,20 @@ class TFSession:
 
             if out.data not in connected_nodes:
                 outerMemlet = Memlet.simple(
-                    out, ",".join(outputDims[i]), wcr_str=wcr, wcr_identity=wcr_identity,
-                    wcr_conflict=wcr_conflict
+                    out,
+                    ",".join(outputDims[i]),
+                    wcr_str=wcr,
+                    wcr_identity=wcr_identity,
+                    wcr_conflict=wcr_conflict,
                 )
                 state.add_edge(otherNode, None, out, None, outerMemlet)
                 connected_nodes.add(out.data)
             innerMemlet = Memlet.simple(
-                out, ",".join(outputParams[i]), wcr_str=wcr, wcr_identity=wcr_identity,
-                wcr_conflict=wcr_conflict
+                out,
+                ",".join(outputParams[i]),
+                wcr_str=wcr,
+                wcr_identity=wcr_identity,
+                wcr_conflict=wcr_conflict,
             )
 
             if isinstance(tasklet, (Tasklet, NestedSDFG)):
