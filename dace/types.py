@@ -345,12 +345,18 @@ def ptrtonumpy(ptr, inner_ctype, shape):
         ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape
     )
 
+def _atomic_counter_generator():
+    ctr = 0
+    while True:
+        ctr += 1
+        yield ctr
 
 # TODO only handles input arrays, not output arrays
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
 
     def __init__(self, return_type, *variadic_args):
+        self.uid = next(_atomic_counter_generator())
         from dace import data
         if isinstance(return_type, data.Array):
             raise TypeError("Callbacks that return arrays are not supported as per SDFG semantics")
@@ -439,13 +445,16 @@ class callback(typeclass):
         )
 
     def __hash__(self):
-        return hash((self.return_type, *self.input_types))
+        return hash((self.uid, self.return_type, *self.input_types))
 
     def __str__(self):
         return "dace.callback"
 
     def __repr__(self):
         return "dace.callback"
+
+    def __eq__(self, other):
+        return self.uid == other.uid
 
 
 int8 = typeclass(numpy.int8)

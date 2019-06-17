@@ -97,6 +97,68 @@ def _atomic_counter_generator():
 
 _atomic_count = _atomic_counter_generator()
 
+from tensorflow.python.ops import *
+
+
+def _find_tf_function(opname):
+    """ 
+        @param opname: this is the name of the tensorflow operation in any case
+        @returns: a pythonic callable function from the tensorflow api that can be called with inputs
+        and will give output tensor objects
+    """
+
+    # from tensorflow.python import ops
+    from tensorflow.python.training import gen_training_ops
+
+    modules = [
+        gen_array_ops,
+        # gen_bitwise_ops,
+        # gen_checkpoint_ops,
+        # gen_collective_ops,
+        # gen_ctc_ops,
+        # gen_dataset_ops,
+        # gen_functional_ops,
+        gen_image_ops,
+        gen_io_ops,
+        gen_linalg_ops,
+        # gen_list_ops,
+        # gen_logging_ops,
+        # gen_lookup_ops,
+        # gen_manip_ops,
+        gen_math_ops,
+        # gen_nccl_ops,
+        gen_nn_ops,
+        # gen_parsing_ops,
+        gen_random_ops,
+        # gen_script_ops,
+        # gen_sdca_ops,
+        # gen_set_ops,
+        gen_sparse_ops,
+        # gen_spectral_ops,
+        # gen_state_ops,
+        # gen_string_ops,
+        # gen_summary_ops,
+        gen_training_ops,
+        gen_user_ops,
+    ]
+    import string_utils
+
+    if string_utils.is_camel_case(opname):
+        opname = string_utils.camel_case_to_snake(opname)
+
+    from inspect import isfunction, getmembers
+    from itertools import chain
+
+    allmembers = []
+    for mod in modules:
+        for tu in getmembers(mod):
+            allmembers.append(tu)
+    myop = filter(lambda tu: opname == tu[0], allmembers)
+    try:
+        return next(myop)[1]
+    except (StopIteration):
+        print(opname, " not found!")
+
 
 class TFSession:
     def __init__(self, name: str = "tfsession", seed: int = None, config=None):
@@ -601,15 +663,70 @@ class TFSession:
         """ Visit a specific node in the graph, creating the SDFG. """
         try:
             func = getattr(self, "visit_" + node.type)
+            func(node)
         except AttributeError:
             # Only stop processing after all node types have been visited,
             # so that we know which implementations are missing.
-            self.kill = True
             print("MISSING IMPLEMENTATION:", node.type)
-        if self.kill == False:
-            func(node)
+            self.visit_callback(node)
         # mark node as visited
         self.visitedNodes.add(node)
+
+    def visit_callback(self, node):
+        # TODO add a dict of callbacks and register this name with the callback function...
+        print(node)
+        inputNodes = []
+        inputDims = []
+        for inpTensor in node.inputs:
+            inputNode, _, itsdims = self.create_and_add_input_node(inpTensor)
+            inputNodes.append(inputNode)
+            inputDims.append(itsdims)
+
+        outputList = self.create_and_add_output_node(node)
+        # outputParams = [self.get_default_params(outp) for outp in node.outputs]
+        outputDims = [self.get_default_dims(outp) for outp in node.outputs]
+        # taskletInputs = ["j" + str(index) for index in range(len(outputList))] + [
+        #    "i" + str(index) for index in range(len(inputNodes))
+        # ]
+        taskletInputs = ["i" + str(index) for index in range(len(inputNodes))]
+
+        tensorflow_callable_function = _find_tf_function(node.type)
+
+        def tensorflow_callback(tenpyfunction, inputList):
+            print(self._internal_session.run(tenpyfunction(*inputList)))
+
+        # [NOTE] The trampoline that the tasklet will call must have the tensorflow function object as an
+        # argument. However, we can use partial and detect and pass that argument beforehand. This
+        # means that in the tasklet we just pass the inputs and outputs to the partial function
+        # object. This is necessary because the callback is typed with arguments, and the tensorflow
+        # thing will have messed up types.
+        from functools import partial
+
+        tensorflow_callback = partial(tensorflow_callback, tensorflow_callable_function)
+        callback_tasklet = self.state.add_tasklet(
+            "callback_" + _string_builder(node.type),
+            {",".join(taskletInputs)},
+            {"out"},
+            "tensorflow_callback(" + ",".join(taskletInputs) + ")",
+        )
+        for index, (inode, dim) in enumerate(zip(inputNodes, inputDims)):
+            self.state.add_edge(
+                inode,
+                None,
+                callback_tasklet,
+                "i" + str(index),
+                Memlet.simple(inode, ",".join(dim)),
+            )
+        self.state.add_edge(
+            callback_tasklet,
+            "out",
+            outputList[0],
+            None,
+            Memlet.simple(outputList[0], ",".join(outputDims[0])),
+        )
+        # print(node.outputs)
+        print(self._internal_session.run(node.outputs))
+        # raise NotImplementedError("TF callbacks coming soon!")
 
     ######################################################################
     # Operator (TensorFlow graph node) visitors
