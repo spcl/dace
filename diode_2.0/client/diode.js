@@ -4698,6 +4698,7 @@ class DIODE {
             elem.appendChild(codeelem[0]);
             langelem = create_language_input(x.value.language, onchange);
             elem.appendChild(langelem[0]);
+            elem.classList.add("flex_column");
 
             return elem;
         }

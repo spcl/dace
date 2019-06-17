@@ -156,6 +156,15 @@ select {
     box-sizing: border-box;
     width: 100%;
 }
+.diode_property_table div {
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.diode_property_table textarea {
+    box-sizing: border-box;
+    width: 100%;
+}
 
 .settings_key_value select {
     width: 49%;
