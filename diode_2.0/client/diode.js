@@ -2839,7 +2839,7 @@ class DIODE_Project {
             
         */
 
-        let snapshots = sessionStorage.getItem("transformation_snapshots");
+        let snapshots = this.getTransformationSnapshots();
         if(typeof(snapshots) == 'string')
             snapshots = JSON.parse(snapshots);
         let y = {
