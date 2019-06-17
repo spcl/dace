@@ -865,7 +865,7 @@ class TaskletTransformer(ExtNodeTransformer):
                                 self, target,
                                 'Array "{}" used before definition'.format(name))
                     connector, memlet = _parse_memlet(
-                        self, node.value.right, node.value.left, self.defined)
+                        self, node.value.right, node.value.left, self.sdfg.arrays)
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
                             self, node,
@@ -922,7 +922,7 @@ class TaskletTransformer(ExtNodeTransformer):
                                 self, target,
                                 'Array "{}" used before definition'.format(name))
                     connector, memlet = _parse_memlet(
-                        self, node.value.left, node.value.right, self.defined)
+                        self, node.value.left, node.value.right, self.sdfg.arrays)
                     if new_output:
                         out_memlet = self.sdfg_outputs[vname][0]
                         out_memlet.wcr = memlet.wcr
