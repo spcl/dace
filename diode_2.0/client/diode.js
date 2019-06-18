@@ -2717,8 +2717,7 @@ class DIODE_Project {
         }
 
         // Store back
-        this._closed_windows = new_list;
-        sessionStorage.setItem(this._project_id + "-closed-window-list", JSON.stringify(this._closed_windows));
+        this.setClosedWindowsList(new_list);
 
         console.assert(rets.length === 1, "Expected only 1 match!");
         let ret = rets[0];
@@ -2731,6 +2730,11 @@ class DIODE_Project {
         };
 
         return config;
+    }
+
+    setClosedWindowsList(new_list) {
+        this._closed_windows = new_list;
+        sessionStorage.setItem(this._project_id + "-closed-window-list", JSON.stringify(this._closed_windows));
     }
 
     clearClosedWindowsList() {
@@ -3566,6 +3570,12 @@ class DIODE {
 
 
     addContentItem(config) {
+        // Remove all saved instances of this component type from the closed windows list
+        if(config.componentName) {
+            let cw = this.project()._closed_windows;
+            this.project().setClosedWindowsList(cw.filter(x => x[0] != config.componentName));
+        }
+
         let root = this.goldenlayout.root;
         if(root.contentItems.length === 0) {
             // Layout is completely missing, need to add one (row in this case)
