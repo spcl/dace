@@ -3093,6 +3093,9 @@ class DIODE_Context_Runqueue extends DIODE_Context {
         let base_element = $(this.container.getElement())[0];
         base_element.innerHTML = "";
         let container = document.createElement("div");
+        $(container).css("overflow", "auto");
+        $(container).width("100%");
+        $(container).height("100%");
         let table = document.createElement("table");
 
         // Build the header
@@ -3168,6 +3171,7 @@ class DIODE_Context_Runqueue extends DIODE_Context {
         this._autorefresher = setInterval(x => {
             this.getCurrentQueue();
         }, 2000);
+        $(this.container.getElement()).css("overflow", "auto");
         this.refreshUI({});
     }
 
