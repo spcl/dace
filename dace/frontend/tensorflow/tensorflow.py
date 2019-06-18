@@ -685,7 +685,6 @@ class TFSession:
         self.visitedNodes.add(node)
 
     def visit_callback(self, node):
-        # TODO add out-edges for all outputs, not just the first one
         node_name = "callback_" + _string_builder(node.type)
         inputNodes = []
         inputDims = []
@@ -703,6 +702,7 @@ class TFSession:
             inputDims.insert(_insertpos, _dims)
 
         taskletInputs = ["i" + str(index) for index in range(len(inputNodes))]
+        taskletOutputs = ["out" + str(index) for index in range(len(outputList))]
 
         def tensorflow_callback(tenpyfunction, *inputList, num_outputs=0, attr_dict={}):
             import tensorflow as tf
@@ -756,7 +756,7 @@ class TFSession:
         callback_tasklet = self.state.add_tasklet(
             node_name,
             {*taskletInputs},
-            {"out"},
+            {*taskletOutputs},
             node_name + "(" + ",".join(taskletInputs) + ")",
         )
 
@@ -768,13 +768,14 @@ class TFSession:
                 "i" + str(index),
                 Memlet.simple(inode, ",".join(dim)),
             )
-        self.state.add_edge(
-            callback_tasklet,
-            "out",
-            outputList[0],
-            None,
-            Memlet.simple(outputList[0], ",".join(outputDims[0])),
-        )
+        for index, (outnode, dim) in enumerate(zip(outputList, outputDims)):
+            self.state.add_edge(
+                callback_tasklet,
+                "out"+str(index),
+                outputList[index],
+                None,
+                Memlet.simple(outputList[index], ",".join(outputDims[index])),
+            )
 
     ######################################################################
     # Operator (TensorFlow graph node) visitors
