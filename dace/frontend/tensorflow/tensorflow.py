@@ -109,40 +109,51 @@ def _find_tf_function(opname):
 
     # from tensorflow.python import ops
     from tensorflow.python.training import gen_training_ops
+    from tensorflow.python.ops import gen_tensor_forest_ops
 
     modules = [
+        gen_data_flow_ops,
         gen_array_ops,
-        # gen_bitwise_ops,
-        # gen_checkpoint_ops,
-        # gen_collective_ops,
-        # gen_ctc_ops,
-        # gen_dataset_ops,
-        # gen_functional_ops,
+        gen_bitwise_ops,
+        gen_checkpoint_ops,
+        gen_collective_ops,
+        gen_ctc_ops,
+        gen_dataset_ops,
+        gen_functional_ops,
         gen_image_ops,
         gen_io_ops,
         gen_linalg_ops,
-        # gen_list_ops,
-        # gen_logging_ops,
-        # gen_lookup_ops,
-        # gen_manip_ops,
+        gen_list_ops,
+        gen_logging_ops,
+        gen_lookup_ops,
+        gen_manip_ops,
         gen_math_ops,
-        # gen_nccl_ops,
+        gen_nccl_ops,
         gen_nn_ops,
-        # gen_parsing_ops,
+        gen_parsing_ops,
         gen_random_ops,
-        # gen_script_ops,
-        # gen_sdca_ops,
-        # gen_set_ops,
+        gen_script_ops,
+        gen_sdca_ops,
+        gen_set_ops,
         gen_sparse_ops,
-        # gen_spectral_ops,
-        # gen_state_ops,
-        # gen_string_ops,
-        # gen_summary_ops,
+        gen_spectral_ops,
+        gen_state_ops,
+        gen_string_ops,
+        gen_summary_ops,
         gen_training_ops,
         gen_user_ops,
+        gen_boosted_trees_ops,
+        gen_candidate_sampling_ops,
+        gen_control_flow_ops,
+        gen_cudnn_rnn_ops,
+        gen_experimental_dataset_ops,
+        gen_ragged_array_ops,
+        gen_ragged_conversion_ops,
+        gen_ragged_math_ops,
+        gen_resource_variable_ops,
+        gen_stateless_random_ops,
     ]
     import string_utils
-
     if string_utils.is_camel_case(opname):
         opname = string_utils.camel_case_to_snake(opname)
 
@@ -158,6 +169,7 @@ def _find_tf_function(opname):
         return next(myop)[1]
     except (StopIteration):
         print(opname, " not found!")
+        raise LookupError
 
 
 class TFSession:
@@ -180,6 +192,8 @@ class TFSession:
         self.inpDict = dict()
         self.reinitDict = dict()
         self.initDict = dict()
+        self.callbackTypeDict = dict()
+        self.callbackFunctionDict = dict()
 
         self.training = False
         self.iterations = 1
@@ -464,7 +478,6 @@ class TFSession:
 
         # Prepare subgraph to process
         total_nodes = []
-
         # Determine output type
         output_type = None
         if not isinstance(nodes, (list, tuple, dict)):  # iter() works in TensorFlow
@@ -536,7 +549,6 @@ class TFSession:
             }
         )
         ############################
-
         # Create output numpy arrays
         outputs = {
             name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
@@ -545,6 +557,7 @@ class TFSession:
         }
         outputs.update({k: v for k, v in sdfg_args.items() if k in total_output_names})
 
+        sdfg_args.update(self.callbackFunctionDict)
         sdfg_args.update(outputs)
 
         ############################
@@ -552,13 +565,12 @@ class TFSession:
         for output in outputs:
             self.graph.arrays[output].transient = False
         ############################
-
+        self.graph._arg_types.update(self.callbackTypeDict)
         # Compile the SDFG
         self.graph.fill_scope_connectors()
-        self.graph.apply_gpu_transformations()
         # self.apply_tensorflow_transform(validate=False)
         # self.graph.apply_strict_transformations(validate=False)
-        # self.graph.validate()
+        self.graph.validate()
         self.graph.draw_to_file()
         compiled_sdfg = self.graph.compile(optimizer=False)
 
@@ -673,8 +685,8 @@ class TFSession:
         self.visitedNodes.add(node)
 
     def visit_callback(self, node):
-        # TODO add a dict of callbacks and register this name with the callback function...
-        print(node)
+        # TODO add out-edges for all outputs, not just the first one
+        node_name = "callback_" + _string_builder(node.type)
         inputNodes = []
         inputDims = []
         for inpTensor in node.inputs:
@@ -683,32 +695,71 @@ class TFSession:
             inputDims.append(itsdims)
 
         outputList = self.create_and_add_output_node(node)
-        # outputParams = [self.get_default_params(outp) for outp in node.outputs]
         outputDims = [self.get_default_dims(outp) for outp in node.outputs]
-        # taskletInputs = ["j" + str(index) for index in range(len(outputList))] + [
-        #    "i" + str(index) for index in range(len(inputNodes))
-        # ]
+
+        # Add outputs as inputs so that the tasklet can modify them in-place
+        for _insertpos, (_outp, _dims) in enumerate(zip(outputList, outputDims)):
+            inputNodes.insert(_insertpos, self.state.add_read(_outp.data))
+            inputDims.insert(_insertpos, _dims)
+
         taskletInputs = ["i" + str(index) for index in range(len(inputNodes))]
 
-        tensorflow_callable_function = _find_tf_function(node.type)
+        def tensorflow_callback(tenpyfunction, *inputList, num_outputs=0, attr_dict={}):
+            import tensorflow as tf
 
-        def tensorflow_callback(tenpyfunction, inputList):
-            print(self._internal_session.run(tenpyfunction(*inputList)))
+            real_inputs = inputList[num_outputs:]
+            try:
+                output_tensor = tenpyfunction(*real_inputs)
+            except (TypeError):
+                output_tensor = tenpyfunction(*real_inputs, *attr_dict.values())
+            outputs_tf = tf.Session().run(output_tensor)
+            for index in range(num_outputs):
+                np.copyto(inputList[index], outputs_tf[index])
 
-        # [NOTE] The trampoline that the tasklet will call must have the tensorflow function object as an
-        # argument. However, we can use partial and detect and pass that argument beforehand. This
-        # means that in the tasklet we just pass the inputs and outputs to the partial function
-        # object. This is necessary because the callback is typed with arguments, and the tensorflow
-        # thing will have messed up types.
         from functools import partial
 
-        tensorflow_callback = partial(tensorflow_callback, tensorflow_callable_function)
-        callback_tasklet = self.state.add_tasklet(
-            "callback_" + _string_builder(node.type),
-            {",".join(taskletInputs)},
-            {"out"},
-            "tensorflow_callback(" + ",".join(taskletInputs) + ")",
+        tensorflow_callable_function = _find_tf_function(node.type)
+        attributes = OrderedDict()
+        try:
+            tensorflow_callable_function(*node.inputs)
+        except (TypeError):
+            try:
+                strides = node.get_attr("strides")
+                padding = node.get_attr("padding")
+                # Since it is an OrderedDict, insert in the order the arguments are given
+                attributes["strides"] = strides
+                attributes["padding"] = padding
+            except:
+                print("Following inputs were tried ")
+                for _inp in node.inputs:
+                    print(_inp)
+            print("TF OP has compulsory inputs stored as attributes ")
+
+        tensorflow_callback = partial(
+            tensorflow_callback,
+            tensorflow_callable_function,
+            attr_dict=attributes,
+            num_outputs=len(outputList),
         )
+
+        # We need two dicts, one is the sdfg args which is used to give this python partial object
+        # Second is the argtypes dict in the sdfg, used to generate function pointer signature
+        callback_input_types = []
+        for somenode in inputNodes:
+            callback_input_types.append(somenode.desc(self.graph))
+
+        self.callbackTypeDict[node_name] = dace.data.Scalar(
+            dace.callback(None, *callback_input_types)
+        )
+        self.callbackFunctionDict[node_name] = tensorflow_callback
+
+        callback_tasklet = self.state.add_tasklet(
+            node_name,
+            {*taskletInputs},
+            {"out"},
+            node_name + "(" + ",".join(taskletInputs) + ")",
+        )
+
         for index, (inode, dim) in enumerate(zip(inputNodes, inputDims)):
             self.state.add_edge(
                 inode,
@@ -724,9 +775,6 @@ class TFSession:
             None,
             Memlet.simple(outputList[0], ",".join(outputDims[0])),
         )
-        # print(node.outputs)
-        print(self._internal_session.run(node.outputs))
-        # raise NotImplementedError("TF callbacks coming soon!")
 
     ######################################################################
     # Operator (TensorFlow graph node) visitors
@@ -2367,13 +2415,10 @@ class TFSession:
             dace.typeclass(_tensortype(node.outputs[0])),
             transient=True,
             toplevel=False,
-            storage = dace.StorageType.Register
+            storage=dace.StorageType.Register,
         )
         memletTempNode = Memlet.simple(
-            str(temp_node),
-            "0",
-            wcr_str="lambda a, b: a+b",
-            wcr_identity=0,
+            str(temp_node), "0", wcr_str="lambda a, b: a+b", wcr_identity=0
         )
         memletTempNode_nocr = Memlet.simple(str(temp_node), "0")
         memletOutputInner = Memlet.simple(outputList[0], ",".join(outputParams[0]))
@@ -2418,7 +2463,9 @@ class TFSession:
         innerMapParams = ["i4", "i5"]
         innerMapDims = ["0:" + str(ksize_0), "0:" + str(ksize_1)]
         innerMapEntry, innerMapExit = self.state.add_map(
-            innerMapLabel, dict(zip(innerMapParams, innerMapDims)), schedule = dace.ScheduleType.Sequential
+            innerMapLabel,
+            dict(zip(innerMapParams, innerMapDims)),
+            schedule=dace.ScheduleType.Sequential,
         )
         normalisationScalar = ksize_0 * ksize_1
         tasklet = self.state.add_tasklet(
