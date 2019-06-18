@@ -351,7 +351,6 @@ def _atomic_counter_generator():
         ctr += 1
         yield ctr
 
-# TODO only handles input arrays, not output arrays
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
 
