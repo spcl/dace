@@ -12,7 +12,7 @@ def indirection(A: dp.float32[W, W, W], x: dp.int32[W], y: dp.int32[W],
     def ind(i, j, k):
         # evaluates to A[i,x[j]+1,y[k]/2]
         inp << A[i, x[j]:x[j + 1],
-                 y[k] / 2][1]  # yapf: disable
+                 y[k] / 2]  # yapf: disable
         out >> B[i, j, k]
         out = inp
 
