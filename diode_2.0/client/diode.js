@@ -996,6 +996,8 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         // Allow overflow
         let parent_element = this.container.getElement();
         $(parent_element).css('overflow', 'auto');
+
+        this.operation_running = false;
     }
 
     setupEvents(project) {
@@ -1248,6 +1250,8 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 
     applyTransformation(x, pos, _title) {
+        if(this.operation_running) return;
+        this.operation_running = true;
         let _state = this.getState();
         let optstruct = _state['optstruct'];
         let named = {};
@@ -1276,10 +1280,11 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             this.project().saveSnapshot(x['sdfg_object'], named);
 
             this.project().request(['update-tfh'], x => {
-
-                
+                this.operation_running = false;
             }, {
-
+                on_timeout: () => {
+                    this.operation_running = false;
+                }
             });
 
             setTimeout(tmp, 10);
