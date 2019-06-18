@@ -82,6 +82,31 @@ div#diode_settings_container h4 {
     margin-top: 5px;
 }
 
+#loading_indicator {
+    position: fixed;
+    z-index: 10000;
+    top: 0;
+    width: 100px;
+    height: 5px;
+    animation-duration: 5s;
+    animation-name: loading_mover;
+    animation-iteration-count: infinite;
+    background: darkblue;
+    box-shadow: 0px 0px 10px cyan;
+
+    display: none;
+}
+
+@keyframes loading_mover {
+    from {
+        left: 0;
+    }
+
+    to {
+        left: 100%;
+    }
+}
+
 .sdfgpropdiv {
     padding: 10px;
     display: inline-block;

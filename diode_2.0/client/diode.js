@@ -249,6 +249,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         });
 
         this.on(this.project().eventString('-req-draw-perfinfo'), (msg) => {
+            setTimeout(() => eh.emit(transthis._project.eventString('draw-perfinfo'), "ok"), 1);
             this._analysis_values = msg.map(x => ({
                 forProgram: x[0],
                 AnalysisName: x[1],
@@ -3230,6 +3231,12 @@ class DIODE {
         this.goldenlayout.eventHub.on(this.project().eventString('-req-remove_stale_data_button'), x => {
             this.__impl_removeStaleDataButton();
         });
+        this.goldenlayout.eventHub.on(this.project().eventString('-req-show_loading'), x => {
+            this.__impl_showIndeterminateLoading();
+        });
+        this.goldenlayout.eventHub.on(this.project().eventString('-req-hide_loading'), x => {
+            this.__impl_hideIndeterminateLoading();
+        });
 
         // Install the hint mechanic on the whole window
         window.addEventListener('contextmenu', ev => {
@@ -4896,6 +4903,27 @@ class DIODE {
         }
     }
 
+
+    showIndeterminateLoading() {
+        this.project().request(['show_loading'], x=>{}, {});
+    }
+
+    hideIndeterminateLoading() {
+        this.project().request(['hide_loading'], x=>{}, {});
+    }
+
+    __impl_showIndeterminateLoading() {
+        $("#loading_indicator").show();
+    }
+
+    __impl_hideIndeterminateLoading() {
+        $("#loading_indicator").hide();
+    }
+
+    hideIndeterminateLoading() {
+        this.project().request(['hide_loading'], x=>{}, {});
+    }
+
     static filterComponentTree(base, filterfunc = x => x) {
         let ret = [];
         for(let x of base.contentItems) {
@@ -5507,6 +5535,7 @@ class DIODE {
     }
 
     load_perfdata() {
+        this.showIndeterminateLoading();
         let client_id = this.getClientID();
 
 
@@ -5518,10 +5547,15 @@ class DIODE {
                 let pd = JSON.parse(xhr.response);
                 console.log("Got result", pd);
 
+                let ondone = () => {
+                    this.hideIndeterminateLoading();
+                };
+
                 this.project().request(['draw-perfinfo'], x => {
-                    
+                    ondone();
                 }, {
-                    params: pd
+                    params: pd,
+                    on_timeout: ondone
                 });
             }
         });
