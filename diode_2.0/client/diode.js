@@ -283,6 +283,18 @@ class DIODE_Context_SDFG extends DIODE_Context {
             
         }, true);
 
+        this.on(this.project().eventString('-req-delete-data-symbol-' + this.getState().created), (msg) => {
+            setTimeout(() => eh.emit(this.project().eventString("delete-data-symbol-" + this.getState().created), "ok"), 1);
+
+            this.removeDataSymbol(msg);
+        });
+
+        this.on(this.project().eventString('-req-add-data-symbol-' + this.getState().created), (msg) => {
+            setTimeout(() => eh.emit(this.project().eventString("add-data-symbol-" + this.getState().created), "ok"), 1);
+
+            this.addDataSymbol(msg.type, msg.name);
+        });
+
         this.on(this.project().eventString('-req-draw-perfinfo'), (msg) => {
             setTimeout(() => eh.emit(transthis._project.eventString('draw-perfinfo'), "ok"), 1);
             this._analysis_values = msg.map(x => ({
@@ -308,6 +320,79 @@ class DIODE_Context_SDFG extends DIODE_Context {
             //named = JSON.stringify(named);
             setTimeout(() => eh.emit(this.project().eventString("sdfg_object"), named), 1);
         }, true);
+    }
+
+    removeDataSymbol(aname) {
+
+        let o = this.getSDFGDataFromState();
+        let sdfg = o['sdfg'];
+
+        let found = false;
+        for(let x of Object.keys(sdfg.attributes._arrays)) {
+            if(x == aname) {
+                // Matching name
+                delete sdfg.attributes._arrays[x];
+                found = true;
+                break;
+            }
+        }
+        if(!found) console.error("Did not find symbol " + name + " in SDFG, this is a fatal error");
+
+        let old = this.getState();
+        if(old.type == "SDFG")
+            console.error("Defensive programming no longer allowed; change input");
+        else
+            old.sdfg_data.sdfg = sdfg;
+
+        this.resetState(old);
+
+        this.diode.showStaleDataButton();
+    }
+    addDataSymbol(type, aname) {
+
+        if(aname == "") {
+            alert("Invalid symbol name. Enter a symbol name in the input field");
+            return;
+        }
+
+        // Create a dummy element, then allow changing later
+        let typestr = "";
+        if(type == "Scalar") typestr = "Scalar";
+        else if(type == "Array") typestr = "Array";
+        let data = {
+            type: typestr,
+            attributes: {
+                dtype: "int32",
+            }
+        };
+
+        let o = this.getSDFGDataFromState();
+        let sdfg = o['sdfg'];
+
+        let found = false;
+        for(let x of Object.keys(sdfg.attributes._arrays)) {
+            if(x == aname) {
+                // Matching name
+                found = true;
+                break;
+            }
+        }
+        if(found) {
+            this.diode.toast("Cannot add symbol", "A symbol with name " + aname + " does already exist.", "error", 3000);
+            return;
+        }
+
+        sdfg.attributes._arrays[aname] = data;
+        let old = this.getState();
+        if(old.type == "SDFG")
+            console.error("Defensive programming no longer allowed; change input");
+        else
+            old.sdfg_data.sdfg = sdfg;
+
+        this.resetState(old);
+
+
+        this.diode.showStaleDataButton();
     }
 
     analysisProvider(aname, nodeinfo) {
@@ -3038,6 +3123,21 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         });
     }
 
+    removeDataSymbol(calling_context, data_name) {
+        this.project().request(["delete-data-symbol-" + calling_context], x => {}, {
+            params: data_name
+        });
+    }
+
+    addDataSymbol(calling_context, data_type, data_name) {
+        this.project().request(["add-data-symbol-" + calling_context], x => {}, {
+            params: {
+                name: data_name,
+                type: data_type
+            }
+        });
+    }
+    
     renderDataSymbols(calling_context, data) {
         // #TODO: This creates the default state (as in same as render_free_symbols() in the old DIODE)
         if(data == null) {
@@ -3074,14 +3174,42 @@ class DIODE_Context_PropWindow extends DIODE_Context {
             edit_but.innerText = "Edit";
             let del_but = document.createElement('button');
             del_but.addEventListener('click', _x => {
-                alert("del_but clicked");
-
+                this.removeDataSymbol(caller_id, x[0]);
             });
             del_but.innerText = "Delete";
             let but_container = document.createElement('div');
             but_container.appendChild(edit_but);
             but_container.appendChild(del_but);
             free_symbol_table.addRow(x[0], x[1].type, x[1].attributes.dtype + "[" + x[1].attributes.shape + "]", but_container);
+        }
+
+        free_symbol_table.addRow("Add data symbols").childNodes.forEach(x => {
+            x.colSpan = 4;
+            x.style = "text-align:center;";
+        });
+        {
+            let input_name = document.createElement("input");
+            input_name.type = "text";
+            input_name.placeholder = "Symbol name";
+            let add_scalar = document.createElement("button");
+            add_scalar.innerText = "Add Scalar";
+            add_scalar.addEventListener("click", () => {
+                this.addDataSymbol(caller_id, "Scalar", input_name.value);
+            });
+            let add_array = document.createElement("button");
+            add_array.addEventListener("click", () => {
+                this.addDataSymbol(caller_id, "Array", input_name.value);
+            })
+            add_array.innerText = "Add Array";
+
+            let but_container = document.createElement("div");
+            but_container.appendChild(add_scalar);
+            but_container.appendChild(add_array);
+            
+            free_symbol_table.addRow(input_name, but_container).childNodes.forEach(x => {
+                x.colSpan = 2;
+                x.style = "text-align:center;";
+            });
         }
 
         this.getHTMLContainer().innerHTML = "";
@@ -4747,7 +4875,14 @@ class DIODE {
             x.type == "list" || x.type == "set"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
-                transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
+                let tmp = elem.value;
+                try {
+                    tmp = JSON.parse(elem.value);
+                }
+                catch(e) {
+                    tmp = elem.value;
+                }
+                transthis.propertyChanged(node, x.name, tmp);
             }, JSON.stringify(x.value));
         }
         else if(x.type == "Range") {
@@ -4834,8 +4969,15 @@ class DIODE {
         else if(x.type == 'ListProperty') {
             // #TODO: Find a better type for this
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
-                transthis.propertyChanged(node, x.name, elem.value);
-            }, x.value);
+                let tmp = elem.value;
+                try {
+                    tmp = JSON.parse(elem.value);
+                }
+                catch(e) {
+                    tmp = elem.value;
+                }
+                transthis.propertyChanged(node, x.name, tmp);
+            }, JSON.stringify(x.value));
         }
         else if(x.type == "StorageType") {
             let storage_types = this.getEnum('StorageType');

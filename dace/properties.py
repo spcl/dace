@@ -370,10 +370,11 @@ class Property:
                 stringified = json.dumps(val, default=Property.json_dumper)
                 newval = _v.from_json(stringified, context)
                 setattr(object_with_properties, tmp, newval)
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
                 # #TODO: Maybe log this...
+                raise e
 
     @staticmethod
     def get_property_element(object_with_properties, name):
@@ -604,7 +605,9 @@ class ListProperty(Property):
     """
 
     def __set__(self, obj, val):
-        if isinstance(val, tuple):
+        if isinstance(val, str):
+            val = list(val)
+        elif isinstance(val, tuple):
             val = list(val)
         super(ListProperty, self).__set__(obj, val)
 
