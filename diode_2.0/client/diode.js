@@ -63,6 +63,7 @@ class DIODE_Context {
         }
 
         this._event_listeners = [];
+        this._event_listeners_closed = []; // Listeners that are installed on closed windows (NOTE: These are NOT active on open windows)
 
         this._no_user_destroy = false; // When true, all destroy()-events are assumed to be programmatic
     }
@@ -72,12 +73,35 @@ class DIODE_Context {
         return this._project;
     }
 
-    on(name, data) {
+    on(name, data, keep_alive_when_closed=false) {
         let eh = this.diode.goldenlayout.eventHub;
 
         let params = [name, data];
         eh.on(...params);
         this._event_listeners.push(params);
+
+        if(keep_alive_when_closed) {
+            // NOTE: The new function has to be created because the function cannot be identical
+            // (This is, because the handler is removed by (name, function) pairs)
+            this.closed_on(name, (x) => data(x));
+        }
+    }
+    // same as on(), but only active when the window is closed (in the closed windows list)
+    closed_on(name, data) {
+        
+
+        let params = [name, data];
+        this._event_listeners_closed.push(params);
+    }
+
+    removeClosedWindowEvents() {
+        // This function has to be called when reopening from the closed windows list
+        // DO NOT call inside destroy()!
+        let eh = this.diode.goldenlayout.eventHub;
+        for(let x of this._event_listeners_closed) {
+            eh.unbind(...x);
+        }
+        this._event_listeners_closed = [];
     }
 
     destroy() {
@@ -99,7 +123,14 @@ class DIODE_Context {
 
         // Add to closed-windows list
         console.log("closing", this);
+        
         this.project().addToClosedWindowsList(this.container._config.componentName, this.getState());
+
+        // Install the event listeners to listen when the window is closed
+        let eh = this.diode.goldenlayout.eventHub;
+        for(let params of this._event_listeners_closed) {
+            eh.on(...params);
+        }
     }
 
     setupEvents(project) {
@@ -124,6 +155,10 @@ class DIODE_Context {
         this.on('leave-programmatic-destroy', msg => {
             this._no_user_destroy = false;
             console.log("Leaving programmatic reordering", this);
+        });
+
+        this.closed_on('window-reopened-' + this.getState().created, x => {
+            this.removeClosedWindowEvents();
         });
     }
 
@@ -234,7 +269,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             let named = {};
             named[this.getState()['sdfg_name']] = resp;
             setTimeout(() => eh.emit(transthis._project.eventString('sdfg_props'), named), 1);
-        });
+        }, true);
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
             // Emit ok directly (to avoid caller timing out)
@@ -246,7 +281,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             else
                 this.propertyChanged(msg.node, msg.name, msg.value);
             
-        });
+        }, true);
 
         this.on(this.project().eventString('-req-draw-perfinfo'), (msg) => {
             setTimeout(() => eh.emit(transthis._project.eventString('draw-perfinfo'), "ok"), 1);
@@ -272,7 +307,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             named[this.getState()['sdfg_name']] = sdfg;
             //named = JSON.stringify(named);
             setTimeout(() => eh.emit(this.project().eventString("sdfg_object"), named), 1);
-        });
+        }, true);
     }
 
     analysisProvider(aname, nodeinfo) {
@@ -462,7 +497,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
         let clicked_elems = omsg.clicked_elements;
         let clicked_states = clicked_elems.filter(x => x.type == 'SDFGState');
-        let clicked_nodes = clicked_elems.filter(x => x.type != 'SDFGState'); // #DISCUSS: Is it guaranteed that the naming is dual here (SDFGState or everything else)?
+        let clicked_nodes = clicked_elems.filter(x => x.type != 'SDFGState'); // #TODO: Is it guaranteed that the naming is dual here (SDFGState or everything else)?
 
         let state_id = null;
         let node_id = null;
@@ -1417,9 +1452,9 @@ class DIODE_Context_CodeIn extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-input_code'), (msg) => {
             // Echo with data
-            setTimeout(() => eh.emit(transthis._project.eventString('input_code'),transthis.editor.getValue()), 1);
+            setTimeout(() => eh.emit(transthis._project.eventString('input_code'), this.getState()['code_content']), 1);
             transthis.editor.clearSelection();
-        });
+        }, true);
 
         this.on(this.project().eventString('-req-new_error'), msg => {
             // Echo with data
@@ -2688,6 +2723,14 @@ class DIODE_Project {
         sessionStorage.setItem("transformation_snapshots", JSON.stringify(sdata));
     }
 
+    reopenClosedWindow(name) {
+        let window = this.getConfigForClosedWindow(name, true);
+        this._diode.addContentItem(window);
+
+        // Emit the reopen event
+        this._diode.goldenlayout.eventHub.emit('window-reopened-' + name);
+    }
+
     getConfigForClosedWindow(name, remove = true) {
         let list = this.getClosedWindowsList();
         let new_list = [];
@@ -3030,7 +3073,10 @@ class DIODE_Context_PropWindow extends DIODE_Context {
             });
             edit_but.innerText = "Edit";
             let del_but = document.createElement('button');
-            del_but.addEventListener('click', _x => alert("del_but clicked"));
+            del_but.addEventListener('click', _x => {
+                alert("del_but clicked");
+
+            });
             del_but.innerText = "Delete";
             let but_container = document.createElement('div');
             but_container.appendChild(edit_but);
@@ -5253,7 +5299,6 @@ class DIODE {
 
     getPseudorandom() {
         let date = new Date();
-        //let millis = date.getTime() * 10000 + Math.random() * 10000;
         let millis = date.getTime().toString() + Math.random().toFixed(10).toString() + this._creation_counter.toString();
 
         ++this._creation_counter;
@@ -5514,7 +5559,7 @@ class DIODE {
         for(let error of errors) {
 
             if(error.type === "SyntaxError") {
-                // This error is most likely to be caused exclusively by input code
+                // This error is most likely caused exclusively by input code
                 
                 calling_context.project().request(['new_error'], msg => {},
                 {
@@ -5740,7 +5785,6 @@ class DIODE {
         if(optpath === undefined) {
             optpath = [];
         }
-        // #DISCUSS: Reusing the compile-command seems to be the best option here. Any objections?
         let transthis = this;
 
         let on_data_available = (code_data, sdfgprop_data, from_code) => {
@@ -5767,11 +5811,6 @@ class DIODE {
                 code_is_sdfg: !from_code
             });
 
-            // Now get the next level of optimizations as well
-            // (i.e. apply the specified transformations and get the new pattern matches)
-            // #DISCUSS: This again is not very efficient and could be done directly when compiling.
-            
-            //transthis.get_pattern_matches(calling_context, code, optpath, props, cb);
         }
 
 

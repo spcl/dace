@@ -456,6 +456,7 @@ function start_DIODE() {
             }
             if(event.target == "compile-menu:compile-clean") {
                 diode.project().request(["clear-errors"], () => {});
+                diode.project().discardTransformationsAfter(0);
                 // Compile, disregarding everything but the input code
                 diode.project().request(['input_code'], msg => {
                     diode.compile(diode, msg['input_code']);
@@ -499,8 +500,8 @@ function start_DIODE() {
                 let name = event.target;
                 name = name.substr("closed-windows:open-closed-".length);
 
-                let window = diode.project().getConfigForClosedWindow(name);
-                diode.addContentItem(window);
+                diode.project().reopenClosedWindow(name);
+
             }
         }
     });
@@ -618,7 +619,7 @@ function start_DIODE() {
             let editor = ace.edit(new_element[0]);
             editor.setTheme(DIODE.themeString());
             editor.session.setMode("ace/mode/python");
-            editor.getSession().on('change', function() {
+            editor.getSession().on('change', () => {
                 container.extendState({ "code_content": editor.getValue() });
             });
 
