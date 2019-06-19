@@ -202,11 +202,8 @@ class Array(Data):
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
-    #access_order = Property(dtype=tuple)
     access_order = ListProperty(dtype=list)
-    #strides = Property(dtype=list)
     strides = ListProperty()
-    #offset = Property(dtype=list)
     offset = ListProperty()
     may_alias = Property(
         dtype=bool,
@@ -276,8 +273,6 @@ class Array(Data):
         Property.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = [*map(symbolic.pystr_to_symbolic, ret.strides)]
-
-        #ret.strides = [*map(lambda x: symbolic.sympy.sympify(x, locals=symbolic.sympy.abc._clash), ret.strides)]
 
         # Check validity now
         ret.validate()
