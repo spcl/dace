@@ -53,7 +53,7 @@ function find_object_cycles(obj) {
     
 }
 
-function setup_drag_n_drop(elem, callbackSingle, callbackMultiple, options={ readMode: "text" }) {
+function setup_drag_n_drop(elem, callbackSingle, callbackMultiple, options={ readMode: "text", condition: (elem) => true }) {
 
     /*
         callbackSingle: (mimetype: string, content: string) => mixed
@@ -61,19 +61,23 @@ function setup_drag_n_drop(elem, callbackSingle, callbackMultiple, options={ rea
         callbackMultiple: reserved
         options:
             .readmode: "text" or "binary"
+            .condition: Function called with parameter "elem" determining if the current element should have the handler active
     */
 
     let drag_enter = (e) => {
+        if(!options.condition(elem)) return;
         e.stopPropagation();
         e.preventDefault();
     };
 
     let drag_over = e => {
+        if(!options.condition(elem)) return;
         e.stopPropagation();
         e.preventDefault();
     };
 
     let drag_drop = e => {
+        if(!options.condition(elem)) return;
         let files = Array.from(e.dataTransfer.files);
         
         if(files.length === 1) {
@@ -861,6 +865,26 @@ function start_DIODE() {
     diode.addKeyShortcut('r', () => { diode.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true }); });
 
     diode.setupEvents();
+
+    // Add drag & drop for the empty goldenlayout container
+    let dgc = $("#diode_gl_container");
+    let glc = dgc[0].firstChild;
+    setup_drag_n_drop(glc, (mime, content) => {
+        console.log("File dropped", mime, content);
+
+        let config = {
+            type: "component",
+            componentName: "CodeInComponent",
+            componentState: {
+                code_content: content
+            }
+        };
+
+        diode.addContentItem(config);
+    }, undefined, {
+        readMode: "text",
+        condition: (elem) => elem.childNodes.length == 0 // Only if empty
+    });
 };
 
 export {start_DIODE, REST_request, 
