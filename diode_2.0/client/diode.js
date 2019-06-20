@@ -582,7 +582,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
         let clicked_elems = omsg.clicked_elements;
         let clicked_states = clicked_elems.filter(x => x.type == 'SDFGState');
-        let clicked_nodes = clicked_elems.filter(x => x.type != 'SDFGState'); // #TODO: Is it guaranteed that the naming is dual here (SDFGState or everything else)?
+        let clicked_nodes = clicked_elems.filter(x => x.type != 'SDFGState' && x.type != "Edge");
+        let clicked_interstate_edges = clicked_elems.filter(x => x.type == "Edge");
 
         let state_id = null;
         let node_id = null;
@@ -598,7 +599,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let state_only = false;
 
         // Check if anything was clicked at all
-        if(clicked_states.length == 0) {
+        if(clicked_states.length == 0 && clicked_interstate_edges.length == 0) {
             // Nothing was selected
             this.render_free_variables();
             return;
@@ -608,7 +609,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
             state_only = true;
         }
 
-        state_id = clicked_states[0].id;
+        if(clicked_states.length > 0)
+            state_id = clicked_states[0].id;
+        else {
+            node_id = clicked_interstate_edges[0].id;
+        }
         if(!state_only)
             node_id = clicked_nodes[0].id;
         
@@ -718,6 +723,16 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
             this.renderProperties(propobj);
         };
+        if(state == null && clicked_interstate_edges.length > 0) {
+            let edges = sdfg.edges;
+            for(let e of edges) {
+                if(e.src == node_id.src && e.dst == node_id.dst) {
+                    render_props(e.attributes.data);
+                    break;
+                }
+            }
+            return;
+        }
         if(state_only) {
             render_props(state);
             return;
@@ -812,6 +827,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
     getEdgeReference(node_id, state_id) {
         let o = this.getSDFGDataFromState();
         let sdfg = o['sdfg'];
+
+        if(state_id == undefined) {
+            // Look for sdfg-level edges
+            for(let e of sdfg.edges) {
+                if(e.src == node_id.src && e.dst == node_id.dst) {
+                    return [e.attributes.data, sdfg];
+                }
+            }
+        }
 
         for(let x of sdfg.nodes) {
             if(x.id == state_id) {

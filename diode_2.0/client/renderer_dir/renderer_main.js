@@ -921,6 +921,12 @@ function canvas_onclick_handler( event,
             });
         }
     });
+    sdfg_state.sdfg.edges.forEach((edge) => {
+        if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
+            let elem = {'type': edge.type, 'id': {src: edge.src, dst: edge.dst }};
+            clicked_elements.push(elem);
+        }
+    });
     if(mode == "click") {
         transmitter.send(JSON.stringify({"msg_type": "click", "clicked_elements": clicked_elements}));
     }
