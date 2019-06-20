@@ -671,7 +671,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
 
         // Get and render the properties from now on
-        let sdfg = this.getSDFGDataFromState().sdfg;
+        let sdfg_data = this.getSDFGDataFromState();
+        let sdfg = sdfg_data.sdfg;
+        let sdfg_name = sdfg_data.sdfg_name;
 
         console.log("sdfg", sdfg);
 
@@ -706,6 +708,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             let propobj = {
                 node_id: parseInt(n.id),
                 state_id: state_id,
+                sdfg_name: sdfg_name,
                 data: () => ({props: proplist})
             };
 
@@ -3513,9 +3516,9 @@ class DIODE {
 
             let keyfile_string = /\S/.test(config['SSH Key override']) ? (" -i " + config['SSH Key override'] + " ") : " ";
             new_settings = {...new_settings, ...{
-                "execution/general/execcmd": ("ssh " + keyfile_string + "${host} ${command}"),
-                "execution/general/copycmd_r2l": ("scp " + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
-                "execution/general/copycmd_l2r": ("scp " + keyfile_string + " ${srcfile} ${host}:${dstfile}"),
+                "execution/general/execcmd": ("ssh -oBatchMode=yes" + keyfile_string + "${host} ${command}"),
+                "execution/general/copycmd_r2l": ("scp -B" + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
+                "execution/general/copycmd_l2r": ("scp -B" + keyfile_string + " ${srcfile} ${host}:${dstfile}"),
             }
             };
         }
@@ -4888,6 +4891,32 @@ class DIODE {
         else if(x.type == "Range") {
             elem = create_range_input(transthis, x, node);
         }
+        else if(x.type == "DataProperty") {
+            // The data list has to be fetched from the SDFG.
+            // Therefore, there needs to be a placeholder until data is ready
+            elem = document.createElement("span");
+            elem.innerText = x.value;
+
+            elem = $(elem);
+            let cb = d => {
+                // Only show data for the inner SDFG (it's possible to input an arbitrary string, still)
+                let sdfg = d.sdfg_object[node.sdfg_name];
+                let arrays = sdfg.attributes._arrays;
+                let array_names = Object.keys(arrays);
+
+                let new_elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
+                    transthis.propertyChanged(node, x.name, elem.value);
+                }, array_names, x.value);
+
+                // Replace the placeholder
+                elem[0].parentNode.replaceChild(new_elem[0], elem[0]);
+            };
+            this.project().request(['sdfg_object'], cb, {
+                on_timeout: cb,
+                timeout: 300
+            });
+            
+        }
         else if(x.type == "CodeProperty") {
             let codeelem = null;
             let langelem = null;
@@ -5874,36 +5903,6 @@ class DIODE {
                 let newdata = xhr.response.substr(xhr.seenBytes);
                 this.goldenlayout.eventHub.emit(terminal_identifier, newdata);
                 xhr.seenBytes = xhr.responseText.length;
-            }
-        });
-    }
-
-    get_pattern_matches(calling_context, code, optpath = undefined, sdfg_props = undefined, callback_override = undefined) {
-        let post_params = { "code": [code] };
-        if(optpath != undefined) {
-            post_params['optpath'] = optpath;
-        }
-        if(sdfg_props != undefined) {
-            post_params['sdfg_props'] = sdfg_props;
-        }
-        post_params['client_id'] = this.getClientID();
-        let version_string = "1.0";
-        REST_request("/dace/api/v" + version_string + "/match_optimizer_patterns/", post_params, (xhr) => {
-            if (xhr.readyState === 4 && xhr.status === 200) {
-                let peek = JSON.parse(xhr.response);
-                if(peek['error'] != undefined) {
-                    // There was at least one error - handle all of them
-                    this.handleErrors(calling_context, peek);
-                }
-                else {
-                    if(callback_override != undefined) {
-                        callback_override(xhr.response);
-                    }
-                    else {
-                        this.OptGraphs_available(xhr.response);
-                        
-                    }
-                }
             }
         });
     }

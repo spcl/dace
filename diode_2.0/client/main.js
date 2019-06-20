@@ -179,6 +179,15 @@ class FormBuilder {
         let inputelem = document.createElement('input');
         inputelem.type = "list";
         inputelem.id = id;
+        inputelem.onfocus = () => {
+            // Clear (this will make it act more like a select)
+            let oldvalue = inputelem.value;
+            inputelem.onblur = () => {
+                inputelem.value = oldvalue;
+            }
+            inputelem.value = "";
+            
+        }
         let dlist = document.createElement("datalist");
         dlist.id = id + "-dlist";
         elem.appendChild(dlist);
@@ -191,6 +200,7 @@ class FormBuilder {
 
         inputelem.value = initial;
         inputelem.onchange = () => {
+            inputelem.onblur = null;
             onchange(inputelem);
         };
 
@@ -648,15 +658,6 @@ function start_DIODE() {
                 exec: function(editor) {
                     alert("Compile & Run pressed");
                     diode_context.compile_and_run(editor.getValue());
-                },
-                readOnly: true // false if this command should not apply in readOnly mode
-            });
-            editor.commands.addCommand({
-                name: 'Get optimizations',
-                bindKey: {win: 'Ctrl-M',  mac: 'Command-M'},
-                exec: function(editor) {
-                    alert("Requesting pattern matches");
-                    diode_context.get_pattern_matches(editor.getValue());
                 },
                 readOnly: true // false if this command should not apply in readOnly mode
             });

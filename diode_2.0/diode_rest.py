@@ -443,7 +443,7 @@ class ExecutorServer:
         config_path = options['config_path']
         client_id = options['client_id']
         perfopts = options['perfopts']
-        sdfgs, code_tuples, sdfg_props, dace_state = compilation_output_tuple
+        sdfgs, code_tuples, dace_state = compilation_output_tuple
 
         terminal_queue = queue.Queue()
 
@@ -645,34 +645,6 @@ def properties_to_json_list(props):
             "value": str(val)
         })
     return ret
-
-
-def get_SDFG_node_properties(sdfg, nodeid_or_obj):
-    if isinstance(nodeid_or_obj, str):
-        sid, nid = split_nodeid_in_state_and_nodeid(nodeid_or_obj)
-        node = sdfg.nodes()[sid].nodes()[nid]
-    else:
-        node = nodeid_or_obj
-
-    props = node.properties()
-    return properties_to_json_list(props)
-
-
-def get_all_SDFG_node_properties(sdfg):
-    nodelist = collect_all_SDFG_nodes(sdfg)
-    sdfg_props = []
-
-    for x in nodelist:
-        _id, _node = x
-        sid, nid = split_nodeid_in_state_and_nodeid(_id)
-        props = get_SDFG_node_properties(sdfg, _node)
-        sdfg_props.append({
-            'state_id': str(sid),
-            'node_id': str(nid),
-            'params': props
-        })
-
-    return sdfg_props
 
 
 def set_properties_from_json(obj, prop, sdfg=None):
@@ -942,18 +914,6 @@ def compileProgram(request, language, perfopts=None):
                     sdfg_dict[sdfg_name] = applyOptPath(
                         sdfg_dict[sdfg_name], op, sdfg_props=sp)
 
-        if in_sdfg == None and len(errors) == 0:
-            if sdfg_props != None:
-                for sdfg_name, sp in sdfg_props.items():
-                    sdfg_dict[sdfg_name] = applySDFGProperties(
-                        sdfg_dict[sdfg_name], sp)
-
-        sdfg_prop_dict = {}
-        if len(errors) == 0:
-            # Get the properties of every node in the SDFG
-            for n, s in sdfg_dict.items():
-                sdfg_prop_dict[n] = get_all_SDFG_node_properties(s)
-
         code_tuple_dict = {}
         # Deep-copy the SDFG (codegen may change the SDFG it operates on)
         codegen_sdfgs = copy.deepcopy(sdfg_dict)
@@ -990,7 +950,7 @@ def compileProgram(request, language, perfopts=None):
         if len(errors) > 0:
             return errors
 
-        return (sdfg_dict, code_tuple_dict, sdfg_prop_dict, dace_state)
+        return (sdfg_dict, code_tuple_dict, dace_state)
 
 
 def get_transformations(sdfgs):
@@ -1012,7 +972,6 @@ def get_transformations(sdfgs):
                 for n in nodes:
                     nodeids.append("s" + str(sid) + "_" + str(n))
 
-                #properties = properties_to_json_list(p.properties())
                 properties = json.loads(
                     dace.properties.Property.all_properties_to_json(p))
             optimizations.append({
@@ -1237,7 +1196,7 @@ def run():
         perfopts = {'mode': pmode, 'core_counts': corecounts}
         tmp = compileProgram(request, 'dace', perfopts)
         if len(tmp) > 1:
-            sdfgs, code_tuples, sdfg_props, dace_state = tmp
+            sdfgs, code_tuples, dace_state = tmp
         else:
             # ERROR
             print("An error occurred")
@@ -1246,7 +1205,7 @@ def run():
         more_options = {}
         more_options['perfopts'] = perfopts
         runner = es.addRun(client_id,
-                           (sdfgs, code_tuples, sdfg_props, dace_state),
+                           (sdfgs, code_tuples, dace_state),
                            more_options)
 
     es.addRun(client_id, "end", {})
@@ -1279,7 +1238,7 @@ def optimize():
     """
     tmp = compileProgram(request, 'dace')
     if len(tmp) > 1:
-        sdfgs, code_tuples, sdfg_props, dace_state = tmp
+        sdfgs, code_tuples, dace_state = tmp
     else:
         # Error
         return jsonify({'error': tmp})
@@ -1325,7 +1284,7 @@ def compile(language):
         return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
 
     if len(tmp) > 1:
-        sdfgs, code_tuples, sdfg_props, dace_state = tmp
+        sdfgs, code_tuples, dace_state = tmp
     else:
         # Error
         return jsonify({'error': tmp})
@@ -1335,7 +1294,6 @@ def compile(language):
     for n, s in sdfgs.items():
         compounds[n] = {
             "sdfg": json.loads(s.toJSON()),
-            #"sdfg_props": sdfg_props[n],
             "matching_opts": opts[n]['matching_opts'],
             "generated_code": [*map(lambda x: x.code, code_tuples[n])]
         }
@@ -1370,7 +1328,6 @@ def decompile(obj):
         # With the SDFG decoded, we must adhere to the output format of compile() for the best interoperability
         sdfg_name = loaded_sdfg.name
         opts = get_transformations({sdfg_name: loaded_sdfg})
-        props = get_all_SDFG_node_properties(loaded_sdfg)
 
         from dace.codegen import codegen
         gen_code = codegen.generate_code(loaded_sdfg)
@@ -1380,7 +1337,6 @@ def decompile(obj):
                 sdfg_name: {
                     'input_code': loaded_sdfg.sourcecode,
                     'sdfg': loaded_sdfg.toJSON(),
-                    'sdfg_props': props,
                     'matching_opts': opts[sdfg_name]['matching_opts'],
                     'generated_code': [*map(lambda x: x.code, gen_code)]
                 }

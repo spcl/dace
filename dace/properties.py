@@ -161,18 +161,7 @@ class Property:
             import json
 
             def tmp_func(self):
-                typestr = ""
-                try:
-                    typestr = self.dtype.__name__
-                except:
-                    # Try again, it might be an enum
-                    try:
-                        typestr = self.enum.__name__
-                    except:
-                        try:
-                            typestr = type(self).__name__
-                        except:
-                            typestr = 'None'
+                typestr = self.typestring()
 
                 _default = self.to_json(self.default)
 
@@ -268,6 +257,21 @@ class Property:
     @property
     def dtype(self):
         return self._dtype
+
+    def typestring(self):
+        typestr = ""
+        try:
+            typestr = self.dtype.__name__
+        except:
+            # Try again, it might be an enum
+            try:
+                typestr = self.enum.__name__
+            except:
+                try:
+                    typestr = type(self).__name__
+                except:
+                    typestr = 'None'
+        return typestr
 
     @property
     def default(self):
@@ -1258,6 +1262,9 @@ class DataProperty(Property):
         # map that has no external inputs
         return super().__init__(
             dtype=str, allow_none=True, desc=desc, default=default, **kwargs)
+
+    def typestring(self):
+        return "DataProperty"
 
     @staticmethod
     def enum(sdfg=None):

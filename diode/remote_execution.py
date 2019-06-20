@@ -19,6 +19,7 @@ class Executor:
         self.counter = 0
         self.perfplot = perfplot
         self.headless = headless
+        self.exit_on_error = self.headless
         self.rendered_graphs = sdfg_renderer
 
         self.running_async = async_host != None
@@ -27,6 +28,9 @@ class Executor:
         self._config = None
 
         self.output_generator = None
+
+    def setExitOnError(self, do_exit):
+        self.exit_on_error = do_exit
 
     def setConfig(self, config):
         self._config = config
@@ -386,7 +390,7 @@ class Executor:
         if p.returncode != 0 and fail_on_nonzero:
             print("The command " + cmd + " failed (retcode " +\
                     str(p.returncode) + ")!\n")
-            if self.headless:
+            if self.headless and self.exit_on_error:
                 os._exit(p.returncode)
             else:
                 raise ValueError("The command " + cmd + " failed (retcode " + \
@@ -402,6 +406,7 @@ class AsyncExecutor:
     def __init__(self, perfplot, headless, sdfg_renderer, diode):
 
         self.executor = Executor(perfplot, headless, sdfg_renderer, self)
+        self.executor.setExitOnError(False)
         self.to_thread_message_queue = queue.Queue(128)
         self.from_thread_message_queue = queue.Queue(128)
         self.diode = diode
