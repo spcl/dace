@@ -711,7 +711,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 proplist.push(pdata);
             }
             let nid = parseInt(n.id);
-            if(isNaN(nid)) {
+            if(isNaN(nid) || node_id == null) {
                 nid = node_id
             }
             let propobj = {
@@ -816,7 +816,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
     getSDFGElementReference(node_id, state_id) {
-        if(node_id.constructor == Object) {
+        if(node_id != null && node_id.constructor == Object) {
             return this.getEdgeReference(node_id, state_id);
         }
         else {
