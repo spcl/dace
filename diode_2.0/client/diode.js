@@ -705,8 +705,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
                 proplist.push(pdata);
             }
+            let nid = parseInt(n.id);
+            if(isNaN(nid)) {
+                nid = node_id
+            }
             let propobj = {
-                node_id: parseInt(n.id),
+                node_id: nid,
                 state_id: state_id,
                 sdfg_name: sdfg_name,
                 data: () => ({props: proplist})
