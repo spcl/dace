@@ -46,6 +46,13 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         dtype=bool,
         default=False)
 
+    nested_seq = Property(
+        desc='Makes nested code semantically-equivalent to single-core code,'
+        'transforming nested maps and memory into sequential and '
+        'local memory respectively.',
+        dtype=bool,
+        default=True)
+
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _reduce = nodes.Reduce('lambda: None', None)
 
@@ -143,6 +150,18 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
 
         # Change schedule
         node_schedprop._schedule = types.ScheduleType.GPU_Device
+
+        # If nested graph is designated as sequential, transform schedules and
+        # storage from Default to Sequential/Register
+        if self.nested_seq and self.expr_index == 0:
+            for node in graph.scope_subgraph(cnode).nodes():
+                if isinstance(node, nodes.AccessNode):
+                    arr = node.desc(sdfg)
+                    if arr.storage == types.StorageType.Default:
+                        arr.storage = types.StorageType.Register
+                elif isinstance(node, nodes.MapEntry):
+                    if node.map.schedule == types.ScheduleType.Default:
+                        node.map.schedule = types.ScheduleType.Sequential
 
         gpu_storage_types = [
             types.StorageType.GPU_Global, types.StorageType.GPU_Shared,
