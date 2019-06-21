@@ -154,6 +154,7 @@ def _find_tf_function(opname):
         gen_stateless_random_ops,
     ]
     import string_utils
+
     if string_utils.is_camel_case(opname):
         opname = string_utils.camel_case_to_snake(opname)
 
@@ -696,68 +697,69 @@ class TFSession:
         outputList = self.create_and_add_output_node(node)
         outputDims = [self.get_default_dims(outp) for outp in node.outputs]
 
+        num_outputs = 0
         # Add outputs as inputs so that the tasklet can modify them in-place
         for _insertpos, (_outp, _dims) in enumerate(zip(outputList, outputDims)):
+            if _dims == ["0:1"]:
+                # If the output is a scalar, there should be only one output
+                assert len(outputList) == 1
+                # In this case, it is a callback that returns something, we don't pass by reference
+                break
             inputNodes.insert(_insertpos, self.state.add_read(_outp.data))
             inputDims.insert(_insertpos, _dims)
+            num_outputs = num_outputs + 1
 
         taskletInputs = ["i" + str(index) for index in range(len(inputNodes))]
         taskletOutputs = ["out" + str(index) for index in range(len(outputList))]
 
-        def tensorflow_callback(tenpyfunction, *inputList, num_outputs=0, attr_dict={}):
+        def tensorflow_callback(tf_op, *inputList, num_outputs=0):
+            real_inputs = inputList[num_outputs:]
             import tensorflow as tf
 
-            real_inputs = inputList[num_outputs:]
-            try:
-                output_tensor = tenpyfunction(*real_inputs)
-            except (TypeError):
-                output_tensor = tenpyfunction(*real_inputs, *attr_dict.values())
-            outputs_tf = tf.Session().run(output_tensor)
+            newGraph = tf.Graph()
+            with newGraph.as_default():
+                newInputs = [tf.constant(_np_inp) for _np_inp in real_inputs]
+                newOp = tf.Operation(tf_op.node_def, newGraph, inputs=newInputs)
+            outputs_tf = tf.Session(graph=newGraph).run(newOp.outputs)
+            if num_outputs == 0:
+                return outputs_tf[0]
             for index in range(num_outputs):
                 np.copyto(inputList[index], outputs_tf[index])
 
         from functools import partial
 
-        tensorflow_callable_function = _find_tf_function(node.type)
-        attributes = OrderedDict()
-        try:
-            tensorflow_callable_function(*node.inputs)
-        except (TypeError):
-            try:
-                strides = node.get_attr("strides")
-                padding = node.get_attr("padding")
-                # Since it is an OrderedDict, insert in the order the arguments are given
-                attributes["strides"] = strides
-                attributes["padding"] = padding
-            except:
-                print("Following inputs were tried ")
-                for _inp in node.inputs:
-                    print(_inp)
-            print("TF OP has compulsory inputs stored as attributes ")
-
         tensorflow_callback = partial(
-            tensorflow_callback,
-            tensorflow_callable_function,
-            attr_dict=attributes,
-            num_outputs=len(outputList),
+            tensorflow_callback, node, num_outputs=num_outputs
         )
 
         # We need two dicts, one is the sdfg args which is used to give this python partial object
         # Second is the argtypes dict in the sdfg, used to generate function pointer signature
         callback_input_types = []
         for somenode in inputNodes:
-            callback_input_types.append(somenode.desc(self.graph))
+            if somenode.desc(self.graph).shape == (1,):
+                callback_input_types.append(somenode.desc(self.graph).dtype)
+            else:
+                callback_input_types.append(somenode.desc(self.graph))
 
-        self.callbackTypeDict[node_name] = dace.data.Scalar(
-            dace.callback(None, *callback_input_types)
-        )
+        if num_outputs > 0:
+            self.callbackTypeDict[node_name] = dace.data.Scalar(
+                dace.callback(None, *callback_input_types)
+            )
+        else:
+            self.callbackTypeDict[node_name] = dace.data.Scalar(
+                dace.callback(
+                    outputList[0].desc(self.graph).dtype, *callback_input_types
+                )
+            )
         self.callbackFunctionDict[node_name] = tensorflow_callback
 
         callback_tasklet = self.state.add_tasklet(
             node_name,
             {*taskletInputs},
             {*taskletOutputs},
-            node_name + "(" + ",".join(taskletInputs) + ")",
+            "out0 = " + node_name + "(" + ",".join(taskletInputs) + ")"
+            if num_outputs == 0
+            else node_name + "(" + ",".join(taskletInputs) + ")",
         )
 
         for index, (inode, dim) in enumerate(zip(inputNodes, inputDims)):
@@ -771,7 +773,7 @@ class TFSession:
         for index, (outnode, dim) in enumerate(zip(outputList, outputDims)):
             self.state.add_edge(
                 callback_tasklet,
-                "out"+str(index),
+                "out" + str(index),
                 outputList[index],
                 None,
                 Memlet.simple(outputList[index], ",".join(outputDims[index])),
