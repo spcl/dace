@@ -51,10 +51,13 @@ def _tensortype(tensor: tf.Tensor):
                 pass
             raise TypeError("Ambiguous type for operation %s" % tensor)
 
-    if tensor.dtype.as_numpy_dtype == object:
-        raise NotImplementedError(
-            "Type %s is not a valid numpy type" % str(tensor.dtype)
-        )
+    try:
+        if tensor.dtype.as_numpy_dtype == object:
+            raise NotImplementedError(
+                "Type %s is not a valid numpy type" % str(tensor.dtype)
+            )
+    except KeyError:
+        raise TypeError("Type %s is not a valid numpy type" % str(tensor.dtype))
 
     if tensor.dtype.is_bool:
         return np.int32
@@ -690,11 +693,19 @@ class TFSession:
         inputNodes = []
         inputDims = []
         for inpTensor in node.inputs:
-            inputNode, _, itsdims = self.create_and_add_input_node(inpTensor)
-            inputNodes.append(inputNode)
-            inputDims.append(itsdims)
+            try:
+                inputNode, _, itsdims = self.create_and_add_input_node(inpTensor)
+                inputNodes.append(inputNode)
+                inputDims.append(itsdims)
+            except TypeError:
+                print("type is not primitive, as seen in callback")
+            except ValueError:
+                print("Shape can not be inferred")
+        try:
+            outputList = self.create_and_add_output_node(node)
+        except TypeError:
+            return
 
-        outputList = self.create_and_add_output_node(node)
         outputDims = [self.get_default_dims(outp) for outp in node.outputs]
 
         num_outputs = 0
@@ -777,6 +788,46 @@ class TFSession:
                 outputList[index],
                 None,
                 Memlet.simple(outputList[index], ",".join(outputDims[index])),
+            )
+
+    def visit_IteratorGetNext(self, node):
+        outputList = self.create_and_add_output_node(node)
+        outputDims = [
+            self.get_default_dims(_out_tensor) for _out_tensor in node.outputs
+        ]
+
+        def tensorflow_dataloader(tf_session, tf_node, *outputs):
+            import tensorflow as tf
+
+            outputs_tf = [tf_session.run(_out) for _out in tf_node.outputs]
+            for _index in range(len(outputs_tf)):
+                np.copyto(outputs[_index], outputs_tf[_index])
+
+        from functools import partial
+
+        call_this = partial(tensorflow_dataloader, tf.Session(), node)
+        node_name = _string_builder(node.type)
+        taskletOutputs = ["out" + str(_index) for _index in range(len(node.outputs))]
+        dataloader_tasklet = self.state.add_tasklet(
+            node_name,
+            {},
+            {*taskletOutputs},
+            node_name + "(" + ",".join(taskletOutputs) + ")",
+        )
+        self.callbackFunctionDict[node_name] = call_this
+        callback_types = []
+        for somenode in outputList:
+            callback_types.append(somenode.desc(self.graph))
+        self.callbackTypeDict[node_name] = dace.data.Scalar(
+            dace.callback(None, *callback_types)
+        )
+        for _index, _out_dace in enumerate(outputList):
+            self.state.add_edge(
+                dataloader_tasklet,
+                taskletOutputs[_index],
+                _out_dace,
+                None,
+                Memlet.simple(_out_dace, ",".join(outputDims[_index])),
             )
 
     ######################################################################
@@ -3979,14 +4030,17 @@ class TFSession:
         # Get DaCe name of the operation
         label = _string_builder(inp.name)
         if "?" in str(_tensorshape(inp)):
-            raise ValueError("Invalid shape for tensor %s" % label)
+            raise ValueError  # ("Invalid shape for tensor %s" % label)
         # Try to find node in DaCe graph
         try:
             # If successful, use the existing node
             inputNode = state.find_node(label)
         except (LookupError):
             # Get type and shape of the input tensor
-            dtype = dace.typeclass(_tensortype(inp))
+            try:
+                dtype = dace.typeclass(_tensortype(inp))
+            except TypeError:
+                raise TypeError
             shape = dace.properties.ShapeProperty.from_string(str(_tensorshape(inp)))
             # Create and add array, default is transient, toplevel =True
             inputNode = state.add_transient(
