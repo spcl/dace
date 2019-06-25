@@ -4,9 +4,10 @@ import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
 from resnet50 import SEED
+from tensorflow.contrib.compiler import xla
 
 learning_rate = 0.01
-batch_size = 1
+batch_size = 128
 num_classes = 10
 
 # dace.Config.set(
@@ -28,26 +29,52 @@ def random_batch(batch_size):
     # print(labels.shape)
     return images, labels
 
-
-images, labels = random_batch(batch_size)
-# Graph building
-myresnet = resnet50.ResNet50("channels_last", classes=num_classes)  # trainable=False)
 input_placeholder = tf.placeholder(dtype=tf.float32, shape=(batch_size, 224, 224, 3))
 label_placeholder = tf.placeholder(dtype=tf.int32, shape=(batch_size))
-logits = myresnet(input_placeholder)
-softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
-    labels=label_placeholder, logits=logits
-)
-loss = tf.reduce_mean(softmax, name="loss")
-gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
-gradient_tensors = []
-for tup in gradients:
-    gradient_tensors.append(tup[0])
-update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(gradients)
-input_gradients = tf.gradients(loss, input_placeholder)
-sess_dace = TFSession(seed=SEED)
-# sess_tf = tf.Session()
-# init = tf.global_variables_initializer()
+
+def build_resnet(images, labels):
+    # Graph building
+    myresnet = resnet50.ResNet50("channels_last", classes=num_classes)  # trainable=False)
+    logits = myresnet(input_placeholder)
+    softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=label_placeholder, logits=logits
+    )
+    loss = tf.reduce_mean(softmax, name="loss")
+    gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
+    gradient_tensors = []
+    for tup in gradients:
+        gradient_tensors.append(tup[0])
+    update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(gradients)
+
+    return logits, update_op
+
+#logits, update_op = build_resnet()
+#input_gradients = tf.gradients(loss, input_placeholder)
+#sess_dace = TFSession(seed=SEED)
+sess_tf = tf.Session()
+[y] = xla.compile(build_resnet, inputs=[input_placeholder, label_placeholder])
+init = tf.global_variables_initializer()
+sess_tf.run(init)
+
+images, labels = random_batch(batch_size)
+
+# Warmup run
+sess_tf.run(y, feed_dict={input_placeholder: images, label_placeholder: labels})
+
+import time
+
+start = time.time()
+times = [0.0] * 100
+for i in range(100):
+    times[i] = time.time()
+    sess_tf.run(y, feed_dict={input_placeholder: images, label_placeholder: labels})
+    times[i] = time.time() - times[i]
+
+tarr = np.array(times)
+print('Median time:', np.median(tarr))
+
+
+    
 # gradients_dace = sess_dace.train(
 #    [],
 #    init,
@@ -65,9 +92,9 @@ sess_dace = TFSession(seed=SEED)
 #        label_placeholder: labels
 #    },
 # )[1]
-updates_dace = sess_dace.run(
-    update_op, feed_dict={input_placeholder: images, label_placeholder: labels}
-)
+#updates_dace = sess_dace.run(
+#    update_op, feed_dict={input_placeholder: images, label_placeholder: labels}
+#)
 #input_grads_dace = sess_dace.run(
 #        input_gradients, feed_dict={input_placeholder: images, label_placeholder: labels}
 #)
