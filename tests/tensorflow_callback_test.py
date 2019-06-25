@@ -28,5 +28,4 @@ for test in tests:
     output_dace = sess_dace.run(test)
     print(output_dace)
     print(output_tf)
-    assert (output_dace == output_tf).all()
-
+    assert np.linalg.norm(output_dace - output_tf) < 1e-8
