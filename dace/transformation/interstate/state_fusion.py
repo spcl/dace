@@ -5,6 +5,7 @@ import networkx as nx
 from dace import sdfg, symbolic
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
+from dace.config import Config
 
 
 class StateFusion(pattern_matching.Transformation):
@@ -26,8 +27,7 @@ class StateFusion(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(StateFusion._first_state,
-                                   StateFusion._second_state)
+            nxutil.node_path_graph(StateFusion._first_state, StateFusion._second_state)
         ]
 
     @staticmethod
@@ -43,7 +43,7 @@ class StateFusion(pattern_matching.Transformation):
         if len(out_edges) != 1:
             return False
         # The interstate edge must not have a condition.
-        if out_edges[0].data.condition.as_string != '':
+        if out_edges[0].data.condition.as_string != "":
             return False
         # The interstate edge may have assignments, as long as there are input
         # edges to the first state, that can absorb them.
@@ -60,18 +60,18 @@ class StateFusion(pattern_matching.Transformation):
 
             # If second state has other input edges, there might be issues
             second_in_edges = graph.in_edges(second_state)
-            if ((not second_state.is_empty() or not first_state.is_empty())
-                    and len(second_in_edges) != 1):
+            if (not second_state.is_empty() or not first_state.is_empty()) and len(
+                second_in_edges
+            ) != 1:
                 return False
 
             # Get connected components.
             first_cc = [
-                cc_nodes
-                for cc_nodes in nx.weakly_connected_components(first_state._nx)
+                cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)
             ]
             second_cc = [
-                cc_nodes for cc_nodes in nx.weakly_connected_components(
-                    second_state._nx)
+                cc_nodes
+                for cc_nodes in nx.weakly_connected_components(second_state._nx)
             ]
 
             # Find source/sink (data) nodes
@@ -82,8 +82,8 @@ class StateFusion(pattern_matching.Transformation):
             }
             first_output = {
                 node
-                for node in first_state.nodes() if
-                isinstance(node, nodes.AccessNode) and node not in first_input
+                for node in first_state.nodes()
+                if isinstance(node, nodes.AccessNode) and node not in first_input
             }
             second_input = {
                 node
@@ -92,27 +92,23 @@ class StateFusion(pattern_matching.Transformation):
             }
             second_output = {
                 node
-                for node in second_state.nodes() if
-                isinstance(node, nodes.AccessNode) and node not in second_input
+                for node in second_state.nodes()
+                if isinstance(node, nodes.AccessNode) and node not in second_input
             }
 
             # Find source/sink (data) nodes by connected component
             first_cc_input = [cc.intersection(first_input) for cc in first_cc]
-            first_cc_output = [
-                cc.intersection(first_output) for cc in first_cc
-            ]
-            second_cc_input = [
-                cc.intersection(second_input) for cc in second_cc
-            ]
-            second_cc_output = [
-                cc.intersection(second_output) for cc in second_cc
-            ]
+            first_cc_output = [cc.intersection(first_output) for cc in first_cc]
+            second_cc_input = [cc.intersection(second_input) for cc in second_cc]
+            second_cc_output = [cc.intersection(second_output) for cc in second_cc]
 
             check_strict = len(first_cc)
             for cc_output in first_cc_output:
                 for node in cc_output:
-                    if next((x for x in second_input
-                             if x.label == node.label), None) is not None:
+                    if (
+                        next((x for x in second_input if x.label == node.label), None)
+                        is not None
+                    ):
                         check_strict -= 1
                         break
 
@@ -120,13 +116,17 @@ class StateFusion(pattern_matching.Transformation):
                 # Check strict conditions
                 # RW dependency
                 for node in first_input:
-                    if next((x for x in second_output
-                             if x.label == node.label), None) is not None:
+                    if (
+                        next((x for x in second_output if x.label == node.label), None)
+                        is not None
+                    ):
                         return False
                 # WW dependency
                 for node in first_output:
-                    if next((x for x in second_output
-                             if x.label == node.label), None) is not None:
+                    if (
+                        next((x for x in second_output if x.label == node.label), None)
+                        is not None
+                    ):
                         return False
 
         return True
@@ -136,8 +136,7 @@ class StateFusion(pattern_matching.Transformation):
         first_state = graph.nodes()[candidate[StateFusion._first_state]]
         second_state = graph.nodes()[candidate[StateFusion._second_state]]
 
-        return ' -> '.join(
-            state.label for state in [first_state, second_state])
+        return " -> ".join(state.label for state in [first_state, second_state])
 
     def apply(self, sdfg):
         first_state = sdfg.nodes()[self.subgraph[StateFusion._first_state]]
@@ -168,23 +167,26 @@ class StateFusion(pattern_matching.Transformation):
 
         # Find source/sink (data) nodes
         first_input = [
-            node for node in nxutil.find_source_nodes(first_state)
+            node
+            for node in nxutil.find_source_nodes(first_state)
             if isinstance(node, nodes.AccessNode)
         ]
         first_output = [
-            node for node in nxutil.find_sink_nodes(first_state)
+            node
+            for node in nxutil.find_sink_nodes(first_state)
             if isinstance(node, nodes.AccessNode)
         ]
         second_input = [
-            node for node in nxutil.find_source_nodes(second_state)
+            node
+            for node in nxutil.find_source_nodes(second_state)
             if isinstance(node, nodes.AccessNode)
         ]
 
         # first input = first input - first output
         first_input = [
-            node for node in first_input
-            if next((x for x in first_output
-                     if x.label == node.label), None) is None
+            node
+            for node in first_input
+            if next((x for x in first_output if x.label == node.label), None) is None
         ]
 
         # Merge second state to first state
@@ -196,16 +198,14 @@ class StateFusion(pattern_matching.Transformation):
         # Merge common (data) nodes
         for node in first_input:
             try:
-                old_node = next(
-                    x for x in second_input if x.label == node.label)
+                old_node = next(x for x in second_input if x.label == node.label)
             except StopIteration:
                 continue
             nxutil.change_edge_src(first_state, old_node, node)
             first_state.remove_node(old_node)
         for node in first_output:
             try:
-                new_node = next(
-                    x for x in second_input if x.label == node.label)
+                new_node = next(x for x in second_input if x.label == node.label)
             except StopIteration:
                 continue
             nxutil.change_edge_dest(first_state, node, new_node)
@@ -214,6 +214,16 @@ class StateFusion(pattern_matching.Transformation):
         # Redirect edges and remove second state
         nxutil.change_edge_src(sdfg, second_state, first_state)
         sdfg.remove_node(second_state)
+        if Config.get_bool("debugprint"):
+            StateFusion._states_fused += 1
+
+    @staticmethod
+    def print_debuginfo():
+        print(
+            "Automatically fused {} states using StateFusion transform.".format(
+                StateFusion._states_fused
+            )
+        )
 
 
 pattern_matching.Transformation.register_stateflow_pattern(StateFusion)

@@ -7,27 +7,27 @@ from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import ShapeProperty
 import sympy
+from dace.config import Config
 
 
-def calc_set_union(set_a: subsets.Subset,
-                   set_b: subsets.Subset) -> subsets.Range:
+def calc_set_union(set_a: subsets.Subset, set_b: subsets.Subset) -> subsets.Range:
     """ Computes the union of two Subset objects. """
 
-    if isinstance(set_a, subsets.Indices) or isinstance(
-            set_b, subsets.Indices):
-        raise NotImplementedError('Set union with indices is not implemented.')
-    if not (isinstance(set_a, subsets.Range)
-            and isinstance(set_b, subsets.Range)):
-        raise TypeError('Can only compute the union of ranges.')
+    if isinstance(set_a, subsets.Indices) or isinstance(set_b, subsets.Indices):
+        raise NotImplementedError("Set union with indices is not implemented.")
+    if not (isinstance(set_a, subsets.Range) and isinstance(set_b, subsets.Range)):
+        raise TypeError("Can only compute the union of ranges.")
     if len(set_a) != len(set_b):
-        raise ValueError('Range dimensions do not match')
+        raise ValueError("Range dimensions do not match")
     union = []
     for range_a, range_b in zip(set_a, set_b):
-        union.append([
-            sympy.Min(range_a[0], range_b[0]),
-            sympy.Max(range_a[1], range_b[1]),
-            sympy.Min(range_a[2], range_b[2]),
-        ])
+        union.append(
+            [
+                sympy.Min(range_a[0], range_b[0]),
+                sympy.Max(range_a[1], range_b[1]),
+                sympy.Min(range_a[2], range_b[2]),
+            ]
+        )
     return subsets.Range(union)
 
 
@@ -90,27 +90,25 @@ class MapFusion(pattern_matching.Transformation):
             return False
 
         # Success
-        candidate[MapFusion._second_map_entry] = graph.nodes().index(
-            second_map_entry)
+        candidate[MapFusion._second_map_entry] = graph.nodes().index(second_map_entry)
 
         return True
 
     @staticmethod
     def match_to_str(graph, candidate):
         first_map_entry = graph.nodes()[candidate[MapFusion._first_map_entry]]
-        second_map_entry = graph.nodes()[candidate[
-            MapFusion._second_map_entry]]
+        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
 
-        return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
-                           for entry in [first_map_entry, second_map_entry])
+        return " -> ".join(
+            entry.map.label + ": " + str(entry.map.params)
+            for entry in [first_map_entry, second_map_entry]
+        )
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        first_map_entry = graph.nodes()[self.subgraph[
-            MapFusion._first_map_entry]]
+        first_map_entry = graph.nodes()[self.subgraph[MapFusion._first_map_entry]]
         first_map_exit = graph.exit_nodes(first_map_entry)[0]
-        second_map_entry = graph.nodes()[self.subgraph[
-            MapFusion._second_map_entry]]
+        second_map_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
         second_exits = graph.exit_nodes(second_map_entry)
         first_map_params = [
             symbolic.pystr_to_symbolic(p) for p in first_map_entry.map.params
@@ -126,7 +124,8 @@ class MapFusion(pattern_matching.Transformation):
 
         # Substitute symbols in second map.
         for _parent, _, _child, _, memlet in graph.bfs_edges(
-                second_map_entry, reverse=False):
+            second_map_entry, reverse=False
+        ):
             for fp, sp in zip(first_map_params, second_map_params):
                 for ind, r in enumerate(memlet.subset):
                     if isinstance(memlet.subset[ind], tuple):
@@ -142,16 +141,16 @@ class MapFusion(pattern_matching.Transformation):
             if not memlet.data in transients:
                 transients[memlet.data] = dst
         new_edges = []
-        for src, src_conn, _, dst_conn, memlet in graph.in_edges(
-                first_map_exit):
+        for src, src_conn, _, dst_conn, memlet in graph.in_edges(first_map_exit):
             new_memlet = dcpy(memlet)
-            new_edges.append((src, src_conn, transients[memlet.data], dst_conn,
-                              new_memlet))
-        for _, src_conn, dst, dst_conn, memlet in graph.out_edges(
-                second_map_entry):
+            new_edges.append(
+                (src, src_conn, transients[memlet.data], dst_conn, new_memlet)
+            )
+        for _, src_conn, dst, dst_conn, memlet in graph.out_edges(second_map_entry):
             new_memlet = dcpy(memlet)
-            new_edges.append((transients[memlet.data], src_conn, dst, dst_conn,
-                              new_memlet))
+            new_edges.append(
+                (transients[memlet.data], src_conn, dst, dst_conn, new_memlet)
+            )
 
         # Delete nodes/edges
         for edge in graph.in_edges(first_map_exit):
@@ -166,6 +165,8 @@ class MapFusion(pattern_matching.Transformation):
                 graph.remove_edge(edge)
         graph.remove_node(first_map_exit)
         graph.remove_node(second_map_entry)
+        if Config.get_bool("debugprint"):
+            MapFusion._maps_transformed += 1
 
         # Add edges
         for edge in new_edges:
@@ -182,6 +183,14 @@ class MapFusion(pattern_matching.Transformation):
                 data_desc.shape = subset.bounding_box_size()
                 data_desc.strides = list(subset.bounding_box_size())
                 data_desc.offset = [0] * subset.dims()
+
+    @staticmethod
+    def print_debuginfo():
+        print(
+            "Automatically fused {} maps using MapFusion transform.".format(
+                MapFusion._maps_transformed
+            )
+        )
 
 
 pattern_matching.Transformation.register_pattern(MapFusion)

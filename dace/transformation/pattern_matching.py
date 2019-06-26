@@ -27,6 +27,9 @@ class Transformation(object):
 
     _patterns = set()
     _stateflow_patterns = set()
+    _arrays_removed = 0
+    _maps_transformed = 0
+    _states_fused = 0
 
     # Static methods
 
@@ -229,6 +232,10 @@ class Transformation(object):
         string = type(self).__name__ + ' in '
         string += type(self).match_to_str(graph, self.subgraph)
         return string
+
+    @staticmethod
+    def print_debuginfo():
+        pass
 
 
 # Module functions ############################################################

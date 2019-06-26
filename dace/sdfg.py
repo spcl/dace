@@ -1438,6 +1438,32 @@ subgraph cluster_state_{state} {{
             return False
         return True
 
+    def apply_transformations(self, patterns, validate=True, strict=True):
+        """ This function applies transformations as given in the argument patterns. Look at the
+        utility functions apply_strict_transformations and apply_gpu_transformations if you don't
+        want to interact with this directly.
+        """
+        # Avoiding import loops
+        from dace.transformation import optimizer
+
+        # Apply strict state fusions greedily.
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+        applied = True
+        while applied:
+            applied = False
+            # Find and apply immediately
+            for match in opt.get_pattern_matches(strict=strict, patterns=patterns):
+                sdfg = self.sdfg_list[match.sdfg_id]
+                match.apply(sdfg)
+                if validate:
+                    self.validate()
+                applied = True
+                break
+        if Config.get_bool("debugprint"):
+            for _p in patterns:
+                _p.print_debuginfo()
+
+
     def apply_strict_transformations(self, validate=True):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
@@ -1445,149 +1471,34 @@ subgraph cluster_state_{state} {{
 
             B{Note:} This is an in-place operation on the SDFG.
         """
-        # Avoiding import loops
-        from dace.transformation import optimizer
-        from dace.transformation.dataflow import (
-            RedundantArray,
-            RedundantArrayCopying,
-            RedundantArrayCopying2,
-            RedundantArrayCopying3,
-        )
+        from dace.transformation.dataflow import RedundantArray
         from dace.transformation.interstate import StateFusion
 
-        # Apply strict state fusions greedily.
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        fusions = 0
-        arrays = 0
-        applied = True
-        while applied:
-            applied = False
-            # Find and apply immediately
-            for match in opt.get_pattern_matches(
-                strict=False,
-                patterns=(
-                    RedundantArray,
-                    RedundantArrayCopying,
-                    RedundantArrayCopying2,
-                    RedundantArrayCopying3,
-                    StateFusion,
-                ),
-            ):
-                sdfg = self.sdfg_list[match.sdfg_id]
-                match.apply(sdfg)
-                if validate:
-                    self.validate()
-                if isinstance(match, StateFusion):
-                    print("F")
-                    fusions += 1
-                if (
-                    isinstance(match, RedundantArray)
-                    or isinstance(match, RedundantArrayCopying)
-                    or isinstance(match, RedundantArrayCopying2)
-                    or isinstance(match, RedundantArrayCopying3)
-                ):
-                    arrays += 1
-                applied = True
-                break
-
-        if Config.get_bool("debugprint") and (fusions > 0 or arrays > 0):
-            print(
-                "Automatically applied {} strict state fusions and removed"
-                " {} redundant arrays.".format(fusions, arrays)
-            )
+        self.apply_transformations(
+            [RedundantArray, StateFusion], validate=True, strict=False
+        )
 
     def apply_gpu_transformations(self, states=None, strict=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
-
+            A{Note:} This will not apply any transformations for optimisation. It is recommended to
+            apply redundant array removal transformation after this transformation. Alternatively,
+            you can apply_strict_transformations() after this transformation.
             B{Note:} This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.dataflow import RedundantArrayCopying
-        from dace.transformation.dataflow import RedundantArrayCopying2
-        from dace.transformation.dataflow import RedundantArrayCopying3
         from dace.transformation.dataflow import GPUTransformLocalStorage
 
+        patterns = [GPUTransformLocalStorage]
+        self.apply_transformations(patterns, True, strict)
+
         # Apply transformations greedily.
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        gpu_maps = 0
-        options = [
-            match
-            for match in opt.get_pattern_matches(
-                strict=strict, states=states, patterns=[GPUTransformLocalStorage]
-            )
-        ]
-        while options:
-            sdfg = self.sdfg_list[options[0].sdfg_id]
-            options[0].apply(sdfg)
-            gpu_maps += 1
-
-            options = [
-                match
-                for match in opt.get_pattern_matches(
-                    strict=strict, states=states, patterns=[GPUTransformLocalStorage]
-                )
-            ]
-        arrays = 0
-        if True:
-            options = [
-                match
-                for match in opt.get_pattern_matches(
-                    strict=True, states=states, patterns=[RedundantArrayCopying]
-                )
-            ]
-            while options:
-                sdfg = self.sdfg_list[options[0].sdfg_id]
-                options[0].apply(sdfg)
-                arrays += 1
-
-                options = [
-                    match
-                    for match in opt.get_pattern_matches(
-                        strict=True, states=states, patterns=[RedundantArrayCopying]
-                    )
-                ]
-            options = [
-                match
-                for match in opt.get_pattern_matches(
-                    strict=True, states=states, patterns=[RedundantArrayCopying2]
-                )
-            ]
-            while options:
-                sdfg = self.sdfg_list[options[0].sdfg_id]
-                options[0].apply(sdfg)
-                arrays += 1
-
-                options = [
-                    match
-                    for match in opt.get_pattern_matches(
-                        strict=True, states=states, patterns=[RedundantArrayCopying2]
-                    )
-                ]
-            options = [
-                match
-                for match in opt.get_pattern_matches(
-                    strict=True, states=states, patterns=[RedundantArrayCopying3]
-                )
-            ]
-            while options:
-                sdfg = self.sdfg_list[options[0].sdfg_id]
-                options[0].apply(sdfg)
-                arrays += 1
-
-                options = [
-                    match
-                    for match in opt.get_pattern_matches(
-                        strict=True, states=states, patterns=[RedundantArrayCopying3]
-                    )
-                ]
-
-        if Config.get_bool("debugprint") and (gpu_maps > 0 or arrays > 0):
-            print(
-                "Automatically applied {} map GPU transformations and removed"
-                " {} redundant array copy-operations.".format(gpu_maps, arrays)
-            )
+        # if Config.get_bool("debugprint") and (gpu_maps > 0 or arrays > 0):
+        #    print(
+        #        "Automatically applied {} map GPU transformations and removed"
+        #        " {} redundant array copy-operations.".format(gpu_maps, arrays)
+        #    )
 
     def generate_code(self, specialize=None):
         """ Generates code from this SDFG and returns it.
