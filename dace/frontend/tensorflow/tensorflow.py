@@ -572,9 +572,10 @@ class TFSession:
         self.graph._arg_types.update(self.callbackTypeDict)
         # Compile the SDFG
         self.graph.fill_scope_connectors()
-        # self.apply_tensorflow_transform(validate=False)
-        # self.graph.apply_strict_transformations(validate=False)
-        self.graph.validate()
+        self.apply_tensorflow_transform(validate=False)
+        self.graph.apply_gpu_transformations()
+        #self.graph.apply_strict_transformations(validate=False)
+        #self.graph.validate()
         self.graph.draw_to_file()
         compiled_sdfg = self.graph.compile(optimizer=False)
 
@@ -3264,7 +3265,8 @@ class TFSession:
             mapLabel + "_max_tmp", shape, dtype, toplevel=True
         )
         mapEntry, mapExit = state.add_map(
-            mapLabel + "_max", dict(zip(mapParams, mapRange))
+            mapLabel + "_max", dict(zip(mapParams, mapRange)),
+            schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(mapLabel + "_max", {"j0"}, {"out"}, "out = j0")
         self.reinitCR(temp1Node, [inputParams[1]], [inputDims[1]], "-999999999999")
@@ -3286,7 +3288,8 @@ class TFSession:
             mapLabel + "_denominator_tmp", shape, dtype, toplevel=True
         )
         mapEntry, mapExit = state.add_map(
-            mapLabel + "_denominator", dict(zip(mapParams, mapRange))
+            mapLabel + "_denominator", dict(zip(mapParams, mapRange)),
+            schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(
             mapLabel + "_denominator",
@@ -3333,7 +3336,8 @@ class TFSession:
 
         # 4th map, calculate the cross-entropy loss for an optional loss output
         mapEntry, mapExit = state.add_map(
-            mapLabel + "_loss", dict(zip(mapParams, mapRange))
+            mapLabel + "_loss", dict(zip(mapParams, mapRange)),
+            schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(
             mapLabel + "_loss",
