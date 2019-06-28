@@ -490,6 +490,16 @@ class TFSession:
             handle = open(sdfg_args_filename, "rb")
             sdfg_args = pickle.load(handle)
             compiled_sdfg = self.graph.compile(optimizer=False)
+            ############################
+            # Create output numpy arrays
+            outputs = {
+                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
+                for node, name in zip(total_nodes, total_output_names)
+                if name is not None and name not in sdfg_args
+            }
+            outputs.update(
+                {k: v for k, v in sdfg_args.items() if k in total_output_names}
+            )
         else:
             # Initialize a new SDFG
             self.graph = SDFG(name)
