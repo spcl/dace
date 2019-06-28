@@ -548,8 +548,8 @@ class TFSession:
         if len(patterns) > 0:
             for _pattern in patterns:
                 self.graph.apply_transformations(_pattern, validate, strict)
-        self.graph.validate()
         self.graph.draw_to_file()
+        self.graph.validate()
         compiled_sdfg = self.graph.compile(optimizer=False)
 
         ############################
@@ -613,7 +613,12 @@ class TFSession:
             @return: Tuple or dictionary of values in the same order as `nodes`.
         """
         callfunc = self.compile(
-            nodes, gpu, name=name, validate=validate, strict=strict, patterns=transformations
+            nodes,
+            gpu,
+            name=name,
+            validate=validate,
+            strict=strict,
+            patterns=transformations,
         )
         return callfunc(feed_dict=feed_dict)
 
@@ -1194,7 +1199,6 @@ class TFSession:
 
         local_ctr = str(next(_atomic_count))
         ######### All the nodes and constants ##########
-        training = node.get_attr("is_training")
         inpTensorNode, inpTensorParams, inpTensorDims = self.create_and_add_input_node(
             node.inputs[0]
         )
@@ -1202,352 +1206,141 @@ class TFSession:
         offset, _, offsetDims = self.create_and_add_input_node(node.inputs[2])
         epsilon = node.get_attr("epsilon")
         epsilon = float(epsilon)
+        # outputs
         outputList = self.create_and_add_output_node(node)
         normalisedTensorNode = outputList[0]
+        meanTensorNode = outputList[1]
+        meanDims = self.get_default_dims(node.outputs[1])
+        varianceTensorNode = outputList[2]
+        varianceDims = self.get_default_dims(node.outputs[2])
+        rootVarianceTensorNode = outputList[4]
+        rootVarianceDims = self.get_default_dims(node.outputs[4])
         normalisationScalar = 1
+        assert str(node.get_attr("data_format"))[2:-1] == "NHWC"
+        assert node.get_attr("is_training") == True
         for i in inpTensorNode.desc(self.graph).shape[:-1]:
             normalisationScalar *= i
         normalisationScalar = float(normalisationScalar)
-        hack_variance = self.state.add_scalar(
-            "variance_sqrt" + local_ctr,
-            dace.typeclass(np.float32),
-            transient=True,
-            toplevel=False,
+        sumInputs = self.state.add_transient(
+            "sigma_x_" + local_ctr,
+            _tensorshape(node.outputs[2]),
+            _tensortype(node.outputs[2]),
         )
-        ######### Maps common for both training and inference #########
-        outerMapLabel = _string_builder("outer_iteration_channels")
-        outerMapEntry, outerMapExit = self.state.add_map(
-            outerMapLabel, dict(zip([inpTensorParams[-1]], [str(inpTensorDims[-1])]))
+        sumSquareInputs = self.state.add_transient(
+            "sigma_x2_" + local_ctr,
+            _tensorshape(node.outputs[2]),
+            _tensortype(node.outputs[2]),
         )
-        fbnormMapLabel = _string_builder("iteration_all_dimensions_3")
-        fbnormMapEntry, fbnormMapExit = self.state.add_map(
-            fbnormMapLabel, dict(zip(inpTensorParams[:-1], inpTensorDims[:-1]))
+        ######## Maps ###################
+        nhwcMapBounds = dict(zip(inpTensorParams, inpTensorDims))
+        cMapBounds = dict(zip([inpTensorParams[0]], [str(inpTensorDims[-1])]))
+        normalisationMapEntry, normalisationMapExit = self.state.add_map(
+            _string_builder("normalisation_map"), nhwcMapBounds
         )
-        ######### Common tasklets #########
+        meanMapEntry, meanMapExit = self.state.add_map(
+            _string_builder("mean_map"), nhwcMapBounds
+        )
+        varianceMapEntry, varianceMapExit = self.state.add_map(
+            _string_builder("variance_map"), nhwcMapBounds
+        )
+        varianceSqrtMapEntry, varianceSqrtMapExit = self.state.add_map(
+            _string_builder("variance_sqrt_map"), cMapBounds
+        )
+        ######### Tasklets #########
         fbnormTasklet = self.state.add_tasklet(
             "fbn_eltwise_norm",
-            {"inp", "gamma", "beta", "mean", "variance"},
+            {"j0", "j1", "j2", "j3", "j4"},
             {"out"},
-            "out=float(double(gamma)*((double(inp)-double(mean))/double(variance))+double(beta))",
+            "out=j1*((j0-j3)/j4)+j2",
         )
-        varianceTaskletSqrt = self.state.add_tasklet(
-            "fbn_variance_sqrt",
-            {"var"},
-            {"var_prime"},
-            "var_prime = math.sqrt(float(var)+float(" + str(epsilon) + "))",
+        meanTasklet = self.state.add_tasklet(
+            "mean_computation", {"j0"}, {"out"}, "out=j0/" + str(normalisationScalar)
+        )
+        varianceTasklet1 = self.state.add_tasklet(
+            "variance_part_1", {"j0"}, {"out0", "out1"}, "out0=j0; out1 = j0*j0"
+        )
+        varianceTasklet2 = self.state.add_tasklet(
+            "variance_part_2",
+            {"j0", "j1"},  # i0 is sigma(X) and i1 is sigma(X^2)
+            {
+                "out0",
+                "out1",
+            },  # out0 is the variance and out1 is the sqrt(variance + epsilon)
+            "out0=j1/"
+            + str(normalisationScalar)
+            + " - (j0*j0)/("
+            + str(normalisationScalar * normalisationScalar)
+            + ");out1=math.sqrt(out0 + "
+            + str(epsilon)
+            + ");",
         )
         ########## Common edges ##########
-        inpTensorMemlet = Memlet.simple(inpTensorNode, ",".join(inpTensorParams))
-        inpTensorMiddleMemlet = Memlet.simple(
-            inpTensorNode, ",".join(inpTensorDims[:-1] + [inpTensorParams[-1]])
+        self.add_in_memlets(
+            [inpTensorNode, scale, offset, meanTensorNode, rootVarianceTensorNode],
+            normalisationMapEntry,
+            fbnormTasklet,
+            [inpTensorDims, scaleDims, offsetDims, meanDims, varianceDims],
+            [
+                inpTensorParams,
+                [inpTensorParams[-1]],
+                [inpTensorParams[-1]],
+                [inpTensorParams[-1]],
+                [inpTensorParams[-1]],
+            ],
+        )
+        self.add_out_memlets(
+            [normalisedTensorNode],
+            normalisationMapExit,
+            fbnormTasklet,
+            [inpTensorDims],
+            [inpTensorParams],
         )
         self.add_in_memlets(
             [inpTensorNode],
-            outerMapEntry,
-            fbnormMapEntry,
+            meanMapEntry,
+            meanTasklet,
             [inpTensorDims],
-            [inpTensorDims[:-1] + [inpTensorParams[-1]]],  # Jugaad
+            [inpTensorParams],
+        )
+        self.add_out_memlets(
+            [meanTensorNode],
+            meanMapExit,
+            meanTasklet,
+            [meanDims],
+            [[inpTensorParams[-1]]],
+            wcr="lambda a,b: a+b",
+            wcr_identity=0,
         )
         self.add_in_memlets(
-            [scale, offset],
-            outerMapEntry,
-            fbnormMapEntry,
-            [scaleDims, offsetDims],
-            [[inpTensorParams[-1]], [inpTensorParams[-1]]],
-        )
-        self.state.add_edge(
-            fbnormMapEntry,
-            None,
-            fbnormTasklet,
-            "gamma",
-            Memlet.simple(scale, inpTensorParams[-1]),
-        )
-        self.state.add_edge(
-            fbnormMapEntry,
-            None,
-            fbnormTasklet,
-            "beta",
-            Memlet.simple(offset, inpTensorParams[-1]),
-        )
-        self.state.add_edge(fbnormMapEntry, None, fbnormTasklet, "inp", inpTensorMemlet)
-        self.add_out_memlets(
-            [normalisedTensorNode],
-            outerMapExit,
-            fbnormMapExit,
+            [inpTensorNode],
+            varianceMapEntry,
+            varianceTasklet1,
             [inpTensorDims],
-            [inpTensorDims[:-1] + [inpTensorParams[-1]]],
+            [inpTensorParams],
         )
-        self.state.add_edge(
-            fbnormTasklet,
-            "out",
-            fbnormMapExit,
-            None,
-            Memlet.simple(normalisedTensorNode, ",".join(inpTensorParams)),
+        self.add_out_memlets(
+            [sumInputs, sumSquareInputs],
+            varianceMapExit,
+            varianceTasklet1,
+            [varianceDims, varianceDims],
+            [[inpTensorParams[-1]], [inpTensorParams[-1]]],
+            wcr="lambda a,b: a+b",
+            wcr_identity=0,
         )
-        self.state.add_edge(
-            varianceTaskletSqrt,
-            "var_prime",
-            hack_variance,
-            None,
-            Memlet.simple(hack_variance, ",".join(["0"])),
+        self.add_in_memlets(
+            [sumInputs, sumSquareInputs],
+            varianceSqrtMapEntry,
+            varianceTasklet2,
+            [varianceDims, varianceDims],
+            [[inpTensorParams[0]], [inpTensorParams[0]]],
         )
-        self.state.add_edge(
-            hack_variance,
-            None,
-            fbnormMapEntry,
-            None,
-            Memlet.simple(hack_variance, ",".join(["0"])),
+        self.add_out_memlets(
+            [varianceTensorNode, rootVarianceTensorNode],
+            varianceSqrtMapExit,
+            varianceTasklet2,
+            [varianceDims, varianceDims],
+            [[inpTensorParams[0]], [inpTensorParams[0]]],
         )
-        self.state.add_edge(
-            fbnormMapEntry,
-            None,
-            fbnormTasklet,
-            "variance",
-            Memlet.simple(hack_variance, ",".join(["0"])),
-        )
-        if training:
-            meanTensorNode = outputList[1]
-            meanDims = self.get_default_dims(node.outputs[1])
-            varianceTensorNode = outputList[2]
-            tempNodeMean = self.state.add_scalar(
-                _string_builder("temp_mean_scalar" + local_ctr),
-                dace.typeclass(_tensortype(node.outputs[1])),
-                transient=True,
-                toplevel=False,
-            )
-            tempNodeMean_sum = self.state.add_scalar(
-                _string_builder("temp_mean_sum_scalar" + local_ctr),
-                dace.typeclass(_tensortype(node.outputs[1])),
-                transient=True,
-                toplevel=False,
-            )
-            tempNodeVar = self.state.add_scalar(
-                _string_builder("temp_variance_scalar" + local_ctr),
-                dace.typeclass(_tensortype(node.outputs[1])),
-                transient=True,
-                toplevel=False,
-            )
-            tempNodeVar_sum = self.state.add_scalar(
-                _string_builder("temp_variance_sum_scalar" + local_ctr),
-                dace.typeclass(_tensortype(node.outputs[1])),
-                transient=True,
-                toplevel=False,
-            )
-            # self.reinitCR(tempNodeMean_sum, "", "0", "0")
-            # self.reinitCR(tempNodeVar_sum, "", "0", "0")
-            ######### Mean/Variance computation maps #########
-            meanMapLabel = _string_builder("iteration_all_dimensions_1")
-            meanMapEntry, meanMapExit = self.state.add_map(
-                meanMapLabel, dict(zip(inpTensorParams[:-1], inpTensorDims[:-1]))
-            )
-            varianceMapLabel = _string_builder("iteration_all_dimensions_2")
-            varianceMapEntry, varianceMapExit = self.state.add_map(
-                varianceMapLabel, dict(zip(inpTensorParams[:-1], inpTensorDims[:-1]))
-            )
-            ######### Tasklets for mean and variance #########
-            meanTaskletSum = self.state.add_tasklet(
-                "fbn_mean_computation_sum", {"j0"}, {"out"}, "out = j0"
-            )
-            meanTaskletNorm = self.state.add_tasklet(
-                "fbn_mean_computation_norm",
-                {"out"},
-                {"out_prime"},
-                "out_prime = out/" + str(normalisationScalar),
-            )
-            varianceTaskletSum = self.state.add_tasklet(
-                "fbn_variance_compation_sum",
-                {"inp0", "inp1"},  # inp0 is the mean, inp1 is the input
-                {"out"},
-                "out = (inp1 - inp0) * (inp1 - inp0)",
-            )
-            varianceTaskletNorm = self.state.add_tasklet(
-                "fbn_variance_computation_norm",
-                {"out"},
-                {"out_prime"},
-                "out_prime = out/" + str(normalisationScalar),
-            )
-            ########## All the edges ##########
-            self.state.add_edge(
-                outerMapEntry, None, meanMapEntry, None, inpTensorMiddleMemlet
-            )
-            self.state.add_edge(
-                meanMapEntry, None, meanTaskletSum, "j0", inpTensorMemlet
-            )
-            self.state.add_edge(
-                meanTaskletSum,
-                "out",
-                meanMapExit,
-                None,
-                Memlet.simple(
-                    tempNodeMean_sum, "0", wcr_str="lambda a, b: a+b", wcr_identity=0
-                ),
-            )
-            self.state.add_edge(
-                meanMapExit,
-                None,
-                tempNodeMean_sum,
-                None,
-                Memlet.simple(
-                    tempNodeMean_sum, "0", wcr_str="lambda a, b: a+b", wcr_identity=0
-                ),
-            )
-            self.state.add_edge(
-                tempNodeMean_sum,
-                None,
-                meanTaskletNorm,
-                "out",
-                Memlet.simple(tempNodeMean_sum, "0"),
-            )
-            self.state.add_edge(
-                meanTaskletNorm,
-                "out_prime",
-                tempNodeMean,
-                None,
-                Memlet.simple(tempNodeMean, "0"),
-            )
-            self.add_in_memlets(
-                [tempNodeMean],
-                varianceMapEntry,
-                varianceTaskletSum,
-                [["0"]],
-                [["0"]],
-                identifier="inp",
-            )
-            self.state.add_edge(
-                outerMapEntry, None, varianceMapEntry, None, inpTensorMiddleMemlet
-            )
-            self.state.add_edge(
-                varianceMapEntry, None, varianceTaskletSum, "inp1", inpTensorMemlet
-            )
-            self.add_out_memlets(
-                [tempNodeVar_sum],
-                varianceMapExit,
-                varianceTaskletSum,
-                [["0"]],
-                [["0"]],
-                wcr="lambda a,b: a+b",
-                wcr_identity=0,
-            )
-            self.state.add_edge(
-                tempNodeVar_sum,
-                None,
-                varianceTaskletNorm,
-                "out",
-                Memlet.simple(tempNodeVar_sum, "0"),
-            )
-            self.state.add_edge(
-                varianceTaskletNorm,
-                "out_prime",
-                tempNodeVar,
-                None,
-                Memlet.simple(tempNodeVar, "0"),
-            )
-            self.state.add_edge(
-                tempNodeMean,
-                None,
-                fbnormMapEntry,
-                None,
-                Memlet.simple(tempNodeMean, ",".join(["0"])),
-            )
-            self.state.add_edge(
-                fbnormMapEntry,
-                None,
-                fbnormTasklet,
-                "mean",
-                Memlet.simple(tempNodeMean, ",".join(["0"])),
-            )
-            self.state.add_edge(
-                tempNodeVar,
-                None,
-                varianceTaskletSqrt,
-                "var",
-                Memlet.simple(tempNodeVar, ",".join(["0"])),
-            )
-            self.state.add_edge(
-                tempNodeMean,
-                None,
-                outerMapExit,
-                None,
-                Memlet.simple(meanTensorNode, ",".join([inpTensorParams[-1]])),
-            )
-            self.state.add_edge(
-                outerMapExit,
-                None,
-                meanTensorNode,
-                None,
-                Memlet.simple(meanTensorNode, ",".join(meanDims)),
-            )
-            self.state.add_edge(
-                tempNodeVar,
-                None,
-                outerMapExit,
-                None,
-                Memlet.simple(varianceTensorNode, ",".join([inpTensorParams[-1]])),
-            )
-            self.state.add_edge(
-                outerMapExit,
-                None,
-                varianceTensorNode,
-                None,
-                Memlet.simple(varianceTensorNode, ",".join(meanDims)),
-            )
-            self.add_out_memlets(
-                [outputList[4]],
-                outerMapExit,
-                hack_variance,
-                [meanDims],
-                [[inpTensorParams[-1]]],
-            )
-            # self.state.add_edge(
-            #    meanTensorNode,
-            #    None,
-            #    outputList[3],
-            #    None,
-            #    Memlet.simple(meanTensorNode, ",".join(meanDims)),
-            # )
-
-        else:
-            # Input and output edges have been added through the two maps and
-            # the tasklets. Need to add variance square root edges and edges
-            # between mean and tasklet. Maybe this can be factored out...
-            populationMeanTensor, populationMeanParams, populationMeanDims = self.create_and_add_input_node(
-                node.inputs[3]
-            )
-            populationVarianceTensor, populationVarianceParams, populationVarianceDims = self.create_and_add_input_node(
-                node.inputs[4]
-            )
-            self.add_in_memlets(
-                [populationMeanTensor],
-                outerMapEntry,
-                fbnormMapEntry,
-                [populationMeanDims],
-                [[inpTensorParams[-1]]],
-            )
-            self.state.add_edge(
-                fbnormMapEntry,
-                None,
-                fbnormTasklet,
-                "mean",
-                Memlet.simple(populationMeanTensor, ",".join([inpTensorParams[-1]])),
-            )
-            self.state.add_edge(
-                populationVarianceTensor,
-                None,
-                outerMapEntry,
-                None,
-                Memlet.simple(
-                    populationVarianceTensor, ",".join(populationVarianceDims)
-                ),
-            )
-            self.state.add_edge(
-                outerMapEntry,
-                None,
-                varianceTaskletSqrt,
-                "var",
-                Memlet.simple(
-                    populationVarianceTensor, ",".join([inpTensorParams[-1]])
-                ),
-            )
 
     def visit_FusedBatchNormGrad(self, node):
         local_ctr = str(next(_atomic_count))
@@ -3253,7 +3046,8 @@ class TFSession:
             mapLabel + "_max_tmp", shape, dtype, toplevel=True
         )
         mapEntry, mapExit = state.add_map(
-            mapLabel + "_max", dict(zip(mapParams, mapRange)),
+            mapLabel + "_max",
+            dict(zip(mapParams, mapRange)),
             schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(mapLabel + "_max", {"j0"}, {"out"}, "out = j0")
@@ -3276,7 +3070,8 @@ class TFSession:
             mapLabel + "_denominator_tmp", shape, dtype, toplevel=True
         )
         mapEntry, mapExit = state.add_map(
-            mapLabel + "_denominator", dict(zip(mapParams, mapRange)),
+            mapLabel + "_denominator",
+            dict(zip(mapParams, mapRange)),
             schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(
@@ -3324,7 +3119,8 @@ class TFSession:
 
         # 4th map, calculate the cross-entropy loss for an optional loss output
         mapEntry, mapExit = state.add_map(
-            mapLabel + "_loss", dict(zip(mapParams, mapRange)),
+            mapLabel + "_loss",
+            dict(zip(mapParams, mapRange)),
             schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(
