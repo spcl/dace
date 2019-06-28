@@ -437,19 +437,13 @@ class TFSession:
             @return: A function that receives a feed_dict, evaluates the nodes,
                      and returns a tuple of values in the same order as nodes.
         """
+        from dace.config import Config
+
         # Create a unique name for this session
         if name is None:
             global _LASTSESSION
             _LASTSESSION += 1
             name = "tfsession%d" % _LASTSESSION
-
-        # Initialize a new SDFG
-        self.graph = SDFG(name)
-        self.graph.propagate = False
-        self.state = SDFGState("s0", self.graph)
-        self.graph.add_node(self.state)
-        self.visitedNodes.clear()
-        ############################
 
         # Prepare subgraph to process
         total_nodes = []
@@ -479,78 +473,106 @@ class TFSession:
         else:
             raise TypeError("Unsupported type for fetches: " + str(type(nodes)))
 
-        ops = [
-            node if isinstance(node, tf.Operation) else node.op for node in total_nodes
-        ]
         total_output_names = [
             _string_builder(node.name) if not isinstance(node, tf.Operation) else None
             for node in total_nodes
         ]
+        import os
+        import pickle
 
-        self.kill = False
-        self.visit_backwards(ops)
-        if self.kill:
-            raise NotImplementedError("Nodes listed above are not implemented")
-        ############################
+        if Config.get_bool("compiler", "use_cache"):
+            # Try to see if a cached version of the binary exists
+            # print("looking for cached binary: " + compiler.get_binary_name(self.name))
+            sdfg_filename = os.path.join(".dacecache", name, "program.sdfg")
+            sdfg_args_filename = os.path.join(".dacecache", name, "sdfg_args.pickle")
+            assert os.path.isfile(sdfg_filename)
+            self.graph = SDFG.from_file(sdfg_filename)
+            handle = open(sdfg_args_filename, "rb")
+            sdfg_args = pickle.load(handle)
+            compiled_sdfg = self.graph.compile(optimizer=False)
+        else:
+            # Initialize a new SDFG
+            self.graph = SDFG(name)
+            self.graph.propagate = False
+            self.state = SDFGState("s0", self.graph)
+            self.graph.add_node(self.state)
+            self.visitedNodes.clear()
+            ############################
 
-        # Remove orphan nodes and register node types
-        node_types = {}
-        for state in self.graph.nodes():
-            for node in state.nodes():
-                if (
-                    state.in_degree(node) + state.out_degree(node) == 0
-                    and node.label not in total_output_names
-                ):
-                    state.remove_node(node)
-                    if node.label in self.constDict:
-                        del self.constDict[node.label]
-                elif isinstance(node, dace.graph.nodes.AccessNode):
-                    node_types[node.data] = node.desc(self.graph).dtype.type
-        ############################
-        # Set up arguments
-        sdfg_args = {}
-        sdfg_args.update(self.constDict)
-        sdfg_args.update(self.varDict)
-        sdfg_args.update(self.inpDict)
-        sdfg_args.update(self.initDict)
+            ops = [
+                node if isinstance(node, tf.Operation) else node.op
+                for node in total_nodes
+            ]
+            self.kill = False
+            self.visit_backwards(ops)
+            if self.kill:
+                raise NotImplementedError("Nodes listed above are not implemented")
+            ############################
 
-        # Set scalar arguments to appropriate arrays of size 1
-        sdfg_args.update(
-            {
-                k: (
-                    v if isinstance(v, np.ndarray) else np.array(v, dtype=node_types[k])
-                )
-                for k, v in sdfg_args.items()
+            # Remove orphan nodes and register node types
+            node_types = {}
+            for state in self.graph.nodes():
+                for node in state.nodes():
+                    if (
+                        state.in_degree(node) + state.out_degree(node) == 0
+                        and node.label not in total_output_names
+                    ):
+                        state.remove_node(node)
+                        if node.label in self.constDict:
+                            del self.constDict[node.label]
+                    elif isinstance(node, dace.graph.nodes.AccessNode):
+                        node_types[node.data] = node.desc(self.graph).dtype.type
+            self.graph._arg_types.update(self.callbackTypeDict)
+            self.graph.fill_scope_connectors()
+            ############################
+            # Set up arguments
+            sdfg_args = {}
+            sdfg_args.update(self.constDict)
+            sdfg_args.update(self.varDict)
+            sdfg_args.update(self.inpDict)
+            sdfg_args.update(self.initDict)
+            sdfg_args.update(self.callbackFunctionDict)
+            # Set scalar arguments to appropriate arrays of size 1
+            sdfg_args.update(
+                {
+                    k: (
+                        v
+                        if isinstance(v, np.ndarray)
+                        else np.array(v, dtype=node_types[k])
+                    )
+                    for k, v in sdfg_args.items()
+                }
+            )
+
+            ############################
+            # Create output numpy arrays
+            outputs = {
+                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
+                for node, name in zip(total_nodes, total_output_names)
+                if name is not None and name not in sdfg_args
             }
-        )
-        ############################
-        # Create output numpy arrays
-        outputs = {
-            name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-            for node, name in zip(total_nodes, total_output_names)
-            if name is not None and name not in sdfg_args
-        }
-        outputs.update({k: v for k, v in sdfg_args.items() if k in total_output_names})
+            outputs.update(
+                {k: v for k, v in sdfg_args.items() if k in total_output_names}
+            )
+            sdfg_args.update(outputs)
+            ############################
+            # Mark outputs as non-transients
+            for output in outputs:
+                self.graph.arrays[output].transient = False
+            ############################
+            # Compile the SDFG
+            if gpu:
+                self.graph.apply_gpu_transformations()
+            if len(patterns) > 0:
+                for _pattern in patterns:
+                    self.graph.apply_transformations(_pattern, validate, strict)
+            self.graph.validate()
+            self.graph.draw_to_file()
+            compiled_sdfg = self.graph.compile(optimizer=False)
 
-        sdfg_args.update(self.callbackFunctionDict)
-        sdfg_args.update(outputs)
-
-        ############################
-        # Mark outputs as non-transients
-        for output in outputs:
-            self.graph.arrays[output].transient = False
-        ############################
-        self.graph._arg_types.update(self.callbackTypeDict)
-        # Compile the SDFG
-        self.graph.fill_scope_connectors()
-        if gpu:
-            self.graph.apply_gpu_transformations()
-        if len(patterns) > 0:
-            for _pattern in patterns:
-                self.graph.apply_transformations(_pattern, validate, strict)
-        self.graph.draw_to_file()
-        self.graph.validate()
-        compiled_sdfg = self.graph.compile(optimizer=False)
+            sdfg_args_filename = os.path.join(".dacecache", name, "sdfg_args.pickle")
+            with open(sdfg_args_filename, "wb") as handle:
+                pickle.dump(sdfg_args, handle, pickle.HIGHEST_PROTOCOL)
 
         ############################
         # Create the function that invokes the SDFG
