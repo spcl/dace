@@ -277,21 +277,21 @@ class ResNet50_small(tf.keras.Model):
         self.l2b = id_block([64, 64, 256], stage=2, block="b")
         self.l2c = id_block([64, 64, 256], stage=2, block="c")
 
-#        self.l3a = conv_block([128, 128, 512], stage=3, block="a")
-#        self.l3b = id_block([128, 128, 512], stage=3, block="b")
-#        self.l3c = id_block([128, 128, 512], stage=3, block="c")
-#        self.l3d = id_block([128, 128, 512], stage=3, block="d")
-#
-#        self.l4a = conv_block([256, 256, 1024], stage=4, block="a")
-#        self.l4b = id_block([256, 256, 1024], stage=4, block="b")
-#        self.l4c = id_block([256, 256, 1024], stage=4, block="c")
-#        self.l4d = id_block([256, 256, 1024], stage=4, block="d")
-#        self.l4e = id_block([256, 256, 1024], stage=4, block="e")
-#        self.l4f = id_block([256, 256, 1024], stage=4, block="f")
-#
-#        self.l5a = conv_block([512, 512, 2048], stage=5, block="a")
-#        self.l5b = id_block([512, 512, 2048], stage=5, block="b")
-#        self.l5c = id_block([512, 512, 2048], stage=5, block="c")
+        self.l3a = conv_block([128, 128, 512], stage=3, block="a")
+        self.l3b = id_block([128, 128, 512], stage=3, block="b")
+        self.l3c = id_block([128, 128, 512], stage=3, block="c")
+        self.l3d = id_block([128, 128, 512], stage=3, block="d")
+
+        self.l4a = conv_block([256, 256, 1024], stage=4, block="a")
+        self.l4b = id_block([256, 256, 1024], stage=4, block="b")
+        self.l4c = id_block([256, 256, 1024], stage=4, block="c")
+        self.l4d = id_block([256, 256, 1024], stage=4, block="d")
+        self.l4e = id_block([256, 256, 1024], stage=4, block="e")
+        self.l4f = id_block([256, 256, 1024], stage=4, block="f")
+
+        self.l5a = conv_block([512, 512, 2048], stage=5, block="a")
+        self.l5b = id_block([512, 512, 2048], stage=5, block="b")
+        self.l5c = id_block([512, 512, 2048], stage=5, block="c")
 
         self.avg_pool = layers.AveragePooling2D(
             (7, 7), strides=(7, 7), data_format=data_format)
@@ -325,24 +325,24 @@ class ResNet50_small(tf.keras.Model):
         x = self.max_pool(x)
 
         x = self.l2a(x, training=training)
-        x = self.l2b(x, training=training)
-        x = self.l2c(x, training=training)
+        #x = self.l2b(x, training=training)
+        #x = self.l2c(x, training=training)
 
-#        x = self.l3a(x, training=training)
-#        x = self.l3b(x, training=training)
-#        x = self.l3c(x, training=training)
-#        x = self.l3d(x, training=training)
-#
-#        x = self.l4a(x, training=training)
-#        x = self.l4b(x, training=training)
-#        x = self.l4c(x, training=training)
-#        x = self.l4d(x, training=training)
-#        x = self.l4e(x, training=training)
-#        x = self.l4f(x, training=training)
-#
-#        x = self.l5a(x, training=training)
-#        x = self.l5b(x, training=training)
-#        x = self.l5c(x, training=training)
+        #x = self.l3a(x, training=training)
+        #x = self.l3b(x, training=training)
+        #x = self.l3c(x, training=training)
+        #x = self.l3d(x, training=training)
+
+        #x = self.l4a(x, training=training)
+        #x = self.l4b(x, training=training)
+        #x = self.l4c(x, training=training)
+        #x = self.l4d(x, training=training)
+        #x = self.l4e(x, training=training)
+        #x = self.l4f(x, training=training)
+
+        #x = self.l5a(x, training=training)
+        #x = self.l5b(x, training=training)
+        #x = self.l5c(x, training=training)
 
         x = self.avg_pool(x)
 
