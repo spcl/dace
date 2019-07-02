@@ -469,6 +469,15 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                         c = max_streams
                         max_streams = increment(max_streams)
                     e.src._cs_childpath = True
+
+                    # Do not create multiple streams within GPU scopes
+                    if (isinstance(e.src, nodes.EntryNode)
+                            and e.src.schedule in dtypes.GPU_SCHEDULES):
+                        e.src._cs_childpath = False
+                    elif state.scope_dict()[e.src] is not None:
+                        parent = state.scope_dict()[e.src]
+                        if parent.schedule in dtypes.GPU_SCHEDULES:
+                            e.src._cs_childpath = False
                 else:
                     c = max_streams
                     max_streams = increment(max_streams)
