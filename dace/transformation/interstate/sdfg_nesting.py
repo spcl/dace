@@ -194,9 +194,7 @@ class InlineSDFG(pattern_matching.Transformation):
             to_unsqueeze = ones
 
         result.subset.unsqueeze(to_unsqueeze)
-        for axis in ones:
-            # TODO: Offset by subset rather than set
-            result.subset[axis] = external_memlet.subset[axis]
+        result.subset.offset(external_memlet.subset, False)
 
         # TODO: Offset rest of memlet according to other_subset
         if external_memlet.other_subset is not None:
