@@ -233,7 +233,8 @@ class AffineSMemlet(SeparableMemletPattern):
                 self.internal_range.add((brb, bre))
 
             if step is not None:
-                if self.param in step.free_symbols:
+                if (symbolic.issymbolic(step)
+                        and self.param in step.free_symbols):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
@@ -637,8 +638,11 @@ def _propagate_labels(g, sdfg):
 
 
 # External API
-def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
-                     union_inner_edges: bool, arr=None):
+def propagate_memlet(dfg_state,
+                     memlet: Memlet,
+                     scope_node: nodes.EntryNode,
+                     union_inner_edges: bool,
+                     arr=None):
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
@@ -776,7 +780,15 @@ def _propagate_node(sdfg,
         array_data[target][memlet.data].append(memlet)
 
 
-def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed, arr=None):
+def _propagate_edge(sdfg,
+                    g,
+                    u,
+                    v,
+                    memlet,
+                    aggdata,
+                    patterns,
+                    reversed,
+                    arr=None):
     if ((isinstance(u, nodes.EntryNode) or isinstance(u, nodes.ExitNode))):
         mapnode = u.map
 
@@ -789,8 +801,9 @@ def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed, arr=None
 
         if arr is None:
             if memlet.data not in sdfg.arrays:
-                raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
-                            'in SDFG.' % memlet.data)
+                raise KeyError(
+                    'Data descriptor (Array, Stream) "%s" not defined '
+                    'in SDFG.' % memlet.data)
             arr = sdfg.arrays[memlet.data]
 
         for pattern in patterns:
@@ -798,8 +811,7 @@ def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed, arr=None
                     expr,
                 [[symbolic.pystr_to_symbolic(p) for p in mapnode.params]],
                     mapnode.range, aggdata):  # Only one level of context
-                return pattern.propagate(arr, expr,
-                                         mapnode.range)
+                return pattern.propagate(arr, expr, mapnode.range)
 
         # No patterns found. Emit a warning and propagate the entire array
         print('WARNING: Cannot find appropriate memlet pattern to propagate %s'
