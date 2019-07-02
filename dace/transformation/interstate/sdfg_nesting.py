@@ -4,7 +4,7 @@ from copy import deepcopy as dc
 import networkx as nx
 
 import dace
-from dace import data as dt, memlet, sdfg as sd, subsets, symbolic, Memlet
+from dace import data as dt, memlet, sdfg as sd, subsets, Memlet, EmptyMemlet
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
@@ -278,6 +278,13 @@ class InlineSDFG(pattern_matching.Transformation):
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in torename:
                 node.data = torename[node.data]
+
+        # If an empty memlet was connected to the nested SDFG, reconnect
+        # all source nodes with empty memlets
+        if None in inputs:
+            cnode, cconn, cmemlet = inputs[None]
+            for node in state.source_nodes():
+                graph.add_edge(cnode, cconn, node, None, EmptyMemlet())
 
         # Remove the nested SDFG node
         graph.remove_node(nsdfg_node)
