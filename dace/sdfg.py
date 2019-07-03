@@ -1460,6 +1460,7 @@ subgraph cluster_state_{state} {{
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate:
+                    self.fill_scope_connectors()
                     self.validate()
                 applied = True
                 break
