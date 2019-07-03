@@ -69,7 +69,7 @@ outputs_dace = sess_dace.run(
     transformations=[
         [TensorflowRedundantArray],
         [GPUTransformLocalStorage],
-        [RedundantArray, RedundantArrayCopying],
+        [RedundantArray, RedundantArrayCopying, RedundantArrayCopying2],
     ],
 )
 # gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
