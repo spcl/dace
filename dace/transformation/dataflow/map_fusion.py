@@ -205,9 +205,7 @@ class MapFusion(pattern_matching.Transformation):
                                 new_tuple.append(_sym)
                         new_tuple = tuple(new_tuple)
                     expected_second_subset.append(new_tuple)
-                if expected_second_subset == [
-                    _something for _something in second_memlet.subset
-                ]:
+                if expected_second_subset == list(second_memlet.subset):
                     provided = True
                     break
 
