@@ -2,13 +2,72 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import data, types, subsets, symbolic
+from dace import data, types, subsets, symbolic, graph
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
-from dace.properties import ShapeProperty
 import sympy
-from dace.config import Config
+from typing import List, Dict
+import ast
 
+
+class ASTFindReplace(ast.NodeTransformer):
+    def __init__(self, repldict: Dict[str, str]):
+        self.repldict = repldict
+
+    def visit_Name(self, node):
+        if node.id in self.repldict:
+            node.id = self.repldict[node.id]
+        return node
+
+
+def replace(subgraph, name: str, new_name: str):
+    """ Finds and replaces all occurrences of a symbol or array in a subgraph.
+        @param name: Name to find.
+        @param new_name: Name to replace.
+    """
+    from dace import properties
+    import sympy as sp
+
+    symrepl = {
+        symbolic.symbol(name): symbolic.symbol(new_name)
+        if isinstance(new_name, str)
+        else new_name
+    }
+
+    def replsym(symlist):
+        if symlist is None:
+            return None
+        if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
+            return symlist.subs(symrepl)
+        for i, dim in enumerate(symlist):
+            try:
+                symlist[i] = tuple(d.subs(symrepl) for d in dim)
+            except TypeError:
+                symlist[i] = dim.subs(symrepl)
+        return symlist
+
+        # Replace in node properties
+
+    for node in subgraph.nodes():
+        for propclass, propval in node.properties():
+            pname = propclass.attr_name
+            if isinstance(propclass, properties.SymbolicProperty):
+                setattr(node, pname, propval.subs({name: new_name}))
+            if isinstance(propclass, properties.DataProperty):
+                if propval == name:
+                    setattr(node, pname, new_name)
+            if isinstance(propclass, properties.RangeProperty):
+                setattr(node, pname, replsym(propval))
+            if isinstance(propclass, properties.CodeProperty):
+                for stmt in propval:
+                    ASTFindReplace({name: new_name}).visit(stmt)
+
+    # Replace in memlets
+    for edge in subgraph.edges():
+        if edge.data.data == name:
+            edge.data.data = new_name
+        edge.data.subset = replsym(edge.data.subset)
+        edge.data.other_subset = replsym(edge.data.other_subset)
 
 def calc_set_union(set_a: subsets.Subset, set_b: subsets.Subset) -> subsets.Range:
     """ Computes the union of two Subset objects. """
@@ -39,8 +98,8 @@ class MapFusion(pattern_matching.Transformation):
         connected in the same manner as they were before the fusion.
     """
 
-    _first_map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _second_map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    _first_map_entry = nodes.EntryNode()
+    _second_map_entry = nodes.EntryNode()
 
     @staticmethod
     def annotates_memlets():
@@ -51,43 +110,109 @@ class MapFusion(pattern_matching.Transformation):
         return [nxutil.node_path_graph(MapFusion._first_map_entry)]
 
     @staticmethod
+    def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> List[int]:
+        """ Find permutation between two map ranges.
+            @param first_map: First map.
+            @param second_map: Second map.
+            @return: None if no such permutation exists, otherwise a list of
+                     indices L such that L[x]'th parameter of second map has the same range as x'th
+                     parameter of the first map.
+            """
+        result = []
+
+        if len(first_map.range) != len(second_map.range):
+            return None
+
+        # Match map ranges with reduce ranges
+        for i, tmap_rng in enumerate(first_map.range):
+            found = False
+            for j, rng in enumerate(second_map.range):
+                if tmap_rng == rng and j not in result:
+                    result.append(j)
+                    found = True
+                    break
+            if not found:
+                break
+
+        # Ensure all map ranges matched
+        if len(result) != len(first_map.range):
+            return None
+
+        return result
+
+    @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        # The first map must have a non-conflicting map exit.
-        # (cannot fuse with CR in the first map)
         first_map_entry = graph.nodes()[candidate[MapFusion._first_map_entry]]
-        first_exits = graph.exit_nodes(first_map_entry)
-        first_exit = first_exits[0]
+        first_exit = graph.exit_nodes(first_map_entry)[0]
         if any([e.data.wcr is not None for e in graph.in_edges(first_exit)]):
             return False
 
-        # Check whether there is a pattern map -> data -> map.
-        data_nodes = []
+        # Check whether there is a pattern map -> access -> map.
+        intermediate_nodes = set()
+        intermediate_data = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):
             if isinstance(dst, nodes.AccessNode):
-                data_nodes.append(dst)
+                intermediate_nodes.add(dst)
+                intermediate_data.add(dst.data)
             else:
                 return False
-        second_map_entry = None
-        for data_node in data_nodes:
-            for _, _, dst, _, _ in graph.out_edges(data_node):
-                if isinstance(dst, nodes.MapEntry):
-                    if second_map_entry is None:
-                        second_map_entry = dst
-                    elif dst != second_map_entry:
-                        return False
-                else:
-                    return False
-        if second_map_entry is None:
-            return False
-        for src, _, _, _, _ in graph.in_edges(second_map_entry):
-            if not src in data_nodes:
-                return False
 
-        # Check map spaces (this should be generalized to ignore order).
-        first_range = first_map_entry.map.range
-        second_range = second_map_entry.map.range
-        if first_range != second_range:
+        second_map_entry = None
+        for node in intermediate_nodes:
+            for _, _, dst, _, _ in graph.out_edges(node):
+                if isinstance(dst, nodes.EntryNode):
+                    second_map_entry = dst
+                    break
+        if second_map_entry is None:  # No second map
             return False
+
+        # Check map ranges
+        perm = MapFusion.find_permutation(first_map_entry.map, second_map_entry.map)
+        if perm is None:
+            return False
+
+        # Create a dict that maps parameters of the first map to those of the second map.
+        params_dict = {}
+        for _index, _param in enumerate(first_map_entry.map.params):
+            params_dict[_param] = second_map_entry.map.params[perm[_index]]
+
+        out_memlets = [e.data for e in graph.in_edges(first_exit)]
+
+        # Check that input set of second map is provided by the output set
+        # of the first map, or other unrelated maps
+        for _, _, _, _, second_memlet in graph.out_edges(second_map_entry):
+            # Memlets that do not come from one of the intermediate arrays
+            if second_memlet.data not in intermediate_data:
+                continue
+            provided = False
+            for first_memlet in out_memlets:
+                if first_memlet.data != second_memlet.data:
+                    continue
+                # If there is an equivalent subset, it is provided
+                first_subset = first_memlet.subset
+                expected_second_subset = []
+                for _tup in first_memlet.subset:
+                    new_tuple = []
+                    if isinstance(_tup, symbolic.symbol):
+                        new_tuple = symbolic.symbol(params_dict[str(_tup)])
+                    else:
+                        for _sym in _tup:
+                            if isinstance(_sym, symbolic.symbol):
+                                new_tuple.append(
+                                    symbolic.symbol(params_dict[str(_sym)])
+                                )
+                            else:
+                                new_tuple.append(_sym)
+                        new_tuple = tuple(new_tuple)
+                    expected_second_subset.append(new_tuple)
+                if expected_second_subset == list(second_memlet.subset):
+                    provided = True
+                    break
+
+            # If none of the output memlets of the first map provide the info,
+            # fail.
+            if provided is False:
+                return False
 
         # Success
         candidate[MapFusion._second_map_entry] = graph.nodes().index(second_map_entry)
@@ -96,101 +221,153 @@ class MapFusion(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        first_map_entry = graph.nodes()[candidate[MapFusion._first_map_entry]]
-        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
+        first_entry = graph.nodes()[candidate[MapFusion._first_map_entry]]
+        second_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
 
         return " -> ".join(
             entry.map.label + ": " + str(entry.map.params)
-            for entry in [first_map_entry, second_map_entry]
+            for entry in [first_entry, second_entry]
         )
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        first_map_entry = graph.nodes()[self.subgraph[MapFusion._first_map_entry]]
-        first_map_exit = graph.exit_nodes(first_map_entry)[0]
-        second_map_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
-        second_exits = graph.exit_nodes(second_map_entry)
-        first_map_params = [
-            symbolic.pystr_to_symbolic(p) for p in first_map_entry.map.params
-        ]
-        second_map_params = [
-            symbolic.pystr_to_symbolic(p) for p in second_map_entry.map.params
-        ]
+        first_entry = graph.nodes()[self.subgraph[MapFusion._first_map_entry]]
+        first_exit = graph.exit_nodes(first_entry)[0]
+        second_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
+        second_exit = graph.exit_nodes(second_entry)[0]
 
-        # Fix exits
-        for exit_node in second_exits:
-            if isinstance(exit_node, nodes.MapExit):
-                exit_node.map = first_map_entry.map
+        intermediate_nodes = set()
+        for _, _, dst, _, _ in graph.out_edges(first_exit):
+            intermediate_nodes.add(dst)
+            assert isinstance(dst, nodes.AccessNode)
 
-        # Substitute symbols in second map.
-        for _parent, _, _child, _, memlet in graph.bfs_edges(
-            second_map_entry, reverse=False
-        ):
-            for fp, sp in zip(first_map_params, second_map_params):
-                for ind, r in enumerate(memlet.subset):
-                    if isinstance(memlet.subset[ind], tuple):
-                        begin = r[0].subs(sp, fp)
-                        end = r[1].subs(sp, fp)
-                        step = r[2].subs(sp, fp)
-                        memlet.subset[ind] = (begin, end, step)
-                    else:
-                        memlet.subset[ind] = memlet.subset[ind].subs(sp, fp)
+        # Check if an access node refers to non transient memory, or transient
+        # is used at another location (cannot erase)
+        do_not_erase = set()
+        for node in intermediate_nodes:
+            if sdfg.arrays[node.data].transient is False:
+                do_not_erase.add(node)
+            else:
+                # If array is used anywhere else in this state.
+                num_occurrences = len(
+                    [
+                        n
+                        for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and n.data == node.data
+                    ]
+                )
+                if num_occurrences > 1:
+                    return False
 
-        transients = {}
-        for _, _, dst, _, memlet in graph.out_edges(first_map_exit):
-            if not memlet.data in transients:
-                transients[memlet.data] = dst
-        new_edges = []
-        for src, src_conn, _, dst_conn, memlet in graph.in_edges(first_map_exit):
-            new_memlet = dcpy(memlet)
-            new_edges.append(
-                (src, src_conn, transients[memlet.data], dst_conn, new_memlet)
-            )
-        for _, src_conn, dst, dst_conn, memlet in graph.out_edges(second_map_entry):
-            new_memlet = dcpy(memlet)
-            new_edges.append(
-                (transients[memlet.data], src_conn, dst, dst_conn, new_memlet)
-            )
+                # TODO: NOT SURE
+                for edge in graph.in_edges(node):
+                    if edge.src != first_exit:
+                        do_not_erase.add(node)
+                        break
+                else:
+                    for edge in graph.out_edges(node):
+                        if edge.dst != second_entry:
+                            do_not_erase.add(node)
+                            break
 
-        # Delete nodes/edges
-        for edge in graph.in_edges(first_map_exit):
-            graph.remove_edge(edge)
-        for edge in graph.out_edges(second_map_entry):
-            graph.remove_edge(edge)
-        data_nodes = []
-        for _, _, dst, _, _ in graph.out_edges(first_map_exit):
-            data_nodes.append(dst)
-        for data_node in data_nodes:
-            for edge in graph.all_edges(data_node):
-                graph.remove_edge(edge)
-        graph.remove_node(first_map_exit)
-        graph.remove_node(second_map_entry)
-        if Config.get_bool("debugprint"):
-            MapFusion._maps_transformed += 1
+        # Find permutation between first and second scopes
+        if first_entry.map.params != second_entry.map.params:
+            perm = MapFusion.find_permutation(first_entry.map, second_entry.map)
+            params_dict = {}
+            for _index, _param in enumerate(first_entry.map.params):
+                params_dict[_param] = second_entry.map.params[perm[_index]]
 
-        # Add edges
-        for edge in new_edges:
-            graph.add_edge(*edge)
+            # Hopefully replaces (in memlets and tasklet) the second scope map
+            # indices with the permuted first map indices
+            second_scope = graph.scope_subgraph(second_entry)
+            for _firstp, _secondp in params_dict.items():
+                replace(second_scope, _secondp, _firstp)
 
-        # Reduce transient sizes
-        for data_node in data_nodes:
-            data_desc = data_node.desc(sdfg)
-            if data_desc.transient:
-                edges = graph.in_edges(data_node)
-                subset = edges[0].data.subset
-                for idx in range(1, len(edges)):
-                    subset = calc_set_union(subset, edges[idx].data.subset)
-                data_desc.shape = subset.bounding_box_size()
-                data_desc.strides = list(subset.bounding_box_size())
-                data_desc.offset = [0] * subset.dims()
+        ########Isolate First MapExit node###########
+        for _edge in graph.in_edges(first_exit):
+            __some_str = _edge.data.data
+            _access_node = graph.find_node(__some_str)
+            # all outputs of first_exit are in intermediate_nodes set, so all inputs to
+            # first_exit should also be!
+            assert _access_node in intermediate_nodes
+            if _access_node not in do_not_erase:
+                _new_dst = None
+                _new_dst_conn = None
+                # look at the second map entry out-edges to get the new destination
+                for _e in graph.out_edges(second_entry):
+                    if _e.data.data == _access_node.data:
+                        _new_dst = _e.dst
+                        _new_dst_conn = _e.dst_conn
+                        break
+                assert _new_dst is not None
+                graph.add_edge(
+                    _edge._src, _edge.src_conn, _new_dst, _new_dst_conn, dcpy(_edge.data)
+                )
+                graph.remove_edge(_edge)
+                ####Isolate this node, but don't remove it because a memlet will need it#####
+                for _in_e in graph.in_edges(_access_node):
+                    graph.remove_edge(_in_e)
+                for _out_e in graph.out_edges(_access_node):
+                    graph.remove_edge(_out_e)
+                graph.remove_node(_access_node)
+            else:
+                # _access_node will become an output of the second map exit
+                for _out_e in graph.out_edges(first_exit):
+                    if _out_e.data.data == _access_node.data:
+                        graph.add_edge(
+                            second_exit,
+                            None,
+                            _out_e._dst,
+                            _out_e.dst_conn,
+                            dcpy(_out_e.data),
+                        )
+                        graph.remove_edge(_out_e)
+                        break
+                else:
+                    raise AssertionError(
+                        "No out-edge was found that leads to {}".format(_access_node)
+                    )
+                graph.add_edge(
+                    _edge._src, _edge.src_conn, second_exit, None, dcpy(_edge.data)
+                )
+                graph.remove_edge(_edge)
+        graph.remove_node(first_exit)  # Take a leap of faith
 
-    @staticmethod
-    def print_debuginfo():
-        print(
-            "Automatically fused {} maps using MapFusion transform.".format(
-                MapFusion._maps_transformed
-            )
-        )
+        #############Isolate second_entry node################
+        for _edge in graph.in_edges(second_entry):
+            _access_node = graph.find_node(_edge.data.data)
+            if _access_node in intermediate_nodes:
+                # Already handled above, just remove this
+                graph.remove_edge(_edge)
+                continue
+            else:
+                # This is an external input to the second map which will now go through the first
+                # map.
+                graph.add_edge(
+                    _edge._src, _edge.src_conn, first_entry, None, dcpy(_edge.data)
+                )
+                graph.remove_edge(_edge)
+                for _out_e in graph.out_edges(second_entry):
+                    if _out_e.data.data == _access_node.data:
+                        graph.add_edge(
+                            first_entry,
+                            None,
+                            _out_e._dst,
+                            _out_e.dst_conn,
+                            dcpy(_out_e.data),
+                        )
+                        graph.remove_edge(_out_e)
+                        break
+                else:
+                    raise AssertionError(
+                        "No out-edge was found that leads to {}".format(_access_node)
+                    )
+
+        assert len(graph.in_edges(second_entry)) == 0
+        graph.remove_node(second_entry)
+
+        # Fix scope exit
+        second_exit.map = first_entry.map
 
 
 pattern_matching.Transformation.register_pattern(MapFusion)

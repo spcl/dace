@@ -1479,6 +1479,35 @@ subgraph cluster_state_{state} {{
         self.apply_transformations(
             [RedundantArray, StateFusion], validate=True, strict=False)
 
+    def apply_transformations(self, patterns, validate=True, strict=False):
+        """ This function applies transformations as given in the argument
+            patterns. """
+        # Avoiding import loops
+        from dace.transformation import optimizer
+
+        # Apply strict state fusions greedily.
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+        applied = True
+        applied_transformations = collections.defaultdict(int)
+        while applied:
+            applied = False
+            # Find and apply immediately
+            for match in opt.get_pattern_matches(
+                    strict=strict, patterns=patterns):
+                sdfg = self.sdfg_list[match.sdfg_id]
+                match.apply(sdfg)
+                applied_transformations[type(match).__name__] += 1
+                if validate:
+                    self.fill_scope_connectors()
+                    self.validate()
+                applied = True
+                break
+
+        if Config.get_bool('debugprint'):
+            print('Applied {}.'.format(', '.join([
+                '%d %s' % (v, k) for k, v in applied_transformations.items()
+            ])))
+
     def apply_gpu_transformations(self, states=None, strict=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
