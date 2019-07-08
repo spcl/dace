@@ -193,7 +193,6 @@ void __dace_exit_cuda({params}) {{
     for(int i = 0; i < {nevents}; ++i) {{
         cudaEventDestroy(dace::cuda::__events[i]);
     }}
-    cudaDeviceReset();
 }}
 
 {localcode}
