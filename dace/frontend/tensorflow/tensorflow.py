@@ -571,7 +571,7 @@ class TFSession:
             ############################
             # Compile the SDFG
             if gpu:
-                self.graph.apply_gpu_transformations()
+            #    self.graph.apply_gpu_transformations()
                 for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
