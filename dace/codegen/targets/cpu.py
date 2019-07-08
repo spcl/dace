@@ -1107,13 +1107,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     raise SyntaxError('Duplicates found in memlets')
                 # Special case: code->code
                 if isinstance(edge.src, nodes.CodeNode):
-                    shared_data_name = 's%d_n%d%s_n%d%s' % (
-                        state_id, dfg.node_id(edge.src), edge.src_conn,
-                        dfg.node_id(edge.dst), edge.dst_conn)
+                    shared_data_name = edge.data.data
 
                     # Read variable from shared storage
                     callsite_stream.write(
-                        'const dace::vec<%s, %s>& %s = __%s;' %
+                        'const dace::vec<%s, %s>& %s = %s;' %
                         (sdfg.arrays[memlet.data].dtype.ctype,
                          sym2cpp(memlet.veclen), edge.dst_conn,
                          shared_data_name), sdfg, state_id,
@@ -1475,7 +1473,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 result.write(code, sdfg, state_id, [edge.src, edge.dst])
                 arg_type = sdfg.arrays[edge.data.data]
                 if (isinstance(arg_type, dace.data.Scalar)
-                        or isinstance(arg_type, dace.dtypes.typeclass)):
+                        or isinstance(arg_type, dace.types.typeclass)):
                     self._dispatcher.defined_vars.add(local_name,
                                                       DefinedType.Scalar)
                 elif isinstance(arg_type, dace.data.Array):
