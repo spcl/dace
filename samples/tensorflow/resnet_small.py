@@ -324,9 +324,9 @@ class ResNet50_small(tf.keras.Model):
         x = tf.nn.relu(x)
         x = self.max_pool(x)
 
-        x = self.l2a(x, training=training)
-        #x = self.l2b(x, training=training)
-        #x = self.l2c(x, training=training)
+        x = self.l2a(inputs, training=training)
+        x = self.l2b(x, training=training)
+        x = self.l2c(x, training=training)
 
         #x = self.l3a(x, training=training)
         #x = self.l3b(x, training=training)
