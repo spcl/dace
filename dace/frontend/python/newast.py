@@ -633,8 +633,8 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
                             len(accesses[fname]) - 1)
 
                     if direct_assignment:
-                        newsubset[dimidx] = newsubset[dimidx].subs(expr, toreplace)
-                        # newsubset[dimidx] = r.subs(expr, toreplace)
+                        # newsubset[dimidx] = newsubset[dimidx].subs(expr, toreplace)
+                        newsubset[dimidx] = r.subs(expr, toreplace)
                     else:
                         rng = list(newsubset[dimidx])
                         rng[i] = rng[i].subs(expr, toreplace)
@@ -694,7 +694,7 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
             transient=True,
             shape=memlet.bounding_box_size())
     indirectRange = subsets.Range([(0, s - 1, 1) for s in storage.shape])
-    dataNode = nodes.AccessNode('__' + local_name + '_value')
+    # dataNode = nodes.AccessNode('__' + local_name + '_value')
 
     # Create memlet that depends on the full array that we look up in
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
@@ -710,13 +710,13 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
 
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
-    indirectMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
-                            indirectRange, memlet.veclen)
-    graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
+    # indirectMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
+    #                         indirectRange, memlet.veclen)
+    # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
     valueMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
                          indirectRange, memlet.veclen)
-    graph.add_edge(dataNode, None, dst, local_name, valueMemlet)
+    graph.add_edge(tasklet, 'lookup', dst, local_name, valueMemlet)
 
 
 class GlobalResolver(ast.NodeTransformer):
