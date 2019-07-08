@@ -22,7 +22,7 @@ if __name__ == '__main__':
 
     with TFSession() as sess:
         # Simple matrix multiplication
-        func = sess.compile(A_tf @ B_tf)
+        func = sess.compile(A_tf @ B_tf, False)
         func(feed_dict={A_tf: A, B_tf: B})
         C = func(feed_dict={A_tf: A, B_tf: B})
 
