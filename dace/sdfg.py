@@ -1440,32 +1440,6 @@ subgraph cluster_state_{state} {{
             return False
         return True
 
-    def apply_transformations(self, patterns, validate=True, strict=True):
-        """ This function applies transformations as given in the argument patterns. Look at the
-        utility functions apply_strict_transformations and apply_gpu_transformations if you don't
-        want to interact with this directly.
-        """
-        # Avoiding import loops
-        from dace.transformation import optimizer
-
-        # Apply strict state fusions greedily.
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        applied = True
-        while applied:
-            applied = False
-            # Find and apply immediately
-            for match in opt.get_pattern_matches(
-                    strict=strict, patterns=patterns):
-                sdfg = self.sdfg_list[match.sdfg_id]
-                match.apply(sdfg)
-                if validate:
-                    self.validate()
-                applied = True
-                break
-        if Config.get_bool("debugprint"):
-            for _p in patterns:
-                _p.print_debuginfo()
-
     def apply_strict_transformations(self, validate=True):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
@@ -1477,7 +1451,7 @@ subgraph cluster_state_{state} {{
         from dace.transformation.interstate import StateFusion
 
         self.apply_transformations(
-            [RedundantArray, StateFusion], validate=True, strict=False)
+            [RedundantArray, StateFusion], validate=True, strict=True)
 
     def apply_transformations(self, patterns, validate=True, strict=False):
         """ This function applies transformations as given in the argument
@@ -2876,6 +2850,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Isolated nodes
             ########################################
             if self.in_degree(node) + self.out_degree(node) == 0:
+                import re
                 # One corner case: OK if this is an empty state and there
                 # is only one empty tasklet
                 if isinstance(node, nd.EmptyTasklet):
@@ -2886,6 +2861,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     pass
                 elif "ShapeN" in node.label:
                     # Just to make the ShapeN test cases pass
+                    pass
+                elif re.match(r"__s[0-9]*_n[0-9]*.*", node.label) :
                     pass
                 else:
                     raise InvalidSDFGNodeError("Isolated node", sdfg, state_id,
