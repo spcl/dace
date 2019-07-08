@@ -455,6 +455,11 @@ class Range(Subset):
         self.offset(self, True)
         return non_ones
 
+    def unsqueeze(self, axes):
+        for axis in sorted(axes):
+            self.ranges.insert(axis, (0, 0, 1))
+            self.tile_sizes.insert(axis, 1)
+
     def pop(self, dimensions):
         new_ranges = []
         new_tsizes = []

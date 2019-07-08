@@ -4,7 +4,7 @@ from copy import deepcopy as dc
 import networkx as nx
 
 import dace
-from dace import data as dt, memlet, sdfg as sd, subsets, symbolic, Memlet
+from dace import data as dt, memlet, sdfg as sd, subsets, Memlet, EmptyMemlet
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
@@ -165,16 +165,42 @@ class InlineSDFG(pattern_matching.Transformation):
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
 
-        # TODO: Remove this loop when subsets are applied below
-        if strict:
-            for e in graph.all_edges(nested_sdfg):
-                if e.data.other_subset is not None:
-                    return False
         return True
 
     @staticmethod
     def match_to_str(graph, candidate):
         return graph.label
+
+    def _modify_memlet(self, internal_memlet: Memlet, external_memlet: Memlet):
+        """ Unsqueezes and offsets a memlet, as per the semantics of nested
+            SDFGs.
+            @param internal_memlet: The internal memlet (inside nested SDFG)
+                                    before modification.
+            @param internal_memlet: The external memlet before modification.
+            @return: Offset Memlet to set on the resulting graph.
+        """
+        result = dc(internal_memlet)
+        result.data = external_memlet.data
+
+        shape = external_memlet.subset.size()
+        ones = [i for i, d in enumerate(shape) if d == 1]
+
+        # Special case: If internal memlet is a range of size 1 with (0,0,1),
+        #               ignore it when unsqueezing
+        if (len(internal_memlet.subset) == 1
+                and internal_memlet.subset[0] == (0, 0, 1)):
+            to_unsqueeze = ones[1:]
+        else:
+            to_unsqueeze = ones
+
+        result.subset.unsqueeze(to_unsqueeze)
+        result.subset.offset(external_memlet.subset, False)
+
+        # TODO: Offset rest of memlet according to other_subset
+        if external_memlet.other_subset is not None:
+            raise NotImplementedError
+
+        return result
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
@@ -185,13 +211,13 @@ class InlineSDFG(pattern_matching.Transformation):
         inputs = {}
         outputs = {}
         for e in graph.in_edges(nsdfg_node):
-            inputs[e.dst_conn] = (e.src, e.src_conn, e.data.data)
+            inputs[e.dst_conn] = (e.src, e.src_conn, e.data)
         for e in graph.out_edges(nsdfg_node):
-            outputs[e.src_conn] = (e.dst, e.dst_conn, e.data.data)
+            outputs[e.src_conn] = (e.dst, e.dst_conn, e.data)
 
         torename = {}
-        torename.update({k: v[2] for k, v in inputs.items()})
-        torename.update({k: v[2] for k, v in outputs.items()})
+        torename.update({k: v[2].data for k, v in inputs.items()})
+        torename.update({k: v[2].data for k, v in outputs.items()})
 
         # Add SDFG nodes to top-level SDFG
         state = nsdfg.nodes()[0]
@@ -219,25 +245,30 @@ class InlineSDFG(pattern_matching.Transformation):
             graph.add_node(node)
 
         # Reconnect edges to their original source
-        # TODO: When copying memlets, apply subset on them first (if memlet to/from nested SDFG is a subset)
         for e in state.edges():
             if isinstance(e.src, nodes.AccessNode) and e.src.data in inputs:
-                cnode, cconn, cdata = inputs[e.src.data]
+                cnode, cconn, cmemlet = inputs[e.src.data]
                 # Connect to source node instead
-                newmemlet = dc(e.data)
-                newmemlet.data = cdata
+                newmemlet = self._modify_memlet(e.data, cmemlet)
                 graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
             elif isinstance(e.dst, nodes.AccessNode) and e.dst.data in outputs:
-                cnode, cconn, cdata = outputs[e.dst.data]
+                cnode, cconn, cmemlet = outputs[e.dst.data]
                 # Connect to destination node instead
-                newmemlet = dc(e.data)
-                newmemlet.data = cdata
+                newmemlet = self._modify_memlet(e.data, cmemlet)
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
             elif e.data.data in torename:
-                # Rename data
-                cdata = torename[e.data.data]
-                newmemlet = dc(e.data)
-                newmemlet.data = cdata
+                if e.data.data in inputs:
+                    newmemlet = self._modify_memlet(e.data,
+                                                    inputs[e.data.data][2])
+                elif e.data.data in outputs:
+                    newmemlet = self._modify_memlet(e.data,
+                                                    outputs[e.data.data][2])
+                else:
+                    # Rename data
+                    cdata = torename[e.data.data]
+                    newmemlet = dc(e.data)
+                    newmemlet.data = cdata
+
                 graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, newmemlet)
             else:
                 # Do nothing
@@ -247,6 +278,13 @@ class InlineSDFG(pattern_matching.Transformation):
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in torename:
                 node.data = torename[node.data]
+
+        # If an empty memlet was connected to the nested SDFG, reconnect
+        # all source nodes with empty memlets
+        if None in inputs:
+            cnode, cconn, cmemlet = inputs[None]
+            for node in state.source_nodes():
+                graph.add_edge(cnode, cconn, node, None, EmptyMemlet())
 
         # Remove the nested SDFG node
         graph.remove_node(nsdfg_node)

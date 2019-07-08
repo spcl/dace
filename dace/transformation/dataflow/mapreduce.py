@@ -176,6 +176,11 @@ class MapReduceFusion(pm.Transformation):
         perm = [None] * len(memlet.subset)
         indices = set()
         for i, dim in enumerate(memlet.subset):
+            if isinstance(memlet.subset, subsets.Range):
+                if memlet.subset.ranges[i][0] != memlet.subset.ranges[i][1]:
+                    raise RuntimeError('Range found in MapReduceFusion')
+                dim = memlet.subset.ranges[i][0]
+
             for j, mapdim in enumerate(map.params):
                 if symbolic.pystr_to_symbolic(
                         mapdim) == dim and j not in indices:

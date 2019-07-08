@@ -63,7 +63,7 @@ class Vectorization(pattern_matching.Transformation):
                 for idx, expr in enumerate(subset):
                     if isinstance(expr, tuple):
                         for ex in expr:
-                            symbolic.pystr_to_symbolic(ex)
+                            ex = symbolic.pystr_to_symbolic(ex)
                             symbols = ex.free_symbols
                             if param in symbols:
                                 if idx == subset.dims() - 1:
