@@ -321,12 +321,12 @@ class ResNet50_small(tf.keras.Model):
     def call(self, inputs, training=True):
         x = self.conv1(inputs)
         x = self.bn_conv1(x, training=training)
-        x = tf.nn.relu(x)
-        x = self.max_pool(x)
+        #x = tf.nn.relu(x)
+        #x = self.max_pool(x)
 
-        x = self.l2a(inputs, training=training)
-        x = self.l2b(x, training=training)
-        x = self.l2c(x, training=training)
+        #x = self.l2a(inputs, training=training)
+        #x = self.l2b(x, training=training)
+        #x = self.l2c(x, training=training)
 
         #x = self.l3a(x, training=training)
         #x = self.l3b(x, training=training)
