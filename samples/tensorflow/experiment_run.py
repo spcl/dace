@@ -19,6 +19,7 @@ learning_rate = 0.01
 batch_size = 1
 num_classes = 10
 
+
 def random_batch(batch_size):
     shape = (batch_size, 224, 224, 3)
     images = np.random.uniform(size=shape).astype(np.float32)
@@ -44,11 +45,11 @@ update_small = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
 
 # Large Graph
 # big_resnet = resnet50.ResNet50("channels_last", classes=num_classes)
-# input_placeholder_1 = tf.placeholder(dtype=tf.float32, shape=(batch_size, 224, 224, 3))
-# label_placeholder_1 = tf.placeholder(dtype=tf.int32, shape=(batch_size))
-# logits_big = big_resnet(input_placeholder_1)
+# input_placeholder = tf.placeholder(dtype=tf.float32, shape=(batch_size, 224, 224, 3))
+# label_placeholder = tf.placeholder(dtype=tf.int32, shape=(batch_size))
+# logits_big = big_resnet(input_placeholder)
 # softmax_big = tf.nn.sparse_softmax_cross_entropy_with_logits(
-#    labels=label_placeholder_1, logits=logits_big
+#   labels=label_placeholder, logits=logits_big
 # )
 # loss_big = tf.reduce_mean(softmax_big, name="loss")
 # update_big = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss_big)
@@ -56,8 +57,14 @@ update_small = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
 sess_dace = TFSession(seed=SEED)
 outputs_dace = sess_dace.run(
     update_small,
+    gpu=True,
     feed_dict={input_placeholder: images, label_placeholder: labels},
-    transformations=[[TensorflowRedundantArray], [MapFusion]],
+    transformations=[
+        [TensorflowRedundantArray],
+        [GPUTransformLocalStorage],
+        [RedundantArray, RedundantArrayCopying, RedundantArrayCopying2],
+        [MapFusion],
+    ],
 )
 # gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
 # gradient_tensors = []
