@@ -4,13 +4,15 @@ from dace.transformation.dataflow import MapFusion
 
 
 @dace.program
-def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20], out: dace.float32[1]):
+def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20],
+           out: dace.float32[1]):
     tmp = dace.define_local([10, 20], dtype=A.dtype)
     tmp_2 = dace.define_local([10, 20], dtype=A.dtype)
     for i, j in dace.map[0:10, 0:20]:
         with dace.tasklet:
             a << A[i, j]
             b >> tmp[i, j]
+
             b = a * a
 
     for k, l in dace.map[0:20, 0:10]:
@@ -18,13 +20,14 @@ def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20], out: dace.float32[1
             a << tmp[l, k]
             b << B[l, k]
             c >> tmp_2[l, k]
-            #c >> out(1, lambda a, b: a + b)[0]
+
             c = a + b
 
     for m, n in dace.map[0:10, 0:20]:
         with dace.tasklet:
             a << tmp_2[m, n]
             b >> out(1, lambda a, b: a + b)[0]
+
             b = a
 
 
