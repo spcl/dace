@@ -1134,22 +1134,17 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('\n', sdfg, state_id, node)
 
         # Use outgoing edges to preallocate output local vars
+        # in two stages, first we preallocate for normal cases (ie NOT code->code) and then for
+        # code->code
+        tasklet_out_connectors = set()
         for edge in state_dfg.out_edges(node):
-            v = edge.dst
-            memlet = edge.data
+            if isinstance(edge.dst, nodes.CodeNode):
+                # Handling this in a separate pass just below
+                continue
 
             if edge.src_conn:
-                if edge.src_conn in arrays:  # Disallow duplicates
+                if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
-                # Special case: code->code
-                if isinstance(edge.dst, nodes.CodeNode):
-                    callsite_stream.write(
-                        'dace::vec<%s, %s> %s;' %
-                        (sdfg.arrays[memlet.data].dtype.ctype,
-                         sym2cpp(memlet.veclen), edge.src_conn), sdfg,
-                        state_id, [edge.src, edge.dst])
-                    self._dispatcher.defined_vars.add(edge.src_conn,
-                                                      DefinedType.Scalar)
                 else:
                     dst_node = find_output_arraynode(state_dfg, edge)
 
@@ -1159,7 +1154,23 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1)
-                arrays.add(edge.src_conn)
+                tasklet_out_connectors.add(edge.src_conn)
+
+        for edge in state_dfg.out_edges(node):
+            # Special case: code->code
+            if edge.src_conn is None:
+                continue
+            elif isinstance(edge.dst, nodes.CodeNode) and edge.src_conn not in tasklet_out_connectors:
+                memlet = edge.data
+                callsite_stream.write(
+                    'dace::vec<%s, %s> %s;' %
+                    (sdfg.arrays[memlet.data].dtype.ctype,
+                     sym2cpp(memlet.veclen), edge.src_conn), sdfg,
+                    state_id, [edge.src, edge.dst])
+                self._dispatcher.defined_vars.add(edge.src_conn,
+                                                  DefinedType.Scalar)
+                self._locals.define(edge.src_conn, -1, self._ldepth + 1)
+                locals_defined = True
 
         callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
                               node)
