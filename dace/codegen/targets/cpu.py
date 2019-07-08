@@ -61,7 +61,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of traversed nodes
         self._generated_nodes = set()
-        self._allocated_arrays = set()
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
@@ -158,11 +157,15 @@ class CPUCodeGen(TargetCodeGenerator):
                        callsite_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
-        if ((state_id, node.data) in self._allocated_arrays
-                or (None, node.data) in self._allocated_arrays
-                or nodedesc.transient == False):
+
+        if nodedesc.transient is False:
             return
-        self._allocated_arrays.add((state_id, node.data))
+
+        try:
+            self._dispatcher.defined_vars.get(node.data)
+            return
+        except KeyError:
+            pass  # The variable was not defined, we can continue
 
         # Compute array size
         arrsize = ' * '.join([sym2cpp(s) for s in nodedesc.strides])
@@ -432,9 +435,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     [src_node, dst_node])
                 return
             # Writing from/to a stream
-            if (isinstance(sdfg.arrays[memlet.data], data.Stream) or \
-                (isinstance(src_node, nodes.AccessNode) and isinstance(src_nodedesc,
-                                                                     data.Stream))):
+            if (isinstance(sdfg.arrays[memlet.data], data.Stream)
+                    or (isinstance(src_node, nodes.AccessNode)
+                        and isinstance(src_nodedesc, data.Stream))):
                 # Identify whether a stream is writing to an array
                 if (isinstance(dst_nodedesc, (data.Scalar, data.Array))
                         and isinstance(src_nodedesc, data.Stream)):
@@ -617,10 +620,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # code->code (e.g., tasklet to tasklet)
             if isinstance(v, nodes.CodeNode):
-                shared_data_name = 's%d_n%d%s_n%d%s' % (
-                    state_id, dfg.node_id(edge.src), edge.src_conn,
-                    dfg.node_id(edge.dst), edge.dst_conn)
-                result.write('__%s = %s;' % (shared_data_name, edge.src_conn),
+                shared_data_name = edge.data.data
+                result.write('%s = %s;' % (shared_data_name, edge.src_conn),
                              sdfg, state_id, [edge.src, edge.dst])
                 continue
 
@@ -1106,13 +1107,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     raise SyntaxError('Duplicates found in memlets')
                 # Special case: code->code
                 if isinstance(edge.src, nodes.CodeNode):
-                    shared_data_name = 's%d_n%d%s_n%d%s' % (
-                        state_id, dfg.node_id(edge.src), edge.src_conn,
-                        dfg.node_id(edge.dst), edge.dst_conn)
+                    shared_data_name = edge.data.data
 
                     # Read variable from shared storage
                     callsite_stream.write(
-                        'const dace::vec<%s, %s>& %s = __%s;' %
+                        'const dace::vec<%s, %s>& %s = %s;' %
                         (sdfg.arrays[memlet.data].dtype.ctype,
                          sym2cpp(memlet.veclen), edge.dst_conn,
                          shared_data_name), sdfg, state_id,
@@ -1465,14 +1464,31 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 continue
             if (isinstance(edge.src, nodes.CodeNode)
                     and isinstance(edge.dst, nodes.CodeNode)):
-                local_name = '__s%d_n%d%s_n%d%s' % (
-                    state_id, dfg.node_id(edge.src), edge.src_conn,
-                    dfg.node_id(edge.dst), edge.dst_conn)
+                local_name = edge.data.data
+                # TODO: Use dispatch_allocate
                 # Allocate variable type
                 code = 'dace::vec<%s, %s> %s;' % (
                     sdfg.arrays[edge.data.data].dtype.ctype,
                     sym2cpp(edge.data.veclen), local_name)
                 result.write(code, sdfg, state_id, [edge.src, edge.dst])
+                arg_type = sdfg.arrays[edge.data.data]
+                if (isinstance(arg_type, dace.data.Scalar)
+                        or isinstance(arg_type, dace.types.typeclass)):
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Scalar)
+                elif isinstance(arg_type, dace.data.Array):
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Pointer)
+                elif isinstance(arg_type, dace.data.Stream):
+                    if arg_type.is_stream_array():
+                        self._dispatcher.defined_vars.add(
+                            local_name, DefinedType.StreamArray)
+                    else:
+                        self._dispatcher.defined_vars.add(
+                            local_name, DefinedType.Stream)
+                else:
+                    raise TypeError("Unrecognized argument type: {}".format(
+                        type(arg_type).__name__))
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1702,9 +1718,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 continue
             if (isinstance(edge.src, nodes.CodeNode)
                     and isinstance(edge.dst, nodes.CodeNode)):
-                local_name = '__s%d_n%d%s_n%d%s' % (
-                    state_id, dfg.node_id(edge.src), edge.src_conn,
-                    dfg.node_id(edge.dst), edge.dst_conn)
+                local_name = edge.data.data
+                # TODO: Use dispatch_allocate (missing defined_vars code below)
                 # Allocate variable type
                 code = 'dace::vec<%s, %s> %s;' % (
                     sdfg.arrays[edge.data.data].dtype.ctype,
