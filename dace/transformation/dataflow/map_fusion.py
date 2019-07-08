@@ -243,12 +243,12 @@ class MapFusion(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        first_entry = graph.nodes()[candidate[MapFusion._first_map_entry]]
+        first_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
         second_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
 
         return " -> ".join(
             entry.map.label + ": " + str(entry.map.params)
-            for entry in [first_entry, second_entry]
+            for entry in [first_exit, second_entry]
         )
 
     def apply(self, sdfg):
