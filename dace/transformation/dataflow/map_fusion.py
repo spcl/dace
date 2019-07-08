@@ -2,11 +2,10 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import data, types, subsets, symbolic, graph
+from dace import symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
-import sympy
-from typing import List, Dict
+from typing import List, Dict, Union
 import ast
 import networkx as nx
 
@@ -30,9 +29,8 @@ def replace(subgraph, name: str, new_name: str):
     import sympy as sp
 
     symrepl = {
-        symbolic.symbol(name): symbolic.symbol(new_name)
-        if isinstance(new_name, str)
-        else new_name
+        symbolic.symbol(name):
+        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
     }
 
     def replsym(symlist):
@@ -71,27 +69,6 @@ def replace(subgraph, name: str, new_name: str):
         edge.data.other_subset = replsym(edge.data.other_subset)
 
 
-def calc_set_union(set_a: subsets.Subset, set_b: subsets.Subset) -> subsets.Range:
-    """ Computes the union of two Subset objects. """
-
-    if isinstance(set_a, subsets.Indices) or isinstance(set_b, subsets.Indices):
-        raise NotImplementedError("Set union with indices is not implemented.")
-    if not (isinstance(set_a, subsets.Range) and isinstance(set_b, subsets.Range)):
-        raise TypeError("Can only compute the union of ranges.")
-    if len(set_a) != len(set_b):
-        raise ValueError("Range dimensions do not match")
-    union = []
-    for range_a, range_b in zip(set_a, set_b):
-        union.append(
-            [
-                sympy.Min(range_a[0], range_b[0]),
-                sympy.Max(range_a[1], range_b[1]),
-                sympy.Min(range_a[2], range_b[2]),
-            ]
-        )
-    return subsets.Range(union)
-
-
 class MapFusion(pattern_matching.Transformation):
     """ Implements the map fusion pattern.
 
@@ -119,7 +96,8 @@ class MapFusion(pattern_matching.Transformation):
         ]
 
     @staticmethod
-    def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> List[int]:
+    def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> \
+            Union[List[int], None]:
         """ Find permutation between two map ranges.
             @param first_map: First map.
             @param second_map: Second map.
@@ -149,25 +127,18 @@ class MapFusion(pattern_matching.Transformation):
 
         return result
 
-    # @staticmethod
-    # def _find_adjacent_maps(graph, first_exit, intermediate_nodes):
-    #    for node in intermediate_nodes:
-    #        for _, _, dst, _, _ in graph.out_edges(node):
-    #            if isinstance(dst, nodes.EntryNode):
-    #                yield dst
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         first_map_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
-
-        # first_exit = first_map_entry.map.MapExit
         first_map_entry = graph.entry_node(first_map_exit)
-        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
+        second_map_entry = graph.nodes()[candidate[
+            MapFusion._second_map_entry]]
+
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
                 for _out_e in graph.out_edges(second_map_entry):
                     if _out_e.data.data == _in_e.data.data:
-                        #wcr is on a node that is used in the second map, quit
+                        # WCR is on a node that is used in the second map, quit
                         return False
         # Check whether there is a pattern map -> access -> map.
         intermediate_nodes = set()
@@ -179,11 +150,13 @@ class MapFusion(pattern_matching.Transformation):
             else:
                 return False
         # Check map ranges
-        perm = MapFusion.find_permutation(first_map_entry.map, second_map_entry.map)
+        perm = MapFusion.find_permutation(first_map_entry.map,
+                                          second_map_entry.map)
         if perm is None:
             return False
 
-        # Create a dict that maps parameters of the first map to those of the second map.
+        # Create a dict that maps parameters of the first map to those of the
+        # second map.
         params_dict = {}
         for _index, _param in enumerate(first_map_entry.map.params):
             params_dict[_param] = second_map_entry.map.params[perm[_index]]
@@ -200,7 +173,9 @@ class MapFusion(pattern_matching.Transformation):
                 for _n in intermediate_nodes:
                     source_node = graph.find_node(_n.data)
                     destination_node = graph.find_node(second_memlet.data)
-                    if destination_node in nx.descendants(graph._nx, source_node):
+                    # NOTE: Assumes graph has networkx version
+                    if destination_node in nx.descendants(
+                            graph._nx, source_node):
                         return False
                     else:
                         continue
@@ -211,7 +186,6 @@ class MapFusion(pattern_matching.Transformation):
                 if first_memlet.data != second_memlet.data:
                     continue
                 # If there is an equivalent subset, it is provided
-                first_subset = first_memlet.subset
                 expected_second_subset = []
                 for _tup in first_memlet.subset:
                     new_tuple = []
@@ -221,8 +195,7 @@ class MapFusion(pattern_matching.Transformation):
                         for _sym in _tup:
                             if isinstance(_sym, symbolic.symbol):
                                 new_tuple.append(
-                                    symbolic.symbol(params_dict[str(_sym)])
-                                )
+                                    symbolic.symbol(params_dict[str(_sym)]))
                             else:
                                 new_tuple.append(_sym)
                         new_tuple = tuple(new_tuple)
@@ -237,8 +210,6 @@ class MapFusion(pattern_matching.Transformation):
                 return False
 
         # Success
-        # candidate[MapFusion._second_map_entry] = graph.nodes().index(second_map_entry)
-
         return True
 
     @staticmethod
@@ -246,16 +217,15 @@ class MapFusion(pattern_matching.Transformation):
         first_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
         second_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
 
-        return " -> ".join(
-            entry.map.label + ": " + str(entry.map.params)
-            for entry in [first_exit, second_entry]
-        )
+        return " -> ".join(entry.map.label + ": " + str(entry.map.params)
+                           for entry in [first_exit, second_entry])
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
         first_entry = graph.entry_node(first_exit)
-        second_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
+        second_entry = graph.nodes()[self.subgraph[
+            MapFusion._second_map_entry]]
         second_exit = graph.exit_nodes(second_entry)[0]
 
         intermediate_nodes = set()
@@ -271,13 +241,10 @@ class MapFusion(pattern_matching.Transformation):
                 do_not_erase.add(node)
             else:
                 # If array is used anywhere else in this state.
-                num_occurrences = len(
-                    [
-                        n
-                        for n in graph.nodes()
-                        if isinstance(n, nodes.AccessNode) and n.data == node.data
-                    ]
-                )
+                num_occurrences = len([
+                    n for n in graph.nodes()
+                    if isinstance(n, nodes.AccessNode) and n.data == node.data
+                ])
                 if num_occurrences > 1:
                     return False
 
@@ -294,7 +261,8 @@ class MapFusion(pattern_matching.Transformation):
 
         # Find permutation between first and second scopes
         if first_entry.map.params != second_entry.map.params:
-            perm = MapFusion.find_permutation(first_entry.map, second_entry.map)
+            perm = MapFusion.find_permutation(first_entry.map,
+                                              second_entry.map)
             params_dict = {}
             for _index, _param in enumerate(first_entry.map.params):
                 params_dict[_param] = second_entry.map.params[perm[_index]]
@@ -325,8 +293,7 @@ class MapFusion(pattern_matching.Transformation):
                     #map
                     continue
                 if _edge.data.data == _access_node.data and isinstance(
-                    _edge._src, nodes.AccessNode
-                ):
+                        _edge._src, nodes.AccessNode):
                     _edge.data.data = _edge._src.data
                     _edge.data.subset = "0"
                 graph.add_edge(
@@ -359,11 +326,10 @@ class MapFusion(pattern_matching.Transformation):
                         break
                 else:
                     raise AssertionError(
-                        "No out-edge was found that leads to {}".format(_access_node)
-                    )
-                graph.add_edge(
-                    _edge._src, _edge.src_conn, second_exit, None, dcpy(_edge.data)
-                )
+                        "No out-edge was found that leads to {}".format(
+                            _access_node))
+                graph.add_edge(_edge._src, _edge.src_conn, second_exit, None,
+                               dcpy(_edge.data))
                 ### If the second map needs this node then link the connector
                 # that generated this to the place where it is needed
                 for _out_e in graph.out_edges(second_entry):
@@ -389,9 +355,8 @@ class MapFusion(pattern_matching.Transformation):
             else:
                 # This is an external input to the second map which will now go through the first
                 # map.
-                graph.add_edge(
-                    _edge._src, _edge.src_conn, first_entry, None, dcpy(_edge.data)
-                )
+                graph.add_edge(_edge._src, _edge.src_conn, first_entry, None,
+                               dcpy(_edge.data))
                 graph.remove_edge(_edge)
                 for _out_e in graph.out_edges(second_entry):
                     if _out_e.data.data == _access_node.data:
@@ -406,8 +371,8 @@ class MapFusion(pattern_matching.Transformation):
                         break
                 else:
                     raise AssertionError(
-                        "No out-edge was found that leads to {}".format(_access_node)
-                    )
+                        "No out-edge was found that leads to {}".format(
+                            _access_node))
 
         graph.remove_node(second_entry)
 
