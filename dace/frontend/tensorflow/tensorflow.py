@@ -481,8 +481,6 @@ class TFSession:
         import pickle
 
         if Config.get_bool("compiler", "use_cache"):
-            # Try to see if a cached version of the binary exists
-            # print("looking for cached binary: " + compiler.get_binary_name(self.name))
             sdfg_filename = os.path.join(".dacecache", name, "program.sdfg")
             sdfg_args_filename = os.path.join(".dacecache", name, "sdfg_args.pickle")
             assert os.path.isfile(sdfg_filename)
@@ -492,11 +490,12 @@ class TFSession:
             compiled_sdfg = self.graph.compile(optimizer=False)
             ############################
             # Create output numpy arrays
+
             outputs = {
-                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-                for node, name in zip(total_nodes, total_output_names)
-                if name is not None and name not in sdfg_args
-            }
+                 name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
+                 for node, name in zip(total_nodes, total_output_names)
+                 if name is not None and name not in sdfg_args
+             }
             outputs.update(
                 {k: v for k, v in sdfg_args.items() if k in total_output_names}
             )
@@ -583,18 +582,19 @@ class TFSession:
                         array.storage = dace.StorageType.CPU_Pinned
 
                 # Modify sdfg_args
-                import numba.cuda
+                #import numba.cuda
 
-                for aname, arg in sdfg_args.items():
-                    if isinstance(arg, np.ndarray):
-                        sdfg_args[aname] = numba.cuda.pinned_array(
-                            arg.shape, dtype=arg.dtype, strides=arg.strides
-                        )
-                        sdfg_args[aname][:] = arg
+                #for aname, arg in sdfg_args.items():
+                #    if isinstance(arg, np.ndarray):
+                #        sdfg_args[aname] = numba.cuda.pinned_array(
+                #            arg.shape, dtype=arg.dtype, strides=arg.strides
+                #        )
+                #        sdfg_args[aname][:] = arg
 
             if len(patterns) > 0:
                 for _pattern in patterns:
                     self.graph.apply_transformations(_pattern, validate, strict)
+                    self.graph.draw_to_file()
             self.graph.validate()
             self.graph.draw_to_file()
             compiled_sdfg = self.graph.compile(optimizer=False)
@@ -2001,6 +2001,7 @@ class TFSession:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_Conv2D(self, node):
+        local_ctr = str(next(_atomic_count))
         inputList = []
         inputNodes = []
         ndims = 0
@@ -2015,11 +2016,11 @@ class TFSession:
         outputList = self.create_and_add_output_node(node)
         ndims = len(outputList[0].desc(self.graph).shape)
         mapLabel = _string_builder(node.type)
-        reduce_node = self.state.add_scalar(
-            mapLabel + "_wcr_avoid",
+        reduce_node = self.state.add_transient(
+            mapLabel + "_wcr_avoid" + local_ctr,
+            [1],
             outputList[0].desc(self.graph).dtype,
             storage=dace.StorageType.Register,
-            transient=True,
         )
 
         mapParams = []
@@ -2030,10 +2031,10 @@ class TFSession:
         inputDims = [[], []]
         # create conv params
         inputParams.append(
-            ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i3"]
+            ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i4"]
         )
-        inputParams.append(["i5", "i6", "i3", "i4"])
-        outputParams.append(["i0", "i1", "i2", "i4"])
+        inputParams.append(["i5", "i6", "i4", "i3"])
+        outputParams.append(["i0", "i1", "i2", "i3"])
         # create conv dims
         for i in range(0, ndims):
             inputDims[0].append(str(0) + ":" + str(node.inputs[0].shape[i]))
@@ -2069,13 +2070,7 @@ class TFSession:
         tasklet = state.add_tasklet(
             mapLabel, {"j0", "j1"}, {"out"}, "out = j0 * j1;"
         )  # printf(\"%f\\t\", j0);")
-        self.add_out_memlets(
-            outputList,
-            mapExit,
-            reduce_node,
-            outputDims,
-            outputParams,
-        )
+        self.add_out_memlets(outputList, mapExit, reduce_node, outputDims, outputParams)
         self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
         # add memlets from inner map to tasklet
         for i, inp in enumerate(inputNodes):
@@ -2086,10 +2081,7 @@ class TFSession:
         for i, out in enumerate(outputList):
             name = "out"
             memlet = Memlet.simple(
-                reduce_node,
-                "0",
-                wcr_str="lambda a,b: a+b",
-                wcr_identity=0,
+                reduce_node, "0", wcr_str="lambda a,b: a+b", wcr_identity=0
             )
             state.add_edge(tasklet, name, mapExit2, None, memlet)
             state.add_edge(mapExit2, None, reduce_node, None, memlet)
@@ -3174,31 +3166,31 @@ class TFSession:
         )
 
         # 4th map, calculate the cross-entropy loss for an optional loss output
-        mapEntry, mapExit = state.add_map(
-            mapLabel + "_loss",
-            dict(zip(mapParams, mapRange)),
-            schedule=dace.ScheduleType.Sequential,
-        )
-        tasklet = state.add_tasklet(
-            mapLabel + "_loss",
-            {"j0", "j1"},
-            {"out"},
-            "if (int(j1) == i1) {\n\tout=-(dace::math::log(j0));}\nelse{\n\tout=0;}",
-            language=dace.types.Language.CPP,
-        )
-        self.reinitCR(outputList[0], [inputParams[1]], [inputDims[1]], "0")
-        self.add_in_memlets(
-            [temp3Node, inputNodes[1]], mapEntry, tasklet, inputDims, inputParams
-        )
-        self.add_out_memlets(
-            [outputList[0]],
-            mapExit,
-            tasklet,
-            [inputDims[1]],
-            [inputParams[1]],
-            "lambda a,b: a+b",
-            0,
-        )
+        #mapEntry, mapExit = state.add_map(
+        #    mapLabel + "_loss",
+        #    dict(zip(mapParams, mapRange)),
+        #    schedule=dace.ScheduleType.Sequential,
+        #)
+        #tasklet = state.add_tasklet(
+        #    mapLabel + "_loss",
+        #    {"j0", "j1"},
+        #    {"out"},
+        #    "if (int(j1) == i1) {\n\tout=-(dace::math::log(j0));}\nelse{\n\tout=0;}",
+        #    language=dace.types.Language.CPP,
+        #)
+        #self.reinitCR(outputList[0], [inputParams[1]], [inputDims[1]], "0")
+        #self.add_in_memlets(
+        #    [temp3Node, inputNodes[1]], mapEntry, tasklet, inputDims, inputParams
+        #)
+        #self.add_out_memlets(
+        #    [outputList[0]],
+        #    mapExit,
+        #    tasklet,
+        #    [inputDims[1]],
+        #    [inputParams[1]],
+        #    "lambda a,b: a+b",
+        #    0,
+        #)
 
         # 5th map, gradient of the whole layer
         mapEntry, mapExit = state.add_map(
