@@ -540,7 +540,6 @@ class TFSession:
             sdfg_args.update(self.varDict)
             sdfg_args.update(self.inpDict)
             sdfg_args.update(self.initDict)
-            sdfg_args.update(self.callbackFunctionDict)
             # Set scalar arguments to appropriate arrays of size 1
             sdfg_args.update(
                 {
@@ -595,13 +594,13 @@ class TFSession:
                 for _pattern in patterns:
                     self.graph.apply_transformations(_pattern, validate, strict)
                     self.graph.draw_to_file()
-            self.graph.validate()
             self.graph.draw_to_file()
             compiled_sdfg = self.graph.compile(optimizer=False)
 
             sdfg_args_filename = os.path.join(".dacecache", name, "sdfg_args.pickle")
             with open(sdfg_args_filename, "wb") as handle:
                 pickle.dump(sdfg_args, handle, pickle.HIGHEST_PROTOCOL)
+            sdfg_args.update(self.callbackFunctionDict)
 
         ############################
         # Create the function that invokes the SDFG
