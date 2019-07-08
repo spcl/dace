@@ -8,6 +8,7 @@ from dace.transformation import pattern_matching
 import sympy
 from typing import List, Dict
 import ast
+import networkx as nx
 
 
 class ASTFindReplace(ast.NodeTransformer):
@@ -69,6 +70,7 @@ def replace(subgraph, name: str, new_name: str):
         edge.data.subset = replsym(edge.data.subset)
         edge.data.other_subset = replsym(edge.data.other_subset)
 
+
 def calc_set_union(set_a: subsets.Subset, set_b: subsets.Subset) -> subsets.Range:
     """ Computes the union of two Subset objects. """
 
@@ -98,7 +100,8 @@ class MapFusion(pattern_matching.Transformation):
         connected in the same manner as they were before the fusion.
     """
 
-    _first_map_entry = nodes.EntryNode()
+    _first_map_exit = nodes.ExitNode()
+    _some_array = nodes.AccessNode("_")
     _second_map_entry = nodes.EntryNode()
 
     @staticmethod
@@ -107,7 +110,13 @@ class MapFusion(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapFusion._first_map_entry)]
+        return [
+            nxutil.node_path_graph(
+                MapFusion._first_map_exit,
+                MapFusion._some_array,
+                MapFusion._second_map_entry,
+            )
+        ]
 
     @staticmethod
     def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> List[int]:
@@ -140,32 +149,35 @@ class MapFusion(pattern_matching.Transformation):
 
         return result
 
+    # @staticmethod
+    # def _find_adjacent_maps(graph, first_exit, intermediate_nodes):
+    #    for node in intermediate_nodes:
+    #        for _, _, dst, _, _ in graph.out_edges(node):
+    #            if isinstance(dst, nodes.EntryNode):
+    #                yield dst
+
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        first_map_entry = graph.nodes()[candidate[MapFusion._first_map_entry]]
-        first_exit = graph.exit_nodes(first_map_entry)[0]
-        if any([e.data.wcr is not None for e in graph.in_edges(first_exit)]):
-            return False
+        first_map_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
 
+        # first_exit = first_map_entry.map.MapExit
+        first_map_entry = graph.entry_node(first_map_exit)
+        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
+        for _in_e in graph.in_edges(first_map_exit):
+            if _in_e.data.wcr is not None:
+                for _out_e in graph.out_edges(second_map_entry):
+                    if _out_e.data.data == _in_e.data.data:
+                        #wcr is on a node that is used in the second map, quit
+                        return False
         # Check whether there is a pattern map -> access -> map.
         intermediate_nodes = set()
         intermediate_data = set()
-        for _, _, dst, _, _ in graph.out_edges(first_exit):
+        for _, _, dst, _, _ in graph.out_edges(first_map_exit):
             if isinstance(dst, nodes.AccessNode):
                 intermediate_nodes.add(dst)
                 intermediate_data.add(dst.data)
             else:
                 return False
-
-        second_map_entry = None
-        for node in intermediate_nodes:
-            for _, _, dst, _, _ in graph.out_edges(node):
-                if isinstance(dst, nodes.EntryNode):
-                    second_map_entry = dst
-                    break
-        if second_map_entry is None:  # No second map
-            return False
-
         # Check map ranges
         perm = MapFusion.find_permutation(first_map_entry.map, second_map_entry.map)
         if perm is None:
@@ -176,14 +188,24 @@ class MapFusion(pattern_matching.Transformation):
         for _index, _param in enumerate(first_map_entry.map.params):
             params_dict[_param] = second_map_entry.map.params[perm[_index]]
 
-        out_memlets = [e.data for e in graph.in_edges(first_exit)]
+        out_memlets = [e.data for e in graph.in_edges(first_map_exit)]
 
         # Check that input set of second map is provided by the output set
         # of the first map, or other unrelated maps
         for _, _, _, _, second_memlet in graph.out_edges(second_map_entry):
             # Memlets that do not come from one of the intermediate arrays
             if second_memlet.data not in intermediate_data:
+                # however, if intermediate_data eventually leads to
+                # second_memlet.data, need to fail.
+                for _n in intermediate_nodes:
+                    source_node = graph.find_node(_n.data)
+                    destination_node = graph.find_node(second_memlet.data)
+                    if destination_node in nx.descendants(graph._nx, source_node):
+                        return False
+                    else:
+                        continue
                 continue
+
             provided = False
             for first_memlet in out_memlets:
                 if first_memlet.data != second_memlet.data:
@@ -215,7 +237,7 @@ class MapFusion(pattern_matching.Transformation):
                 return False
 
         # Success
-        candidate[MapFusion._second_map_entry] = graph.nodes().index(second_map_entry)
+        # candidate[MapFusion._second_map_entry] = graph.nodes().index(second_map_entry)
 
         return True
 
@@ -231,8 +253,8 @@ class MapFusion(pattern_matching.Transformation):
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        first_entry = graph.nodes()[self.subgraph[MapFusion._first_map_entry]]
-        first_exit = graph.exit_nodes(first_entry)[0]
+        first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
+        first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
         second_exit = graph.exit_nodes(second_entry)[0]
 
@@ -289,7 +311,6 @@ class MapFusion(pattern_matching.Transformation):
             _access_node = graph.find_node(__some_str)
             # all outputs of first_exit are in intermediate_nodes set, so all inputs to
             # first_exit should also be!
-            assert _access_node in intermediate_nodes
             if _access_node not in do_not_erase:
                 _new_dst = None
                 _new_dst_conn = None
@@ -299,12 +320,24 @@ class MapFusion(pattern_matching.Transformation):
                         _new_dst = _e.dst
                         _new_dst_conn = _e.dst_conn
                         break
-                assert _new_dst is not None
+                if _new_dst is None:
+                    #_access_node is used somewhere else, but not in the second
+                    #map
+                    continue
+                if _edge.data.data == _access_node.data and isinstance(
+                    _edge._src, nodes.AccessNode
+                ):
+                    _edge.data.data = _edge._src.data
+                    _edge.data.subset = "0"
                 graph.add_edge(
-                    _edge._src, _edge.src_conn, _new_dst, _new_dst_conn, dcpy(_edge.data)
+                    _edge._src,
+                    _edge.src_conn,
+                    _new_dst,
+                    _new_dst_conn,
+                    dcpy(_edge.data),
                 )
                 graph.remove_edge(_edge)
-                ####Isolate this node, but don't remove it because a memlet will need it#####
+                ####Isolate this node#####
                 for _in_e in graph.in_edges(_access_node):
                     graph.remove_edge(_in_e)
                 for _out_e in graph.out_edges(_access_node):
@@ -321,6 +354,7 @@ class MapFusion(pattern_matching.Transformation):
                             _out_e.dst_conn,
                             dcpy(_out_e.data),
                         )
+
                         graph.remove_edge(_out_e)
                         break
                 else:
@@ -330,6 +364,18 @@ class MapFusion(pattern_matching.Transformation):
                 graph.add_edge(
                     _edge._src, _edge.src_conn, second_exit, None, dcpy(_edge.data)
                 )
+                ### If the second map needs this node then link the connector
+                # that generated this to the place where it is needed
+                for _out_e in graph.out_edges(second_entry):
+                    if _out_e.data.data == _access_node.data:
+                        graph.add_edge(
+                            _edge._src,
+                            _edge.src_conn,
+                            _out_e._dst,
+                            _out_e.dst_conn,
+                            dcpy(_edge.data),
+                        )
+                        break
                 graph.remove_edge(_edge)
         graph.remove_node(first_exit)  # Take a leap of faith
 
@@ -363,11 +409,11 @@ class MapFusion(pattern_matching.Transformation):
                         "No out-edge was found that leads to {}".format(_access_node)
                     )
 
-        assert len(graph.in_edges(second_entry)) == 0
         graph.remove_node(second_entry)
 
         # Fix scope exit
         second_exit.map = first_entry.map
+        graph.fill_scope_connectors()
 
 
 pattern_matching.Transformation.register_pattern(MapFusion)
