@@ -167,7 +167,7 @@ class MapFusion(pattern_matching.Transformation):
             if _in_e.data.wcr is not None:
                 for _out_e in graph.out_edges(second_map_entry):
                     if _out_e.data.data == _in_e.data.data:
-                        #wcr is on a node that is used in the second map, quit
+                        # wcr is on a node that is used in the second map, quit
                         return False
         # Check whether there is a pattern map -> access -> map.
         intermediate_nodes = set()
@@ -321,8 +321,8 @@ class MapFusion(pattern_matching.Transformation):
                         _new_dst_conn = _e.dst_conn
                         break
                 if _new_dst is None:
-                    #_access_node is used somewhere else, but not in the second
-                    #map
+                    # _access_node is used somewhere else, but not in the second
+                    # map
                     continue
                 if _edge.data.data == _access_node.data and isinstance(
                     _edge._src, nodes.AccessNode
@@ -368,6 +368,19 @@ class MapFusion(pattern_matching.Transformation):
                 # that generated this to the place where it is needed
                 for _out_e in graph.out_edges(second_entry):
                     if _out_e.data.data == _access_node.data:
+                        local_name = "__s%d_n%d%s_n%d%s" % (
+                            self.state_id,
+                            graph.node_id(_edge._src),
+                            _edge.src_conn,
+                            graph.node_id(_edge._dst),
+                            _edge.dst_conn,
+                        )
+                        local_node = graph.add_transient(
+                            local_name,
+                            _access_node.desc(graph).shape,
+                            dtype=_access_node.desc(graph).dtype,
+                        )
+                        _edge.data.data = local_node.data
                         graph.add_edge(
                             _edge._src,
                             _edge.src_conn,
