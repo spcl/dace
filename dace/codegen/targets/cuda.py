@@ -15,8 +15,8 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
-from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, cpp_array_expr,
-                                      is_array_stream_view,
+from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, unparse_cr_split,
+                                      cpp_array_expr, is_array_stream_view,
                                       synchronize_streams)
 from dace.codegen.targets.framecode import _set_default_schedule_and_storage_types
 from dace.properties import LambdaProperty
@@ -753,7 +753,7 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                                     str(redtype)[str(redtype).find('.') + 1:])
                         reduction_tmpl = '<%s>' % credtype
                     else:
-                        custom_reduction = [unparse_cr(memlet.wcr)]
+                        custom_reduction = [unparse_cr(sdfg, memlet.wcr)]
                     accum = '::template Accum%s' % reduction_tmpl
 
                 if any(
@@ -1515,7 +1515,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # Create a functor or use an existing one for reduction
         if redtype == types.ReductionType.Custom:
-            body, arg1, arg2 = unparse_cr_split(node.wcr)
+            body, [arg1, arg2] = unparse_cr_split(sdfg, node.wcr)
             self._globalcode.write(
                 """
         struct __reduce_{id} {{
@@ -1766,25 +1766,6 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output,
 ########################################################################
 ########################################################################
 # Helper functions and classes
-
-
-def unparse_cr_split(wcr_ast):
-    """ Parses various types of WCR functions, returning a 3-tuple of body,
-        first argument name and second argument name. """
-    if isinstance(wcr_ast, ast.FunctionDef):
-        return (cppunparse.cppunparse(wcr_ast.body, expr_semicolon=False),
-                wcr_ast.args.args[0].arg, wcr_ast.args.args[1].arg)
-    elif isinstance(wcr_ast, ast.Lambda):
-        return (('return (' + cppunparse.cppunparse(
-            wcr_ast.body, expr_semicolon=False) + ');'),
-                wcr_ast.args.args[0].arg, wcr_ast.args.args[1].arg)
-    elif isinstance(wcr_ast, ast.Module):
-        return unparse_cr_split(wcr_ast.body[0].value)
-    elif isinstance(wcr_ast, str):
-        return unparse_cr_split(LambdaProperty.from_string(wcr_ast))
-    else:
-        raise NotImplementedError('INVALID TYPE OF WCR: ' +
-                                  type(wcr_ast).__name__)
 
 
 def _topy(arr):
