@@ -1233,6 +1233,24 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                                  child, function_stream,
                                                  kernel_stream)
 
+        # Generate register definitions for inter-tasklet memlets
+        dfg = sdfg.nodes()[state_id]
+        scope_dict = dfg.scope_dict()
+        for edge in dfg.edges():
+            # Only interested in edges within current scope
+            if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
+                continue
+            if (isinstance(edge.src, nodes.CodeNode)
+                    and isinstance(edge.dst, nodes.CodeNode)):
+                local_name = edge.data.data
+                # Allocate variable type
+                code = 'dace::vec<%s, %s> %s;' % (
+                    sdfg.arrays[edge.data.data].dtype.ctype,
+                    sym2cpp(edge.data.veclen), local_name)
+                kernel_stream.write(code, sdfg, state_id, [edge.src, edge.dst])
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
+
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
         if has_tbmap == False:
