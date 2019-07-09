@@ -89,7 +89,7 @@ class TensorflowRedundantArray(pm.Transformation):
         graph.remove_edge(e)
 
         # Finally, remove out_array node
-        print("Removed ", str(out_array.data))
+        #print("Removed ", str(out_array.data))
         graph.remove_node(out_array)
         if Config.get_bool("debugprint"):
             TensorflowRedundantArray._arrays_removed += 1
