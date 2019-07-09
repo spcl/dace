@@ -321,21 +321,79 @@ class MapFusion(pattern_matching.Transformation):
                         _new_dst_conn = _e.dst_conn
                         break
                 if _new_dst is None:
-                    # _access_node is used somewhere else, but not in the second
-                    # map
+                    # Access node is not even used in the second map
+                    graph.remove_node(_access_node)
                     continue
                 if _edge.data.data == _access_node.data and isinstance(
                     _edge._src, nodes.AccessNode
                 ):
                     _edge.data.data = _edge._src.data
                     _edge.data.subset = "0"
-                graph.add_edge(
-                    _edge._src,
-                    _edge.src_conn,
-                    _new_dst,
-                    _new_dst_conn,
-                    dcpy(_edge.data),
-                )
+                    graph.add_edge(
+                        _edge._src,
+                        _edge.src_conn,
+                        _new_dst,
+                        _new_dst_conn,
+                        dcpy(_edge.data),
+                    )
+                else:
+                    if _edge.data.subset.num_elements() == 1:
+                        # We will add a scalar
+                        local_name = "__s%d_n%d%s_n%d%s" % (
+                            self.state_id,
+                            graph.node_id(_edge._src),
+                            _edge.src_conn,
+                            graph.node_id(_edge._dst),
+                            _edge.dst_conn,
+                        )
+                        local_node = graph.add_scalar(
+                            local_name,
+                            dtype=_access_node.desc(graph).dtype,
+                            toplevel=False,
+                            transient=True,
+                            storage=types.StorageType.Register,
+                        )
+                        _edge.data.data = local_name
+                        _edge.data.subset = "0"
+                        graph.add_edge(
+                            _edge._src,
+                            _edge.src_conn,
+                            _new_dst,
+                            _new_dst_conn,
+                            dcpy(_edge.data),
+                        )
+                    else:
+                        # We will add a transient of size = memlet subset
+                        # size
+                        local_name = "__s%d_n%d%s_n%d%s" % (
+                            self.state_id,
+                            graph.node_id(_edge._src),
+                            _edge.src_conn,
+                            graph.node_id(_edge._dst),
+                            _edge.dst_conn,
+                        )
+                        local_node = graph.add_tranisent(
+                            local_name,
+                            _edge.data.subset.size,
+                            dtype=_access_node.desc(graph).dtype,
+                            toplevel=False,
+                        )
+                        _edge.data.data = local_node.data
+                        _edge.data.subset = _edge.data.subset.size
+                        graph.add_edge(
+                            _edge._src,
+                            _edge.src_conn,
+                            local_node,
+                            None,
+                            dcpy(_edge.data),
+                        )
+                        graph.add_edge(
+                            local_node,
+                            None,
+                            _new_dst,
+                            _new_dst_conn,
+                            dcpy(_edge.data),
+                        )
                 graph.remove_edge(_edge)
                 ####Isolate this node#####
                 for _in_e in graph.in_edges(_access_node):
@@ -365,29 +423,67 @@ class MapFusion(pattern_matching.Transformation):
                     _edge._src, _edge.src_conn, second_exit, None, dcpy(_edge.data)
                 )
                 ### If the second map needs this node then link the connector
-                # that generated this to the place where it is needed
+                # that generated this to the place where it is needed, with a
+                # temp transient/scalar for memlet to be generated
                 for _out_e in graph.out_edges(second_entry):
                     if _out_e.data.data == _access_node.data:
-                        local_name = "__s%d_n%d%s_n%d%s" % (
-                            self.state_id,
-                            graph.node_id(_edge._src),
-                            _edge.src_conn,
-                            graph.node_id(_edge._dst),
-                            _edge.dst_conn,
-                        )
-                        local_node = graph.add_transient(
-                            local_name,
-                            _access_node.desc(graph).shape,
-                            dtype=_access_node.desc(graph).dtype,
-                        )
-                        _edge.data.data = local_node.data
-                        graph.add_edge(
-                            _edge._src,
-                            _edge.src_conn,
-                            _out_e._dst,
-                            _out_e.dst_conn,
-                            dcpy(_edge.data),
-                        )
+                        if _edge.data.subset.num_elements() == 1:
+                            # We will add a scalar
+                            local_name = "__s%d_n%d%s_n%d%s" % (
+                                self.state_id,
+                                graph.node_id(_edge._src),
+                                _edge.src_conn,
+                                graph.node_id(_edge._dst),
+                                _edge.dst_conn,
+                            )
+                            local_node = graph.add_scalar(
+                                local_name,
+                                dtype=_access_node.desc(graph).dtype,
+                                storage=types.StorageType.Register,
+                                toplevel=False,
+                                transient=True,
+                            )
+                            _edge.data.data = local_node.data
+                            _edge.data.subset = "0"
+                            graph.add_edge(
+                                _edge._src,
+                                _edge.src_conn,
+                                _out_e._dst,
+                                _out_e.dst_conn,
+                                dcpy(_edge.data),
+                            )
+                        else:
+                            # We will add a transient of size = memlet subset
+                            # size
+                            local_name = "__s%d_n%d%s_n%d%s" % (
+                                self.state_id,
+                                graph.node_id(_edge._src),
+                                _edge.src_conn,
+                                graph.node_id(_edge._dst),
+                                _edge.dst_conn,
+                            )
+                            local_node = graph.add_tranisent(
+                                local_name,
+                                _edge.data.subset.size,
+                                dtype=_access_node.desc(graph).dtype,
+                                toplevel=False,
+                            )
+                            _edge.data.data = local_node.data
+                            _edge.data.subset = _edge.data.subset.size
+                            graph.add_edge(
+                                _edge._src,
+                                _edge.src_conn,
+                                local_node,
+                                None,
+                                dcpy(_edge.data),
+                            )
+                            graph.add_edge(
+                                local_node,
+                                None,
+                                _out_e._dst,
+                                _out_e.dst_conn,
+                                dcpy(_edge.data),
+                            )
                         break
                 graph.remove_edge(_edge)
         graph.remove_node(first_exit)  # Take a leap of faith
