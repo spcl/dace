@@ -443,7 +443,7 @@ class MapFusion(pattern_matching.Transformation):
                                 toplevel=False,
                                 transient=True,
                             )
-                            _edge.data.data = local_node.data
+                            _edge.data.data = local_name
                             _edge.data.subset = "0"
                             graph.add_edge(
                                 _edge._src,
@@ -468,7 +468,7 @@ class MapFusion(pattern_matching.Transformation):
                                 dtype=_access_node.desc(graph).dtype,
                                 toplevel=False,
                             )
-                            _edge.data.data = local_node.data
+                            _edge.data.data = local_name
                             _edge.data.subset = _edge.data.subset.size
                             graph.add_edge(
                                 _edge._src,
