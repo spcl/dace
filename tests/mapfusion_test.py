@@ -2,7 +2,6 @@ import numpy as np
 import dace
 from dace.transformation.dataflow import MapFusion
 
-dace.Config.set("compiler", "allow_shadowing", value="True")
 
 @dace.program
 def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20],
