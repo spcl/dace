@@ -346,7 +346,7 @@ class MapFusion(pattern_matching.Transformation):
                             graph.node_id(_edge._dst),
                             _edge.dst_conn,
                         )
-                        local_node = graph.add_scalar(
+                        local_node = sdfg.add_scalar(
                             local_name,
                             dtype=_access_node.desc(graph).dtype,
                             toplevel=False,
@@ -372,7 +372,7 @@ class MapFusion(pattern_matching.Transformation):
                             graph.node_id(_edge._dst),
                             _edge.dst_conn,
                         )
-                        local_node = graph.add_tranisent(
+                        local_node = sdfg.add_tranisent(
                             local_name,
                             _edge.data.subset.size,
                             dtype=_access_node.desc(graph).dtype,
@@ -436,7 +436,7 @@ class MapFusion(pattern_matching.Transformation):
                                 graph.node_id(_edge._dst),
                                 _edge.dst_conn,
                             )
-                            local_node = graph.add_scalar(
+                            local_node = sdfg.add_scalar(
                                 local_name,
                                 dtype=_access_node.desc(graph).dtype,
                                 storage=types.StorageType.Register,
@@ -462,7 +462,7 @@ class MapFusion(pattern_matching.Transformation):
                                 graph.node_id(_edge._dst),
                                 _edge.dst_conn,
                             )
-                            local_node = graph.add_tranisent(
+                            local_node = sdfg.add_tranisent(
                                 local_name,
                                 _edge.data.subset.size,
                                 dtype=_access_node.desc(graph).dtype,
