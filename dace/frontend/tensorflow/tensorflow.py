@@ -593,7 +593,6 @@ class TFSession:
             if len(patterns) > 0:
                 for _pattern in patterns:
                     self.graph.apply_transformations(_pattern, validate, strict)
-                    self.graph.draw_to_file()
             self.graph.draw_to_file()
             compiled_sdfg = self.graph.compile(optimizer=False)
 
