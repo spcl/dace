@@ -2,7 +2,7 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import symbolic
+from dace import symbolic, types
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from typing import List, Dict, Union
