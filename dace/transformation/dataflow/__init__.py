@@ -24,6 +24,7 @@ from .redundant_array_copying import (
 
 # Tensorflow specific stuff
 from .tensorflow_redundant_array import TensorflowRedundantArray
+from .tensorflow_padding_gpu import TensorflowPaddingGPU
 
 # Device-related
 from .copy_to_device import CopyToDevice
