@@ -525,9 +525,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     stride_tmpl_args[j] = dst
                     j += 1
 
-            copy_args = ([src_expr, dst_expr] + ([] if memlet.wcr is None else
-                                                 [unparse_cr(memlet.wcr)]) +
-                         sym2cpp(stride_tmpl_args))
+            copy_args = (
+                [src_expr, dst_expr] + ([] if memlet.wcr is None else [
+                    unparse_cr(sdfg, memlet.wcr)
+                ]) + sym2cpp(stride_tmpl_args))
 
             #############################################################
             # Instrumentation: Pre-copy 2
@@ -580,7 +581,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 ]:  # Special case: accumulating one element
                     dst_expr = self.memlet_view_ctor(sdfg, memlet, True)
                     stream.write(
-                        write_and_resolve_expr(memlet, nc, dst_expr,
+                        write_and_resolve_expr(sdfg, memlet, nc, dst_expr,
                                                '*(' + src_expr + ')'), sdfg,
                         state_id, [src_node, dst_node])
                 else:
@@ -668,9 +669,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if memlet.wcr is not None:
                         nc = not is_write_conflicted(dfg, edge)
                         result.write(
-                            write_and_resolve_expr(memlet, nc, out_local_name,
-                                                   in_local_name), sdfg,
-                            state_id, node)
+                            write_and_resolve_expr(
+                                sdfg, memlet, nc, out_local_name,
+                                in_local_name), sdfg, state_id, node)
                     else:
                         result.write(
                             '%s.write(%s);\n' % (out_local_name,
@@ -1477,30 +1478,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if (isinstance(edge.src, nodes.CodeNode)
                     and isinstance(edge.dst, nodes.CodeNode)):
                 local_name = edge.data.data
-                # TODO: Use dispatch_allocate
                 # Allocate variable type
                 code = 'dace::vec<%s, %s> %s;' % (
                     sdfg.arrays[edge.data.data].dtype.ctype,
                     sym2cpp(edge.data.veclen), local_name)
                 result.write(code, sdfg, state_id, [edge.src, edge.dst])
-                arg_type = sdfg.arrays[edge.data.data]
-                if (isinstance(arg_type, dace.data.Scalar)
-                        or isinstance(arg_type, dace.types.typeclass)):
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Scalar)
-                elif isinstance(arg_type, dace.data.Array):
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Pointer)
-                elif isinstance(arg_type, dace.data.Stream):
-                    if arg_type.is_stream_array():
-                        self._dispatcher.defined_vars.add(
-                            local_name, DefinedType.StreamArray)
-                    else:
-                        self._dispatcher.defined_vars.add(
-                            local_name, DefinedType.Stream)
-                else:
-                    raise TypeError("Unrecognized argument type: {}".format(
-                        type(arg_type).__name__))
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1722,21 +1706,22 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
                                                  None, result)
 
-        # Generate register definitions for inter-tasklet memlets
-        scope_dict = dfg.scope_dict()
-        for edge in dfg.edges():
-            # Only interested in edges within current scope
-            if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
-                continue
-            if (isinstance(edge.src, nodes.CodeNode)
-                    and isinstance(edge.dst, nodes.CodeNode)):
-                local_name = edge.data.data
-                # TODO: Use dispatch_allocate (missing defined_vars code below)
-                # Allocate variable type
-                code = 'dace::vec<%s, %s> %s;' % (
-                    sdfg.arrays[edge.data.data].dtype.ctype,
-                    sym2cpp(edge.data.veclen), local_name)
-                result.write(code, sdfg, state_id, [edge.src, edge.dst])
+            # Generate register definitions for inter-tasklet memlets
+            scope_dict = dfg.scope_dict()
+            for edge in dfg.edges():
+                # Only interested in edges within current scope
+                if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
+                    continue
+                if (isinstance(edge.src, nodes.CodeNode)
+                        and isinstance(edge.dst, nodes.CodeNode)):
+                    local_name = edge.data.data
+                    # Allocate variable type
+                    code = 'dace::vec<%s, %s> %s;' % (
+                        sdfg.arrays[edge.data.data].dtype.ctype,
+                        sym2cpp(edge.data.veclen), local_name)
+                    result.write(code, sdfg, state_id, [edge.src, edge.dst])
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Scalar)
 
     def _generate_ConsumeExit(self, sdfg, dfg, state_id, node, function_stream,
                               callsite_stream):
@@ -1947,7 +1932,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         else:
             callsite_stream.write(
                 'dace::wcr_custom<%s>::template reduce_atomic(%s, &%s, %s);' %
-                (output_type, unparse_cr(node.wcr), outvar, invar), sdfg,
+                (output_type, unparse_cr(sdfg, node.wcr), outvar, invar), sdfg,
                 state_id, node)  #cpp_array_expr(), cpp_array_expr()
 
         #############################################################
@@ -2197,7 +2182,7 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def write_and_resolve_expr(memlet, nc, outname, inname, indices=None):
+def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
     """ Helper function that emits a write_and_resolve call from a memlet. """
 
     redtype = operations.detect_reduction_type(memlet.wcr)
@@ -2214,7 +2199,7 @@ def write_and_resolve_expr(memlet, nc, outname, inname, indices=None):
                     str(redtype)[str(redtype).find('.') + 1:])
         reduction_tmpl = '<%s>' % credtype
     else:
-        custom_reduction = ', %s' % unparse_cr(memlet.wcr)
+        custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr)
 
     return '{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind});'.format(
         oname=outname,
@@ -2275,29 +2260,37 @@ class LambdaToFunction(ast.NodeTransformer):
         return ast.fix_missing_locations(newnode)
 
 
-def unparse_cr(wcr_ast):
-    """ Outputs a C++ version of a conflict resolution lambda. """
-
+def unparse_cr_split(sdfg, wcr_ast):
+    """ Parses various types of WCR functions, returning a 2-tuple of body (in
+        C++), and a list of arguments. """
     if isinstance(wcr_ast, ast.Lambda):
         # Convert the lambda expression into a function that we can parse
         funcdef = LambdaToFunction().visit(wcr_ast)
-        return unparse_cr(funcdef)
+        return unparse_cr_split(sdfg, funcdef)
     elif isinstance(wcr_ast, ast.FunctionDef):
         # Process data structure initializers
-        sinit = StructInitializer()
+        sinit = StructInitializer(sdfg)
         body = [sinit.visit(stmt) for stmt in wcr_ast.body]
 
         # Construct a C++ lambda function out of a function
-        return '[] (%s) { %s }' % (', '.join([
-            'const auto& %s' % n.arg for n in wcr_ast.args.args
-        ]), cppunparse.cppunparse(body, expr_semicolon=False))
+        args = [n.arg for n in wcr_ast.args.args]
+        return cppunparse.cppunparse(body, expr_semicolon=False), args
     elif isinstance(wcr_ast, ast.Module):
-        return unparse_cr(wcr_ast.body[0].value)
+        return unparse_cr_split(sdfg, wcr_ast.body[0].value)
     elif isinstance(wcr_ast, str):
-        return unparse_cr(LambdaProperty.from_string(wcr_ast))
+        return unparse_cr_split(sdfg, LambdaProperty.from_string(wcr_ast))
     else:
         raise NotImplementedError('INVALID TYPE OF WCR: ' +
                                   type(wcr_ast).__name__)
+
+
+def unparse_cr(sdfg, wcr_ast):
+    """ Outputs a C++ version of a conflict resolution lambda. """
+    body_cpp, args = unparse_cr_split(sdfg, wcr_ast)
+
+    # Construct a C++ lambda function out of a function
+    return '[] (%s) { %s }' % (', '.join('const auto& %s' % a
+                                         for a in args), body_cpp)
 
 
 def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
@@ -2384,12 +2377,12 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     callsite_stream.write('// Tasklet code (%s)\n' % node.label, sdfg,
                           state_id, node)
     for stmt in body:
-        rk = StructInitializer().visit(stmt)
+        rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(memlets,
+            rk = DaCeKeywordRemover(sdfg, memlets,
                                     sdfg.constants).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(memlets, sdfg.constants).visit(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
@@ -2478,7 +2471,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                Python frontend).
     """
 
-    def __init__(self, memlets, constants):
+    def __init__(self, sdfg, memlets, constants):
+        self.sdfg = sdfg
         self.memlets = memlets
         self.constants = constants
 
@@ -2516,7 +2510,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     if wcr is not None:
                         newnode = ast.Name(
                             id=write_and_resolve_expr(
-                                memlet, nc, '__' + target,
+                                self.sdfg, memlet, nc, '__' + target,
                                 cppunparse.cppunparse(
                                     value, expr_semicolon=False)))
                     else:
@@ -2543,6 +2537,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if wcr is not None:
             newnode = ast.Name(
                 id=write_and_resolve_expr(
+                    self.sdfg,
                     memlet,
                     nc,
                     '__' + target,
@@ -2612,14 +2607,31 @@ class StructInitializer(ExtNodeTransformer):
     """ Replace struct creation calls with compound literal struct
         initializers in tasklets. """
 
+    def __init__(self, sdfg: SDFG):
+        self._structs = {}
+        if sdfg is None:
+            return
+
+        # Find all struct types in SDFG
+        for array in sdfg.arrays.values():
+            if array is None or not hasattr(array, "dtype"):
+                continue
+            if isinstance(array.dtype, dace.types.struct):
+                self._structs[array.dtype.name] = array.dtype
+
     def visit_Call(self, node):
         if isinstance(node.func,
-                      ast.Name) and node.func.id.startswith('__DAPPSTRUCT_'):
+                      ast.Name) and (node.func.id.startswith('__DAPPSTRUCT_')
+                                     or node.func.id in self._structs):
             fields = ', '.join([
                 '.%s = %s' % (rname(arg.arg), unparse(arg.value))
-                for arg in node.keywords
+                for arg in sorted(node.keywords, key=lambda x: x.arg)
             ])
-            tname = node.func.id[len('__DAPPSTRUCT_'):]
+
+            tname = node.func.id
+            if node.func.id.startswith('__DAPPSTRUCT_'):
+                tname = node.func.id[len('__DAPPSTRUCT_'):]
+
             return ast.copy_location(
                 ast.Name(id='(%s) { %s }' % (tname, fields), ctx=ast.Load),
                 node)

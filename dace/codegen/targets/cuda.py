@@ -15,8 +15,8 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
-from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, cpp_array_expr,
-                                      is_array_stream_view,
+from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, unparse_cr_split,
+                                      cpp_array_expr, is_array_stream_view,
                                       synchronize_streams)
 from dace.codegen.targets.framecode import _set_default_schedule_and_storage_types
 from dace.properties import LambdaProperty
@@ -754,7 +754,7 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                                     str(redtype)[str(redtype).find('.') + 1:])
                         reduction_tmpl = '<%s>' % credtype
                     else:
-                        custom_reduction = [unparse_cr(memlet.wcr)]
+                        custom_reduction = [unparse_cr(sdfg, memlet.wcr)]
                     accum = '::template Accum%s' % reduction_tmpl
 
                 if any(
@@ -1234,6 +1234,24 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                                  child, function_stream,
                                                  kernel_stream)
 
+        # Generate register definitions for inter-tasklet memlets
+        dfg = sdfg.nodes()[state_id]
+        scope_dict = dfg.scope_dict()
+        for edge in dfg.edges():
+            # Only interested in edges within current scope
+            if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
+                continue
+            if (isinstance(edge.src, nodes.CodeNode)
+                    and isinstance(edge.dst, nodes.CodeNode)):
+                local_name = edge.data.data
+                # Allocate variable type
+                code = 'dace::vec<%s, %s> %s;' % (
+                    sdfg.arrays[edge.data.data].dtype.ctype,
+                    sym2cpp(edge.data.veclen), local_name)
+                kernel_stream.write(code, sdfg, state_id, [edge.src, edge.dst])
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
+
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
         if has_tbmap == False:
@@ -1518,7 +1536,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # Create a functor or use an existing one for reduction
         if redtype == types.ReductionType.Custom:
-            body, arg1, arg2 = unparse_cr_split(node.wcr)
+            body, [arg1, arg2] = unparse_cr_split(sdfg, node.wcr)
             self._globalcode.write(
                 """
         struct __reduce_{id} {{
@@ -1769,25 +1787,6 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output,
 ########################################################################
 ########################################################################
 # Helper functions and classes
-
-
-def unparse_cr_split(wcr_ast):
-    """ Parses various types of WCR functions, returning a 3-tuple of body,
-        first argument name and second argument name. """
-    if isinstance(wcr_ast, ast.FunctionDef):
-        return (cppunparse.cppunparse(wcr_ast.body, expr_semicolon=False),
-                wcr_ast.args.args[0].arg, wcr_ast.args.args[1].arg)
-    elif isinstance(wcr_ast, ast.Lambda):
-        return (('return (' + cppunparse.cppunparse(
-            wcr_ast.body, expr_semicolon=False) + ');'),
-                wcr_ast.args.args[0].arg, wcr_ast.args.args[1].arg)
-    elif isinstance(wcr_ast, ast.Module):
-        return unparse_cr_split(wcr_ast.body[0].value)
-    elif isinstance(wcr_ast, str):
-        return unparse_cr_split(LambdaProperty.from_string(wcr_ast))
-    else:
-        raise NotImplementedError('INVALID TYPE OF WCR: ' +
-                                  type(wcr_ast).__name__)
 
 
 def _topy(arr):
