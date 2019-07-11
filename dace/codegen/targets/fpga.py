@@ -12,8 +12,8 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, DefinedType
 from dace.codegen.targets.cpu import cpp_offset_expr, cpp_array_expr
 from dace.codegen.targets import cpu
-
 from dace.codegen import cppunparse
+from dace.properties import Property, make_properties, indirect_properties
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -883,6 +883,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         dst_storage, dst_schedule, edge, state_dfg,
                         callsite_stream)
 
+    def _generate_PipelineEntry(self, *args, **kwargs):
+        self._generate_MapEntry(*args, **kwargs)
+
     def _generate_MapEntry(self, sdfg, dfg, state_id, node, function_stream,
                            callsite_stream):
 
@@ -901,6 +904,13 @@ class FPGACodeGen(TargetCodeGenerator):
             # Pipeline innermost loops
             scope = dfg.scope_dict(True)[node]
 
+            # Generate custom iterators if this is a pipelined (and thus
+            # flattened) loop
+            if isinstance(node, PipelineEntry):
+                for i in range(len(node.map.range)):
+                    result.write("int {} = {};\n".format(
+                        node.map.params[i], node.map.range[i][0]))
+
             if node.map.unroll:
                 self.generate_unroll_pre(result, None, sdfg, state_id, node)
             else:
@@ -913,13 +923,30 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
 
             # Generate nested loops
-            for i, r in enumerate(node.map.range):
-                var = node.map.params[i]
-                begin, end, skip = r
+            if not isinstance(node, PipelineEntry):
+                for i, r in enumerate(node.map.range):
+                    var = node.map.params[i]
+                    begin, end, skip = r
+                    result.write(
+                        "for (int {} = {}; {} < {}; {} += {}) {{\n".format(
+                            var, cpu.sym2cpp(begin), var, cpu.sym2cpp(end + 1),
+                            var, cpu.sym2cpp(skip)), sdfg, state_id, node)
+            else:
+                pipeline = node.pipeline
+                flat_it = pipeline.iterator_str()
+                bound = pipeline.loop_bound_str()
                 result.write(
-                    "for (int {} = {}; {} < {}; {} += {}) {{\n".format(
-                        var, cpu.sym2cpp(begin), var, cpu.sym2cpp(end + 1),
-                        var, cpu.sym2cpp(skip)), sdfg, state_id, node)
+                    "for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
+                        it=flat_it, bound=node.pipeline.loop_bound_str()))
+                if pipeline.init_size > 0:
+                    result.write("const bool {} = {} < {};\n".format(
+                        node.pipeline.init_condition(), flat_it,
+                        cpu.sym2cpp(pipeline.init_size)))
+                if pipeline.drain_size > 0:
+                    result.write("const bool {} = {} >= {};\n".format(
+                        node.pipeline.drain_condition(), flat_it,
+                        bound + (" - " + cpu.sym2cpp(pipeline.drain_size)
+                                 if pipeline.drain_size != 0 else "")))
 
             if node.map.unroll:
                 self.generate_unroll_post(result, None, sdfg, state_id, node)
@@ -947,6 +974,9 @@ class FPGACodeGen(TargetCodeGenerator):
             self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
                                                  None, result)
 
+    def _generate_PipelineExit(self, *args, **kwargs):
+        self._generate_MapExit(*args, **kwargs)
+
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
         scope_dict = dfg.scope_dict()
@@ -955,6 +985,28 @@ class FPGACodeGen(TargetCodeGenerator):
             # This was generated as unrolled processing elements, no need to
             # generate anything here
             return
+        if isinstance(node, PipelineExit):
+            flat_it = node.pipeline.iterator_str()
+            bound = node.pipeline.loop_bound_str()
+            pipeline = node.pipeline
+            cond = []
+            if pipeline.init_size > 0 and pipeline.init_overlap == False:
+                cond.append("!" + pipeline.init_condition())
+            if pipeline.drain_size > 0 and pipeline.drain_overlap == False:
+                cond.append("!" + pipeline.drain_condition())
+            if len(cond) > 0:
+                callsite_stream.write("if ({}) {{".format(" && ".join(cond)))
+            for it, r in reversed(list(zip(pipeline.params, pipeline.range))):
+                callsite_stream.write(
+                    "if ({it} >= {end}) {{\n{it} = {begin};\n".format(
+                        it=it, begin=r[0], end=r[1]))
+            for it, r in zip(pipeline.params, pipeline.range):
+                callsite_stream.write(
+                    "}} else {{\n{it} += {step};\n}}\n".format(
+                        it=it, step=r[2]))
+            if len(cond) > 0:
+                callsite_stream.write("}\n")
+
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
 
@@ -1278,3 +1330,78 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                                                None, host_code_stream)
             self._dispatcher.dispatch_initialize(sdfg, state, None, arr_node,
                                                  None, host_code_stream)
+
+
+# ------------------------------------------------------------------------------
+
+
+class PipelineEntry(dace.graph.nodes.MapEntry):
+    @property
+    def pipeline(self):
+        return self._map
+
+    @pipeline.setter
+    def pipeline(self, val):
+        self._map = val
+
+
+class PipelineExit(dace.graph.nodes.MapExit):
+    @property
+    def pipeline(self):
+        return self._map
+
+    @pipeline.setter
+    def pipeline(self, val):
+        self._map = val
+
+
+@make_properties
+class Pipeline(dace.graph.nodes.Map):
+
+    init_size = Property(
+        dtype=int, desc="Number of initialization iterations.")
+    init_overlap = Property(
+        dtype=int,
+        desc="Whether to increment regular map indices during initialization.")
+    drain_size = Property(dtype=int, desc="Number of drain iterations.")
+    drain_overlap = Property(
+        dtype=int,
+        desc="Whether to increment regular map indices during pipeline drain.")
+
+    def __init__(self,
+                 *args,
+                 init_size=0,
+                 init_overlap=False,
+                 drain_size=0,
+                 drain_overlap=False,
+                 **kwargs):
+        super(Pipeline, self).__init__(*args, **kwargs)
+        self.init_size = init_size
+        self.init_overlap = init_overlap
+        self.drain_size = drain_size
+        self.drain_overlap = drain_overlap
+        self.flatten = True
+
+    def iterator_str(self):
+        return "__" + "".join(self.params)
+
+    def loop_bound_str(self):
+        bound = 1
+        for begin, end, step in self.range:
+            bound *= (step + end - begin) // step
+        # Add init and drain phases when relevant
+        add_str = (" + " + cpu.sym2cpp(self.init_size) if
+                   self.init_size != 0 and not self.init_overlap else "")
+        add_str += (" + " + cpu.sym2cpp(self.drain_size) if
+                    self.drain_size != 0 and not self.drain_overlap else "")
+        return cpu.sym2cpp(bound) + add_str
+
+    def init_condition(self):
+        """Variable that can be checked to see if pipeline is currently in
+           initialization phase."""
+        return self.iterator_str() + "_init"
+
+    def drain_condition(self):
+        """Variable that can be checked to see if pipeline is currently in
+           draining phase."""
+        return self.iterator_str() + "_drain"
