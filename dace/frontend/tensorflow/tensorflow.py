@@ -492,10 +492,10 @@ class TFSession:
             # Create output numpy arrays
 
             outputs = {
-                 name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-                 for node, name in zip(total_nodes, total_output_names)
-                 if name is not None and name not in sdfg_args
-             }
+                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
+                for node, name in zip(total_nodes, total_output_names)
+                if name is not None and name not in sdfg_args
+            }
             outputs.update(
                 {k: v for k, v in sdfg_args.items() if k in total_output_names}
             )
@@ -570,7 +570,7 @@ class TFSession:
             ############################
             # Compile the SDFG
             if gpu:
-            #    self.graph.apply_gpu_transformations()
+                #    self.graph.apply_gpu_transformations()
                 for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
@@ -581,9 +581,9 @@ class TFSession:
                         array.storage = dace.StorageType.CPU_Pinned
 
                 # Modify sdfg_args
-                #import numba.cuda
+                # import numba.cuda
 
-                #for aname, arg in sdfg_args.items():
+                # for aname, arg in sdfg_args.items():
                 #    if isinstance(arg, np.ndarray):
                 #        sdfg_args[aname] = numba.cuda.pinned_array(
                 #            arg.shape, dtype=arg.dtype, strides=arg.strides
@@ -1409,31 +1409,30 @@ class TFSession:
         gammaGrads = outputList[1]
         betaGrads = outputList[2]
         ############################TRANSIENTS##########################################
-        gammaPrime = self.state.add_scalar(
+        gammaPrime = self.state.add_transient(
             "gamma_prime" + local_ctr,
+            _tensorshape(node.outputs[1]),
             _tensortype(node.outputs[1]),
-            transient=True,
             toplevel=False,
         )
-        betaPrime = self.state.add_array(
+        betaPrime = self.state.add_transient(
             "beta_prime" + local_ctr,
-            [1],
+            _tensorshape(node.outputs[2]),
             _tensortype(node.outputs[2]),
-            transient=True,
             toplevel=False,
         )
         ###############################MAPS##############################################
-        channelMapLabel = _string_builder(node.type) + "_outer"
-        channelMapEntry, channelMapExit = self.state.add_map(
-            channelMapLabel, dict(zip([backpropParams[-1]], [backpropDims[-1]]))
-        )
+        # channelMapLabel = _string_builder(node.type) + "_outer"
+        # channelMapEntry, channelMapExit = self.state.add_map(
+        #    channelMapLabel, dict(zip([backpropParams[-1]], [backpropDims[-1]]))
+        # )
         innerMap1Label = _string_builder(node.type) + "_inner1"
         innerMap1Entry, innerMap1Exit = self.state.add_map(
-            innerMap1Label, dict(zip(backpropParams[:-1], backpropDims[:-1]))
+            innerMap1Label, dict(zip(backpropParams, backpropDims))
         )
         innerMap2Label = _string_builder(node.type) + "_inner2"
         innerMap2Entry, innerMap2Exit = self.state.add_map(
-            innerMap2Label, dict(zip(backpropParams[:-1], backpropDims[:-1]))
+            innerMap2Label, dict(zip(backpropParams, backpropDims))
         )
         #############################TASKLETS###########################################
         nhw = 1
@@ -1459,14 +1458,19 @@ class TFSession:
         )
         inputs = [backpropGradients, inputData, meanNode, stdevNode]
         dims = [backpropDims, inputDims, meanDims, stdevDims]
-        middleParams = [
-            backpropDims[:-1] + [backpropParams[-1]],
-            backpropDims[:-1] + [backpropParams[-1]],
-            [backpropParams[-1]],
-            [backpropParams[-1]],
-        ]
+        # middleParams = [
+        #    backpropDims[:-1] + [backpropParams[-1]],
+        #    backpropDims[:-1] + [backpropParams[-1]],
+        #    [backpropParams[-1]],
+        #    [backpropParams[-1]],
+        # ]
+
         # auxGradTasklet in-edges
-        self.add_in_memlets(inputs, channelMapEntry, innerMap1Entry, dims, middleParams)
+        for _dim, _node in zip(dims, inputs):
+            self.state.add_edge(
+                _node, None, innerMap1Entry, None, Memlet.simple(_node, ",".join(_dim))
+            )
+        # self.add_in_memlets(inputs, channelMapEntry, innerMap1Entry, dims, middleParams)
         self.state.add_edge(
             innerMap1Entry,
             None,
@@ -1502,7 +1506,10 @@ class TFSession:
             innerMap1Exit,
             None,
             Memlet.simple(
-                gammaPrime, "0", wcr_str="lambda a,b: a+b", wcr_identity=float(0)
+                gammaPrime,
+                ",".join([backpropParams[-1]]),
+                wcr_str="lambda a,b: a+b",
+                wcr_identity=float(0),
             ),
         )
         self.state.add_edge(
@@ -1511,7 +1518,10 @@ class TFSession:
             gammaPrime,
             None,
             Memlet.simple(
-                gammaPrime, "0", wcr_str="lambda a,b: a+b", wcr_identity=float(0)
+                gammaPrime,
+                ",".join(gammaDims),
+                wcr_str="lambda a,b: a+b",
+                wcr_identity=float(0),
             ),
         )
         self.state.add_edge(
@@ -1520,7 +1530,10 @@ class TFSession:
             innerMap1Exit,
             None,
             Memlet.simple(
-                betaPrime, "0", wcr_str="lambda a, b: a+b", wcr_identity=float(0)
+                betaPrime,
+                ",".join([backpropParams[-1]]),
+                wcr_str="lambda a, b: a+b",
+                wcr_identity=float(0),
             ),
         )
         self.state.add_edge(
@@ -1529,30 +1542,44 @@ class TFSession:
             betaPrime,
             None,
             Memlet.simple(
-                betaPrime, "0", wcr_str="lambda a, b: a+b", wcr_identity=float(0)
+                betaPrime,
+                ",".join(gammaDims),
+                wcr_str="lambda a, b: a+b",
+                wcr_identity=float(0),
             ),
         )
         # second map in-edges
-        self.add_in_memlets(
-            [gammaNode],
-            channelMapEntry,
+        # self.add_in_memlets(
+        #    [gammaNode],
+        #    channelMapEntry,
+        #    innerMap2Entry,
+        #    [gammaDims],
+        #    [[backpropParams[-1]]],
+        # )
+        self.state.add_edge(
+            gammaNode,
+            None,
             innerMap2Entry,
-            [gammaDims],
-            [[backpropParams[-1]]],
+            None,
+            Memlet.simple(gammaNode, ",".join(gammaDims)),
         )
-        for node, param in zip(inputs, middleParams):
+        for _node, _dim in zip(inputs, dims):
             self.state.add_edge(
-                channelMapEntry,
-                None,
-                innerMap2Entry,
-                None,
-                Memlet.simple(node, ",".join(param)),
+                _node, None, innerMap2Entry, None, Memlet.simple(_node, ",".join(_dim))
             )
         self.state.add_edge(
-            gammaPrime, None, innerMap2Entry, None, Memlet.simple(gammaPrime, "0")
+            gammaPrime,
+            None,
+            innerMap2Entry,
+            None,
+            Memlet.simple(gammaPrime, ",".join(gammaDims)),
         )
         self.state.add_edge(
-            betaPrime, None, innerMap2Entry, None, Memlet.simple(betaPrime, "0")
+            betaPrime,
+            None,
+            innerMap2Entry,
+            None,
+            Memlet.simple(betaPrime, ",".join(gammaDims)),
         )
         # inputGradsTasklet in-edges
         self.state.add_edge(
@@ -1567,14 +1594,14 @@ class TFSession:
             None,
             inputGradsTasklet,
             "beta_prime",
-            Memlet.simple(betaPrime, "0"),
+            Memlet.simple(betaPrime, ",".join([backpropParams[-1]])),
         )
         self.state.add_edge(
             innerMap2Entry,
             None,
             inputGradsTasklet,
             "gamma_prime",
-            Memlet.simple(gammaPrime, "0"),
+            Memlet.simple(gammaPrime, ",".join([backpropParams[-1]])),
         )
         self.state.add_edge(
             innerMap2Entry,
@@ -1612,24 +1639,45 @@ class TFSession:
             None,
             Memlet.simple(imageGrads, ",".join(backpropParams)),
         )
-        self.add_out_memlets(
-            [imageGrads],
-            channelMapExit,
+        self.state.add_edge(
             innerMap2Exit,
-            [backpropDims],
-            [backpropDims[:-1] + [backpropParams[-1]]],
+            None,
+            imageGrads,
+            None,
+            Memlet.simple(imageGrads, ",".join(backpropDims)),
         )
-        # Add reads and edges. Can't directly add out memlets.
-        self.add_out_memlets(
-            [gammaGrads],
-            channelMapExit,
+        self.state.add_edge(
+            betaPrime,
+            None,
+            betaGrads,
+            None,
+            Memlet.simple(betaPrime, ",".join(gammaDims)),
+        )
+        self.state.add_edge(
             gammaPrime,
-            [gammaDims],
-            [[backpropParams[-1]]],
+            None,
+            gammaGrads,
+            None,
+            Memlet.simple(gammaPrime, ",".join(gammaDims)),
         )
-        self.add_out_memlets(
-            [betaGrads], channelMapExit, betaPrime, [gammaDims], [[backpropParams[-1]]]
-        )
+        # self.add_out_memlets(
+        #    [imageGrads],
+        #    channelMapExit,
+        #    innerMap2Exit,
+        #    [backpropDims],
+        #    [backpropDims[:-1] + [backpropParams[-1]]],
+        # )
+        # Add reads and edges. Can't directly add out memlets.
+        # self.add_out_memlets(
+        #    [gammaGrads],
+        #    channelMapExit,
+        #    gammaPrime,
+        #    [gammaDims],
+        #    [[backpropParams[-1]]],
+        # )
+        # self.add_out_memlets(
+        #    [betaGrads], channelMapExit, betaPrime, [gammaDims], [[backpropParams[-1]]]
+        # )
 
     def visit_Tile(self, node):
         # Replicates input multiple times
@@ -3164,23 +3212,23 @@ class TFSession:
         )
 
         # 4th map, calculate the cross-entropy loss for an optional loss output
-        #mapEntry, mapExit = state.add_map(
+        # mapEntry, mapExit = state.add_map(
         #    mapLabel + "_loss",
         #    dict(zip(mapParams, mapRange)),
         #    schedule=dace.ScheduleType.Sequential,
-        #)
-        #tasklet = state.add_tasklet(
+        # )
+        # tasklet = state.add_tasklet(
         #    mapLabel + "_loss",
         #    {"j0", "j1"},
         #    {"out"},
         #    "if (int(j1) == i1) {\n\tout=-(dace::math::log(j0));}\nelse{\n\tout=0;}",
         #    language=dace.types.Language.CPP,
-        #)
-        #self.reinitCR(outputList[0], [inputParams[1]], [inputDims[1]], "0")
-        #self.add_in_memlets(
+        # )
+        # self.reinitCR(outputList[0], [inputParams[1]], [inputDims[1]], "0")
+        # self.add_in_memlets(
         #    [temp3Node, inputNodes[1]], mapEntry, tasklet, inputDims, inputParams
-        #)
-        #self.add_out_memlets(
+        # )
+        # self.add_out_memlets(
         #    [outputList[0]],
         #    mapExit,
         #    tasklet,
@@ -3188,7 +3236,7 @@ class TFSession:
         #    [inputParams[1]],
         #    "lambda a,b: a+b",
         #    0,
-        #)
+        # )
 
         # 5th map, gradient of the whole layer
         mapEntry, mapExit = state.add_map(
@@ -4019,17 +4067,17 @@ class TFSession:
         )
         output.setzero = True
 
-        # mapParams = inputParams
-        # mapRange = inputDims
-        # mapLabel = _string_builder(node.type)
-        # mapEntry, mapExit = state.add_map(mapLabel,
-        #                                  dict(zip(mapParams, mapRange)))
-        # tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        #mapParams = inputParams
+        #mapRange = inputDims
+        #mapLabel = _string_builder(node.type)
+        #mapEntry, mapExit = state.add_map(mapLabel,
+        #                                 dict(zip(mapParams, mapRange)))
+        #tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
         self.state.add_edge(inpnode, None, output, None, padMemlet)
-        # self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
-        #                    [inputParams])
-        # self.add_out_memlets([output], mapExit, tasklet, [outputDims],
-        #                     [outputParams])
+        #self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
+        #                   [inputParams])
+        #self.add_out_memlets([output], mapExit, tasklet, [outputDims],
+        #                    [outputParams])
         return output, outputDims
 
     def get_default_params(self, tensor, start=0, identifier="i"):
