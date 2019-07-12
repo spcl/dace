@@ -1259,24 +1259,39 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._dispatcher.defined_vars.enter_scope(node)
 
-        # Use outgoing edges to preallocate output local vars
-        # in two stages, first we preallocate for normal cases (ie NOT code->code) and then for
-        # code->code
-        tasklet_out_connectors = set()
-        for edge in state_dfg.out_edges(node):
-            if isinstance(edge.dst, nodes.CodeNode):
-                # Handling this in a separate pass just below
-                continue
+        arrays = set()
+        for edge in state_dfg.in_edges(node):
+            u = edge.src
+            memlet = edge.data
 
-            if edge.src_conn:
-                if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
-                    continue
+            if edge.dst_conn:  # Not (None or "")
+                if edge.dst_conn in arrays:  # Disallow duplicates
+                    raise SyntaxError("Duplicates found in memlets")
+                # Special case: code->code
+                if isinstance(edge.src, nodes.CodeNode):
+                    shared_data_name = edge.data.data
+
+                    # Read variable from shared storage
+                    callsite_stream.write(
+                        "const dace::vec<%s, %s>& %s = %s;"
+                        % (
+                            sdfg.arrays[memlet.data].dtype.ctype,
+                            sym2cpp(memlet.veclen),
+                            edge.dst_conn,
+                            shared_data_name,
+                        ),
+                        sdfg,
+                        state_id,
+                        [edge.src, edge.dst],
+                    )
+                    self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Scalar)
+
                 else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
+                    src_node = find_input_arraynode(state_dfg, edge)
 
                     self._dispatcher.dispatch_copy(
+                        src_node,
                         node,
-                        dst_node,
                         edge,
                         sdfg,
                         state_dfg,
@@ -1286,32 +1301,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     )
 
                 # Also define variables in the C++ unparser scope
-                self._locals.define(edge.src_conn, -1, self._ldepth + 1)
-                tasklet_out_connectors.add(edge.src_conn)
-
-        for edge in state_dfg.out_edges(node):
-            # Special case: code->code
-            if edge.src_conn is None:
-                continue
-            elif (
-                isinstance(edge.dst, nodes.CodeNode)
-                and edge.src_conn not in tasklet_out_connectors
-            ):
-                memlet = edge.data
-                callsite_stream.write(
-                    "dace::vec<%s, %s> %s;"
-                    % (
-                        sdfg.arrays[memlet.data].dtype.ctype,
-                        sym2cpp(memlet.veclen),
-                        edge.src_conn,
-                    ),
-                    sdfg,
-                    state_id,
-                    [edge.src, edge.dst],
-                )
-                self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar)
-                self._locals.define(edge.src_conn, -1, self._ldepth + 1)
-                locals_defined = True
+                self._locals.define(edge.dst_conn, -1, self._ldepth + 1)
+                arrays.add(edge.dst_conn)
 
         callsite_stream.write("\n", sdfg, state_id, node)
 
@@ -1365,6 +1356,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     [edge.src, edge.dst],
                 )
+                tasklet_out_connectors.add(edge.src_conn)
                 self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar)
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1)
                 locals_defined = True
