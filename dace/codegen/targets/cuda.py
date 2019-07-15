@@ -148,6 +148,8 @@ DACE_EXPORTED void __dace_exit_cuda({params});
 namespace dace {{ namespace cuda {{
     cudaStream_t __streams[{nstreams}];
     cudaEvent_t __events[{nevents}];
+    int num_streams = {nstreams};
+    int num_events = {nevents};
 }} }}
 
 int __dace_init_cuda({params}) {{

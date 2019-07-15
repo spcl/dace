@@ -2302,7 +2302,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         if (max_streams >= 0 and not is_devicelevel(sdfg, state_dfg, node)
                 and hasattr(node, '_cuda_stream')):
             callsite_stream.write(
-                'cudaStream_t __dace_current_stream = dace::cuda::__streams[%d];'
+                'int __dace_current_stream_id = %d;\ncudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
                 % node._cuda_stream, sdfg, state_id, node)
 
         if node.language != types.Language.CPP:
