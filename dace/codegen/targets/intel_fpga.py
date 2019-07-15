@@ -664,11 +664,21 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
             result = ""
 
+            src_def_type = self._dispatcher.defined_vars.get(connector)
+            dst_def_type = self._dispatcher.defined_vars.get(data_name)
+
+            read_expr = self.make_read(src_def_type, memlet_type, connector,
+                                       self._memory_widths[data_name],
+                                       connector, None)
+            write_expr = self.make_write(dst_def_type, memlet_type, data_name,
+                                         self._memory_widths[data_name],
+                                         data_name, offset, read_expr)
+
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
-                    result += "{} = {};".format(data_name, connector)
+                    result += write_expr
                 elif memlet.num_accesses == -1:
                     # Variable number of reads or writes
                     pass
@@ -678,22 +688,19 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                         format(memlet.num_accesses, connector))
             elif isinstance(data_desc, dace.data.Array):
                 if memlet.num_accesses == 1:
-                    result += "{}[{}] = {};".format(data_name, offset,
-                                                    connector)
+                    result += write_expr
                 else:
                     pass
             elif isinstance(data_desc, dace.data.Stream):
                 if not data_desc.is_stream_array():
                     if memlet.num_accesses == 1:
-                        result += "write_channel_intel({}, {});".format(
-                            data_name, connector)
+                        result += write_expr
                     else:
                         # Must happen directly in the code
                         pass
                 else:  # is array of streams
                     if memlet.num_accesses == 1:
-                        result += "write_channel_intel({}[{}], {});".format(
-                            data_name, offset, connector)
+                        result += write_expr
                     else:
                         # Must happen directly in the code
                         pass

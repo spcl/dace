@@ -1399,9 +1399,13 @@ class Pipeline(dace.graph.nodes.Map):
     def init_condition(self):
         """Variable that can be checked to see if pipeline is currently in
            initialization phase."""
+        if self.init_size <= 0:
+            raise ValueError("No init condition exists for " + self.label)
         return self.iterator_str() + "_init"
 
     def drain_condition(self):
         """Variable that can be checked to see if pipeline is currently in
            draining phase."""
+        if self.drain_size <= 0:
+            raise ValueError("No drain condition exists for " + self.label)
         return self.iterator_str() + "_drain"
