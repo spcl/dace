@@ -222,7 +222,6 @@ class PropertyRenderer:
             name_label.set_tooltip_text(prop.desc)
             self.propertygrid.attach(name_label, 0, rownum, 1, 1)
             callback_data = [sdfg, memlet, tail, head, label, prop]
-            #print("rendering prop for: " +str(prop)+" name: "+str(prop.attr_name)+" dtype: "+str(prop.dtype)+" value: "+str(value))
             widget = self.render_prop(prop, value, self.memlet_props_changed,
                                       callback_data, sdfg)
             self.propertygrid.attach(widget, 1, rownum, 1, 1)
@@ -495,6 +494,7 @@ class PropertyRenderer:
                                  data[len(data)-1][3]
         newval = self.get_value_from_widget(widget)
         dace.properties.set_property_from_string(prop, data, newval)
+        self.on_update_cb(sdfg, "data", name, prop.attr_name, newval)
 
     def render_properties_for_pattern(self, optgraph, nodeid, pattern_match):
         label = self.propertylabel
