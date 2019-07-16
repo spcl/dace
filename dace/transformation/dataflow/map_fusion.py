@@ -171,13 +171,11 @@ class MapFusion(pattern_matching.Transformation):
                 # however, if intermediate_data eventually leads to
                 # second_memlet.data, need to fail.
                 for _n in intermediate_nodes:
-                    source_node = graph.find_node(_n.data)
+                    source_node = _n#graph.find_node(_n.data)
                     destination_node = graph.find_node(second_memlet.data)
                     # NOTE: Assumes graph has networkx version
                     if destination_node in nx.descendants(graph._nx, source_node):
                         return False
-                    else:
-                        continue
                 continue
 
             provided = False

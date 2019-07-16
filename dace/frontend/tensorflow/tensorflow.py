@@ -4067,17 +4067,17 @@ class TFSession:
         )
         output.setzero = True
 
-        mapParams = inputParams
-        mapRange = inputDims
-        mapLabel = _string_builder(node.type)
-        mapEntry, mapExit = state.add_map(mapLabel,
-                                         dict(zip(mapParams, mapRange)))
-        tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
-        #self.state.add_edge(inpnode, None, output, None, padMemlet)
-        self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
-                           [inputParams])
-        self.add_out_memlets([output], mapExit, tasklet, [outputDims],
-                            [outputParams])
+        #mapParams = inputParams
+        #mapRange = inputDims
+        #mapLabel = _string_builder(node.type)
+        #mapEntry, mapExit = state.add_map(mapLabel,
+        #                                 dict(zip(mapParams, mapRange)))
+        #tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        self.state.add_edge(inpnode, None, output, None, padMemlet)
+        #self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
+        #                   [inputParams])
+        #self.add_out_memlets([output], mapExit, tasklet, [outputDims],
+        #                    [outputParams])
         return output, outputDims
 
     def get_default_params(self, tensor, start=0, identifier="i"):

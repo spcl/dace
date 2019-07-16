@@ -164,3 +164,6 @@ perfdata.db
 
 .idea/
 _dotgraphs/
+
+samples/tensorflow/experiment_run.py
+samples/tensorflow/resnet_small.py
