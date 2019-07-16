@@ -618,6 +618,7 @@ class DIODE:
         curr.set_sdfg(sdfg)
         self.draw_sdfg_graph()
         self.update_generated_code()
+        self.propren.update()
 
     def ChangeSDFGMemletProperties(self, elem_head, elem_tail, mid, prop,
                                    newval):
@@ -637,6 +638,7 @@ class DIODE:
         dace_state.compile()
         self.draw_sdfg_graph()
         self.update_generated_code()
+        self.propren.update()
 
     def ChangeSDFGDataProperties(self, dataname, propname, newval):
         curr = self.optimization_graph.get_current().get_dace_state()
@@ -653,6 +655,7 @@ class DIODE:
         curr.set_sdfg(sdfg)
         self.draw_sdfg_graph()
         self.update_generated_code()
+        self.propren.update()
 
 
 
