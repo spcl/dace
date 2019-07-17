@@ -7,6 +7,7 @@ import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState
 from dace.graph.nodes import Tasklet, NestedSDFG
+from dace.frontend.tensorflow.winograd import winograd_convolution
 
 import numpy as np
 from collections import OrderedDict
@@ -728,7 +729,7 @@ class TFSession:
             # so that we know which implementations are missing.
             print("MISSING IMPLEMENTATION:", node.type)
             self.visit_callback(node)
-        # mark node as visited
+         #mark node as visited
         self.visitedNodes.add(node)
 
     def visit_callback(self, node):
@@ -2047,90 +2048,93 @@ class TFSession:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_Conv2D(self, node):
-        local_ctr = str(next(_atomic_count))
-        inputList = []
-        inputNodes = []
-        ndims = 0
-        strides = node.get_attr("strides")[1]
-        state = self.state
+        if 3 in _tensorshape(node.inputs[1])[0:2]:
+            winograd_convolution(self, node)
+        else:
+        	local_ctr = str(next(_atomic_count))
+        	inputList = []
+        	inputNodes = []
+        	ndims = 0
+        	strides = node.get_attr("strides")[1]
+        	state = self.state
 
-        for inp in node.inputs:
-            inputNode = self.create_and_add_input_node(inp)[0]
-            inputList.append(inputNode.desc(self.graph))
-            inputNodes.append(inputNode)
+        	for inp in node.inputs:
+        	    inputNode = self.create_and_add_input_node(inp)[0]
+        	    inputList.append(inputNode.desc(self.graph))
+        	    inputNodes.append(inputNode)
 
-        outputList = self.create_and_add_output_node(node)
-        ndims = len(outputList[0].desc(self.graph).shape)
-        mapLabel = _string_builder(node.type)
-        reduce_node = self.state.add_transient(
-            mapLabel + "_wcr_avoid" + local_ctr,
-            [1],
-            outputList[0].desc(self.graph).dtype,
-            storage=dace.StorageType.Register,
-        )
+        	outputList = self.create_and_add_output_node(node)
+        	ndims = len(outputList[0].desc(self.graph).shape)
+        	mapLabel = _string_builder(node.type)
+        	reduce_node = self.state.add_transient(
+        	    mapLabel + "_wcr_avoid" + local_ctr,
+        	    [1],
+        	    outputList[0].desc(self.graph).dtype,
+        	    storage=dace.StorageType.Register,
+        	)
 
-        mapParams = []
-        outputParams = []
-        mapRange = []
-        outputDims = [[]]
-        inputParams = []
-        inputDims = [[], []]
-        # create conv params
-        inputParams.append(
-            ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i4"]
-        )
-        inputParams.append(["i5", "i6", "i4", "i3"])
-        outputParams.append(["i0", "i1", "i2", "i3"])
-        # create conv dims
-        for i in range(0, ndims):
-            inputDims[0].append(str(0) + ":" + str(node.inputs[0].shape[i]))
-            inputDims[1].append(str(0) + ":" + str(node.inputs[1].shape[i]))
-            outputDims[0].append(str(0) + ":" + str(node.outputs[0].shape[i]))
-        # add a padding map for same padding(zero padding so that input and
-        # output of convolution have the same size)
-        if str(node.get_attr("padding"))[2:-1] == "SAME":
-            paddedInput, paddedDims = self.inputPadding(
-                node,
-                inputNodes[0],
-                inputList[0],
-                outputList[0].desc(self.graph).shape[1],
-                inputList[1].shape[0],
-                strides,
-                inputDims[0],
-            )
-            inputDims[0] = paddedDims
-            inputNodes[0] = paddedInput
+        	mapParams = []
+        	outputParams = []
+        	mapRange = []
+        	outputDims = [[]]
+        	inputParams = []
+        	inputDims = [[], []]
+        	# create conv params
+        	inputParams.append(
+        	    ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i4"]
+        	)
+        	inputParams.append(["i5", "i6", "i4", "i3"])
+        	outputParams.append(["i0", "i1", "i2", "i3"])
+        	# create conv dims
+        	for i in range(0, ndims):
+        	    inputDims[0].append(str(0) + ":" + str(node.inputs[0].shape[i]))
+        	    inputDims[1].append(str(0) + ":" + str(node.inputs[1].shape[i]))
+        	    outputDims[0].append(str(0) + ":" + str(node.outputs[0].shape[i]))
+        	# add a padding map for same padding(zero padding so that input and
+        	# output of convolution have the same size)
+        	if str(node.get_attr("padding"))[2:-1] == "SAME":
+        	    paddedInput, paddedDims = self.inputPadding(
+        	        node,
+        	        inputNodes[0],
+        	        inputList[0],
+        	        outputList[0].desc(self.graph).shape[1],
+        	        inputList[1].shape[0],
+        	        strides,
+        	        inputDims[0],
+        	    )
+        	    inputDims[0] = paddedDims
+        	    inputNodes[0] = paddedInput
 
-        mapParams = outputParams[0]
-        mapParams2 = inputParams[1][:-1]
-        mapRange = outputDims[0]
-        mapRange2 = inputDims[1][:-1]
+        	mapParams = outputParams[0]
+        	mapParams2 = inputParams[1][:-1]
+        	mapRange = outputDims[0]
+        	mapRange2 = inputDims[1][:-1]
 
-        mapEntry, mapExit = state.add_map(
-            mapLabel + "_outer", dict(zip(mapParams, mapRange))
-        )
-        mapEntry2, mapExit2 = state.add_map(
-            mapLabel + "_inner", dict(zip(mapParams2, mapRange2))
-        )
-        self.reinitCR(outputList[0], outputParams, outputDims, "0")
-        tasklet = state.add_tasklet(
-            mapLabel, {"j0", "j1"}, {"out"}, "out = j0 * j1;"
-        )  # printf(\"%f\\t\", j0);")
-        self.add_out_memlets(outputList, mapExit, reduce_node, outputDims, outputParams)
-        self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
-        # add memlets from inner map to tasklet
-        for i, inp in enumerate(inputNodes):
-            name = "j" + str(i)
-            memlet = Memlet.simple(inp, ",".join(inputParams[i]))
-            state.add_edge(mapEntry2, None, tasklet, name, memlet)
-        # add memelets from tasklet to cr
-        for i, out in enumerate(outputList):
-            name = "out"
-            memlet = Memlet.simple(
-                reduce_node, "0", wcr_str="lambda a,b: a+b", wcr_identity=0
-            )
-            state.add_edge(tasklet, name, mapExit2, None, memlet)
-            state.add_edge(mapExit2, None, reduce_node, None, memlet)
+        	mapEntry, mapExit = state.add_map(
+        	    mapLabel + "_outer", dict(zip(mapParams, mapRange))
+        	)
+        	mapEntry2, mapExit2 = state.add_map(
+        	    mapLabel + "_inner", dict(zip(mapParams2, mapRange2))
+        	)
+        	self.reinitCR(outputList[0], outputParams, outputDims, "0")
+        	tasklet = state.add_tasklet(
+        	    mapLabel, {"j0", "j1"}, {"out"}, "out = j0 * j1;"
+        	)  # printf(\"%f\\t\", j0);")
+        	self.add_out_memlets(outputList, mapExit, reduce_node, outputDims, outputParams)
+        	self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
+        	# add memlets from inner map to tasklet
+        	for i, inp in enumerate(inputNodes):
+        	    name = "j" + str(i)
+        	    memlet = Memlet.simple(inp, ",".join(inputParams[i]))
+        	    state.add_edge(mapEntry2, None, tasklet, name, memlet)
+        	# add memelets from tasklet to cr
+        	for i, out in enumerate(outputList):
+        	    name = "out"
+        	    memlet = Memlet.simple(
+        	        reduce_node, "0", wcr_str="lambda a,b: a+b", wcr_identity=0
+        	    )
+        	    state.add_edge(tasklet, name, mapExit2, None, memlet)
+        	    state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_BiasAdd(self, node):
 
