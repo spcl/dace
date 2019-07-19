@@ -648,6 +648,7 @@ class TFSession:
         validate=False,
         strict=True,
         name=None,
+        winograd=True,
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
@@ -662,6 +663,7 @@ class TFSession:
                              transformations.
             @return: Tuple or dictionary of values in the same order as `nodes`.
         """
+        self.winograd = winograd
         callfunc = self.compile(
             nodes,
             gpu,
@@ -2048,7 +2050,7 @@ class TFSession:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_Conv2D(self, node):
-        if 3 in _tensorshape(node.inputs[1])[0:2]:
+        if 3 in _tensorshape(node.inputs[1])[0:2] and self.winograd:
             winograd_convolution(self, node)
         else:
             local_ctr = str(next(_atomic_count))
