@@ -72,7 +72,7 @@ def _tensorshape(tensor: tf.Tensor):
     return tensor.shape
 
 
-def _string_builder(string):
+def string_builder(string):
     """ To match DaCe variable naming conventions, replaces all undesired 
         characters with "_".
     """
@@ -86,7 +86,7 @@ def _string_builder(string):
 def _name(tensor_or_op):
     if isinstance(tensor_or_op, tf.Operation):
         return None
-    return _string_builder(tensor_or_op.name)
+    return string_builder(tensor_or_op.name)
 
 
 _LASTSESSION = 0
@@ -319,7 +319,7 @@ class TFSession:
                 node if isinstance(node, tf.Operation) else node.op for node in nodes
             ]
             output_names = [
-                _string_builder(node.name)
+                string_builder(node.name)
                 if not isinstance(node, tf.Operation)
                 else None
                 for node in nodes
@@ -365,7 +365,7 @@ class TFSession:
 
         sdfg_args.update(
             {
-                (k if isinstance(k, str) else _string_builder(k.name + "_Inp")): v
+                (k if isinstance(k, str) else string_builder(k.name + "_Inp")): v
                 for k, v in feed_dict.items()
             }
         )
@@ -475,7 +475,7 @@ class TFSession:
             raise TypeError("Unsupported type for fetches: " + str(type(nodes)))
 
         total_output_names = [
-            _string_builder(node.name) if not isinstance(node, tf.Operation) else None
+            string_builder(node.name) if not isinstance(node, tf.Operation) else None
             for node in total_nodes
         ]
         import os
@@ -608,7 +608,7 @@ class TFSession:
             invoke_args = dict(
                 sdfg_args,
                 **{
-                    (k if isinstance(k, str) else _string_builder(k.name)): v
+                    (k if isinstance(k, str) else string_builder(k.name)): v
                     for k, v in feed_dict.items()
                 }
             )
@@ -729,11 +729,11 @@ class TFSession:
             # so that we know which implementations are missing.
             print("MISSING IMPLEMENTATION:", node.type)
             self.visit_callback(node)
-         #mark node as visited
+        #mark node as visited
         self.visitedNodes.add(node)
 
     def visit_callback(self, node):
-        node_name = "callback_" + _string_builder(node.type)
+        node_name = "callback_" + string_builder(node.type)
         inputNodes = []
         inputDims = []
         for inpTensor in node.inputs:
@@ -850,7 +850,7 @@ class TFSession:
         from functools import partial
 
         call_this = partial(tensorflow_dataloader, tf.Session(), node)
-        node_name = _string_builder(node.type)
+        node_name = string_builder(node.type)
         taskletOutputs = ["out" + str(_index) for _index in range(len(node.outputs))]
         dataloader_tasklet = self.state.add_tasklet(
             node_name,
@@ -894,7 +894,7 @@ class TFSession:
 
     def visit_Const(self, node):
         state = self.state
-        label = _string_builder(node.name + "_0")
+        label = string_builder(node.name + "_0")
 
         # Create DaCe shape
         shape = dace.properties.ShapeProperty.from_string(
@@ -930,7 +930,7 @@ class TFSession:
     def visit_VariableV2(self, node):
 
         state = self.state
-        label = _string_builder(node.name) + "_0"
+        label = string_builder(node.name) + "_0"
         shape = dace.properties.ShapeProperty.from_string(
             str(_tensorshape(node.outputs[0]))
         )
@@ -954,7 +954,7 @@ class TFSession:
         # Modified to rely on only the second argument tensor for shape and
         # dtype.
         state = self.state
-        label = _string_builder(node.inputs[1].name)
+        label = string_builder(node.inputs[1].name)
         try:
             fillNode = state.find_node(label)
         except (LookupError):
@@ -966,9 +966,9 @@ class TFSession:
                 name=label, shape=shape, dtype=dtype, toplevel=True
             )
 
-        label = _string_builder(node.inputs[0].name)
+        label = string_builder(node.inputs[0].name)
         try:
-            emptyNode = state.find_node(_string_builder(node.inputs[0].name))
+            emptyNode = state.find_node(string_builder(node.inputs[0].name))
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -996,7 +996,7 @@ class TFSession:
         inputDims = []
         outputTensor = node.outputs[0]
         state = self.state
-        label = _string_builder(node.name + "_0")
+        label = string_builder(node.name + "_0")
 
         # Check if the node is already in the graph and get as a list
         try:
@@ -1074,7 +1074,7 @@ class TFSession:
     def visit_TruncatedNormal(self, node):
         # Creates a truncated normal array and adds it to initDict
         state = self.state
-        label = _string_builder(node.name + "_0")
+        label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
             outputNode = state.find_node(label)
@@ -1093,7 +1093,7 @@ class TFSession:
     def visit_RandomStandardNormal(self, node):
 
         state = self.state
-        label = _string_builder(node.name + "_0")
+        label = string_builder(node.name + "_0")
 
         try:
             outputNode = state.find_node(label)
@@ -1110,7 +1110,7 @@ class TFSession:
     def visit_RandomUniform(self, node):
         # Creates a random uniform array and adds it to initDict
         state = self.state
-        label = _string_builder(node.name + "_0")
+        label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
             outputNode = state.find_node(label)
@@ -1129,7 +1129,7 @@ class TFSession:
     def visit_RandomUniformInt(self, node):
         # Creates a random uniform array and adds it to initDict
         state = self.state
-        label = _string_builder(node.name + "_0")
+        label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
             outputNode = state.find_node(label)
@@ -1179,7 +1179,7 @@ class TFSession:
             outputParams.append(params)
             outputDims.append(dims)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0] + outputParams[0]
         mapRange = inputDims[0] + outputDims[0]
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
@@ -1213,7 +1213,7 @@ class TFSession:
         for i in reduction_axes:
             norm *= inputNode.desc(self.graph).shape[i]
         norm = _tensortype(node.outputs[0])(norm)
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = params
         mapDims = dims
         mapEntry, mapExit = self.state.add_map(mapLabel, dict(zip(mapParams, mapDims)))
@@ -1285,16 +1285,16 @@ class TFSession:
         nhwcMapBounds = dict(zip(inpTensorParams, inpTensorDims))
         cMapBounds = dict(zip([inpTensorParams[0]], [str(inpTensorDims[-1])]))
         normalisationMapEntry, normalisationMapExit = self.state.add_map(
-            _string_builder("normalisation_map"), nhwcMapBounds
+            string_builder("normalisation_map"), nhwcMapBounds
         )
         meanMapEntry, meanMapExit = self.state.add_map(
-            _string_builder("mean_map"), nhwcMapBounds
+            string_builder("mean_map"), nhwcMapBounds
         )
         varianceMapEntry, varianceMapExit = self.state.add_map(
-            _string_builder("variance_map"), nhwcMapBounds
+            string_builder("variance_map"), nhwcMapBounds
         )
         varianceSqrtMapEntry, varianceSqrtMapExit = self.state.add_map(
-            _string_builder("variance_sqrt_map"), cMapBounds
+            string_builder("variance_sqrt_map"), cMapBounds
         )
         ######### Tasklets #########
         fbnormTasklet = self.state.add_tasklet(
@@ -1423,15 +1423,15 @@ class TFSession:
             toplevel=False,
         )
         ###############################MAPS##############################################
-        # channelMapLabel = _string_builder(node.type) + "_outer"
+        # channelMapLabel = string_builder(node.type) + "_outer"
         # channelMapEntry, channelMapExit = self.state.add_map(
         #    channelMapLabel, dict(zip([backpropParams[-1]], [backpropDims[-1]]))
         # )
-        innerMap1Label = _string_builder(node.type) + "_inner1"
+        innerMap1Label = string_builder(node.type) + "_inner1"
         innerMap1Entry, innerMap1Exit = self.state.add_map(
             innerMap1Label, dict(zip(backpropParams, backpropDims))
         )
-        innerMap2Label = _string_builder(node.type) + "_inner2"
+        innerMap2Label = string_builder(node.type) + "_inner2"
         innerMap2Entry, innerMap2Exit = self.state.add_map(
             innerMap2Label, dict(zip(backpropParams, backpropDims))
         )
@@ -1689,7 +1689,7 @@ class TFSession:
 
         for inp in node.inputs:
 
-            label = _string_builder(inp.name)
+            label = string_builder(inp.name)
             try:
                 inputNode = state.find_node(label)
             except (LookupError):
@@ -1701,7 +1701,7 @@ class TFSession:
 
         outputList = self.create_and_add_output_node(node)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         outputDims = self.get_default_dims(node.outputs[0])
         outputParams = self.get_default_params(node.outputs[0])
         inputDims = self.get_default_dims(node.inputs[0])
@@ -1736,7 +1736,7 @@ class TFSession:
         # TODO this should ideally be an add_read on the input name
         state = self.state
         inp = node.inputs[0]
-        label = _string_builder(inp.name)
+        label = string_builder(inp.name)
         try:
             inputNode = state.find_node(label)
         except (LookupError):
@@ -1831,13 +1831,13 @@ class TFSession:
             inputList.append(inputNode.desc(self.graph))
             inputNodes.append(inputNode)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         # inputList[1] is learning rate which needs its own parameter
         inputParams[1] = ["i4"]
         # This is the variable which is input and output of this map at the same
         # time. We create the output version of it here
         out = node.inputs[0]
-        outName = _string_builder(out.name)
+        outName = string_builder(out.name)
         outputNode = self.state.add_write(outName)
         dims = self.get_default_dims(out)
         params = self.get_default_params(out)
@@ -1845,7 +1845,7 @@ class TFSession:
         outputParams = [params]
         outputDims = [dims]
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0] + ["i4"]
         mapRange = inputDims[0] + ["0:1"]
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
@@ -1867,7 +1867,7 @@ class TFSession:
         # make the input node using the gradient node, because the input node has type "resource"
         # and no shape information.
         inp = node.inputs[0]
-        label = _string_builder(inp.name)
+        label = string_builder(inp.name)
         try:
             inputNode = state.find_node(label)
         except (LookupError):
@@ -1893,14 +1893,14 @@ class TFSession:
         # inputList[1] is learning rate which needs its own parameter
         inputParams[1] = ["i4"]
         out = node.inputs[2]
-        outName = _string_builder(node.inputs[0].name)
+        outName = string_builder(node.inputs[0].name)
         outputNode = state.add_write(outName)
         dims = self.get_default_dims(out)
         params = self.get_default_params(out)
         outputList = [outputNode]
         outputParams = [params]
         outputDims = [dims]
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0] + ["i4"]
         mapRange = inputDims[0] + ["0:1"]
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
@@ -2020,7 +2020,7 @@ class TFSession:
             inputDims.append(dims)
 
         outputNodes = self.create_and_add_output_node(node)
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         # create params
         for inp in inputList:
             inputParamsString = []
@@ -2051,90 +2051,92 @@ class TFSession:
         if 3 in _tensorshape(node.inputs[1])[0:2]:
             winograd_convolution(self, node)
         else:
-        	local_ctr = str(next(_atomic_count))
-        	inputList = []
-        	inputNodes = []
-        	ndims = 0
-        	strides = node.get_attr("strides")[1]
-        	state = self.state
+            local_ctr = str(next(_atomic_count))
+            inputList = []
+            inputNodes = []
+            ndims = 0
+            strides = node.get_attr("strides")[1]
+            state = self.state
 
-        	for inp in node.inputs:
-        	    inputNode = self.create_and_add_input_node(inp)[0]
-        	    inputList.append(inputNode.desc(self.graph))
-        	    inputNodes.append(inputNode)
+            for inp in node.inputs:
+                inputNode = self.create_and_add_input_node(inp)[0]
+                inputList.append(inputNode.desc(self.graph))
+                inputNodes.append(inputNode)
 
-        	outputList = self.create_and_add_output_node(node)
-        	ndims = len(outputList[0].desc(self.graph).shape)
-        	mapLabel = _string_builder(node.type)
-        	reduce_node = self.state.add_transient(
-        	    mapLabel + "_wcr_avoid" + local_ctr,
-        	    [1],
-        	    outputList[0].desc(self.graph).dtype,
-        	    storage=dace.StorageType.Register,
-        	)
+            outputList = self.create_and_add_output_node(node)
+            ndims = len(outputList[0].desc(self.graph).shape)
+            mapLabel = string_builder(node.type)
+            reduce_node = self.state.add_transient(
+                mapLabel + "_wcr_avoid" + local_ctr,
+                [1],
+                outputList[0].desc(self.graph).dtype,
+                storage=dace.StorageType.Register,
+            )
 
-        	mapParams = []
-        	outputParams = []
-        	mapRange = []
-        	outputDims = [[]]
-        	inputParams = []
-        	inputDims = [[], []]
-        	# create conv params
-        	inputParams.append(
-        	    ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i4"]
-        	)
-        	inputParams.append(["i5", "i6", "i4", "i3"])
-        	outputParams.append(["i0", "i1", "i2", "i3"])
-        	# create conv dims
-        	for i in range(0, ndims):
-        	    inputDims[0].append(str(0) + ":" + str(node.inputs[0].shape[i]))
-        	    inputDims[1].append(str(0) + ":" + str(node.inputs[1].shape[i]))
-        	    outputDims[0].append(str(0) + ":" + str(node.outputs[0].shape[i]))
-        	# add a padding map for same padding(zero padding so that input and
-        	# output of convolution have the same size)
-        	if str(node.get_attr("padding"))[2:-1] == "SAME":
-        	    paddedInput, paddedDims = self.inputPadding(
-        	        node,
-        	        inputNodes[0],
-        	        inputList[0],
-        	        outputList[0].desc(self.graph).shape[1],
-        	        inputList[1].shape[0],
-        	        strides,
-        	        inputDims[0],
-        	    )
-        	    inputDims[0] = paddedDims
-        	    inputNodes[0] = paddedInput
+            mapParams = []
+            outputParams = []
+            mapRange = []
+            outputDims = [[]]
+            inputParams = []
+            inputDims = [[], []]
+            # create conv params
+            inputParams.append(
+                ["i0", "i1*" + str(strides) + "+i5", "i2*" + str(strides) + "+i6", "i4"]
+            )
+            inputParams.append(["i5", "i6", "i4", "i3"])
+            outputParams.append(["i0", "i1", "i2", "i3"])
+            # create conv dims
+            for i in range(0, ndims):
+                inputDims[0].append(str(0) + ":" + str(node.inputs[0].shape[i]))
+                inputDims[1].append(str(0) + ":" + str(node.inputs[1].shape[i]))
+                outputDims[0].append(str(0) + ":" + str(node.outputs[0].shape[i]))
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            if str(node.get_attr("padding"))[2:-1] == "SAME":
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    inputNodes[0],
+                    inputList[0],
+                    outputList[0].desc(self.graph).shape[1],
+                    inputList[1].shape[0],
+                    strides,
+                    inputDims[0],
+                )
+                inputDims[0] = paddedDims
+                inputNodes[0] = paddedInput
 
-        	mapParams = outputParams[0]
-        	mapParams2 = inputParams[1][:-1]
-        	mapRange = outputDims[0]
-        	mapRange2 = inputDims[1][:-1]
+            mapParams = outputParams[0]
+            mapParams2 = inputParams[1][:-1]
+            mapRange = outputDims[0]
+            mapRange2 = inputDims[1][:-1]
 
-        	mapEntry, mapExit = state.add_map(
-        	    mapLabel + "_outer", dict(zip(mapParams, mapRange))
-        	)
-        	mapEntry2, mapExit2 = state.add_map(
-        	    mapLabel + "_inner", dict(zip(mapParams2, mapRange2))
-        	)
-        	self.reinitCR(outputList[0], outputParams, outputDims, "0")
-        	tasklet = state.add_tasklet(
-        	    mapLabel, {"j0", "j1"}, {"out"}, "out = j0 * j1;"
-        	)  # printf(\"%f\\t\", j0);")
-        	self.add_out_memlets(outputList, mapExit, reduce_node, outputDims, outputParams)
-        	self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
-        	# add memlets from inner map to tasklet
-        	for i, inp in enumerate(inputNodes):
-        	    name = "j" + str(i)
-        	    memlet = Memlet.simple(inp, ",".join(inputParams[i]))
-        	    state.add_edge(mapEntry2, None, tasklet, name, memlet)
-        	# add memelets from tasklet to cr
-        	for i, out in enumerate(outputList):
-        	    name = "out"
-        	    memlet = Memlet.simple(
-        	        reduce_node, "0", wcr_str="lambda a,b: a+b", wcr_identity=0
-        	    )
-        	    state.add_edge(tasklet, name, mapExit2, None, memlet)
-        	    state.add_edge(mapExit2, None, reduce_node, None, memlet)
+            mapEntry, mapExit = state.add_map(
+                mapLabel + "_outer", dict(zip(mapParams, mapRange))
+            )
+            mapEntry2, mapExit2 = state.add_map(
+                mapLabel + "_inner", dict(zip(mapParams2, mapRange2))
+            )
+            self.reinitCR(outputList[0], outputParams, outputDims, "0")
+            tasklet = state.add_tasklet(
+                mapLabel, {"j0", "j1"}, {"out"}, "out = j0 * j1;"
+            )  # printf(\"%f\\t\", j0);")
+            self.add_out_memlets(
+                outputList, mapExit, reduce_node, outputDims, outputParams
+            )
+            self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
+            # add memlets from inner map to tasklet
+            for i, inp in enumerate(inputNodes):
+                name = "j" + str(i)
+                memlet = Memlet.simple(inp, ",".join(inputParams[i]))
+                state.add_edge(mapEntry2, None, tasklet, name, memlet)
+            # add memelets from tasklet to cr
+            for i, out in enumerate(outputList):
+                name = "out"
+                memlet = Memlet.simple(
+                    reduce_node, "0", wcr_str="lambda a,b: a+b", wcr_identity=0
+                )
+                state.add_edge(tasklet, name, mapExit2, None, memlet)
+                state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_BiasAdd(self, node):
 
@@ -2150,7 +2152,7 @@ class TFSession:
         outputList = self.create_and_add_output_node(node)
         dims = outputList[0].desc(self.graph).shape
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = []
         outputParams = []
         mapRange = []
@@ -2219,7 +2221,7 @@ class TFSession:
             inputDims[0] = paddedDims
             inputNodes[0] = paddedInput
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams1 = outputParams[0]
         mapRange1 = outputDims[0]
         mapParams2 = ["i4", "i5"]
@@ -2309,7 +2311,7 @@ class TFSession:
         #    inputDims[0] = paddedDims
         #    inputNodes[0] = paddedInput
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams1 = outputParams[0]
         mapRange1 = outputDims[0]
         mapParams2 = ["i4", "i5"]
@@ -2387,13 +2389,13 @@ class TFSession:
             "i3",
         ]
         outputDims = self.get_default_dims(node.outputs[0])
-        outerMapLabel = _string_builder(node.type) + "_outer"
+        outerMapLabel = string_builder(node.type) + "_outer"
         outerMapParams = backpropParams
         outerMapDims = backpropDims
         outerMapEntry, outerMapExit = self.state.add_map(
             outerMapLabel, dict(zip(outerMapParams, outerMapDims))
         )
-        innerMapLabel = _string_builder(node.type) + "_inner"
+        innerMapLabel = string_builder(node.type) + "_inner"
         innerMapParams = ["i4", "i5"]
         innerMapDims = ["0:" + str(ksize_0), "0:" + str(ksize_1)]
         innerMapEntry, innerMapExit = self.state.add_map(
@@ -2403,7 +2405,7 @@ class TFSession:
         )
         normalisationScalar = ksize_0 * ksize_1
         tasklet = self.state.add_tasklet(
-            _string_builder(node.type),
+            string_builder(node.type),
             {"backpropGrad"},
             {"outpGrad"},
             "outpGrad = backpropGrad / " + str(normalisationScalar),
@@ -2462,7 +2464,7 @@ class TFSession:
 
         outputList = self.create_and_add_output_node(node)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = []
         mapRange = []
         mapParams = inputParams[0]
@@ -2476,7 +2478,7 @@ class TFSession:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_ShapeN(self, node):
-        outputLabels = [_string_builder(op.name) for op in node.outputs]
+        outputLabels = [string_builder(op.name) for op in node.outputs]
 
         inputNodes = []
         for n in node.inputs:
@@ -2546,13 +2548,13 @@ class TFSession:
             inputDims.append(dims)
 
         outputList = self.create_and_add_output_node(node)
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
 
         dtype = dace.typeclass(_tensortype(node))
         shape = dace.properties.ShapeProperty.from_string(str(inputList[0].shape))
 
         # tempNode = state.add_transient(
-        #    _string_builder(node.name + "_tmp"), shape, dtype, toplevel=True
+        #    string_builder(node.name + "_tmp"), shape, dtype, toplevel=True
         # )
         tempNode = outputList[0]
         tempList = [tempNode]
@@ -2697,7 +2699,7 @@ class TFSession:
             outputParams.append(params)
             outputDims.append(dims)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0]
         mapRange = inputDims[0]
 
@@ -2733,7 +2735,7 @@ class TFSession:
             outputParams.append([inputParams[0][-1]])
             outputDims.append([inputDims[0][-1]])
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0]
         mapRange = inputDims[0]
 
@@ -2790,7 +2792,7 @@ class TFSession:
             paddedOutputDims[1] += "+" + str(padding)
             paddedOutputDims[2] += "+" + str(padding)
             paddedOutput = state.add_transient(
-                _string_builder(node.outputs[0].name) + "_padded",
+                string_builder(node.outputs[0].name) + "_padded",
                 [
                     paddedOutputDims[0][2:],
                     paddedOutputDims[1][2:],
@@ -2816,14 +2818,14 @@ class TFSession:
                 newShape[1] = node.outputs[0].shape[1] + ksize - 1
                 newShape[2] = node.outputs[0].shape[2] + ksize - 1
             expandedGrads = state.add_transient(
-                _string_builder(node.inputs[2].name) + "_bigger_strided",
+                string_builder(node.inputs[2].name) + "_bigger_strided",
                 newShape,
                 _tensortype(node.inputs[2]),
             )
             expandedGrads.setzero = True
             mapParams = self.get_default_params(node.inputs[2])
             mapRange = self.get_default_dims(node.inputs[2])
-            mapLabel = _string_builder(node.type) + "_grad_expansion"
+            mapLabel = string_builder(node.type) + "_grad_expansion"
             mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
             tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
             self.add_in_memlets(
@@ -2857,7 +2859,7 @@ class TFSession:
                 newShape[1] = node.outputs[0].shape[1] + ksize - 1
                 newShape[2] = node.outputs[0].shape[2] + ksize - 1
             expandedGrads = state.add_transient(
-                _string_builder(node.inputs[2].name) + "_bigger",
+                string_builder(node.inputs[2].name) + "_bigger",
                 newShape,
                 _tensortype(node.inputs[2]),
             )
@@ -2893,7 +2895,7 @@ class TFSession:
         # Gradient params
         inputParams.append(["i0", "i1" + "+i5", "i2" + "+i6", "i3"])
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = ["i0", "i1", "i2", "i4"]
         mapParams2 = ["i5", "i6", "i3"]
         mapRange = (
@@ -3025,14 +3027,14 @@ class TFSession:
                 node.inputs[2].shape[3],
             ]
             expandedGrads = state.add_transient(
-                _string_builder(node.inputs[2].name) + "_bigger",
+                string_builder(node.inputs[2].name) + "_bigger",
                 newShape,
                 _tensortype(node.inputs[2]),
             )
             expandedGrads.setzero = True
             mapParams = self.get_default_params(node.inputs[2])
             mapRange = self.get_default_dims(node.inputs[2])
-            mapLabel = _string_builder(node.type) + "_grad_expansion"
+            mapLabel = string_builder(node.type) + "_grad_expansion"
             mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
             tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
             self.add_in_memlets(
@@ -3066,7 +3068,7 @@ class TFSession:
         mapParams2 = inputParams[1][:-1]
         mapRange = outputDims[0]
         mapRange2 = inputDims[1][:-1]
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_outer", dict(zip(mapParams, mapRange))
         )
@@ -3121,7 +3123,7 @@ class TFSession:
             inputParams.append(params)
 
         for out in node.outputs:
-            label = _string_builder(out.name)
+            label = string_builder(out.name)
             try:
                 outputNode = state.find_node(label)
             except (LookupError):
@@ -3132,7 +3134,7 @@ class TFSession:
                 outputNode = state.add_transient(label, shape, dtype, toplevel=True)
             outputList.append(outputNode)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0]
         mapRange = inputDims[0]
 
@@ -3309,7 +3311,7 @@ class TFSession:
                 paddedDims += shortDims
                 paddedDims[-1] += "+" + depth_radius + "*2"
 
-        label = _string_builder(node.name)
+        label = string_builder(node.name)
         outputList = self.create_and_add_output_node(node)
         longParams = ["i0", "i1", "i2", "i3", "i4"]
         shortParams = ["i0", "i1", "i2", "i3"]
@@ -3351,7 +3353,7 @@ class TFSession:
             [sqrsum], mapExit, tasklet, [shortDims], [shortParams], "lambda a,b: a+b", 0
         )
 
-        label = _string_builder(node.name)
+        label = string_builder(node.name)
         norm = state.add_transient(
             label + "_Norm", shortAccesses, _tensortype(node), toplevel=True
         )
@@ -3445,7 +3447,7 @@ class TFSession:
                 paddedDims += shortDims
                 paddedDims[-1] += "+" + depth_radius + "*2"
 
-        label = _string_builder(node.name)
+        label = string_builder(node.name)
         outputList = self.create_and_add_output_node(node)
         longParams = ["i0", "i1", "i2", "i3", "i4"]
         shortParams = ["i0", "i1", "i2", "i3"]
@@ -3489,7 +3491,7 @@ class TFSession:
 
         mapEntry, mapExit = state.add_map(label, dict(zip(shortParams, shortDims)))
         tasklet = state.add_tasklet(
-            _string_builder(node.name),
+            string_builder(node.name),
             {"j0", "j1"},
             {"out"},
             "out = j0/(pow(" + bias + "+" + alpha + "*j1," + beta + "));",
@@ -3530,7 +3532,7 @@ class TFSession:
 
         outputList = self.create_and_add_output_node(node)
 
-        mapLabel = _string_builder(node.name)
+        mapLabel = string_builder(node.name)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_max", dict(zip(inputParams[0], inputDims[0]))
         )
@@ -3603,7 +3605,7 @@ class TFSession:
             outputParams.append(params)
             outputDims.append(dims)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0]
         mapRange = inputDims[0]
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
@@ -3640,7 +3642,7 @@ class TFSession:
             outputParams.append(params)
             outputDims.append(dims)
 
-        mapLabel = _string_builder(node.type)
+        mapLabel = string_builder(node.type)
         mapParams = inputParams[0]
         mapRange = inputDims[0]
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
@@ -3681,7 +3683,7 @@ class TFSession:
             inputParams[0].append("i" + str(i))
             inputDims[0].append("0:" + str(dim))
 
-        mapLabel = _string_builder(node.name)
+        mapLabel = string_builder(node.name)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_map1", dict(zip(inputParams[0], inputDims[0]))
         )
@@ -3775,7 +3777,7 @@ class TFSession:
         outputDims = self.get_default_dims(node.outputs[0])
         jays = ["j" + str(index) for index in range(len(inputNodes))]
         tasklet, mapEntry, mapExit = self.state.add_mapped_tasklet(
-            _string_builder(node.type),
+            string_builder(node.type),
             dict(zip(inputParams[0], inputDims[0])),
             dict(
                 zip(
@@ -3914,7 +3916,7 @@ class TFSession:
 
         state = self.state
         # Get DaCe name of the operation
-        label = _string_builder(inp.name)
+        label = string_builder(inp.name)
         if "?" in str(_tensorshape(inp)):
             raise ValueError  # ("Invalid shape for tensor %s" % label)
         # Try to find node in DaCe graph
@@ -3948,7 +3950,7 @@ class TFSession:
         outputList = []
         state = self.state
         for count, out in enumerate(node.outputs):
-            label = _string_builder(out.name)
+            label = string_builder(out.name)
             if "?" in str(_tensorshape(out)):
                 raise ValueError(
                     "Invalid shape {} for tensor {}".format(_tensorshape(out), label)
@@ -4071,16 +4073,16 @@ class TFSession:
         )
         output.setzero = True
 
-        #mapParams = inputParams
-        #mapRange = inputDims
-        #mapLabel = _string_builder(node.type)
-        #mapEntry, mapExit = state.add_map(mapLabel,
+        # mapParams = inputParams
+        # mapRange = inputDims
+        # mapLabel = string_builder(node.type)
+        # mapEntry, mapExit = state.add_map(mapLabel,
         #                                 dict(zip(mapParams, mapRange)))
-        #tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        # tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
         self.state.add_edge(inpnode, None, output, None, padMemlet)
-        #self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
+        # self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
         #                   [inputParams])
-        #self.add_out_memlets([output], mapExit, tasklet, [outputDims],
+        # self.add_out_memlets([output], mapExit, tasklet, [outputDims],
         #                    [outputParams])
         return output, outputDims
 
