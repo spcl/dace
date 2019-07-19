@@ -924,6 +924,14 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
+        ##### TODO remove before flight
+        syms_copy = {}
+        for _n, _s in syms.items():
+            if 'callback' in str(_s.dtype.ctype):
+                continue
+            else:
+                syms_copy[_n] = _s
+        syms = syms_copy
         freesyms = {
             k: v
             for k, v in syms.items()
