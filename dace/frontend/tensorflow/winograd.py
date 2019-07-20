@@ -532,7 +532,7 @@ def winograd_convolution(dace_session, tf_node):
             # storage=dace.StorageType.GPU_Global,
         )
         aTransposeGPU = state.add_array(
-            "atransGPU",
+            "AtransGPU",
             at.shape,
             dace.float32,
             transient=True,
@@ -540,7 +540,7 @@ def winograd_convolution(dace_session, tf_node):
             storage=dace.StorageType.GPU_Global,
         )
         aGPU = state.add_array(
-            "aGPU",
+            "AGPU",
             a.shape,
             dace.float32,
             transient=True,
@@ -636,7 +636,10 @@ def winograd_convolution(dace_session, tf_node):
         "i2",
     ]
     inputView = state.add_transient(
-        "V", inputViewShape, dace.float32, dace.StorageType.GPU_Global
+        "V" + "_".join([str(_s) for _s in inputViewShape]),
+        inputViewShape,
+        dace.float32,
+        dace.StorageType.GPU_Global,
     )
     mapEntry, mapExit = state.add_map(
         string_builder(tf_node.name) + "_input_tile",
@@ -655,7 +658,10 @@ def winograd_convolution(dace_session, tf_node):
     # Re-use memory
     # vNode = state.add_write(inputView.data)
     vNode = state.add_transient(
-        "V_output", inputViewShape, dace.float32, dace.StorageType.GPU_Global
+        "V_output" + "_".join([str(_s) for _s in inputViewShape]),
+        inputViewShape,
+        dace.float32,
+        dace.StorageType.GPU_Global,
     )
     vNode.setzero = True
     mapEntry, mapExit = state.add_map(
@@ -801,7 +807,13 @@ def winograd_convolution(dace_session, tf_node):
     #    dace.StorageType.GPU_Global,
     # )
     processedKernelNode = state.add_transient(
-        "U",
+        "U"
+        + "_".join(
+            [
+                str(_s)
+                for _s in inputViewShape[0:2] + list(tf_node.inputs[1].shape[-1:-3:-1])
+            ]
+        ),
         inputViewShape[0:2] + list(tf_node.inputs[1].shape[-1:-3:-1]),
         dace.float32,
         dace.StorageType.GPU_Global,
@@ -925,7 +937,14 @@ def winograd_convolution(dace_session, tf_node):
     #    dace.StorageType.GPU_Global,
     # )
     mNode = state.add_transient(
-        "m",
+        "m"
+        + "_".join(
+            [
+                str(_s)
+                for _s in inputViewShape[0:2]
+                + [tf_node.inputs[1].shape[-1], inputViewShape[-1]]
+            ]
+        ),
         inputViewShape[0:2] + [tf_node.inputs[1].shape[-1], inputViewShape[-1]],
         dace.float32,
         dace.StorageType.GPU_Global,
@@ -1033,7 +1052,8 @@ def winograd_convolution(dace_session, tf_node):
     #    dace.StorageType.GPU_Global,
     # )
     transformedOutputNode = state.add_transient(
-        "inv_txformed_output",
+        "inv_txformed_output"
+        + "_".join([str(tf_node.inputs[1].shape[-1])] + [str(inputViewShape[-1])]),
         [OUTPUT_TILE_SIZE, OUTPUT_TILE_SIZE]
         + [tf_node.inputs[1].shape[-1]]
         + [inputViewShape[-1]],
