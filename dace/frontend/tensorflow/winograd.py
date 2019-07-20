@@ -701,12 +701,28 @@ def winograd_convolution(dace_session, tf_node):
     #    None,
     #    Memlet.simple(inputView, ",".join(inputViewDims[0:2] + inputParams[0][0:2])),
     # )
+    b_desc = bNode.desc(dace_session.graph)
+    b_cache = state.add_transient(
+        bNode.data + "_shmem",
+        b_desc.shape,
+        b_desc.dtype,
+        storage=dace.StorageType.GPU_Shared,
+    )
     state.add_edge(
         bNode,
         None,
         mapEntry,
         None,
         Memlet.from_array(bNode, bNode.desc(dace_session.graph)),
+    )
+    state.add_edge(mapEntry, None, b_cache, None, Memlet.from_array(bNode, b_desc))
+    bNode = b_cache
+    bTrans_desc = bTransposeNode.desc(dace_session.graph)
+    bTranspose_cache = state.add_transient(
+        bTransposeNode.data + "_shmem",
+        bTrans_desc.shape,
+        bTrans_desc.dtype,
+        storage=dace.StorageType.GPU_Shared,
     )
     state.add_edge(
         bTransposeNode,
@@ -715,6 +731,14 @@ def winograd_convolution(dace_session, tf_node):
         None,
         Memlet.from_array(bTransposeNode, bTransposeNode.desc(dace_session.graph)),
     )
+    state.add_edge(
+        mapEntry,
+        None,
+        bTranspose_cache,
+        None,
+        Memlet.from_array(bTransposeNode, bTrans_desc),
+    )
+    bTransposeNode = bTranspose_cache
     # state.add_edge(
     #    mapEntry,
     #    None,
@@ -739,7 +763,7 @@ def winograd_convolution(dace_session, tf_node):
             inputView, ",".join(inputViewDims[0:2] + inputParams[0][0:2])
         ),
         map_entry=mapEntry,
-        A_direct=False,
+        A_direct=True,
         B_direct=False,
     )
     mm_small(
@@ -756,7 +780,7 @@ def winograd_convolution(dace_session, tf_node):
             wcr_conflict=False,
         ),
         map_entry=mapEntry,
-        B_direct=False,
+        B_direct=True,
         A_direct=True,
     )
     # state.add_edge(
@@ -863,6 +887,32 @@ def winograd_convolution(dace_session, tf_node):
     #    None,
     #    Memlet.simple(inputNodes[1], ",".join(inputDims[1][0:2] + inputParams[1][0:2])),
     # )
+    gdesc = gNode.desc(dace_session.graph)
+    gNode_cache = state.add_transient(
+        gNode.data + "_shmem",
+        gdesc.shape,
+        gdesc.dtype,
+        storage=dace.StorageType.GPU_Shared,
+    )
+    state.add_edge(mapEntry, None, gNode_cache, None, Memlet.from_array(gNode, gdesc))
+    gNode = gNode_cache
+
+    gtransdesc = gTransposeNode.desc(dace_session.graph)
+    gTransposeNode_cache = state.add_transient(
+        gTransposeNode.data + "_shmem",
+        gtransdesc.shape,
+        gtransdesc.dtype,
+        storage=dace.StorageType.GPU_Shared,
+    )
+    state.add_edge(
+        mapEntry,
+        None,
+        gTransposeNode_cache,
+        None,
+        Memlet.from_array(gTransposeNode, gtransdesc),
+    )
+    gTransposeNode = gTransposeNode_cache
+
     mm_small(
         state,
         gNode,
@@ -874,7 +924,7 @@ def winograd_convolution(dace_session, tf_node):
             inputNodes[1], ",".join(inputDims[1][0:2] + inputParams[1][0:2])
         ),
         B_direct=False,
-        A_direct=False,
+        A_direct=True,
     )
     mm_small(
         state,
@@ -891,7 +941,7 @@ def winograd_convolution(dace_session, tf_node):
         map_entry=mapEntry,
         map_exit=mapExit,
         A_direct=True,
-        B_direct=False,
+        B_direct=True,
     )
     # state.add_edge(
     #    processedFilterNode,
@@ -1075,6 +1125,37 @@ def winograd_convolution(dace_session, tf_node):
         None,
         Memlet.from_array(aTransposeNode.data, aTransposeNode.desc(dace_session.graph)),
     )
+    adesc = aNode.desc(dace_session.graph)
+    aNode_cache = state.add_transient(
+        aNode.data + "_shmem",
+        adesc.shape,
+        adesc.dtype,
+        storage=dace.StorageType.GPU_Shared,
+    )
+    state.add_edge(
+        mapEntry,
+        None,
+        aNode_cache,
+        None,
+        Memlet.from_array(aNode.data, aNode.desc(dace_session.graph)),
+    )
+    aNode = aNode_cache
+
+    atransdesc = aTransposeNode.desc(dace_session.graph)
+    aTranspose_cache = state.add_transient(
+        aTransposeNode.data + "_shmem",
+        atransdesc.shape,
+        atransdesc.dtype,
+        storage=dace.StorageType.GPU_Shared,
+    )
+    state.add_edge(
+        mapEntry,
+        None,
+        aTranspose_cache,
+        None,
+        Memlet.from_array(aTransposeNode.data, aTransposeNode.desc(dace_session.graph)),
+    )
+    aTransposeNode = aTranspose_cache
     # state.add_edge(
     #    mapEntry,
     #    None,
@@ -1109,7 +1190,7 @@ def winograd_convolution(dace_session, tf_node):
             mNode, ",".join(inputViewDims[0:2] + inputParams[0][0:2])
         ),
         map_entry=mapEntry,
-        A_direct=False,
+        A_direct=True,
         B_direct=False,
     )
     mm_small(
@@ -1129,7 +1210,8 @@ def winograd_convolution(dace_session, tf_node):
         ),
         map_entry=mapEntry,
         map_exit=mapExit,
-        B_direct=False,
+        A_direct=True,
+        B_direct=True
     )
     # state.add_edge(
     #    transformedOutputTileNode,
