@@ -927,9 +927,12 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
         ##### TODO remove before flight
         syms_copy = {}
         for _n, _s in syms.items():
-            if 'callback' in str(_s.dtype.ctype):
-                continue
-            else:
+            try:
+                if 'callback' in str(_s.dtype.ctype):
+                    continue
+                else:
+                    syms_copy[_n] = _s
+            except AttributeError:
                 syms_copy[_n] = _s
         syms = syms_copy
         freesyms = {
