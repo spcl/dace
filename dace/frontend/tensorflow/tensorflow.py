@@ -2917,15 +2917,21 @@ class TFSession:
 
         tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"}, "out = j0 * j1")
 
+        reduce_node = self.state.add_transient(
+            mapLabel + "_wcr_avoid",
+            [1],
+            outputList[0].desc(self.graph).dtype,
+            storage=dace.StorageType.Register,
+        )
+
         if padding > 0:
             self.add_out_memlets(
                 [paddedOutput],
                 mapExit,
-                mapExit2,
+                reduce_node,
+                #mapExit2,
                 [paddedOutputDims],
                 outputParams,
-                "lambda a,b: a+b",
-                0,
             )
             nonpaddedsubset = paddedOutputDims.copy()
             nonpaddedsubset[1] = (
@@ -2955,11 +2961,10 @@ class TFSession:
             self.add_out_memlets(
                 outputList,
                 mapExit,
-                mapExit2,
+                reduce_node,
+                #mapExit2,
                 outputDims,
                 outputParams,
-                "lambda a,b: a+b",
-                0,
             )
 
         self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
@@ -2969,12 +2974,14 @@ class TFSession:
             state.add_edge(mapEntry2, None, tasklet, name, memlet)
 
         memlet = Memlet.simple(
-            paddedOutput if padding > 0 else outputList[0],
-            ",".join(outputParams[0]),
+            reduce_node,
+            #paddedOutput if padding > 0 else outputList[0],
+            "0",
             wcr_str="lambda a,b: a+b",
             wcr_identity=0,
         )
         state.add_edge(tasklet, "out", mapExit2, None, memlet)
+        state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_Conv2DBackpropFilter(self, node):
         # convolve loss over input.
@@ -3084,16 +3091,24 @@ class TFSession:
 
         tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"}, "out = j0*j1")
 
+        reduce_node = self.state.add_transient(
+            mapLabel + "_wcr_avoid",
+            [1],
+            outputList[0].desc(self.graph).dtype,
+            storage=dace.StorageType.Register,
+        )
+
         self.reinitCR(outputList[0], outputParams, outputDims, "0")
 
         self.add_out_memlets(
             outputList,
             mapExit,
-            mapExit2,
+            reduce_node,
+            #mapExit2,
             outputDims,
             outputParams,
-            "lambda a,b: a+b",
-            0,
+            #"lambda a,b: a+b",
+            #0,
         )
         self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims, inputParams)
 
@@ -3102,15 +3117,16 @@ class TFSession:
             memlet = Memlet.simple(inp, ",".join(inputParams[i]))
             state.add_edge(mapEntry2, None, tasklet, name, memlet)
 
-        for i, out in enumerate(outputList):
-            name = "out"
-            memlet = Memlet.simple(
-                out,
-                ",".join(outputParams[i]),
-                wcr_str="lambda a,b: a+b",
-                wcr_identity=0,
-            )
-            state.add_edge(tasklet, name, mapExit2, None, memlet)
+        #for i, out in enumerate(outputList):
+        memlet = Memlet.simple(
+            reduce_node,
+            #out,
+            "0",
+            wcr_str="lambda a,b: a+b",
+            wcr_identity=0,
+        )
+        state.add_edge(tasklet, "out", mapExit2, None, memlet)
+        state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_SparseSoftmaxCrossEntropyWithLogits(self, node):
 
