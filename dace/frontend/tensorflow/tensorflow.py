@@ -731,7 +731,7 @@ class TFSession:
             # so that we know which implementations are missing.
             print("MISSING IMPLEMENTATION:", node.type)
             self.visit_callback(node)
-        #mark node as visited
+        # mark node as visited
         self.visitedNodes.add(node)
 
     def visit_callback(self, node):
@@ -2050,7 +2050,11 @@ class TFSession:
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims, inputParams)
 
     def visit_Conv2D(self, node):
-        if 3 in _tensorshape(node.inputs[1])[0:2] and self.winograd:
+        if (
+            7 in _tensorshape(node.inputs[0])[1:3]
+            and 3 in _tensorshape(node.inputs[1])[0:2]
+            and self.winograd
+        ):
             winograd_convolution(self, node)
         else:
             local_ctr = str(next(_atomic_count))
