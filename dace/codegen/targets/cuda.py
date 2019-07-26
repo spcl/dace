@@ -924,7 +924,10 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
-        ##### TODO remove before flight
+
+        # This is a workaround for sdfg's with callbacks that are running on
+        # the GPU. This is because the callback ctype throws exceptions. Best
+        # way is to remove these symbols before going forward.
         syms_copy = {}
         for _n, _s in syms.items():
             try:
