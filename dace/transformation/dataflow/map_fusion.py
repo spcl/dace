@@ -71,11 +71,29 @@ def replace(subgraph, name: str, new_name: str):
 
 
 class MapFusion(pattern_matching.Transformation):
-    """ Implements the map fusion pattern.
+    """ Implements the MapFusion transformation.
+        It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
+        based on the following rules, fuse them and remove the transient in
+        between. There are several possibilities of what it does to this
+        transient in between. 
 
-        Map Fusion takes two maps that are connected in series and have the 
-        same range, and fuses them to one map. The tasklets in the new map are
-        connected in the same manner as they were before the fusion.
+        Essentially, if there is some other place in the
+        sdfg where it is required, or if it is not a transient, then it will
+        not be removed. In such a case, it will be linked to the MapExit node
+        of the new fused map.
+
+        Rules for fusing maps:
+          0. The map range of the second map should be a permutation of the
+             first map range.
+          1. Each of the access nodes that are adjacent to the first map exit
+             should have an edge to the second map entry. If it doesn't, then the
+             second map entry should not be reachable from this access node.
+          2. Any node that has a wcr from the first map exit should not be
+             adjacent to the second map entry.
+          3. Access pattern for the access nodes in the second map should be
+             the same permutation of the map parameters as the map ranges of the
+             two maps. Alternatively, this access node should not be adjacent to
+             the first map entry.
     """
 
     _first_map_exit = nodes.ExitNode()
@@ -171,7 +189,7 @@ class MapFusion(pattern_matching.Transformation):
                 # however, if intermediate_data eventually leads to
                 # second_memlet.data, need to fail.
                 for _n in intermediate_nodes:
-                    source_node = _n#graph.find_node(_n.data)
+                    source_node = _n  # graph.find_node(_n.data)
                     destination_node = graph.find_node(second_memlet.data)
                     # NOTE: Assumes graph has networkx version
                     if destination_node in nx.descendants(graph._nx, source_node):
@@ -221,6 +239,26 @@ class MapFusion(pattern_matching.Transformation):
         )
 
     def apply(self, sdfg):
+        """
+            This method applies the mapfusion transformation. 
+            Other than the removal of the second map entry node (SME), and the first
+            map exit (FME) node, it has the following side effects:
+
+            1.  Any transient adjacent to both FME and SME with degree = 2 will be removed. 
+                The tasklets that use/produce it shall be connected directly with a 
+                scalar/new transient (if the dataflow is more than a single scalar)
+
+            2.  If this transient is adjacent to FME and SME and has other
+                uses, it will be adjacent to the new map exit post fusion.
+                Tasklet-> Tasklet edges will ALSO be added as mentioned above.
+
+            3.  If an access node is adjacent to FME but not SME, it will be
+                adjacent to new map exit post fusion.
+
+            4.  If an access node is adjacent to SME but not FME, it will be
+                adjacent to the new map entry node post fusion.
+
+        """
         graph = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
         first_entry = graph.entry_node(first_exit)
@@ -250,7 +288,6 @@ class MapFusion(pattern_matching.Transformation):
                 if num_occurrences > 1:
                     return False
 
-                # TODO: NOT SURE
                 for edge in graph.in_edges(node):
                     if edge.src != first_exit:
                         do_not_erase.add(node)
