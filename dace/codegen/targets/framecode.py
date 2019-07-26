@@ -83,6 +83,8 @@ class DaCeCodeGenerator(object):
         # Write constants
         self.generate_constants(sdfg, global_stream)
 
+        global_stream.write(sdfg.global_code, sdfg)
+
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
@@ -105,8 +107,6 @@ class DaCeCodeGenerator(object):
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
-
-        global_stream.write(sdfg.global_code, sdfg)
 
         self.generate_fileheader(sdfg, callsite_stream)
 

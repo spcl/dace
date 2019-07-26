@@ -969,8 +969,6 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
 
-        self._localcode.write(sdfg.global_code, sdfg)
-
         self._localcode.write(self.scope_entry_stream.getvalue())
 
         # Assuming kernel can write to global scope (function_stream), we
