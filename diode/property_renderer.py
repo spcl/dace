@@ -26,11 +26,20 @@ class PropertyRenderer:
         self.screen = Gdk.Screen.get_default()
         self.gtk_provider = Gtk.CssProvider()
         self.gtk_context = Gtk.StyleContext()
+        
+        # Here we store the last called render function, so if there is any update we can call it again  
+        self.current_render_func = None
+        self.current_render_args = None
 
     def clear_properties(self):
         old = self.propertygrid.get_children()
         for w in old:
             w.destroy()
+
+    def update(self):
+        if self.current_render_func != None:
+            self.clear_properties()
+            self.current_render_func(**self.current_render_args)
 
     def split_nodeid_in_state_and_nodeid(self, nodeid):
         match = re.match("s(\d+)_(\d+)", nodeid)
@@ -200,6 +209,8 @@ class PropertyRenderer:
         return widget
 
     def node_props(self, sdfg, nodeid):
+        self.current_render_func = self.node_props
+        self.current_render_args = dict(sdfg=sdfg, nodeid=nodeid)
         sid, nid = self.split_nodeid_in_state_and_nodeid(nodeid)
         node = sdfg.nodes()[sid].nodes()[nid]
         properties = node.properties()
@@ -215,6 +226,8 @@ class PropertyRenderer:
         self.propertygrid.show_all()
 
     def memlet_props(self, sdfg, memlet, tail, head, label):
+        self.current_render_func = self.memlet_props
+        self.current_render_args = dict(sdfg=sdfg, memlet=memlet, tail=tail, head=head, label=label)
         properties = memlet.properties()
         for rownum, (prop, value) in enumerate(properties):
             name_label = Gtk.Label()
@@ -222,13 +235,14 @@ class PropertyRenderer:
             name_label.set_tooltip_text(prop.desc)
             self.propertygrid.attach(name_label, 0, rownum, 1, 1)
             callback_data = [sdfg, memlet, tail, head, label, prop]
-            #print("rendering prop for: " +str(prop)+" name: "+str(prop.attr_name)+" dtype: "+str(prop.dtype)+" value: "+str(value))
             widget = self.render_prop(prop, value, self.memlet_props_changed,
                                       callback_data, sdfg)
             self.propertygrid.attach(widget, 1, rownum, 1, 1)
         self.propertygrid.show_all()
 
     def state_props(self, sdfg, stateid):
+        self.current_render_func = self.state_props
+        self.current_render_args = dict(sdfg=sdfg, stateid=stateid)
         properties = sdfg.nodes()[stateid].properties()
         for rownum, (prop, value) in enumerate(properties):
             name_label = Gtk.Label()
@@ -242,6 +256,8 @@ class PropertyRenderer:
         self.propertygrid.show_all()
 
     def interstate_props(self, sdfg, tail, head):
+        self.current_render_func = self.interstate_props
+        self.current_render_args = dict(sdfg=sdfg, tail=tail, head=head)
         edges = sdfg.edges_between(sdfg.nodes()[tail], sdfg.nodes()[head])
         _, _, v = edges[0]
         properties = v.properties()
@@ -260,7 +276,8 @@ class PropertyRenderer:
     def pattern_props(self, optgraph, nodeid, pattern_match):
         if pattern_match is None:
             return
-
+        self.current_render_func = self.pattern_props
+        self.current_render_args = dict(optgraph=optgraph, nodeid=nodeid, pattern_match=pattern_match)
         properties = pattern_match.properties()
         for rownum, (prop, value) in enumerate(properties):
             name_label = Gtk.Label()
@@ -280,17 +297,23 @@ class PropertyRenderer:
         return False
 
     def render_properties_for_node(self, sdfg, stateid, nodeid):
-        self.propertylabel.set_text("Node Properties:")
+        self.current_render_func = self.render_properties_for_node
+        self.current_render_args = dict(sdfg=sdfg, stateid=stateid, nodeid=nodeid)
+        self.propertylabel.set_text("Node Properties: (node "+nodeid+" in state "+stateid+")")
         self.clear_properties()
         combined_nodeid = "s" + str(stateid) + "_" + str(nodeid)
         self.node_props(sdfg, combined_nodeid)
 
     def render_properties_for_state(self, sdfg, stateid):
-        self.propertylabel.set_text("State Properties:")
+        self.current_render_func = self.render_properties_for_state
+        self.current_render_args = dict(sdfg=sdfg, stateid=stateid)
+        self.propertylabel.set_text("State Properties: (state "+stateid+")")
         self.clear_properties()
         self.state_props(sdfg, stateid)
 
     def render_properties_for_element(self, sdfg, elem):
+        self.current_render_func = self.render_properties_for_element
+        self.current_render_args = dict(sdfg=sdfg, elem=elem)
         if type(elem).__name__ == "Node":
             # if this is a dummy node, show properties for the state
             nodeid = elem.id.decode('utf-8')
@@ -330,6 +353,8 @@ class PropertyRenderer:
             self.propertylabel.set_text("Properties: (Nothing selected)")
 
     def render_free_symbols(self, sdfg):
+        self.current_render_func = self.render_free_symbols
+        self.current_render_args = dict(sdfg=sdfg)
         label = self.propertylabel
         grid = self.propertygrid
         label.set_text("Symbols of the SDFG")
@@ -495,6 +520,7 @@ class PropertyRenderer:
                                  data[len(data)-1][3]
         newval = self.get_value_from_widget(widget)
         dace.properties.set_property_from_string(prop, data, newval)
+        self.on_update_cb(sdfg, "data", name, prop.attr_name, newval)
 
     def render_properties_for_pattern(self, optgraph, nodeid, pattern_match):
         label = self.propertylabel
