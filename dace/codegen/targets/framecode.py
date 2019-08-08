@@ -68,7 +68,7 @@ class DaCeCodeGenerator(object):
         # Custom types
         types = set()
         # Types of this SDFG
-        for sdfg, arrname, arr in sdfg.arrays_recursive():
+        for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 types.add(arr.dtype)
 
