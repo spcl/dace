@@ -68,7 +68,7 @@ class DaCeCodeGenerator(object):
         # Custom types
         types = set()
         # Types of this SDFG
-        for sdfg, arrname, arr in sdfg.arrays_recursive():
+        for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 types.add(arr.dtype)
 
@@ -82,6 +82,8 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Write constants
         self.generate_constants(sdfg, global_stream)
+
+        global_stream.write(sdfg.global_code, sdfg)
 
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
@@ -105,8 +107,6 @@ class DaCeCodeGenerator(object):
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
-
-        global_stream.write(sdfg.global_code, sdfg)
 
         self.generate_fileheader(sdfg, callsite_stream)
 

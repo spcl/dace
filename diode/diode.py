@@ -461,6 +461,14 @@ class DIODE:
                                  str(label) +    "\", \"" + \
                                  str(propname) + "\", \"" + \
                                  str(newval) + "\")")
+
+        elif elemtype == "data":
+            name, propname, newval = args
+            self.emit_script_cmd("diode.ChangeSDFGDataProperties(\"" + \
+                                 str(name) +     "\", \"" + \
+                                 str(propname) + "\", \"" + \
+                                 str(newval) + "\")")
+
         dace_state = self.optimization_graph.get_current().get_dace_state()
         dace_state.set_sdfg(sdfg)
         self.draw_sdfg_graph()
@@ -601,7 +609,7 @@ class DIODE:
     def HighlightSDFGElement(self, elem):
         pass
 
-    def ChangeSDFGProperties(self, elem, prop, newval):
+    def ChangeSDFGNodeProperties(self, elem, prop, newval):
         curr = self.optimization_graph.get_current().get_dace_state()
         sdfg = curr.get_sdfg()
         sid, nid = self.split_nodeid_in_state_and_nodeid(elem)
@@ -610,6 +618,7 @@ class DIODE:
         curr.set_sdfg(sdfg)
         self.draw_sdfg_graph()
         self.update_generated_code()
+        self.propren.update()
 
     def ChangeSDFGMemletProperties(self, elem_head, elem_tail, mid, prop,
                                    newval):
@@ -629,6 +638,24 @@ class DIODE:
         dace_state.compile()
         self.draw_sdfg_graph()
         self.update_generated_code()
+        self.propren.update()
+
+    def ChangeSDFGDataProperties(self, dataname, propname, newval):
+        curr = self.optimization_graph.get_current().get_dace_state()
+        sdfg = curr.get_sdfg()
+        data = None
+        for d in sdfg.arrays.items():
+            if d[0] == dataname:
+                data = d[1]
+                break
+        if data is None:
+            raise ValueError("Data item " + name + " not found in SDFG " +
+                             sdfg)
+        dace.properties.set_property_from_string(propname, data, newval)
+        curr.set_sdfg(sdfg)
+        self.draw_sdfg_graph()
+        self.update_generated_code()
+        self.propren.update()
 
     def Run(self, fail_on_nonzero=None):
         if self.optimization_graph.get_current() == None:

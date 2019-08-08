@@ -148,6 +148,8 @@ DACE_EXPORTED void __dace_exit_cuda({params});
 namespace dace {{ namespace cuda {{
     cudaStream_t __streams[{nstreams}];
     cudaEvent_t __events[{nevents}];
+    int num_streams = {nstreams};
+    int num_events = {nevents};
 }} }}
 
 int __dace_init_cuda({params}) {{
@@ -576,9 +578,9 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                 ] or dst_storage in [
                     types.StorageType.GPU_Global, types.StorageType.CPU_Pinned
                 ]) and not (src_storage in cpu_storage_types
-                    and dst_storage in cpu_storage_types)):
-                #and not (src_storage in gpu_storage_types
-                #    and dst_storage in gpu_storage_types)):
+                            and dst_storage in cpu_storage_types)):
+            #and not (src_storage in gpu_storage_types
+            #    and dst_storage in gpu_storage_types)):
             src_location = 'Device' if src_storage == types.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == types.StorageType.GPU_Global else 'Host'
 

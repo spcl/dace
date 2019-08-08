@@ -76,26 +76,25 @@ class CPUCodeGen(TargetCodeGenerator):
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
             if isinstance(arg_type, dace.data.Scalar) or isinstance(
-                arg_type, dace.types.typeclass
-            ):
+                    arg_type, dace.types.typeclass):
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar)
             elif isinstance(arg_type, dace.data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             elif isinstance(arg_type, dace.data.Stream):
                 if arg_type.is_stream_array():
-                    self._dispatcher.defined_vars.add(name, DefinedType.StreamArray)
+                    self._dispatcher.defined_vars.add(name,
+                                                      DefinedType.StreamArray)
                 else:
                     self._dispatcher.defined_vars.add(name, DefinedType.Stream)
             else:
-                raise TypeError(
-                    "Unrecognized argument type: {}".format(type(arg_type).__name__)
-                )
+                raise TypeError("Unrecognized argument type: {}".format(
+                    type(arg_type).__name__))
 
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
         dispatcher.register_map_dispatcher(
-            [types.ScheduleType.CPU_Multicore, types.ScheduleType.Sequential], self
-        )
+            [types.ScheduleType.CPU_Multicore, types.ScheduleType.Sequential],
+            self)
 
         cpu_storage = [
             types.StorageType.CPU_Heap,
@@ -105,8 +104,10 @@ class CPUCodeGen(TargetCodeGenerator):
         dispatcher.register_array_dispatcher(cpu_storage, self)
 
         # Register CPU copies (all internal pairs)
-        for src_storage, dst_storage in itertools.product(cpu_storage, cpu_storage):
-            dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
+        for src_storage, dst_storage in itertools.product(
+                cpu_storage, cpu_storage):
+            dispatcher.register_copy_dispatcher(src_storage, dst_storage, None,
+                                                self)
 
     @staticmethod
     def cmake_options():
@@ -137,19 +138,19 @@ class CPUCodeGen(TargetCodeGenerator):
         return False
 
     def generate_scope(
-        self,
-        sdfg: SDFG,
-        dfg_scope: ScopeSubgraphView,
-        state_id,
-        function_stream,
-        callsite_stream,
+            self,
+            sdfg: SDFG,
+            dfg_scope: ScopeSubgraphView,
+            state_id,
+            function_stream,
+            callsite_stream,
     ):
         entry_node = dfg_scope.source_nodes()[0]
-        presynchronize_streams(sdfg, dfg_scope, state_id, entry_node, callsite_stream)
+        presynchronize_streams(sdfg, dfg_scope, state_id, entry_node,
+                               callsite_stream)
 
-        self.generate_node(
-            sdfg, dfg_scope, state_id, entry_node, function_stream, callsite_stream
-        )
+        self.generate_node(sdfg, dfg_scope, state_id, entry_node,
+                           function_stream, callsite_stream)
         self._dispatcher.dispatch_subgraph(
             sdfg,
             dfg_scope,
@@ -159,9 +160,8 @@ class CPUCodeGen(TargetCodeGenerator):
             skip_entry_node=True,
         )
 
-    def generate_node(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def generate_node(self, sdfg, dfg, state_id, node, function_stream,
+                      callsite_stream):
         # Dynamically obtain node generator according to class name
         gen = getattr(self, "_generate_" + type(node).__name__)
 
@@ -172,9 +172,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_array(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
+                       callsite_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
 
@@ -191,9 +190,8 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = " * ".join([sym2cpp(s) for s in nodedesc.strides])
 
         if isinstance(nodedesc, data.Scalar):
-            callsite_stream.write(
-                "%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node
-            )
+            callsite_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
+                                  sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Scalar)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
@@ -203,16 +201,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 if state_id is None:
                     raise SyntaxError(
                         "Stream-view of array may not be defined "
-                        "in more than one state"
-                    )
+                        "in more than one state")
 
                 arrnode = sdfg.arrays[nodedesc.sink]
                 state = sdfg.nodes()[state_id]
                 edges = state.out_edges(node)
                 if len(edges) > 1:
-                    raise NotImplementedError(
-                        "Cannot handle streams writing " "to multiple arrays."
-                    )
+                    raise NotImplementedError("Cannot handle streams writing "
+                                              "to multiple arrays.")
 
                 memlet_path = state.memlet_path(edges[0])
                 # Allocate the array before its stream view, if necessary
@@ -231,14 +227,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     types.StorageType.CPU_Stack,
                     types.StorageType.Register,
                 ]
-                if (
-                    sdfg.arrays[nodedesc.sink].storage in threadlocal_stores
-                    or nodedesc.storage in threadlocal_stores
-                ):
+                if (sdfg.arrays[nodedesc.sink].storage in threadlocal_stores
+                        or nodedesc.storage in threadlocal_stores):
                     threadlocal = "Threadlocal"
                 callsite_stream.write(
-                    "dace::ArrayStreamView%s<%s> %s (%s);\n"
-                    % (threadlocal, arrnode.dtype.ctype, name, array_expr),
+                    "dace::ArrayStreamView%s<%s> %s (%s);\n" %
+                    (threadlocal, arrnode.dtype.ctype, name, array_expr),
                     sdfg,
                     state_id,
                     node,
@@ -249,46 +243,39 @@ class CPUCodeGen(TargetCodeGenerator):
             ###################################################################
             # Regular stream
 
-            dtype = "dace::vec<{}, {}>".format(
-                nodedesc.dtype.ctype, sym2cpp(nodedesc.veclen)
-            )
+            dtype = "dace::vec<{}, {}>".format(nodedesc.dtype.ctype,
+                                               sym2cpp(nodedesc.veclen))
 
             if nodedesc.buffer_size != 0:
                 definition = "dace::Stream<{}> {}({});".format(
-                    dtype, name, nodedesc.buffer_size
-                )
+                    dtype, name, nodedesc.buffer_size)
             else:
                 definition = "dace::Stream<{}> {};".format(dtype, name)
 
             callsite_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream)
 
-        elif (
-            nodedesc.storage == types.StorageType.CPU_Heap
-            or nodedesc.storage == types.StorageType.Immaterial
-        ):  # TODO: immaterial arrays should not allocate memory
+        elif (nodedesc.storage == types.StorageType.CPU_Heap
+              or nodedesc.storage == types.StorageType.Immaterial
+              ):  # TODO: immaterial arrays should not allocate memory
             callsite_stream.write(
-                "%s *%s = new %s DACE_ALIGN(64)[%s];\n"
-                % (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype, arrsize),
+                "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
+                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype, arrsize),
                 sdfg,
                 state_id,
                 node,
             )
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             if node.setzero:
-                callsite_stream.write(
-                    "memset(%s, 0, sizeof(%s)*%s);"
-                    % (name, nodedesc.dtype.ctype, arrsize)
-                )
+                callsite_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
+                                      (name, nodedesc.dtype.ctype, arrsize))
             return
-        elif (
-            nodedesc.storage == types.StorageType.CPU_Stack
-            or nodedesc.storage == types.StorageType.Register
-        ):
+        elif (nodedesc.storage == types.StorageType.CPU_Stack
+              or nodedesc.storage == types.StorageType.Register):
             if node.setzero:
                 callsite_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n"
-                    % (nodedesc.dtype.ctype, name, arrsize),
+                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
+                    (nodedesc.dtype.ctype, name, arrsize),
                     sdfg,
                     state_id,
                     node,
@@ -296,7 +283,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
                 return
             callsite_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, arrsize),
+                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name,
+                                                  arrsize),
                 sdfg,
                 state_id,
                 node,
@@ -304,20 +292,17 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             return
         else:
-            raise NotImplementedError(
-                "Unimplemented storage type " + str(nodedesc.storage)
-            )
+            raise NotImplementedError("Unimplemented storage type " +
+                                      str(nodedesc.storage))
 
-    def initialize_array(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
+                         callsite_stream):
         if isinstance(dfg, SDFG):
             result = StringIO()
             for sid, state in enumerate(dfg.nodes()):
                 if node in state.nodes():
-                    self.initialize_array(
-                        sdfg, state, sid, node, function_stream, callsite_stream
-                    )
+                    self.initialize_array(sdfg, state, sid, node,
+                                          function_stream, callsite_stream)
                     break
             return
 
@@ -336,8 +321,7 @@ class CPUCodeGen(TargetCodeGenerator):
         identity = None
         if parent_node is not None:
             for u, uconn, v, vconn, d, s in nxutil.traverse_sdfg_scope(
-                dfg, parent_node
-            ):
+                    dfg, parent_node):
                 identity = traverse(u, uconn, v, vconn, d)
                 if identity is not None:
                     break
@@ -352,9 +336,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # If we should generate an initialization expression
         if isinstance(nodedesc, data.Scalar):
-            callsite_stream.write(
-                "%s = %s;\n" % (name, sym2cpp(identity)), sdfg, state_id, node
-            )
+            callsite_stream.write("%s = %s;\n" % (name, sym2cpp(identity)),
+                                  sdfg, state_id, node)
             return
 
         params = [name, sym2cpp(identity)]
@@ -364,38 +347,36 @@ class CPUCodeGen(TargetCodeGenerator):
         # Faster
         if identity == 0:
             params[-1] += " * sizeof(%s[0])" % name
-            callsite_stream.write(
-                "memset(%s);\n" % (", ".join(params)), sdfg, state_id, node
-            )
+            callsite_stream.write("memset(%s);\n" % (", ".join(params)), sdfg,
+                                  state_id, node)
             return
 
-        callsite_stream.write(
-            "dace::InitArray(%s);\n" % (", ".join(params)), sdfg, state_id, node
-        )
+        callsite_stream.write("dace::InitArray(%s);\n" % (", ".join(params)),
+                              sdfg, state_id, node)
 
-    def deallocate_array(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
+                         callsite_stream):
         nodedesc = node.desc(sdfg)
         if isinstance(nodedesc, data.Scalar):
             return
         elif isinstance(nodedesc, data.Stream):
             return
         elif nodedesc.storage == types.StorageType.CPU_Heap:
-            callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id, node)
+            callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
+                                  node)
         else:
             return
 
     def copy_memory(
-        self,
-        sdfg,
-        dfg,
-        state_id,
-        src_node,
-        dst_node,
-        edge,
-        function_stream,
-        callsite_stream,
+            self,
+            sdfg,
+            dfg,
+            state_id,
+            src_node,
+            dst_node,
+            edge,
+            function_stream,
+            callsite_stream,
     ):
         if isinstance(src_node, nodes.Tasklet):
             src_storage = types.StorageType.Register
@@ -435,17 +416,17 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def _emit_copy(
-        self,
-        sdfg,
-        state_id,
-        src_node,
-        src_storage,
-        dst_node,
-        dst_storage,
-        dst_schedule,
-        edge,
-        dfg,
-        stream,
+            self,
+            sdfg,
+            state_id,
+            src_node,
+            src_storage,
+            dst_node,
+            dst_storage,
+            dst_schedule,
+            edge,
+            dfg,
+            stream,
     ):
         u, uconn, v, vconn, memlet = edge
 
@@ -454,8 +435,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # For perfcounters, we have to make sure that:
         # 1) No other measurements are done for the containing scope (no map operation containing this copy is instrumented)
-        src_instrumented = PerfUtils.has_surrounding_perfcounters(src_node, dfg)
-        dst_instrumented = PerfUtils.has_surrounding_perfcounters(dst_node, dfg)
+        src_instrumented = PerfUtils.has_surrounding_perfcounters(
+            src_node, dfg)
+        dst_instrumented = PerfUtils.has_surrounding_perfcounters(
+            dst_node, dfg)
 
         # From cuda.py
         cpu_storage_types = [
@@ -466,31 +449,28 @@ class CPUCodeGen(TargetCodeGenerator):
         ]
 
         perf_cpu_only = (src_storage in cpu_storage_types) and (
-            dst_storage in cpu_storage_types
-        )
+            dst_storage in cpu_storage_types)
 
         perf_should_instrument = (
             PerfSettings.perf_enable_instrumentation_for(sdfg)
-            and (not src_instrumented)
-            and (not dst_instrumented)
-            and perf_cpu_only
-        )
+            and (not src_instrumented) and (not dst_instrumented)
+            and perf_cpu_only)
 
         #############################################################
 
         # Determine memlet directionality
-        if isinstance(src_node, nodes.AccessNode) and memlet.data == src_node.data:
+        if isinstance(src_node,
+                      nodes.AccessNode) and memlet.data == src_node.data:
             write = True
-        elif isinstance(dst_node, nodes.AccessNode) and memlet.data == dst_node.data:
+        elif isinstance(dst_node,
+                        nodes.AccessNode) and memlet.data == dst_node.data:
             write = False
         elif isinstance(src_node, nodes.CodeNode) and isinstance(
-            dst_node, nodes.CodeNode
-        ):
+                dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
             raise RuntimeError(
                 "Copying between code nodes is only supported as"
-                " part of the participating nodes"
-            )
+                " part of the participating nodes")
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
@@ -518,15 +498,18 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if write:
                 vconn = dst_node.data
-            ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype, memlet.veclen)
+            ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype,
+                                           memlet.veclen)
 
             #############################################
             # Corner cases
 
             # Writing one index
-            if isinstance(memlet.subset, subsets.Indices) and memlet.wcr is None:
+            if isinstance(memlet.subset,
+                          subsets.Indices) and memlet.wcr is None:
                 stream.write(
-                    "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, False)),
+                    "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet,
+                                                          False)),
                     sdfg,
                     state_id,
                     [src_node, dst_node],
@@ -534,36 +517,34 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
             # Writing from/to a stream
             if isinstance(sdfg.arrays[memlet.data], data.Stream) or (
-                isinstance(src_node, nodes.AccessNode)
-                and isinstance(src_nodedesc, data.Stream)
-            ):
+                    isinstance(src_node, nodes.AccessNode)
+                    and isinstance(src_nodedesc, data.Stream)):
                 # Identify whether a stream is writing to an array
-                if isinstance(dst_nodedesc, (data.Scalar, data.Array)) and isinstance(
-                    src_nodedesc, data.Stream
-                ):
+                if isinstance(dst_nodedesc,
+                              (data.Scalar, data.Array)) and isinstance(
+                                  src_nodedesc, data.Stream):
                     return  # Do nothing (handled by ArrayStreamView)
 
                 # Array -> Stream - push bulk
-                if isinstance(src_nodedesc, (data.Scalar, data.Array)) and isinstance(
-                    dst_nodedesc, data.Stream
-                ):
+                if isinstance(src_nodedesc,
+                              (data.Scalar, data.Array)) and isinstance(
+                                  dst_nodedesc, data.Stream):
                     if hasattr(src_nodedesc, "src"):  # ArrayStreamView
                         stream.write(
                             "{s}.push({arr});".format(
-                                s=dst_node.data, arr=src_nodedesc.src
-                            ),
+                                s=dst_node.data, arr=src_nodedesc.src),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
                         )
                     else:
                         copysize = " * ".join(
-                            [sym2cpp(s) for s in memlet.subset.size()]
-                        )
+                            [sym2cpp(s) for s in memlet.subset.size()])
                         stream.write(
                             "{s}.push({arr}, {size});".format(
-                                s=dst_node.data, arr=src_node.data, size=copysize
-                            ),
+                                s=dst_node.data,
+                                arr=src_node.data,
+                                size=copysize),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
@@ -578,8 +559,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_dfg = sdfg.nodes()[state_id]
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = self.memlet_copy_to_absolute_strides(
-                sdfg, memlet, src_node, dst_node
-            )
+                sdfg, memlet, src_node, dst_node)
 
             # Which numbers to include in the variable argument part
             dynshape, dynsrc, dyndst = 1, 1, 1
@@ -602,20 +582,27 @@ class CPUCodeGen(TargetCodeGenerator):
                 dynshape = 0
 
             # Constant src/dst dimensions
-            if not any(symbolic.issymbolic(s, sdfg.constants) for s in dst_strides):
+            if not any(
+                    symbolic.issymbolic(s, sdfg.constants)
+                    for s in dst_strides):
                 # Constant destination
-                shape_tmpl = "template ConstDst<%s>" % ", ".join(sym2cpp(dst_strides))
+                shape_tmpl = "template ConstDst<%s>" % ", ".join(
+                    sym2cpp(dst_strides))
                 dyndst = 0
-            elif not any(symbolic.issymbolic(s, sdfg.constants) for s in src_strides):
+            elif not any(
+                    symbolic.issymbolic(s, sdfg.constants)
+                    for s in src_strides):
                 # Constant source
-                shape_tmpl = "template ConstSrc<%s>" % ", ".join(sym2cpp(src_strides))
+                shape_tmpl = "template ConstSrc<%s>" % ", ".join(
+                    sym2cpp(src_strides))
                 dynsrc = 0
             else:
                 # Both dynamic
                 shape_tmpl = "Dynamic"
 
             # Parameter pack handling
-            stride_tmpl_args = [0] * (dynshape + dynsrc + dyndst) * len(copy_shape)
+            stride_tmpl_args = [0] * (
+                dynshape + dynsrc + dyndst) * len(copy_shape)
             j = 0
             for shape, src, dst in zip(copy_shape, src_strides, dst_strides):
                 if dynshape > 0:
@@ -638,31 +625,29 @@ class CPUCodeGen(TargetCodeGenerator):
             unique_cpy_id = PerfSettings.get_unique_number()
 
             if perf_should_instrument:
-                fac3 = (
-                    " * ".join(sym2cpp(copy_shape))
-                    + " / "
-                    + "/".join(sym2cpp(dst_strides))
-                )
-                copy_size = "sizeof(%s) * %s * (%s)" % (ctype, memlet.veclen, fac3)
+                fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " + "/".join(
+                    sym2cpp(dst_strides)))
+                copy_size = "sizeof(%s) * %s * (%s)" % (ctype, memlet.veclen,
+                                                        fac3)
                 node_id = PerfUtils.unified_id(dfg.node_id(dst_node), state_id)
                 # Mark a section start (this is not really a section in itself (it would be a section with 1 entry))
                 stream.write(
-                    PerfUtils.perf_section_start_string(node_id, copy_size, copy_size),
+                    PerfUtils.perf_section_start_string(
+                        node_id, copy_size, copy_size),
                     sdfg,
                     state_id,
                     [src_node, dst_node],
                 )
                 stream.write(
-                    (
-                        "dace_perf::{pcs} __perf_cpy_{nodeid}_{unique_id};\n"
-                        + "auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(__perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, dace_perf::ValueSetType::Copy);\n"
-                        + "__perf_cpy_{nodeid}_{unique_id}.enterCritical();\n"
-                    ).format(
-                        pcs=PerfUtils.perf_counter_string(dst_node),
-                        nodeid=node_id,
-                        unique_id=unique_cpy_id,
-                        size=copy_size,
-                    ),
+                    ("dace_perf::{pcs} __perf_cpy_{nodeid}_{unique_id};\n" +
+                     "auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(__perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, dace_perf::ValueSetType::Copy);\n"
+                     + "__perf_cpy_{nodeid}_{unique_id}.enterCritical();\n"
+                     ).format(
+                         pcs=PerfUtils.perf_counter_string(dst_node),
+                         nodeid=node_id,
+                         unique_id=unique_cpy_id,
+                         size=copy_size,
+                     ),
                     sdfg,
                     state_id,
                     [src_node, dst_node],
@@ -680,7 +665,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         {copy_args});""".format(
                         copy_tmpl=copy_tmpl,
                         shape_tmpl=shape_tmpl,
-                        copy_func="Copy" if memlet.wcr is None else "Accumulate",
+                        copy_func="Copy"
+                        if memlet.wcr is None else "Accumulate",
                         copy_args=", ".join(copy_args),
                     ),
                     sdfg,
@@ -691,25 +677,25 @@ class CPUCodeGen(TargetCodeGenerator):
                 if dynshape == 1:
                     raise NotImplementedError(
                         "Accumulation of dynamically-shaped "
-                        "arrays not yet implemented"
-                    )
-                elif copy_shape == [1]:  # Special case: accumulating one element
+                        "arrays not yet implemented")
+                elif copy_shape == [
+                        1
+                ]:  # Special case: accumulating one element
                     dst_expr = self.memlet_view_ctor(sdfg, memlet, True)
                     stream.write(
                         write_and_resolve_expr(sdfg, memlet, nc, dst_expr,
                                                '*(' + src_expr + ')'), sdfg,
                         state_id, [src_node, dst_node])
                 else:
-                    raise NotImplementedError(
-                        "Accumulation of arrays " "with WCR not yet implemented"
-                    )
+                    raise NotImplementedError("Accumulation of arrays "
+                                              "with WCR not yet implemented")
 
         #############################################################
         # Instrumentation: Post-copy
         if perf_should_instrument:
             stream.write(
-                ("__perf_cpy_%d_%d.leaveCritical(__vs_cpy_%d_%d);\n")
-                % (node_id, unique_cpy_id, node_id, unique_cpy_id),
+                ("__perf_cpy_%d_%d.leaveCritical(__vs_cpy_%d_%d);\n") %
+                (node_id, unique_cpy_id, node_id, unique_cpy_id),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
@@ -720,15 +706,15 @@ class CPUCodeGen(TargetCodeGenerator):
     # Memlet handling
 
     def process_out_memlets(
-        self,
-        sdfg,
-        state_id,
-        node,
-        dfg,
-        dispatcher,
-        result,
-        locals_defined,
-        function_stream,
+            self,
+            sdfg,
+            state_id,
+            node,
+            dfg,
+            dispatcher,
+            result,
+            locals_defined,
+            function_stream,
     ):
 
         scope_dict = sdfg.nodes()[state_id].scope_dict()
@@ -739,13 +725,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Target is neither a data nor a tasklet node
             if isinstance(node, nodes.AccessNode) and (
-                not isinstance(dst_node, nodes.AccessNode)
-                and not isinstance(dst_node, nodes.CodeNode)
-            ):
+                    not isinstance(dst_node, nodes.AccessNode)
+                    and not isinstance(dst_node, nodes.CodeNode)):
                 continue
 
             # Skip array->code (will be handled as a tasklet input)
-            if isinstance(node, nodes.AccessNode) and isinstance(v, nodes.CodeNode):
+            if isinstance(node, nodes.AccessNode) and isinstance(
+                    v, nodes.CodeNode):
                 continue
 
             # code->code (e.g., tasklet to tasklet)
@@ -766,8 +752,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # If the memlet is pointing into an array in an inner scope, then
             # the inner scope (i.e., the output array) must handle it
             if scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(
-                scope_dict, node, dst_node
-            ):
+                    scope_dict, node, dst_node):
                 continue
 
             # Array to tasklet (path longer than 1, handled at tasklet entry)
@@ -778,10 +763,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode):
                 if not uconn:
                     raise SyntaxError(
-                        "Cannot copy memlet without a local connector: {} to {}".format(
-                            str(edge.src), str(edge.dst)
-                        )
-                    )
+                        "Cannot copy memlet without a local connector: {} to {}".
+                        format(str(edge.src), str(edge.dst)))
 
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
@@ -793,9 +776,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     in_local_name = uconn
                     if not locals_defined:
                         out_local_name = self.memlet_ctor(sdfg, memlet, True)
-                        in_memlets = [d for _, _, _, _, d in dfg.in_edges(node)]
+                        in_memlets = [
+                            d for _, _, _, _, d in dfg.in_edges(node)
+                        ]
                         assert len(in_memlets) == 1
-                        in_local_name = self.memlet_ctor(sdfg, in_memlets[0], False)
+                        in_local_name = self.memlet_ctor(
+                            sdfg, in_memlets[0], False)
 
                     state_dfg = sdfg.nodes()[state_id]
 
@@ -807,14 +793,16 @@ class CPUCodeGen(TargetCodeGenerator):
                                 in_local_name), sdfg, state_id, node)
                     else:
                         result.write(
-                            "%s.write(%s);\n" % (out_local_name, in_local_name),
+                            "%s.write(%s);\n" % (out_local_name,
+                                                 in_local_name),
                             sdfg,
                             state_id,
                             node,
                         )
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
-                if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
+                if dst_node != node and not isinstance(dst_node,
+                                                       nodes.Tasklet):
                     dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -847,8 +835,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # generated from the FPGA codegen. We should find a nicer solution.
             if self._packed_types is True:
                 offset = cpp_array_expr(
-                    sdfg, memlet, False, packed_veclen=memlet.veclen
-                )
+                    sdfg, memlet, False, packed_veclen=memlet.veclen)
             else:
                 offset = cpp_array_expr(sdfg, memlet, False)
 
@@ -872,16 +859,17 @@ class CPUCodeGen(TargetCodeGenerator):
                         packed_veclen=memlet.veclen,
                     )
                 else:
-                    offset = cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
+                    offset = cpp_offset_expr(sdfg.arrays[memlet.data],
+                                             memlet.subset)
                 if offset == "0":
                     memlet_params.append(memlet_expr)
                 else:
-                    if def_type not in [DefinedType.Pointer, DefinedType.ArrayView]:
+                    if def_type not in [
+                            DefinedType.Pointer, DefinedType.ArrayView
+                    ]:
                         raise dace.codegen.codegen.CodegenError(
-                            "Cannot offset address of connector {} of type {}".format(
-                                memlet_name, def_type
-                            )
-                        )
+                            "Cannot offset address of connector {} of type {}".
+                            format(memlet_name, def_type))
                     memlet_params.append(memlet_expr + " + " + offset)
 
                 # Dimensions to remove from view (due to having one value)
@@ -900,10 +888,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 if dims > 0:
                     strides = memlet.subset.absolute_strides(
-                        sdfg.arrays[memlet.data].strides
-                    )
+                        sdfg.arrays[memlet.data].strides)
                     # Filter out index dims
-                    strides = [s for i, s in enumerate(strides) if i not in indexdims]
+                    strides = [
+                        s for i, s in enumerate(strides) if i not in indexdims
+                    ]
                     # FIXME: _packed_types influences how this offset is
                     # generated from the FPGA codegen. We should find a nicer
                     # solution.
@@ -914,7 +903,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     dims = memlet.subset.data_dims()
 
             else:
-                raise RuntimeError('Memlet type "%s" not implemented' % memlet.subset)
+                raise RuntimeError(
+                    'Memlet type "%s" not implemented' % memlet.subset)
 
         if memlet.num_accesses == 1:
             num_accesses_str = "1"
@@ -931,9 +921,8 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def memlet_definition(self, sdfg, memlet, output, local_name):
-        result = (
-            "auto __%s = " % local_name + self.memlet_ctor(sdfg, memlet, output) + ";\n"
-        )
+        result = ("auto __%s = " % local_name + self.memlet_ctor(
+            sdfg, memlet, output) + ";\n")
 
         # Allocate variable type
         memlet_type = "dace::vec<%s, %s>" % (
@@ -957,65 +946,65 @@ class CPUCodeGen(TargetCodeGenerator):
                 if not output:
                     # We can pre-read the value
                     result += "{} {} = __{}.val<{}>();".format(
-                        memlet_type, local_name, local_name, memlet.veclen
-                    )
+                        memlet_type, local_name, local_name, memlet.veclen)
                 else:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     result += "{} {};".format(memlet_type, local_name)
-                self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
             elif memlet.num_accesses == -1:
                 if output:
                     # Variable number of writes: get reference to the target of
                     # the view to reflect writes at the data
                     result += "auto &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen
-                    )
+                        local_name, local_name, memlet.veclen)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     result += "auto const &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen
-                    )
-                self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar)
+                        local_name, local_name, memlet.veclen)
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
             else:
                 raise dace.codegen.codegen.CodegenError(
                     "Unsupported number of accesses {} for scalar {}".format(
-                        memlet.num_accesses, local_name
-                    )
-                )
+                        memlet.num_accesses, local_name))
         elif var_type == DefinedType.Pointer:
             if memlet.num_accesses == 1:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
                     result += "{} {} = __{}.val<{}>();".format(
-                        memlet_type, local_name, local_name, memlet.veclen
-                    )
-                self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar)
+                        memlet_type, local_name, local_name, memlet.veclen)
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
             else:
                 if memlet.subset.data_dims() == 0:
                     # Forward ArrayView
                     result += "auto &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen
-                    )
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar)
+                        local_name, local_name, memlet.veclen)
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Scalar)
                 else:
                     result += "auto *{} = __{}.ptr<{}>();".format(
-                        local_name, local_name, memlet.veclen
-                    )
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Pointer)
+                        local_name, local_name, memlet.veclen)
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Pointer)
         elif var_type == DefinedType.Stream or var_type == DefinedType.StreamArray:
             if memlet.num_accesses == 1:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
-                    result += "auto {} = __{}.pop();".format(local_name, local_name)
-                self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar)
+                    result += "auto {} = __{}.pop();".format(
+                        local_name, local_name)
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Scalar)
             else:
                 # Just forward actions to the underlying object
                 result += "auto &{} = __{};".format(local_name, local_name)
-                self._dispatcher.defined_vars.add(local_name, DefinedType.Stream)
+                self._dispatcher.defined_vars.add(local_name,
+                                                  DefinedType.Stream)
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
 
@@ -1023,17 +1012,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def memlet_stream_ctor(self, sdfg, memlet):
         stream = sdfg.arrays[memlet.data]
-        dtype = "dace::vec<{}, {}>".format(
-            stream.dtype.ctype, symbolic.symstr(memlet.veclen)
-        )
-        return "dace::make_streamview({})".format(
-            memlet.data
-            + (
-                "[{}]".format(cpp_offset_expr(stream, memlet.subset))
-                if isinstance(stream, dace.data.Stream) and stream.is_stream_array()
-                else ""
-            )
-        )
+        dtype = "dace::vec<{}, {}>".format(stream.dtype.ctype,
+                                           symbolic.symstr(memlet.veclen))
+        return "dace::make_streamview({})".format(memlet.data + (
+            "[{}]".format(cpp_offset_expr(stream, memlet.subset))
+            if isinstance(stream, dace.data.Stream)
+            and stream.is_stream_array() else ""))
 
     def memlet_ctor(self, sdfg, memlet, is_output):
 
@@ -1042,27 +1026,23 @@ class CPUCodeGen(TargetCodeGenerator):
         if def_type == DefinedType.Stream or def_type == DefinedType.StreamArray:
             return self.memlet_stream_ctor(sdfg, memlet)
 
-        elif (
-            def_type == DefinedType.Pointer
-            or def_type == DefinedType.Scalar
-            or def_type == DefinedType.ScalarView
-            or def_type == DefinedType.ArrayView
-        ):
+        elif (def_type == DefinedType.Pointer or def_type == DefinedType.Scalar
+              or def_type == DefinedType.ScalarView
+              or def_type == DefinedType.ArrayView):
             return self.memlet_view_ctor(sdfg, memlet, is_output)
 
         else:
             raise NotImplementedError(
-                "Connector type {} not yet implemented".format(def_type)
-            )
+                "Connector type {} not yet implemented".format(def_type))
 
     def copy_expr(
-        self,
-        sdfg,
-        dataname,
-        memlet,
-        offset=None,
-        relative_offset=True,
-        packed_types=False,
+            self,
+            sdfg,
+            dataname,
+            memlet,
+            offset=None,
+            relative_offset=True,
+            packed_types=False,
     ):
         datadesc = sdfg.arrays[dataname]
         if relative_offset:
@@ -1078,14 +1058,14 @@ class CPUCodeGen(TargetCodeGenerator):
             o = None
         if s != None:
             offset_cppstr = cpp_offset_expr(
-                datadesc, s, o, memlet.veclen if packed_types else 1
-            )
+                datadesc, s, o, memlet.veclen if packed_types else 1)
         else:
             offset_cppstr = "0"
         dt = ""
 
         if memlet.veclen != 1 and not packed_types:
-            offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(memlet.veclen))
+            offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(
+                memlet.veclen))
             dt = "(dace::vec<%s, %s> *)" % (
                 datadesc.dtype.ctype,
                 sym2cpp(memlet.veclen),
@@ -1099,29 +1079,23 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if def_type == DefinedType.Pointer:
             return "{}{}{}".format(
-                dt, expr, " + {}".format(offset_cppstr) if add_offset else ""
-            )
+                dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
         elif def_type == DefinedType.ArrayView:
             return "{}{}.ptr(){}".format(
-                dt, expr, " + {}".format(offset_cppstr) if add_offset else ""
-            )
+                dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
         elif def_type == DefinedType.StreamArray:
             return "{}[{}]".format(expr, offset_cppstr)
 
-        elif (
-            def_type == DefinedType.Scalar
-            or def_type == DefinedType.ScalarView
-            or def_type == DefinedType.Stream
-        ):
+        elif (def_type == DefinedType.Scalar
+              or def_type == DefinedType.ScalarView
+              or def_type == DefinedType.Stream):
 
             if add_offset:
                 raise TypeError(
                     "Tried to offset address of scalar {}: {}".format(
-                        dataname, offset_cppstr
-                    )
-                )
+                        dataname, offset_cppstr))
 
             if def_type == DefinedType.Scalar or def_type == DefinedType.ScalarView:
                 return "{}&{}".format(dt, expr)
@@ -1130,12 +1104,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
         else:
             raise NotImplementedError(
-                "copy_expr not implemented " "for connector type: {}".format(def_type)
-            )
+                "copy_expr not implemented "
+                "for connector type: {}".format(def_type))
 
-    def memlet_copy_to_absolute_strides(
-        self, sdfg, memlet, src_node, dst_node, packed_types=False
-    ):
+    def memlet_copy_to_absolute_strides(self,
+                                        sdfg,
+                                        memlet,
+                                        src_node,
+                                        dst_node,
+                                        packed_types=False):
         # Ignore vectorization flag is a hack to accommmodate FPGA behavior,
         # where the pointer type is changed to a vector type, and addresses
         # thus shouldn't take vectorization into account.
@@ -1146,11 +1123,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if memlet.data == src_node.data:
             src_expr = self.copy_expr(
-                sdfg, src_node.data, memlet, packed_types=packed_types
-            )
+                sdfg, src_node.data, memlet, packed_types=packed_types)
             dst_expr = self.copy_expr(
-                sdfg, dst_node.data, memlet, None, False, packed_types=packed_types
-            )
+                sdfg,
+                dst_node.data,
+                memlet,
+                None,
+                False,
+                packed_types=packed_types)
             if memlet.other_subset is not None:
                 dst_expr = self.copy_expr(
                     sdfg,
@@ -1167,11 +1147,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
         else:
             src_expr = self.copy_expr(
-                sdfg, src_node.data, memlet, None, False, packed_types=packed_types
-            )
+                sdfg,
+                src_node.data,
+                memlet,
+                None,
+                False,
+                packed_types=packed_types)
             dst_expr = self.copy_expr(
-                sdfg, dst_node.data, memlet, packed_types=packed_types
-            )
+                sdfg, dst_node.data, memlet, packed_types=packed_types)
             if memlet.other_subset is not None:
                 src_expr = self.copy_expr(
                     sdfg,
@@ -1206,16 +1189,16 @@ class CPUCodeGen(TargetCodeGenerator):
             # If other_subset is defined, reduce its dimensionality by
             # removing the "empty" dimensions (size = 1) and filter the
             # corresponding strides out
-            src_strides = (
-                [stride for stride, s in zip(src_strides, src_subset.size()) if s != 1]
-                + src_strides[len(src_subset) :]
-            )  # Include tiles
+            src_strides = ([
+                stride for stride, s in zip(src_strides, src_subset.size())
+                if s != 1
+            ] + src_strides[len(src_subset):])  # Include tiles
             if not src_strides:
                 src_strides = [1]
-            dst_strides = (
-                [stride for stride, s in zip(dst_strides, dst_subset.size()) if s != 1]
-                + dst_strides[len(dst_subset) :]
-            )  # Include tiles
+            dst_strides = ([
+                stride for stride, s in zip(dst_strides, dst_subset.size())
+                if s != 1
+            ] + dst_strides[len(dst_subset):])  # Include tiles
             if not dst_strides:
                 dst_strides = [1]
             copy_shape = [s for s in copy_shape if s != 1]
@@ -1224,20 +1207,23 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Extend copy shape to the largest among the data dimensions,
         # and extend other array with the appropriate strides
-        if len(dst_strides) != len(copy_shape) or len(src_strides) != len(copy_shape):
+        if len(dst_strides) != len(copy_shape) or len(src_strides) != len(
+                copy_shape):
             if memlet.data == src_node.data:
                 copy_shape, dst_strides = _reshape_strides(
-                    src_subset, src_strides, dst_strides, copy_shape
-                )
+                    src_subset, src_strides, dst_strides, copy_shape)
             elif memlet.data == dst_node.data:
                 copy_shape, src_strides = _reshape_strides(
-                    dst_subset, dst_strides, src_strides, copy_shape
-                )
+                    dst_subset, dst_strides, src_strides, copy_shape)
 
         if memlet.veclen != 1:
             int_floor = sp.Function("int_floor")
-            src_strides[:-1] = [int_floor(s, memlet.veclen) for s in src_strides[:-1]]
-            dst_strides[:-1] = [int_floor(s, memlet.veclen) for s in dst_strides[:-1]]
+            src_strides[:-1] = [
+                int_floor(s, memlet.veclen) for s in src_strides[:-1]
+            ]
+            dst_strides[:-1] = [
+                int_floor(s, memlet.veclen) for s in dst_strides[:-1]
+            ]
             if not packed_types:
                 copy_shape[-1] = int_floor(copy_shape[-1], memlet.veclen)
 
@@ -1246,9 +1232,8 @@ class CPUCodeGen(TargetCodeGenerator):
     #########################################################################
     # Dynamically-called node dispatchers
 
-    def _generate_Tasklet(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
+                          callsite_stream):
         callsite_stream.write("{\n", sdfg, state_id, node)
 
         # Add code to init and exit functions
@@ -1273,8 +1258,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
                     # Read variable from shared storage
                     callsite_stream.write(
-                        "const dace::vec<%s, %s>& %s = %s;"
-                        % (
+                        "const dace::vec<%s, %s>& %s = %s;" % (
                             sdfg.arrays[memlet.data].dtype.ctype,
                             sym2cpp(memlet.veclen),
                             edge.dst_conn,
@@ -1284,7 +1268,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         state_id,
                         [edge.src, edge.dst],
                     )
-                    self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Scalar)
+                    self._dispatcher.defined_vars.add(edge.dst_conn,
+                                                      DefinedType.Scalar)
 
                 else:
                     src_node = find_input_arraynode(state_dfg, edge)
@@ -1340,14 +1325,11 @@ class CPUCodeGen(TargetCodeGenerator):
             # Special case: code->code
             if edge.src_conn is None:
                 continue
-            elif (
-                isinstance(edge.dst, nodes.CodeNode)
-                and edge.src_conn not in tasklet_out_connectors
-            ):
+            elif (isinstance(edge.dst, nodes.CodeNode)
+                  and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
                 callsite_stream.write(
-                    "dace::vec<%s, %s> %s;"
-                    % (
+                    "dace::vec<%s, %s> %s;" % (
                         sdfg.arrays[memlet.data].dtype.ctype,
                         sym2cpp(memlet.veclen),
                         edge.src_conn,
@@ -1357,11 +1339,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     [edge.src, edge.dst],
                 )
                 tasklet_out_connectors.add(edge.src_conn)
-                self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(edge.src_conn,
+                                                  DefinedType.Scalar)
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1)
                 locals_defined = True
 
-        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
+        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
+                              node)
 
         unparse_tasklet(
             sdfg,
@@ -1374,7 +1358,8 @@ class CPUCodeGen(TargetCodeGenerator):
             self._ldepth,
         )
 
-        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
+        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
+                              node)
 
         # Process outgoing memlets
         self.process_out_memlets(
@@ -1390,35 +1375,31 @@ class CPUCodeGen(TargetCodeGenerator):
 
         #############################################################
         # Instrumentation: Post-tasklet
-        if PerfSettings.perf_enable_instrumentation() and PerfUtils.has_surrounding_perfcounters(
-            node, dfg
-        ):
+        if PerfSettings.perf_enable_instrumentation(
+        ) and PerfUtils.has_surrounding_perfcounters(node, dfg):
             # Add bytes moved
             callsite_stream.write(
-                "__perf_store.addBytesMoved(%s);"
-                % PerfUtils.get_tasklet_byte_accesses(node, dfg, sdfg, state_id)
-            )
+                "__perf_store.addBytesMoved(%s);" %
+                PerfUtils.get_tasklet_byte_accesses(node, dfg, sdfg, state_id))
         #############################################################
 
         callsite_stream.write("}\n", sdfg, state_id, node)
 
         self._dispatcher.defined_vars.exit_scope(node)
 
-    def _generate_EmptyTasklet(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
-        self._generate_Tasklet(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream
-        )
+    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node,
+                               function_stream, callsite_stream):
+        self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
+                               callsite_stream)
 
     def _generate_NestedSDFG(
-        self,
-        sdfg,
-        dfg: ScopeSubgraphView,
-        state_id,
-        node,
-        function_stream: CodeIOStream,
-        callsite_stream: CodeIOStream,
+            self,
+            sdfg,
+            dfg: ScopeSubgraphView,
+            state_id,
+            node,
+            function_stream: CodeIOStream,
+            callsite_stream: CodeIOStream,
     ):
 
         self._dispatcher.defined_vars.enter_scope(sdfg)
@@ -1443,20 +1424,21 @@ class CPUCodeGen(TargetCodeGenerator):
                 node,
             )
 
-        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
+        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
+                              node)
 
         sdfg_label = "_%d_%d" % (state_id, dfg.node_id(node))
         # Generate code for internal SDFG
         global_code, local_code, used_targets = self._frame.generate_code(
-            node.sdfg, node.schedule, sdfg_label
-        )
+            node.sdfg, node.schedule, sdfg_label)
 
         # Write generated code in the proper places (nested SDFG writes
         # location info)
         function_stream.write(global_code)
         callsite_stream.write(local_code)
 
-        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
+        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
+                              node)
 
         # Process outgoing memlets with the internal SDFG
         self.process_out_memlets(
@@ -1473,13 +1455,13 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _generate_MapEntry(
-        self,
-        sdfg,
-        dfg,
-        state_id,
-        node: nodes.MapEntry,
-        function_stream,
-        callsite_stream,
+            self,
+            sdfg,
+            dfg,
+            state_id,
+            node: nodes.MapEntry,
+            function_stream,
+            callsite_stream,
     ):
         map_params = node.map.params
         map_name = "__DACEMAP_" + str(state_id) + "_" + str(dfg.node_id(node))
@@ -1494,7 +1476,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result = callsite_stream
 
-        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id, sym2cpp)
+        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id,
+                                                     sym2cpp)
 
         map_header = ""
 
@@ -1505,37 +1488,33 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Emit supersection if possible
         map_header += PerfUtils.perf_get_supersection_start_string(
-            node, sdfg, dfg, unified_id
-        )
+            node, sdfg, dfg, unified_id)
 
         if PerfUtils.instrument_entry(
-            node, dfg
-        ) and PerfSettings.perf_enable_instrumentation_for(sdfg, node):
+                node, dfg) and PerfSettings.perf_enable_instrumentation_for(
+                    sdfg, node):
 
             size = PerfUtils.accumulate_byte_movements_v2(
-                node, node, dfg, sdfg, state_id
-            )
+                node, node, dfg, sdfg, state_id)
             size = sp.simplify(size)
 
             used_symbols = symbolic.symbols_in_sympy_expr(size)
             defined_symbols = sdfg.symbols_defined_at(node)
-            undefined_symbols = [x for x in used_symbols if x not in defined_symbols]
+            undefined_symbols = [
+                x for x in used_symbols if x not in defined_symbols
+            ]
             if len(undefined_symbols) > 0:
                 # We cannot statically determine the size at this point
                 print(
                     'Failed to determine size because of undefined symbols ("'
-                    + str(undefined_symbols)
-                    + '") in "'
-                    + str(size)
-                    + '", falling back to 0'
-                )
+                    + str(undefined_symbols) + '") in "' + str(size) +
+                    '", falling back to 0')
                 size = 0
 
             size = sym2cpp(size)
 
             map_header += PerfUtils.perf_section_start_string(
-                unified_id, size, input_size
-            )
+                unified_id, size, input_size)
 
         #############################################################
 
@@ -1560,17 +1539,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # TODO: Explicit map unroller
         if node.map.unroll:
             if node.map.schedule == types.ScheduleType.CPU_Multicore:
-                raise ValueError(
-                    "An Multicore CPU map cannot be unrolled (" + node.map.label + ")"
-                )
+                raise ValueError("An Multicore CPU map cannot be unrolled (" +
+                                 node.map.label + ")")
 
-        constsize = all(
-            [
-                not symbolic.issymbolic(v, sdfg.constants)
-                for r in node.map.range
-                for v in r
-            ]
-        )
+        constsize = all([
+            not symbolic.issymbolic(v, sdfg.constants) for r in node.map.range
+            for v in r
+        ])
 
         # Construct (EXCLUSIVE) map range as a list of comma-delimited C++
         # strings.
@@ -1585,20 +1560,18 @@ class CPUCodeGen(TargetCodeGenerator):
             #############################################################
             # Instrumentation: Post-MapEntry (pre-definitions)
             perf_entry_string = (
-                "dace_perf::%s __perf_%d;\n"
-                + "auto& __vs_%d = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(), %%s);\n"
-                + "__perf_%d.enterCritical();\n"
-            ) % (
-                PerfUtils.perf_counter_string(node),
-                unified_id,
-                unified_id,
-                unified_id,
-                unified_id,
-                unified_id,
-            )
+                "dace_perf::%s __perf_%d;\n" +
+                "auto& __vs_%d = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(), %%s);\n"
+                + "__perf_%d.enterCritical();\n") % (
+                    PerfUtils.perf_counter_string(node),
+                    unified_id,
+                    unified_id,
+                    unified_id,
+                    unified_id,
+                    unified_id,
+                )
             perf_entry_string = PerfUtils.perf_counter_start_measurement_string(
-                node, unified_id, "%s"
-            )
+                node, unified_id, "%s")
             # If the integer set is constant-sized, emit const_int_range
             if constsize:
                 # Generate the loop
@@ -1622,11 +1595,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng::size; ++{mapname}_i
                 # Perfcounters for flattened maps include the calculations
                 # made to obtain the different axis indices
                 if PerfUtils.instrument_entry(
-                    node, dfg
-                ) and PerfSettings.perf_enable_instrumentation_for(sdfg, node):
-                    result.write(
-                        perf_entry_string % (map_name + "_iter"), sdfg, state_id, node
-                    )
+                        node,
+                        dfg) and PerfSettings.perf_enable_instrumentation_for(
+                            sdfg, node):
+                    result.write(perf_entry_string % (map_name + "_iter"),
+                                 sdfg, state_id, node)
                     # remember which map has the counters enabled
                     node.map._has_papi_counters = True
                 #############################################################
@@ -1634,11 +1607,9 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng::size; ++{mapname}_i
                 # Generate the variables
                 for ind, var in enumerate(map_params):
                     result.write(
-                        (
-                            "auto {var} = {mapname}_rng"
-                            + "::index_value({mapname}_iter, "
-                            + "{ind});"
-                        ).format(ind=ind, var=var, mapname=map_name),
+                        ("auto {var} = {mapname}_rng" +
+                         "::index_value({mapname}_iter, " + "{ind});").format(
+                             ind=ind, var=var, mapname=map_name),
                         sdfg,
                         state_id,
                         node,
@@ -1651,9 +1622,10 @@ auto {mapname}_rng = dace::make_range({tuplerange});
 {map_header}
 for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_iter) {{
                                  """.format(
-                        tuplerange=", ".join(
-                            ["std::make_tuple(%s)" % cppr for cppr in maprange_cppstr]
-                        ),
+                        tuplerange=", ".join([
+                            "std::make_tuple(%s)" % cppr
+                            for cppr in maprange_cppstr
+                        ]),
                         map_header=map_header,
                         mapname=map_name,
                     ),
@@ -1667,11 +1639,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 # Perfcounters for flattened maps include the calculations
                 # made to obtain the different axis indices
                 if PerfUtils.instrument_entry(
-                    node, dfg
-                ) and PerfSettings.perf_enable_instrumentation_for(sdfg, node):
-                    result.write(
-                        perf_entry_string % (map_name + "_iter"), sdfg, state_id, node
-                    )
+                        node,
+                        dfg) and PerfSettings.perf_enable_instrumentation_for(
+                            sdfg, node):
+                    result.write(perf_entry_string % (map_name + "_iter"),
+                                 sdfg, state_id, node)
                     # remember which map has the counters enabled
                     node.map._has_papi_counters = True
                 #############################################################
@@ -1679,11 +1651,9 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 # Generate the variables
                 for ind, var in enumerate(map_params):
                     result.write(
-                        (
-                            "auto {var} = {mapname}_rng"
-                            + ".index_value({mapname}_iter, "
-                            + "{ind});"
-                        ).format(ind=ind, var=var, mapname=map_name),
+                        ("auto {var} = {mapname}_rng" +
+                         ".index_value({mapname}_iter, " + "{ind});").format(
+                             ind=ind, var=var, mapname=map_name),
                         sdfg,
                         state_id,
                         node,
@@ -1700,8 +1670,9 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     result.write("#pragma unroll", sdfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n"
-                    % (var, sym2cpp(begin), var, sym2cpp(end + 1), var, sym2cpp(skip)),
+                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                    (var, sym2cpp(begin), var, sym2cpp(end + 1), var,
+                     sym2cpp(skip)),
                     sdfg,
                     state_id,
                     node,
@@ -1709,20 +1680,14 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
                 #############################################################
                 # Instrumentation: Post-MapEntry (pre-definitions)
-                if (
-                    PerfUtils.instrument_entry(node, dfg)
-                    and (
-                        (not PerfSettings.perf_debug_profile_innermost and i == 0)
-                        or (
-                            PerfSettings.perf_debug_profile_innermost
-                            and i == len(node.map.range) - 1
-                        )
-                    )
-                    and PerfSettings.perf_enable_instrumentation_for(sdfg, node)
-                ):
+                if (PerfUtils.instrument_entry(node, dfg) and
+                    ((not PerfSettings.perf_debug_profile_innermost and i == 0)
+                     or (PerfSettings.perf_debug_profile_innermost
+                         and i == len(node.map.range) - 1))
+                        and PerfSettings.perf_enable_instrumentation_for(
+                            sdfg, node)):
                     start_string = PerfUtils.perf_counter_start_measurement_string(
-                        node, unified_id, var
-                    )
+                        node, unified_id, var)
                     result.write(start_string, sdfg, state_id, node)
                     # remember which map has the counters enabled
                     node.map._has_papi_counters = True
@@ -1737,10 +1702,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None, result)
-            self._dispatcher.dispatch_initialize(
-                sdfg, dfg, state_id, child, None, result
-            )
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
+                                               None, result)
+            self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
+                                                 None, result)
 
         # Generate register definitions for inter-tasklet memlets
         scope_dict = dfg.scope_dict()
@@ -1749,8 +1714,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
                 continue
             if isinstance(edge.src, nodes.CodeNode) and isinstance(
-                edge.dst, nodes.CodeNode
-            ):
+                    edge.dst, nodes.CodeNode):
                 local_name = edge.data.data
                 # Allocate variable type
                 code = "dace::vec<%s, %s> %s;" % (
@@ -1762,9 +1726,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 self._dispatcher.defined_vars.add(local_name,
                                                   DefinedType.Scalar)
 
-    def _generate_MapExit(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
+                          callsite_stream):
         result = callsite_stream
 
         # Obtain start of map
@@ -1772,11 +1735,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         map_node = scope_dict[node]
 
         if map_node is None:
-            raise ValueError(
-                "Exit node "
-                + str(node.map.label)
-                + " is not dominated by a scope entry node"
-            )
+            raise ValueError("Exit node " + str(node.map.label) +
+                             " is not dominated by a scope entry node")
 
         #############################################################
         # Instrumentation: Pre-MapExit
@@ -1792,31 +1752,27 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if child.data not in to_allocate or child.data in deallocated:
                 continue
             deallocated.add(child.data)
-            self._dispatcher.dispatch_deallocate(
-                sdfg, dfg, state_id, child, None, result
-            )
+            self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
+                                                 None, result)
 
         # If there are other non-visited map exits, they are responsible for
         # closing braces
         map_exits = [
-            k
-            for k, v in scope_dict.items()
-            if v == map_node
-            and isinstance(k, nodes.ExitNode)
+            k for k, v in scope_dict.items()
+            if v == map_node and isinstance(k, nodes.ExitNode)
             and k not in self._generated_nodes
         ]
         if len(map_exits) > 1:
             return
 
-        perf_end_string = PerfUtils.perf_counter_end_measurement_string(unified_id)
+        perf_end_string = PerfUtils.perf_counter_end_measurement_string(
+            unified_id)
         # Map flattening
         if map_node.map.flatten:
             #############################################################
             # Instrumentation: Pre-MapExit
-            if (
-                PerfSettings.perf_enable_instrumentation()
-                and map_node.map._has_papi_counters
-            ):
+            if (PerfSettings.perf_enable_instrumentation()
+                    and map_node.map._has_papi_counters):
                 result.write(perf_end_string, sdfg, state_id, node)
 
             if PerfSettings.perf_debug_annotate_scopes:
@@ -1827,24 +1783,17 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             for i, r in enumerate(map_node.map.range):
                 #############################################################
                 # Instrumentation: Pre-MapExit
-                if (
-                    PerfSettings.perf_enable_instrumentation()
-                    and map_node.map._has_papi_counters
-                    and (
-                        (PerfSettings.perf_debug_profile_innermost and i == 0)
-                        or (
-                            not PerfSettings.perf_debug_profile_innermost
-                            and i == len(map_node.map.range) - 1
-                        )
-                    )
-                ):
+                if (PerfSettings.perf_enable_instrumentation()
+                        and map_node.map._has_papi_counters and
+                    ((PerfSettings.perf_debug_profile_innermost and i == 0) or
+                     (not PerfSettings.perf_debug_profile_innermost
+                      and i == len(map_node.map.range) - 1))):
                     result.write(perf_end_string, sdfg, state_id, node)
 
-                if (
-                    PerfSettings.perf_debug_annotate_scopes
-                    and i == len(map_node.map.range) - 1
-                ):
-                    result.write("// %s\n" % str(map_node), sdfg, state_id, node)
+                if (PerfSettings.perf_debug_annotate_scopes
+                        and i == len(map_node.map.range) - 1):
+                    result.write("// %s\n" % str(map_node), sdfg, state_id,
+                                 node)
                 #############################################################
                 result.write("}", sdfg, state_id, node)
 
@@ -1857,13 +1806,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         #############################################################
 
     def _generate_ConsumeEntry(
-        self,
-        sdfg,
-        dfg,
-        state_id,
-        node: nodes.MapEntry,
-        function_stream,
-        callsite_stream,
+            self,
+            sdfg,
+            dfg,
+            state_id,
+            node: nodes.MapEntry,
+            function_stream,
+            callsite_stream,
     ):
         result = callsite_stream
 
@@ -1872,21 +1821,16 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # Intrusively set the depth. (Better solutions are welcome)
         PerfUtils.set_map_depth(node, dfg)
 
-        constsize = all(
-            [
-                not symbolic.issymbolic(v, sdfg.constants)
-                for r in node.map.range
-                for v in r
-            ]
-        )
+        constsize = all([
+            not symbolic.issymbolic(v, sdfg.constants) for r in node.map.range
+            for v in r
+        ])
         state_dfg = sdfg.nodes()[state_id]
 
         input_sedge = next(
-            e for e in state_dfg.in_edges(node) if e.dst_conn == "IN_stream"
-        )
+            e for e in state_dfg.in_edges(node) if e.dst_conn == "IN_stream")
         output_sedge = next(
-            e for e in state_dfg.out_edges(node) if e.src_conn == "OUT_stream"
-        )
+            e for e in state_dfg.out_edges(node) if e.src_conn == "OUT_stream")
         input_stream = state_dfg.memlet_path(input_sedge)[0].src
         input_streamdesc = input_stream.desc(sdfg)
 
@@ -1896,27 +1840,23 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 input_streamdesc.dtype.ctype,
                 node.consume.label + "_element",
             )
-            self._dispatcher.defined_vars.add(
-                node.consume.label + "_element", DefinedType.Scalar
-            )
+            self._dispatcher.defined_vars.add(node.consume.label + "_element",
+                                              DefinedType.Scalar)
         else:
             chunk = "const %s *%s, size_t %s" % (
                 input_streamdesc.dtype.ctype,
                 node.consume.label + "_elements",
                 node.consume.label + "_numelems",
             )
-            self._dispatcher.defined_vars.add(
-                node.consume.label + "_elements", DefinedType.Pointer
-            )
-            self._dispatcher.defined_vars.add(
-                node.consume.label + "_numelems", DefinedType.Scalar
-            )
+            self._dispatcher.defined_vars.add(node.consume.label + "_elements",
+                                              DefinedType.Pointer)
+            self._dispatcher.defined_vars.add(node.consume.label + "_numelems",
+                                              DefinedType.Scalar)
 
         # Take quiescence condition into account
         if node.consume.condition is not None:
             condition_string = "[&]() { return %s; }, " % cppunparse.cppunparse(
-                node.consume.condition, False
-            )
+                node.consume.condition, False)
         else:
             condition_string = ""
 
@@ -1925,8 +1865,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             # TODO: Safety checks
             result.write(
                 PerfUtils.perf_get_supersection_start_string(
-                    node, sdfg, dfg, unified_id
-                ),
+                    node, sdfg, dfg, unified_id),
                 sdfg,
                 state_id,
                 node,
@@ -1971,15 +1910,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
         if PerfUtils.instrument_entry(node, dfg):
             result.write(
-                (
-                    "auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".format(
-                        id=unified_id
-                    )
-                )
-                + PerfUtils.perf_counter_start_measurement_string(
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
+                 format(id=unified_id)) +
+                PerfUtils.perf_counter_start_measurement_string(
                     node,
                     unified_id,
-                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(id=unified_id),
+                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(
+                        id=unified_id),
                     core_str="dace_perf::getThreadID()",
                 ),
                 sdfg,
@@ -1997,9 +1934,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 transient=True,
                 storage=types.StorageType.Register,
             )
-            ce_node = nodes.AccessNode(
-                node.consume.label + "_element", types.AccessType.ReadOnly
-            )
+            ce_node = nodes.AccessNode(node.consume.label + "_element",
+                                       types.AccessType.ReadOnly)
         else:
             consumed_element = sdfg.add_array(
                 node.consume.label + "_elements",
@@ -2008,9 +1944,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 transient=True,
                 storage=types.StorageType.Register,
             )
-            ce_node = nodes.AccessNode(
-                node.consume.label + "_elements", types.AccessType.ReadOnly
-            )
+            ce_node = nodes.AccessNode(node.consume.label + "_elements",
+                                       types.AccessType.ReadOnly)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])
@@ -2041,10 +1976,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None, result)
-            self._dispatcher.dispatch_initialize(
-                sdfg, dfg, state_id, child, None, result
-            )
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
+                                               None, result)
+            self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
+                                                 None, result)
 
             # Generate register definitions for inter-tasklet memlets
             scope_dict = dfg.scope_dict()
@@ -2063,9 +1998,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     self._dispatcher.defined_vars.add(local_name,
                                                       DefinedType.Scalar)
 
-    def _generate_ConsumeExit(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def _generate_ConsumeExit(self, sdfg, dfg, state_id, node, function_stream,
+                              callsite_stream):
         result = callsite_stream
 
         # Obtain start of map
@@ -2075,11 +2009,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         unified_id = PerfUtils.unified_id(dfg.node_id(entry_node), state_id)
 
         if entry_node is None:
-            raise ValueError(
-                "Exit node "
-                + str(node.consume.label)
-                + " is not dominated by a scope entry node"
-            )
+            raise ValueError("Exit node " + str(node.consume.label) +
+                             " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
         to_allocate = dace.sdfg.local_transients(sdfg, dfg, entry_node)
@@ -2090,9 +2021,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if child.data not in to_allocate or child.data in deallocated:
                 continue
             deallocated.add(child.data)
-            self._dispatcher.dispatch_deallocate(
-                sdfg, dfg, state_id, child, None, result
-            )
+            self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
+                                                 None, result)
 
         if PerfUtils.instrument_entry(entry_node, dfg):
             result.write(
@@ -2103,13 +2033,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             )
         result.write("});", sdfg, state_id, node)
 
-    def _generate_Reduce(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
+                         callsite_stream):
 
         unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
 
-        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id, sym2cpp)
+        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id,
+                                                     sym2cpp)
 
         # Try to autodetect reduction type
         redtype = operations.detect_reduction_type(node.wcr)
@@ -2119,8 +2049,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         perf_should_instrument = (
             PerfSettings.perf_enable_instrumentation()
             and not PerfUtils.has_surrounding_perfcounters(node, dfg)
-            and PerfSettings.perf_enable_instrumentation_for(sdfg, node)
-        )
+            and PerfSettings.perf_enable_instrumentation_for(sdfg, node))
 
         if node.schedule == types.ScheduleType.CPU_Multicore:
             if PerfSettings.perf_enable_vectorization_analysis():
@@ -2167,11 +2096,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
             for axis in range(output_dims):
                 ao = output_memlet.subset[axis]
-                perf_expected_data_movement_sympy *= (ao[1] + 1 - ao[0]) / ao[2]
+                perf_expected_data_movement_sympy *= (
+                    ao[1] + 1 - ao[0]) / ao[2]
 
             for axis in axes:
                 ai = input_memlet.subset[axis]
-                perf_expected_data_movement_sympy *= (ai[1] + 1 - ai[0]) / ai[2]
+                perf_expected_data_movement_sympy *= (
+                    ai[1] + 1 - ai[0]) / ai[2]
 
             if not dfg.is_parallel():
                 # Now we put a start marker, but only if we are in a serial state
@@ -2185,14 +2116,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             callsite_stream.write(
                 PerfUtils.perf_section_start_string(
                     unified_id,
-                    str(sp.simplify(perf_expected_data_movement_sympy))
-                    + (
-                        " * (sizeof(%s) + sizeof(%s))"
-                        % (
-                            sdfg.arrays[output_memlet.data].dtype.ctype,
-                            sdfg.arrays[input_memlet.data].dtype.ctype,
-                        )
-                    ),
+                    str(sp.simplify(perf_expected_data_movement_sympy)) +
+                    (" * (sizeof(%s) + sizeof(%s))" % (
+                        sdfg.arrays[output_memlet.data].dtype.ctype,
+                        sdfg.arrays[input_memlet.data].dtype.ctype,
+                    )),
                     input_size,
                 ),
                 sdfg,
@@ -2209,7 +2137,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         output_subset = output_memlet.subset
         for axis in range(output_dims):
             callsite_stream.write(
-                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".format(
+                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
+                format(
                     var="__o%d" % axis,
                     begin=output_subset[axis][0],
                     end=output_subset[axis][1] + 1,
@@ -2224,17 +2153,14 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             # Instrumentation: Reduce (part 1)
             # This could prevent the compiler from parallelizing/vectorizing
             if perf_should_instrument:
-                if (
-                    end_braces == 0 and not PerfSettings.perf_debug_profile_innermost
-                ) or (
-                    end_braces == output_dims - 1
-                    and PerfSettings.perf_debug_profile_innermost
-                ):
+                if (end_braces == 0
+                        and not PerfSettings.perf_debug_profile_innermost) or (
+                            end_braces == output_dims - 1
+                            and PerfSettings.perf_debug_profile_innermost):
 
                     callsite_stream.write(
                         PerfUtils.perf_counter_start_measurement_string(
-                            node, unified_id, "__o" + str(axis)
-                        ),
+                            node, unified_id, "__o" + str(axis)),
                         sdfg,
                         state_id,
                         node,
@@ -2247,7 +2173,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         if end_braces == 0 and perf_should_instrument:
             # The outer dimensions no longer exist. We should add instrumentation anyway.
             callsite_stream.write(
-                PerfUtils.perf_counter_start_measurement_string(node, unified_id, 0),
+                PerfUtils.perf_counter_start_measurement_string(
+                    node, unified_id, 0),
                 sdfg,
                 state_id,
                 node,
@@ -2257,21 +2184,18 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         use_tmpout = False
         if len(axes) == input_dims:
             # Add OpenMP reduction clause if reducing all axes
-            if (
-                redtype != types.ReductionType.Custom
-                and node.schedule == types.ScheduleType.CPU_Multicore
-            ):
+            if (redtype != types.ReductionType.Custom
+                    and node.schedule == types.ScheduleType.CPU_Multicore):
                 loop_header += " reduction(%s: __tmpout)" % (
-                    _REDUCTION_TYPE_TO_OPENMP[redtype]
-                )
+                    _REDUCTION_TYPE_TO_OPENMP[redtype])
 
             # Output initialization
             identity = ""
             if node.identity is not None:
                 identity = " = %s" % sym2cpp(node.identity)
             callsite_stream.write(
-                "{\n%s __tmpout%s;" % (output_type, identity), sdfg, state_id, node
-            )
+                "{\n%s __tmpout%s;" % (output_type, identity), sdfg, state_id,
+                node)
             callsite_stream.write(loop_header, sdfg, state_id, node)
             end_braces += 1
             use_tmpout = True
@@ -2280,7 +2204,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         input_subset = input_memlet.subset
         for axis in axes:
             callsite_stream.write(
-                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".format(
+                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
+                format(
                     var="__i%d" % axis,
                     begin=input_subset[axis][0],
                     end=input_subset[axis][1] + 1,
@@ -2293,27 +2218,23 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             end_braces += 1
 
         # Generate reduction code
-        credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
+        credtype = "dace::ReductionType::" + str(
+            redtype)[str(redtype).find(".") + 1:]
 
         # Use index expressions
-        outvar = (
-            "__tmpout"
-            if use_tmpout
-            else cpp_array_expr(
-                sdfg,
-                output_memlet,
-                offset=["__o%d" % i for i in range(output_dims)],
-                relative_offset=False,
-            )
-        )
+        outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
+            sdfg,
+            output_memlet,
+            offset=["__o%d" % i for i in range(output_dims)],
+            relative_offset=False,
+        ))
         invar = cpp_array_expr(
-            sdfg, input_memlet, offset=axis_vars, relative_offset=False
-        )
+            sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
         if redtype != types.ReductionType.Custom:
             callsite_stream.write(
-                "dace::wcr_fixed<%s, %s>::reduce_atomic(&%s, %s);"
-                % (credtype, output_type, outvar, invar),
+                "dace::wcr_fixed<%s, %s>::reduce_atomic(&%s, %s);" %
+                (credtype, output_type, outvar, invar),
                 sdfg,
                 state_id,
                 node,
@@ -2337,8 +2258,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         if perf_should_instrument:
             callsite_stream.write(
-                byte_moved_measurement
-                % ("(sizeof(%s) + sizeof(%s))" % (outvar, invar)),
+                byte_moved_measurement % ("(sizeof(%s) + sizeof(%s))" %
+                                          (outvar, invar)),
                 sdfg,
                 state_id,
                 node,
@@ -2358,9 +2279,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             #############################################################
             # Instrumentation: Post-Reduce (in-braces)
             if perf_should_instrument and (
-                (i == end_braces - 1 and not PerfSettings.perf_debug_profile_innermost)
-                or (i == len(axes) and PerfSettings.perf_debug_profile_innermost)
-            ):
+                (i == end_braces - 1
+                 and not PerfSettings.perf_debug_profile_innermost) or
+                (i == len(axes)
+                 and PerfSettings.perf_debug_profile_innermost)):
                 callsite_stream.write(
                     PerfUtils.perf_counter_end_measurement_string(unified_id),
                     sdfg,
@@ -2372,14 +2294,14 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
             callsite_stream.write("}", sdfg, state_id, node)
 
-    def _generate_AccessNode(
-        self, sdfg, dfg, state_id, node, function_stream, callsite_stream
-    ):
+    def _generate_AccessNode(self, sdfg, dfg, state_id, node, function_stream,
+                             callsite_stream):
         state_dfg = sdfg.nodes()[state_id]
 
         if node not in state_dfg.sink_nodes():
             # NOTE: sink nodes are synchronized at the end of a state
-            presynchronize_streams(sdfg, state_dfg, state_id, node, callsite_stream)
+            presynchronize_streams(sdfg, state_dfg, state_id, node,
+                                   callsite_stream)
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
@@ -2393,10 +2315,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 src_node = memlet_path[0].src
                 # Only generate code in case this is the innermost scope
                 # (copies are generated at the inner scope, where both arrays exist)
-                if (
-                    scope_contains_scope(sdict, src_node, node)
-                    and sdict[src_node] != sdict[node]
-                ):
+                if (scope_contains_scope(sdict, src_node, node)
+                        and sdict[src_node] != sdict[node]):
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -2441,7 +2361,7 @@ def _reshape_strides(subset, strides, original_strides, copy_shape):
     ]
 
     reshaped_copy = copy_shape + [ts for ts in subset.tile_sizes if ts != 1]
-    reshaped_copy[: len(copy_shape)] = [
+    reshaped_copy[:len(copy_shape)] = [
         s / ts for s, ts in zip(copy_shape, reduced_tile_sizes)
     ]
 
@@ -2453,8 +2373,7 @@ def _reshape_strides(subset, strides, original_strides, copy_shape):
         elements_remaining = new_strides[i]
         if reduced_tile_sizes[i] != 1:
             new_strides[dims + tiledim] = (
-                elements_remaining / reshaped_copy[dims + tiledim]
-            )
+                elements_remaining / reshaped_copy[dims + tiledim])
             elements_remaining = new_strides[dims + tiledim]
             tiledim += 1
 
@@ -2462,14 +2381,14 @@ def _reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def ndcopy_to_strided_copy(
-    copy_shape,
-    src_shape,
-    src_strides,
-    dst_shape,
-    dst_strides,
-    subset,
-    src_subset,
-    dst_subset,
+        copy_shape,
+        src_shape,
+        src_strides,
+        dst_shape,
+        dst_strides,
+        subset,
+        src_subset,
+        dst_subset,
 ):
     """ Detects situations where an N-dimensional copy can be degenerated into
         a (faster) 1D copy or 2D strided copy. Returns new copy
@@ -2487,14 +2406,16 @@ def ndcopy_to_strided_copy(
     # pointers should be the shape of the copy
     first_src_index = src_subset.at([0] * src_subset.dims(), src_shape)
     first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_shape)
-    last_src_index = src_subset.at([d - 1 for d in src_subset.size()], src_shape)
-    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()], dst_shape)
+    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
+                                   src_shape)
+    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
+                                   dst_shape)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if (
-        tuple(copy_shape) == tuple(src_shape) and tuple(copy_shape) == tuple(dst_shape)
-    ) or (src_copylen == copy_length and dst_copylen == copy_length):
+    if (tuple(copy_shape) == tuple(src_shape)
+            and tuple(copy_shape) == tuple(dst_shape)) or (
+                src_copylen == copy_length and dst_copylen == copy_length):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
@@ -2517,7 +2438,9 @@ def ndcopy_to_strided_copy(
             dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
 
         # Return new copy
-        return [copy_shape[copydim]], [src_strides[srcdim]], [dst_strides[dstdim]]
+        return [copy_shape[copydim]], [src_strides[srcdim]], [
+            dst_strides[dstdim]
+        ]
     else:
         return None
 
@@ -2531,8 +2454,7 @@ def ndslice_cpp(slice, dims, rowmajor=True):
     for i, d in enumerate(slice):
         if isinstance(d, tuple):
             raise SyntaxError(
-                "CPU backend does not yet support ranges as inputs/outputs"
-            )
+                "CPU backend does not yet support ranges as inputs/outputs")
 
         # TODO(later): Use access order
 
@@ -2540,15 +2462,17 @@ def ndslice_cpp(slice, dims, rowmajor=True):
 
         # If not last
         if i < len(slice) - 1:
-            strdims = [str(dim) for dim in dims[i + 1 :]]
-            result.write("*%s + " % "*".join(strdims))  # Multiply by leading dimensions
+            strdims = [str(dim) for dim in dims[i + 1:]]
+            result.write(
+                "*%s + " % "*".join(strdims))  # Multiply by leading dimensions
 
     return result.getvalue()
 
 
-def cpp_offset_expr(
-    d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1
-):
+def cpp_offset_expr(d: data.Data,
+                    subset_in: subsets.Subset,
+                    offset=None,
+                    packed_veclen=1):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
         @param d: The data structure to use for sizes/strides.
@@ -2581,13 +2505,17 @@ def cpp_offset_expr(
     return sym2cpp(index)
 
 
-def cpp_array_expr(
-    sdfg, memlet, with_brackets=True, offset=None, relative_offset=True, packed_veclen=1
-):
+def cpp_array_expr(sdfg,
+                   memlet,
+                   with_brackets=True,
+                   offset=None,
+                   relative_offset=True,
+                   packed_veclen=1):
     """ Converts an Indices/Range object to a C++ array access string. """
     s = memlet.subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o, packed_veclen)
+    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o,
+                                    packed_veclen)
 
     if with_brackets:
         return "%s[%s]" % (memlet.data, offset_cppstr)
@@ -2608,7 +2536,8 @@ def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
 
     # Special call for detected reduction types
     if redtype != types.ReductionType.Custom:
-        credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
+        credtype = "dace::ReductionType::" + str(
+            redtype)[str(redtype).find(".") + 1:]
         reduction_tmpl = "<%s>" % credtype
     else:
         custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr)
@@ -2644,10 +2573,8 @@ def is_write_conflicted(dfg, edge, datanode=None):
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
             return True
-        if (
-            isinstance(in_edges[0].src, nodes.ExitNode)
-            and in_edges[0].src.map.schedule == types.ScheduleType.Sequential
-        ):
+        if (isinstance(in_edges[0].src, nodes.ExitNode) and
+                in_edges[0].src.map.schedule == types.ScheduleType.Sequential):
             return False
         return True
 
@@ -2657,16 +2584,12 @@ def is_write_conflicted(dfg, edge, datanode=None):
     # TODO: This is not perfect (need to take indices into consideration)
     path = dfg.memlet_path(edge)
     for e in path:
-        if (
-            isinstance(e.dst, nodes.ExitNode)
-            and e.dst.map.schedule != types.ScheduleType.Sequential
-        ):
+        if (isinstance(e.dst, nodes.ExitNode)
+                and e.dst.map.schedule != types.ScheduleType.Sequential):
             return True
         # Should never happen (no such thing as write-conflicting reads)
-        if (
-            isinstance(e.src, nodes.EntryNode)
-            and e.src.map.schedule != types.ScheduleType.Sequential
-        ):
+        if (isinstance(e.src, nodes.EntryNode)
+                and e.src.map.schedule != types.ScheduleType.Sequential):
             return True
 
     return False
@@ -2676,8 +2599,7 @@ class LambdaToFunction(ast.NodeTransformer):
     def visit_Lambda(self, node: ast.Lambda):
         newbody = [ast.Return(value=node.body)]
         newnode = ast.FunctionDef(
-            name="_anonymous", args=node.args, body=newbody, decorator_list=[]
-        )
+            name="_anonymous", args=node.args, body=newbody, decorator_list=[])
         newnode = ast.copy_location(newnode, node)
         return ast.fix_missing_locations(newnode)
 
@@ -2702,7 +2624,8 @@ def unparse_cr_split(sdfg, wcr_ast):
     elif isinstance(wcr_ast, str):
         return unparse_cr_split(sdfg, LambdaProperty.from_string(wcr_ast))
     else:
-        raise NotImplementedError("INVALID TYPE OF WCR: " + type(wcr_ast).__name__)
+        raise NotImplementedError("INVALID TYPE OF WCR: " +
+                                  type(wcr_ast).__name__)
 
 
 def unparse_cr(sdfg, wcr_ast):
@@ -2732,11 +2655,10 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         if node.language is not types.Language.CPP:
             raise ValueError(
                 "Global code only supported for C++ tasklets: got {}".format(
-                    node.language
-                )
-            )
+                    node.language))
         function_stream.write(
-            type(node).__properties__["code_global"].to_string(node.code_global),
+            type(node).__properties__["code_global"].to_string(
+                node.code_global),
             sdfg,
             state_id,
             node,
@@ -2747,14 +2669,12 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     if node.language != types.Language.Python:
         # If this code runs on the host and is associated with a CUDA stream,
         # set the stream to a local variable.
-        max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if (
-            max_streams >= 0
-            and not is_devicelevel(sdfg, state_dfg, node)
-            and hasattr(node, "_cuda_stream")
-        ):
+        max_streams = int(
+            Config.get("compiler", "cuda", "max_concurrent_streams"))
+        if (max_streams >= 0 and not is_devicelevel(sdfg, state_dfg, node)
+                and hasattr(node, "_cuda_stream")):
             callsite_stream.write(
-                "cudaStream_t __dace_current_stream = dace::cuda::__streams[%d];"
+                'int __dace_current_stream_id = %d;\ncudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
                 % node._cuda_stream,
                 sdfg,
                 state_id,
@@ -2763,16 +2683,16 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
 
         if node.language != types.Language.CPP:
             raise ValueError(
-                "Only Python or C++ code supported in CPU codegen, got: {}".format(
-                    node.language
-                )
-            )
+                "Only Python or C++ code supported in CPU codegen, got: {}".
+                format(node.language))
         callsite_stream.write(
-            type(node).__properties__["code"].to_string(node.code), sdfg, state_id, node
-        )
+            type(node).__properties__["code"].to_string(node.code), sdfg,
+            state_id, node)
 
-        if hasattr(node, "_cuda_stream") and not is_devicelevel(sdfg, state_dfg, node):
-            synchronize_streams(sdfg, state_dfg, state_id, node, node, callsite_stream)
+        if hasattr(node, "_cuda_stream") and not is_devicelevel(
+                sdfg, state_dfg, node):
+            synchronize_streams(sdfg, state_dfg, state_id, node, node,
+                                callsite_stream)
         return
 
     body = node.code
@@ -2791,10 +2711,11 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
 
     #############################################################
     # Instrumentation: Pre-Tasklet
-    if PerfSettings.perf_tasklets and PerfSettings.perf_enable_instrumentation():
+    if PerfSettings.perf_tasklets and PerfSettings.perf_enable_instrumentation(
+    ):
         callsite_stream.write(
-            "dace_perf::%s __perf_%s;\n"
-            % (PerfUtils.perf_counter_string(node), node.label),
+            "dace_perf::%s __perf_%s;\n" %
+            (PerfUtils.perf_counter_string(node), node.label),
             sdfg,
             state_id,
             node,
@@ -2807,13 +2728,13 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             node,
         )
 
-        callsite_stream.write(
-            "__perf_%s.enterCritical();\n" % node.label, sdfg, state_id, node
-        )
+        callsite_stream.write("__perf_%s.enterCritical();\n" % node.label,
+                              sdfg, state_id, node)
 
     #############################################################
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id, node)
+    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg,
+                          state_id, node)
     for stmt in body:
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
@@ -2830,9 +2751,11 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
 
     #############################################################
     # Instrumentation: Post-Tasklet
-    if PerfSettings.perf_tasklets and PerfSettings.perf_enable_instrumentation():
+    if PerfSettings.perf_tasklets and PerfSettings.perf_enable_instrumentation(
+    ):
         callsite_stream.write(
-            "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label, node.label),
+            "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label,
+                                                        node.label),
             sdfg,
             state_id,
             node,
@@ -2850,14 +2773,12 @@ def is_array_stream_view(sdfg, dfg, node):
     for e in dfg.in_edges(node):
         src_node = dfg.memlet_path(e)[0].src
         if isinstance(src_node, nodes.AccessNode) and isinstance(
-            src_node.desc(sdfg), data.Array
-        ):
+                src_node.desc(sdfg), data.Array):
             source_paths.append(src_node)
     for e in dfg.out_edges(node):
         sink_node = dfg.memlet_path(e)[-1].dst
         if isinstance(sink_node, nodes.AccessNode) and isinstance(
-            sink_node.desc(sdfg), data.Array
-        ):
+                sink_node.desc(sdfg), data.Array):
             sink_paths.append(sink_node)
 
     # Special case: stream can be represented as a view of an array
@@ -2867,7 +2788,8 @@ def is_array_stream_view(sdfg, dfg, node):
         # Only works if the stream itself is not an array of streams
         if list(node.desc(sdfg).shape) == [1]:
             node.desc(sdfg).sink = arrnode.data  # For memlet generation
-            arrnode.desc(sdfg).src = node.data  # TODO: Move src/sink to node, not array
+            arrnode.desc(
+                sdfg).src = node.data  # TODO: Move src/sink to node, not array
             return True
     return False
 
@@ -2921,8 +2843,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # This is a DaCe shift, omit it
         if isinstance(node.value, ast.BinOp):
             if isinstance(node.value.op, ast.LShift) or isinstance(
-                node.value.op, ast.RShift
-            ):
+                    node.value.op, ast.RShift):
                 return None
         return self.generic_visit(node)
 
@@ -2934,9 +2855,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        raise SyntaxError(
-            "Augmented assignments (e.g. +=) not allowed on " + "array memlets"
-        )
+        raise SyntaxError("Augmented assignments (e.g. +=) not allowed on " +
+                          "array memlets")
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
@@ -2957,13 +2877,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cppunparse.cppunparse(
                                     value, expr_semicolon=False)))
                     else:
-                        newnode = ast.Name(
-                            id="__%s.write(%s);"
-                            % (
-                                target,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            )
-                        )
+                        newnode = ast.Name(id="__%s.write(%s);" % (
+                            target,
+                            cppunparse.cppunparse(value, expr_semicolon=False),
+                        ))
 
                     return ast.copy_location(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
@@ -2989,17 +2906,13 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     "__" + target,
                     cppunparse.cppunparse(value, expr_semicolon=False),
                     indices=subscript,
-                )
-            )
+                ))
         else:
-            newnode = ast.Name(
-                id="__%s.write(%s, %s);"
-                % (
-                    target,
-                    cppunparse.cppunparse(value, expr_semicolon=False),
-                    subscript,
-                )
-            )
+            newnode = ast.Name(id="__%s.write(%s, %s);" % (
+                target,
+                cppunparse.cppunparse(value, expr_semicolon=False),
+                subscript,
+            ))
 
         return ast.copy_location(newnode, node)
 
@@ -3018,7 +2931,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             subscript = unparse(slice)
 
         if target in self.constants:
-            slice_str = ndslice_cpp(subscript.split(", "), self.constants[target].shape)
+            slice_str = ndslice_cpp(
+                subscript.split(", "), self.constants[target].shape)
             newnode = ast.parse("%s[%s]" % (target, slice_str)).body[0].value
         else:
             newnode = ast.parse("__%s(%s)" % (target, subscript)).body[0].value
@@ -3046,13 +2960,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     # Replace default modules (e.g., math) with dace::math::
     def visit_Attribute(self, node):
         attrname = rname(node)
-        module_name = attrname[: attrname.rfind(".")]
-        func_name = attrname[attrname.rfind(".") + 1 :]
+        module_name = attrname[:attrname.rfind(".")]
+        func_name = attrname[attrname.rfind(".") + 1:]
         if module_name in types._ALLOWED_MODULES:
             cppmodname = types._ALLOWED_MODULES[module_name]
             return ast.copy_location(
-                ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node
-            )
+                ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
         return self.generic_visit(node)
 
 
@@ -3086,8 +2999,8 @@ class StructInitializer(ExtNodeTransformer):
                 tname = node.func.id[len('__DAPPSTRUCT_'):]
 
             return ast.copy_location(
-                ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load), node
-            )
+                ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load),
+                node)
 
         return self.generic_visit(node)
 
@@ -3114,7 +3027,8 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
+def synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
+                        callsite_stream):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
@@ -3122,14 +3036,14 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (
-                isinstance(edge.dst, nodes.AccessNode)
-                and edge.dst._cuda_stream != node._cuda_stream
-            ):
+            if (isinstance(edge.dst, nodes.AccessNode)
+                    and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
-cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);""".format(
-                        ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
+cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
+                    .format(
+                        ev=edge._cuda_event
+                        if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream,
                     ),
@@ -3153,8 +3067,10 @@ cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{e
                 elif e.dst._cuda_stream != node._cuda_stream:
                     callsite_stream.write(
                         """cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
-    cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);""".format(
-                            ev=e._cuda_event if hasattr(e, "_cuda_event") else 0,
+    cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
+                        .format(
+                            ev=e._cuda_event
+                            if hasattr(e, "_cuda_event") else 0,
                             src_stream=cudastream,
                             dst_stream=e.dst._cuda_stream,
                         ),
