@@ -8,6 +8,7 @@ from dace.graph import nodes, nxutil
 from dace.sdfg import SDFGState
 from dace.transformation import pattern_matching as pm
 from dace.properties import ShapeProperty
+from dace.config import Config
 
 
 class RedundantArray(pm.Transformation):
@@ -15,14 +16,13 @@ class RedundantArray(pm.Transformation):
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
 
-    _in_array = nodes.AccessNode('_')
-    _out_array = nodes.AccessNode('_')
+    _in_array = nodes.AccessNode("_")
+    _out_array = nodes.AccessNode("_")
 
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArray._in_array,
-                                   RedundantArray._out_array),
+            nxutil.node_path_graph(RedundantArray._in_array, RedundantArray._out_array)
         ]
 
     @staticmethod
@@ -45,19 +45,23 @@ class RedundantArray(pm.Transformation):
         # Find occurrences in this and other states
         occurrences = []
         for state in sdfg.nodes():
-            occurrences.extend([
-                n for n in state.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == in_array.desc(sdfg)
-            ])
+            occurrences.extend(
+                [
+                    n
+                    for n in state.nodes()
+                    if isinstance(n, nodes.AccessNode)
+                    and n.desc(sdfg) == in_array.desc(sdfg)
+                ]
+            )
 
         if len(occurrences) > 1:
             return False
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
-        if (len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape)
-                or any(i != o for i, o in zip(
-                    in_array.desc(sdfg).shape,
-                    out_array.desc(sdfg).shape))):
+        if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
+            i != o
+            for i, o in zip(in_array.desc(sdfg).shape, out_array.desc(sdfg).shape)
+        ):
             return False
 
         return True
@@ -66,7 +70,7 @@ class RedundantArray(pm.Transformation):
     def match_to_str(graph, candidate):
         in_array = graph.nodes()[candidate[RedundantArray._in_array]]
 
-        return 'Remove ' + str(in_array)
+        return "Remove " + str(in_array)
 
     def apply(self, sdfg):
         def gnode(nname):
@@ -89,6 +93,16 @@ class RedundantArray(pm.Transformation):
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
+        if Config.get_bool("debugprint"):
+            RedundantArray._arrays_removed += 1
+
+    @staticmethod
+    def print_debuginfo():
+        print(
+            "Automatically removed {} redundant arrays using RedundantArray transform.".format(
+                RedundantArray._arrays_removed
+            )
+        )
 
     def modifies_graph(self):
         return True

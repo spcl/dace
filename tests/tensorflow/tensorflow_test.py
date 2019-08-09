@@ -7,8 +7,6 @@ except ImportError:
     exit(0)
 
 import numpy as np
-
-import dace
 from dace.frontend.tensorflow import TFSession
 
 if __name__ == '__main__':

@@ -348,24 +348,18 @@ def ptrtonumpy(ptr, inner_ctype, shape):
         ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
+def _atomic_counter_generator():
+    ctr = 0
+    while True:
+        ctr += 1
+        yield ctr
+
+
 class callback(typeclass):
-    """
-        This is a new type in dace for creating callbacks to python functions. This will allow
-        blackboxes to be put in the tasklets directly. The callback function should be side-effect
-        free so as to not violate the tasklet semantics in the SDFG. DACE will not parse the
-        contents of this function.
-
-        Signature is dace.callback(return_type, *input_types)
-
-        @param return_type: The first type passed in to the definition is interpreted as the return
-                            type. It is necessary to pass "None" in case the callback function
-                            returns nothing. The return type can be a dace primitive data-type or None.
-
-        @param input_types: These are the types of all the inputs to the function. These can be
-                            dace arrays or dace primitive-types.
-    """
+    """ Looks like dace.callback([None, <some_native_type>], *types)"""
 
     def __init__(self, return_type, *variadic_args):
+        self.uid = next(_atomic_counter_generator())
         from dace import data
         if isinstance(return_type, data.Array):
             raise TypeError(
@@ -448,13 +442,16 @@ class callback(typeclass):
         return partial(trampoline, pyfunc, arraypos, types_and_sizes)
 
     def __hash__(self):
-        return hash((self.return_type, *self.input_types))
+        return hash((self.uid, self.return_type, *self.input_types))
 
     def __str__(self):
         return "dace.callback"
 
     def __repr__(self):
         return "dace.callback"
+
+    def __eq__(self, other):
+        return self.uid == other.uid
 
 
 int8 = typeclass(numpy.int8)

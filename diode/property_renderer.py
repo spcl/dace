@@ -26,8 +26,8 @@ class PropertyRenderer:
         self.screen = Gdk.Screen.get_default()
         self.gtk_provider = Gtk.CssProvider()
         self.gtk_context = Gtk.StyleContext()
-        
-        # Here we store the last called render function, so if there is any update we can call it again  
+
+        # Here we store the last called render function, so if there is any update we can call it again
         self.current_render_func = None
         self.current_render_args = None
 
@@ -227,7 +227,8 @@ class PropertyRenderer:
 
     def memlet_props(self, sdfg, memlet, tail, head, label):
         self.current_render_func = self.memlet_props
-        self.current_render_args = dict(sdfg=sdfg, memlet=memlet, tail=tail, head=head, label=label)
+        self.current_render_args = dict(
+            sdfg=sdfg, memlet=memlet, tail=tail, head=head, label=label)
         properties = memlet.properties()
         for rownum, (prop, value) in enumerate(properties):
             name_label = Gtk.Label()
@@ -277,7 +278,8 @@ class PropertyRenderer:
         if pattern_match is None:
             return
         self.current_render_func = self.pattern_props
-        self.current_render_args = dict(optgraph=optgraph, nodeid=nodeid, pattern_match=pattern_match)
+        self.current_render_args = dict(
+            optgraph=optgraph, nodeid=nodeid, pattern_match=pattern_match)
         properties = pattern_match.properties()
         for rownum, (prop, value) in enumerate(properties):
             name_label = Gtk.Label()
@@ -298,8 +300,10 @@ class PropertyRenderer:
 
     def render_properties_for_node(self, sdfg, stateid, nodeid):
         self.current_render_func = self.render_properties_for_node
-        self.current_render_args = dict(sdfg=sdfg, stateid=stateid, nodeid=nodeid)
-        self.propertylabel.set_text("Node Properties: (node "+nodeid+" in state "+stateid+")")
+        self.current_render_args = dict(
+            sdfg=sdfg, stateid=stateid, nodeid=nodeid)
+        self.propertylabel.set_text("Node Properties: (node " + nodeid +
+                                    " in state " + stateid + ")")
         self.clear_properties()
         combined_nodeid = "s" + str(stateid) + "_" + str(nodeid)
         self.node_props(sdfg, combined_nodeid)
@@ -307,7 +311,8 @@ class PropertyRenderer:
     def render_properties_for_state(self, sdfg, stateid):
         self.current_render_func = self.render_properties_for_state
         self.current_render_args = dict(sdfg=sdfg, stateid=stateid)
-        self.propertylabel.set_text("State Properties: (state "+stateid+")")
+        self.propertylabel.set_text("State Properties: (state " + stateid +
+                                    ")")
         self.clear_properties()
         self.state_props(sdfg, stateid)
 

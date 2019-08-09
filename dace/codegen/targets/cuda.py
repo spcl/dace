@@ -577,7 +577,8 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                     types.StorageType.GPU_Global, types.StorageType.CPU_Pinned
                 ] or dst_storage in [
                     types.StorageType.GPU_Global, types.StorageType.CPU_Pinned
-                ])):
+                ]) and not (src_storage in cpu_storage_types
+                            and dst_storage in cpu_storage_types)):
             src_location = 'Device' if src_storage == types.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == types.StorageType.GPU_Global else 'Host'
 
@@ -628,7 +629,6 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
                 self._cpu_codegen.memlet_copy_to_absolute_strides(
                     sdfg, memlet, src_node, dst_node))
-
             dims = len(copy_shape)
 
             # Handle unsupported copy types
@@ -924,6 +924,18 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
+
+        # Pointers to callback functions cannot be used within CUDA kernels
+        syms_copy = {}
+        for _n, _s in syms.items():
+            try:
+                if 'callback' in str(_s.dtype.ctype):
+                    continue
+                else:
+                    syms_copy[_n] = _s
+            except AttributeError:
+                syms_copy[_n] = _s
+        syms = syms_copy
         freesyms = {
             k: v
             for k, v in syms.items()
@@ -1266,8 +1278,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 # Optimize conditions if they are always true
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if i >= 3 or ((dsym_end[i] < maxel) != False and (
-                    (dsym_end[i] % self._block_dims[i]) != 0) == True):
+                if (i >= 3
+                        or ((dsym_end[i] < maxel) != False and
+                            ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                        or (self._block_dims[i] > maxel) == True):
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))

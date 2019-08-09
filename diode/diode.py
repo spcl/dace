@@ -657,8 +657,6 @@ class DIODE:
         self.update_generated_code()
         self.propren.update()
 
-
-
     def Run(self, fail_on_nonzero=None):
         if self.optimization_graph.get_current() == None:
             return False

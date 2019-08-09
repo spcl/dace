@@ -264,7 +264,7 @@ class CompiledSDFG(object):
              atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
             for arg, atype in callparams)
 
-       # Replace arrays with their pointers
+        # Replace arrays with their pointers
         newargs = tuple(
             (ctypes.c_void_p(arg.__array_interface__['data'][0]),
              atype) if (isinstance(arg, ndarray.ndarray)
