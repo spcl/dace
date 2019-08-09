@@ -455,8 +455,7 @@ class TFSession:
             node_types = {}
             for state in self.graph.nodes():
                 for node in state.nodes():
-                    if (state.in_degree(node) + state.out_degree(node) == 0
-                            and node.label not in total_output_names):
+                    if state.in_degree(node) + state.out_degree(node) == 0:
                         state.remove_node(node)
                         if node.label in self.constDict:
                             del self.constDict[node.label]
