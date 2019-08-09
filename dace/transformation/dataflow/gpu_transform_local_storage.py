@@ -42,9 +42,13 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         @see: GPUTransformMap
     """
 
+    _arrays_removed = 0
+    _maps_transformed = 0
+
     fullcopy = Property(
-        desc="Copy whole arrays rather than used subset", dtype=bool, default=False
-    )
+        desc="Copy whole arrays rather than used subset",
+        dtype=bool,
+        default=False)
 
     nested_seq = Property(
         desc="Makes nested code semantically-equivalent to single-core code,"
@@ -67,7 +71,8 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         if expr_index == 0:
-            map_entry = graph.nodes()[candidate[GPUTransformLocalStorage._map_entry]]
+            map_entry = graph.nodes()[candidate[
+                GPUTransformLocalStorage._map_entry]]
             candidate_map = map_entry.map
 
             # Disallow GPUTransform on nested maps in strict mode
@@ -76,22 +81,20 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     return False
 
             # Map schedules that are disallowed to transform to GPUs
-            if (
-                candidate_map.schedule == types.ScheduleType.MPI
-                or candidate_map.schedule == types.ScheduleType.GPU_Device
-                or candidate_map.schedule == types.ScheduleType.GPU_ThreadBlock
-                or candidate_map.schedule == types.ScheduleType.Sequential
-            ):
+            if (candidate_map.schedule == types.ScheduleType.MPI
+                    or candidate_map.schedule == types.ScheduleType.GPU_Device
+                    or candidate_map.schedule ==
+                    types.ScheduleType.GPU_ThreadBlock or
+                    candidate_map.schedule == types.ScheduleType.Sequential):
                 return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry
             while current_node != None:
-                if (
-                    current_node.map.schedule == types.ScheduleType.GPU_Device
-                    or current_node.map.schedule == types.ScheduleType.GPU_ThreadBlock
-                ):
+                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                        or current_node.map.schedule ==
+                        types.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -99,11 +102,10 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
-                if (
-                    isinstance(node, nodes.AccessNode)
-                    and node.desc(sdfg).storage != types.StorageType.Default
-                    and node.desc(sdfg).storage != types.StorageType.Register
-                ):
+                if (isinstance(node, nodes.AccessNode) and
+                        node.desc(sdfg).storage != types.StorageType.Default
+                        and
+                        node.desc(sdfg).storage != types.StorageType.Register):
                     return False
 
             return True
@@ -111,21 +113,18 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
 
             # Map schedules that are disallowed to transform to GPUs
-            if (
-                reduce.schedule == types.ScheduleType.MPI
-                or reduce.schedule == types.ScheduleType.GPU_Device
-                or reduce.schedule == types.ScheduleType.GPU_ThreadBlock
-            ):
+            if (reduce.schedule == types.ScheduleType.MPI
+                    or reduce.schedule == types.ScheduleType.GPU_Device
+                    or reduce.schedule == types.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
             while current_node != None:
-                if (
-                    current_node.map.schedule == types.ScheduleType.GPU_Device
-                    or current_node.map.schedule == types.ScheduleType.GPU_ThreadBlock
-                ):
+                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                        or current_node.map.schedule ==
+                        types.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -134,19 +133,23 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         if GPUTransformLocalStorage._reduce in candidate:
-            return str(graph.nodes()[candidate[GPUTransformLocalStorage._reduce]])
+            return str(
+                graph.nodes()[candidate[GPUTransformLocalStorage._reduce]])
         else:
-            map_entry = graph.nodes()[candidate[GPUTransformLocalStorage._map_entry]]
+            map_entry = graph.nodes()[candidate[
+                GPUTransformLocalStorage._map_entry]]
             return str(map_entry)
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         if self.expr_index == 0:
-            cnode = graph.nodes()[self.subgraph[GPUTransformLocalStorage._map_entry]]
+            cnode = graph.nodes()[self.subgraph[
+                GPUTransformLocalStorage._map_entry]]
             node_schedprop = cnode.map
             exit_nodes = graph.exit_nodes(cnode)
         else:
-            cnode = graph.nodes()[self.subgraph[GPUTransformLocalStorage._reduce]]
+            cnode = graph.nodes()[self.subgraph[
+                GPUTransformLocalStorage._reduce]]
             node_schedprop = cnode
             exit_nodes = [cnode]
 
@@ -191,7 +194,8 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                 out_arrays_to_clone.add((data_node, e.data))
 
         if Config.get_bool("debugprint"):
-            GPUTransformLocalStorage._arrays_removed += len(in_arrays_to_clone) + len(out_arrays_to_clone)
+            GPUTransformLocalStorage._arrays_removed += len(
+                in_arrays_to_clone) + len(out_arrays_to_clone)
 
         # Second, create a GPU clone of each array
         # TODO: Overapproximate union of memlets
@@ -233,8 +237,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     except:
                         full_shape.append(size)
                 actual_dims = [
-                    idx
-                    for idx, r in enumerate(full_shape)
+                    idx for idx, r in enumerate(full_shape)
                     if not (isinstance(r, int) and r == 1)
                 ]
                 if len(actual_dims) == 0:  # abort
@@ -257,8 +260,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         storage=types.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
                         access_order=tuple(
-                            [array.access_order[d] for d in actual_dims]
-                        ),
+                            [array.access_order[d] for d in actual_dims]),
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
@@ -301,8 +303,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     except:
                         full_shape.append(size)
                 actual_dims = [
-                    idx
-                    for idx, r in enumerate(full_shape)
+                    idx for idx, r in enumerate(full_shape)
                     if not (isinstance(r, int) and r == 1)
                 ]
                 if len(actual_dims) == 0:  # abort
@@ -325,8 +326,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         storage=types.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
                         access_order=tuple(
-                            [array.access_order[d] for d in actual_dims]
-                        ),
+                            [array.access_order[d] for d in actual_dims]),
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
@@ -367,17 +367,19 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 newsubset[ind] -= r[0]
                         if len(lost_dims) == len(edge.data.subset):
                             lost_dims.pop()
-                            newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
+                            newmemlet.subset = type(
+                                edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)(
-                                [r for r in newsubset if r is not None]
-                            )
+                                [r for r in newsubset if r is not None])
 
-                    graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
+                    graph.add_edge(node, None, edge.dst, edge.dst_conn,
+                                   newmemlet)
 
                     for e in graph.bfs_edges(edge.dst, reverse=False):
                         parent, _, _child, _, memlet = e
-                        if parent != edge.dst and not in_scope(graph, parent, edge.dst):
+                        if parent != edge.dst and not in_scope(
+                                graph, parent, edge.dst):
                             break
                         if memlet.data != edge.data.data:
                             continue
@@ -408,14 +410,15 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(
-                                [r for r in newsubset if r is not None]
-                            )
+                                [r for r in newsubset if r is not None])
                         memlet.data = node.data
 
                     if self.fullcopy:
-                        edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
+                        edge.data.subset = sbs.Range.from_array(
+                            node.desc(sdfg))
                     edge.data.other_subset = newmemlet.subset
-                    graph.add_edge(edge.src, edge.src_conn, node, None, edge.data)
+                    graph.add_edge(edge.src, edge.src_conn, node, None,
+                                   edge.data)
                     graph.remove_edge(edge)
 
         for array_name, node in out_cloned_arraynodes.items():
@@ -448,13 +451,14 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 newsubset[ind] -= r[0]
                         if len(lost_dims) == len(edge.data.subset):
                             lost_dims.pop()
-                            newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
+                            newmemlet.subset = type(
+                                edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)(
-                                [r for r in newsubset if r is not None]
-                            )
+                                [r for r in newsubset if r is not None])
 
-                    graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
+                    graph.add_edge(edge.src, edge.src_conn, node, None,
+                                   newmemlet)
 
                     end_node = graph.scope_dict()[edge.src]
                     for e in graph.bfs_edges(edge.src, reverse=True):
@@ -465,7 +469,8 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                             continue
                         path = graph.memlet_path(e)
                         if not isinstance(path[0].dst, nodes.CodeNode):
-                            if in_path(path, e, nodes.EntryNode, forward=False):
+                            if in_path(
+                                    path, e, nodes.EntryNode, forward=False):
                                 if isinstance(parent, nodes.CodeNode):
                                     # Output edge
                                     break
@@ -490,15 +495,16 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(
-                                [r for r in newsubset if r is not None]
-                            )
+                                [r for r in newsubset if r is not None])
                         memlet.data = node.data
 
                     edge.data.wcr = None
                     if self.fullcopy:
-                        edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
+                        edge.data.subset = sbs.Range.from_array(
+                            node.desc(sdfg))
                     edge.data.other_subset = newmemlet.subset
-                    graph.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
+                    graph.add_edge(node, None, edge.dst, edge.dst_conn,
+                                   edge.data)
                     graph.remove_edge(edge)
 
         # Fourth, replace memlet arrays as necessary
@@ -513,8 +519,10 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
 
     @staticmethod
     def print_debuginfo():
-        print("Automatically cloned {} arrays for the GPU.".format(GPUTransformLocalStorage._arrays_removed))
-        print("Automatically changed {} maps for the GPU.".format(GPUTransformLocalStorage._maps_transformed))
+        print("Automatically cloned {} arrays for the GPU.".format(
+            GPUTransformLocalStorage._arrays_removed))
+        print("Automatically changed {} maps for the GPU.".format(
+            GPUTransformLocalStorage._maps_transformed))
 
 
 pattern_matching.Transformation.register_pattern(GPUTransformLocalStorage)

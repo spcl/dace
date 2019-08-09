@@ -15,26 +15,26 @@ class TensorflowRedundantArray(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         to remove ReadVariableOps and control dependencies. """
 
+    _arrays_removed = 0
     _in_array = nodes.AccessNode("_")
     _out_array = nodes.AccessNode("_")
 
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
-                TensorflowRedundantArray._in_array, TensorflowRedundantArray._out_array
-            )
+            nxutil.node_path_graph(TensorflowRedundantArray._in_array,
+                                   TensorflowRedundantArray._out_array)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         in_array = graph.nodes()[candidate[TensorflowRedundantArray._in_array]]
-        out_array = graph.nodes()[candidate[TensorflowRedundantArray._out_array]]
+        out_array = graph.nodes()[candidate[
+            TensorflowRedundantArray._out_array]]
 
         # Just to be sure, check for the OP name in the out array
-        if not (
-            "ReadVariable" in out_array.data or "control_dependency" in out_array.data
-        ):
+        if not ("ReadVariable" in out_array.data
+                or "control_dependency" in out_array.data):
             return False
 
         # Make sure that the candidate is a transient variable
@@ -46,17 +46,18 @@ class TensorflowRedundantArray(pm.Transformation):
             return False
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
-        if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
-            i != o
-            for i, o in zip(in_array.desc(sdfg).shape, out_array.desc(sdfg).shape)
-        ):
+        if len(in_array.desc(sdfg).shape) != len(
+                out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
+                    in_array.desc(sdfg).shape,
+                    out_array.desc(sdfg).shape)):
             return False
 
         return True
 
     @staticmethod
     def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[TensorflowRedundantArray._out_array]]
+        out_array = graph.nodes()[candidate[
+            TensorflowRedundantArray._out_array]]
 
         return "Remove " + str(out_array)
 
@@ -100,10 +101,8 @@ class TensorflowRedundantArray(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} tensorflow redundant arrays using TensorflowRedundantArray transform.".format(
-                TensorflowRedundantArray._arrays_removed
-            )
-        )
+            "Automatically removed {} tensorflow redundant arrays using TensorflowRedundantArray transform.".
+            format(TensorflowRedundantArray._arrays_removed))
 
 
 pm.Transformation.register_pattern(TensorflowRedundantArray)

@@ -18,6 +18,8 @@ class GPUTransformMap(pattern_matching.Transformation):
         outside it, generating CPU<->GPU memory copies automatically.
     """
 
+    _maps_transformed = 0
+
     fullcopy = Property(
         desc="Copy whole arrays rather than used subset",
         dtype=bool,
@@ -136,7 +138,8 @@ class GPUTransformMap(pattern_matching.Transformation):
             if data_node.desc(sdfg).storage not in gpu_storage_types:
                 out_arrays_to_clone.add(data_node)
         if Config.get_bool("debugprint"):
-            GPUTransformMap._arrays_removed += len(in_arrays_to_clone) + len(out_arrays_to_clone)
+            GPUTransformMap._arrays_removed += len(in_arrays_to_clone) + len(
+                out_arrays_to_clone)
 
         # Second, create a GPU clone of each array
         cloned_arrays = {}
@@ -229,7 +232,10 @@ class GPUTransformMap(pattern_matching.Transformation):
 
     @staticmethod
     def print_debuginfo():
-        print("Automatically cloned {} arrays for the GPU.".format(GPUTransformMap._arrays_removed))
-        print("Automatically changed {} maps for the GPU.".format(GPUTransformMap._maps_transformed))
+        print("Automatically cloned {} arrays for the GPU.".format(
+            GPUTransformMap._arrays_removed))
+        print("Automatically changed {} maps for the GPU.".format(
+            GPUTransformMap._maps_transformed))
+
 
 pattern_matching.Transformation.register_pattern(GPUTransformMap)
