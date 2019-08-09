@@ -75,15 +75,16 @@ def parse_dace_program(f, argtypes, global_vars, modules):
     local_finder.visit(src_ast)
     local_vars = local_finder.locals
 
-    # 1. Inline all "dace.call"ed functions
+    # 1. Inline all "dace.call"ed functions and structs
+    src_ast = StructTransformer(global_vars).visit(src_ast)
     inliner = FunctionInliner(global_vars, modules, local_vars)
-    inliner.visit(src_ast)
+    src_ast = inliner.visit(src_ast)
 
     # 2. resolve all the symbols in the AST
     allowed_globals = global_vars.copy()
     allowed_globals.update(argtypes)
     symresolver = SymbolResolver(allowed_globals)
-    symresolver.visit(src_ast)
+    src_ast = symresolver.visit(src_ast)
 
     # 3. Parse the DaCe program to a hierarchical dependency representation
     ast_parser = ParseDaCe(src_file, src_line, argtypes, global_vars, modules,
@@ -109,6 +110,40 @@ class MemletRemover(ExtNodeTransformer):
                     node.value.op, ast.RShift):
                 return None
         return self.generic_visit(node)
+
+
+class StructTransformer(ast.NodeTransformer):
+    """ A Python AST transformer that replaces `Call`s to create structs with
+        the custom StructInitializer AST node. """
+
+    def __init__(self, gvars):
+        super().__init__()
+        self._structs = {
+            k: v
+            for k, v in gvars.items() if isinstance(v, types.struct)
+        }
+
+    def visit_Call(self, node: ast.Call):
+        # Struct initializer
+        name = rname(node.func)
+        if name not in self._structs:
+            return self.generic_visit(node)
+
+        # Parse name and fields
+        struct = self._structs[name]
+        name = struct.name
+        fields = {rname(arg.arg): arg.value for arg in node.keywords}
+        if tuple(fields.keys()) != tuple(struct.fields.keys()):
+            raise SyntaxError('Mismatch in fields in struct definition')
+
+        # Create custom node
+        #new_node = astutils.StructInitializer(name, fields)
+        #return ast.copy_location(new_node, node)
+
+        node.func = ast.copy_location(
+            ast.Name(id='__DAPPSTRUCT_' + name, ctx=ast.Load()), node.func)
+
+        return node
 
 
 class ModuleInliner(ExtNodeTransformer):

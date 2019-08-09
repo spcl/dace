@@ -161,3 +161,8 @@ sdaccel_timeline_*
 *~
 
 perfdata.db
+
+.idea/
+_dotgraphs/
+
+/dace/codegen/cmake-build-debug/

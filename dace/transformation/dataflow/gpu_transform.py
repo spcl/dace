@@ -7,6 +7,7 @@ from dace import data, types, sdfg as sd, subsets as sbs, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
+from dace.config import Config
 
 
 @make_properties
@@ -16,6 +17,9 @@ class GPUTransformMap(pattern_matching.Transformation):
         Converts a single map to a GPU-scheduled map and creates GPU arrays
         outside it, generating CPU<->GPU memory copies automatically.
     """
+
+    _maps_transformed = 0
+    _arrays_removed = 0
 
     fullcopy = Property(
         desc="Copy whole arrays rather than used subset",
@@ -108,6 +112,8 @@ class GPUTransformMap(pattern_matching.Transformation):
 
         # Change schedule
         node_schedprop._schedule = types.ScheduleType.GPU_Device
+        if Config.get_bool("debugprint"):
+            GPUTransformMap._maps_transformed += 1
 
         gpu_storage_types = [
             types.StorageType.GPU_Global,
@@ -132,6 +138,9 @@ class GPUTransformMap(pattern_matching.Transformation):
             data_node = sd.find_output_arraynode(graph, e)
             if data_node.desc(sdfg).storage not in gpu_storage_types:
                 out_arrays_to_clone.add(data_node)
+        if Config.get_bool("debugprint"):
+            GPUTransformMap._arrays_removed += len(in_arrays_to_clone) + len(
+                out_arrays_to_clone)
 
         # Second, create a GPU clone of each array
         cloned_arrays = {}
@@ -221,6 +230,13 @@ class GPUTransformMap(pattern_matching.Transformation):
 
     def modifies_graph(self):
         return True
+
+    @staticmethod
+    def print_debuginfo():
+        print("Automatically cloned {} arrays for the GPU.".format(
+            GPUTransformMap._arrays_removed))
+        print("Automatically changed {} maps for the GPU.".format(
+            GPUTransformMap._maps_transformed))
 
 
 pattern_matching.Transformation.register_pattern(GPUTransformMap)

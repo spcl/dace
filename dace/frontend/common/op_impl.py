@@ -540,7 +540,8 @@ def matrix_transpose_cublas(state: State,
                             B_dst: Node,
                             B_node: DNode,
                             alpha: str = 'const_pone',
-                            label: str = None):
+                            label: str = None,
+                            conjugate: bool = False):
     """ Adds a matrix transposition operation to an existing SDFG state,
         using CUBLAS as the implementation.
         @param A_src: The source node from which the memlet of matrix A is
@@ -566,6 +567,8 @@ def matrix_transpose_cublas(state: State,
     if A.dtype.type != B.dtype.type:
         raise ValidationError('Type mismatch for transpose')
 
+    mode = 'C' if conjugate else 'T'
+
     # Create tasklet
     tasklet = state.add_tasklet(
         name=label + '_' + 'tasklet',
@@ -576,7 +579,7 @@ def matrix_transpose_cublas(state: State,
         cublasSetStream(handle, __dace_current_stream);
         cublasStatus_t status = cublas{btype}geam(
             handle,
-            CUBLAS_OP_T, CUBLAS_OP_N,
+            CUBLAS_OP_{mode}, CUBLAS_OP_N,
             {cols}, {rows},
             {alpha},
             ({cutype}*)a, {astride},
@@ -585,6 +588,7 @@ def matrix_transpose_cublas(state: State,
             ({cutype}*)b, {bstride}
         );
         '''.format(
+            mode=mode,
             btype=_to_blastype(A.dtype.type),
             cutype=_to_cudatype(A.dtype.type),
             rows=A.shape[1],

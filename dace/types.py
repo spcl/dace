@@ -233,7 +233,7 @@ class typeclass(object):
 
         if isinstance(s, list) or isinstance(s, tuple):
             return data.Array(self, tuple(s))
-        return data.Array(self, (s,))
+        return data.Array(self, (s, ))
 
     def __repr__(self):
         return self.ctype
@@ -285,6 +285,10 @@ class struct(typeclass):
         self.materialize_func = None
         self._parse_field_and_types(**fields_and_types)
 
+    @property
+    def fields(self):
+        return self._data
+
     def _parse_field_and_types(self, **fields_and_types):
         self._data = dict()
         self._length = dict()
@@ -296,8 +300,8 @@ class struct(typeclass):
                     raise TypeError("Only pointer types may have a length.")
                 if l not in fields_and_types.keys():
                     raise ValueError(
-                        "Length {} not a field of struct {}".format(l, self.name)
-                    )
+                        "Length {} not a field of struct {}".format(
+                            l, self.name))
                 self._data[k] = t
                 self._length[k] = l
                 self.bytes += t.bytes
@@ -314,13 +318,14 @@ class struct(typeclass):
         for k, v in self._data.items():
             if isinstance(v, pointer):
                 fields.append(
-                    (k, ctypes.c_void_p)
-                )  # ctypes.POINTER(_FFI_CTYPES[v.type])))
+                    (k,
+                     ctypes.c_void_p))  # ctypes.POINTER(_FFI_CTYPES[v.type])))
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
         fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
-        struct_class = type("NewStructClass", (ctypes.Structure,), {"_fields_": fields})
+        struct_class = type("NewStructClass", (ctypes.Structure, ),
+                            {"_fields_": fields})
         return struct_class
 
     def emit_definition(self):
@@ -328,12 +333,10 @@ class struct(typeclass):
 {types}
 }};""".format(
             name=self.name,
-            types="\n".join(
-                [
-                    "    %s %s;" % (t.ctype, tname)
-                    for tname, t in sorted(self._data.items())
-                ]
-            ),
+            types="\n".join([
+                "    %s %s;" % (t.ctype, tname)
+                for tname, t in sorted(self._data.items())
+            ]),
         )
 
 
@@ -342,31 +345,26 @@ def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
     import numpy as np
     return np.ctypeslib.as_array(
-        ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape
-    )
+        ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
+
+
+def _atomic_counter_generator():
+    ctr = 0
+    while True:
+        ctr += 1
+        yield ctr
 
 
 class callback(typeclass):
-    """
-        This is a new type in dace for creating callbacks to python functions. This will allow
-        blackboxes to be put in the tasklets directly. The callback function should be side-effect
-        free so as to not violate the tasklet semantics in the SDFG. DACE will not parse the
-        contents of this function.
-
-        Signature is dace.callback(return_type, *input_types)
-
-        @param return_type: The first type passed in to the definition is interpreted as the return
-                            type. It is necessary to pass "None" in case the callback function
-                            returns nothing. The return type can be a dace primitive data-type or None.
-
-        @param input_types: These are the types of all the inputs to the function. These can be
-                            dace arrays or dace primitive-types.
-    """
+    """ Looks like dace.callback([None, <some_native_type>], *types)"""
 
     def __init__(self, return_type, *variadic_args):
+        self.uid = next(_atomic_counter_generator())
         from dace import data
         if isinstance(return_type, data.Array):
-            raise TypeError("Callbacks that return arrays are not supported as per SDFG semantics")
+            raise TypeError(
+                "Callbacks that return arrays are not supported as per SDFG semantics"
+            )
         self.dtype = self
         self.return_type = return_type
         self.input_types = variadic_args
@@ -379,17 +377,15 @@ class callback(typeclass):
         """ Returns the ctypes version of the typeclass. """
         from dace import data
 
-        return_ctype = (
-            self.return_type.as_ctypes() if self.return_type is not None else None
-        )
+        return_ctype = (self.return_type.as_ctypes()
+                        if self.return_type is not None else None)
         input_ctypes = []
         for some_arg in self.input_types:
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
-                input_ctypes.append(
-                    some_arg.as_ctypes() if some_arg is not None else None
-                )
+                input_ctypes.append(some_arg.as_ctypes()
+                                    if some_arg is not None else None)
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
@@ -398,9 +394,8 @@ class callback(typeclass):
     def signature(self, name):
         from dace import data
 
-        return_type_cstring = (
-            self.return_type.ctype if self.return_type is not None else "void"
-        )
+        return_type_cstring = (self.return_type.ctype
+                               if self.return_type is not None else "void")
         input_type_cstring = []
         for arg in self.input_types:
             if isinstance(arg, data.Array):
@@ -429,7 +424,8 @@ class callback(typeclass):
         if len(arraypos) == 0:
             return pyfunc
 
-        def trampoline(orig_function, indices, data_types_and_sizes, *other_inputs):
+        def trampoline(orig_function, indices, data_types_and_sizes,
+                       *other_inputs):
             list_of_other_inputs = list(other_inputs)
             for i in indices:
                 data_type, size = data_types_and_sizes[i]
@@ -440,25 +436,22 @@ class callback(typeclass):
                     else:
                         non_symbolic_sizes.append(s)
                 list_of_other_inputs[i] = ptrtonumpy(
-                    other_inputs[i], data_type, non_symbolic_sizes
-                )
+                    other_inputs[i], data_type, non_symbolic_sizes)
             return orig_function(*list_of_other_inputs)
 
-        return partial(
-            trampoline,
-            pyfunc,
-            arraypos,
-            types_and_sizes
-        )
+        return partial(trampoline, pyfunc, arraypos, types_and_sizes)
 
     def __hash__(self):
-        return hash((self.return_type, *self.input_types))
+        return hash((self.uid, self.return_type, *self.input_types))
 
     def __str__(self):
         return "dace.callback"
 
     def __repr__(self):
         return "dace.callback"
+
+    def __eq__(self, other):
+        return self.uid == other.uid
 
 
 int8 = typeclass(numpy.int8)
@@ -575,7 +568,12 @@ class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for 
         IDE and debugging purposes. """
 
-    def __init__(self, start_line, start_column, end_line, end_column, filename=None):
+    def __init__(self,
+                 start_line,
+                 start_column,
+                 end_line,
+                 end_column,
+                 filename=None):
         self.start_line = start_line
         self.end_line = end_line
         self.start_column = start_column
@@ -590,5 +588,4 @@ class DebugInfo:
 def deduplicate(iterable):
     """ Removes duplicates in the passed iterable. """
     return type(iterable)(
-        [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))]
-    )
+        [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])

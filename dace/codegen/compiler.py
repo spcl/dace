@@ -264,7 +264,7 @@ class CompiledSDFG(object):
              atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
             for arg, atype in callparams)
 
-       # Replace arrays with their pointers
+        # Replace arrays with their pointers
         newargs = tuple(
             (ctypes.c_void_p(arg.__array_interface__['data'][0]),
              atype) if (isinstance(arg, ndarray.ndarray)
@@ -312,8 +312,10 @@ def unique_flags(flags):
     return set(re.findall(pattern, flags))
 
 
-def generate_program_folder(sdfg, code_objects: List[CodeObject],
-                            out_path: str, config=None):
+def generate_program_folder(sdfg,
+                            code_objects: List[CodeObject],
+                            out_path: str,
+                            config=None):
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 

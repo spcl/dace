@@ -64,7 +64,7 @@ class SDFGOptimizer(object):
                 ]
 
             for pattern in _patterns:
-                matches += pattern_matching.match_stateflow_pattern(
+                yield from pattern_matching.match_stateflow_pattern(
                     self.sdfg, pattern, strict=strict)
 
         state_enum = []
@@ -82,10 +82,8 @@ class SDFGOptimizer(object):
             _patterns = [p for p in patterns if p in self.patterns]
         for state_id, state in state_enum:
             for pattern in _patterns:
-                matches += pattern_matching.match_pattern(
+                yield from pattern_matching.match_pattern(
                     state_id, state, pattern, self.sdfg, strict=strict)
-
-        return matches
 
     def optimize(self, debugprint=True):
         """ A command-line UI for applying patterns on the SDFG.
@@ -108,7 +106,7 @@ class SDFGOptimizer(object):
         pattern_counter = 0
         while True:
             # Print in the UI all the pattern matching options.
-            ui_options = self.get_pattern_matches()
+            ui_options = sorted(self.get_pattern_matches())
             ui_options_idx = 0
             for pattern_match in ui_options:
                 sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
