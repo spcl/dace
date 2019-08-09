@@ -579,8 +579,6 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                     types.StorageType.GPU_Global, types.StorageType.CPU_Pinned
                 ]) and not (src_storage in cpu_storage_types
                             and dst_storage in cpu_storage_types)):
-            #and not (src_storage in gpu_storage_types
-            #    and dst_storage in gpu_storage_types)):
             src_location = 'Device' if src_storage == types.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == types.StorageType.GPU_Global else 'Host'
 
@@ -927,9 +925,7 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
 
-        # This is a workaround for sdfg's with callbacks that are running on
-        # the GPU. This is because the callback ctype throws exceptions. Best
-        # way is to remove these symbols before going forward.
+        # Pointers to callback functions cannot be used within CUDA kernels
         syms_copy = {}
         for _n, _s in syms.items():
             try:

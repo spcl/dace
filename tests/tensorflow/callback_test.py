@@ -1,6 +1,10 @@
+try:
+    import tensorflow as tf
+except ImportError:
+    print("WARNING: Tensorflow not found, skipping test")
+    exit(0)
+
 import numpy as np
-import tensorflow as tf
-import dace
 from dace.frontend.tensorflow import TFSession
 
 input_image = tf.constant(0.69, tf.float64, [2, 2, 5, 5, 2])

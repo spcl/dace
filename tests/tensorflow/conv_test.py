@@ -1,4 +1,9 @@
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except ImportError:
+    print("WARNING: Tensorflow not found, skipping test")
+    exit(0)
+
 from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace

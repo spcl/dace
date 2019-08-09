@@ -157,8 +157,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_id,
             function_stream,
             callsite_stream,
-            skip_entry_node=True,
-        )
+            skip_entry_node=True)
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
@@ -1292,8 +1291,8 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write("\n", sdfg, state_id, node)
 
         # Use outgoing edges to preallocate output local vars
-        # in two stages, first we preallocate for normal cases (ie NOT code->code) and then for
-        # code->code
+        # in two stages: first we preallocate for data<->code cases,
+        # followed by code<->code
         tasklet_out_connectors = set()
         for edge in state_dfg.out_edges(node):
             if isinstance(edge.dst, nodes.CodeNode):
@@ -1539,7 +1538,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # TODO: Explicit map unroller
         if node.map.unroll:
             if node.map.schedule == types.ScheduleType.CPU_Multicore:
-                raise ValueError("An Multicore CPU map cannot be unrolled (" +
+                raise ValueError("A Multicore CPU map cannot be unrolled (" +
                                  node.map.label + ")")
 
         constsize = all([

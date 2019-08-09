@@ -2,11 +2,9 @@
 """
 
 from __future__ import print_function
-import bisect
-import timeit
+import inspect
 from types import GeneratorType
 import dace
-from dace import sdfg as sd
 from dace.properties import make_properties, Property
 from dace.graph import labeling, graph as gr
 import networkx as nx
@@ -27,9 +25,6 @@ class Transformation(object):
 
     _patterns = set()
     _stateflow_patterns = set()
-    _arrays_removed = 0
-    _maps_transformed = 0
-    _states_fused = 0
 
     # Static methods
 
@@ -76,7 +71,7 @@ class Transformation(object):
         """ Registers all transformations in a single Python file. """
 
         pattern_members = {}
-        with open(pattern_path) as pattern_file:
+        with open(filename) as pattern_file:
             exec(pattern_file.read(), pattern_members)
         for member in pattern_members.values():
             if inspect.isclass(member) and issubclass(member, Transformation):
@@ -385,10 +380,6 @@ def match_pattern(state_id,
             match_found = pattern.can_be_applied(
                 state, subgraph, idx, sdfg, strict=strict)
             if match_found:
-                #bisect.insort_left(
-                #    matches,
-                #    pattern(
-                #        sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx))
                 yield pattern(
                     sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx)
 
@@ -432,9 +423,6 @@ def match_stateflow_pattern(sdfg,
             match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
                                                  strict)
             if match_found:
-                #bisect.insort_left(
-                #    matches,
-                #    pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx))
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
 
     # Recursive call for nested SDFGs

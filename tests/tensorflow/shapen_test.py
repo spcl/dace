@@ -1,5 +1,9 @@
-import tensorflow as tf
-import dace
+try:
+    import tensorflow as tf
+except ImportError:
+    print("WARNING: Tensorflow not found, skipping test")
+    exit(0)
+
 from dace.frontend.tensorflow import TFSession
 
 myshape = [69, 96, 666]

@@ -22,7 +22,7 @@ from .redundant_array import RedundantArray
 from .redundant_array_copying import (
     RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
 
-# Tensorflow specific stuff
+# TensorFlow-specific transformations
 from .tensorflow_redundant_array import TensorflowRedundantArray
 
 # Device-related

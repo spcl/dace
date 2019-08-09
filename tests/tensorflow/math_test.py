@@ -1,4 +1,9 @@
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except ImportError:
+    print("WARNING: Tensorflow not found, skipping test")
+    exit(0)
+
 import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
@@ -6,7 +11,6 @@ from dace.frontend.tensorflow import TFSession
 dace.Config.append(
     "compiler", "cpu", "args", value=" -faligned-new -fpermissive")
 shape = [10, 11, 12, 13]
-# shape = [10, 10, 10, 10]
 inp = tf.placeholder(tf.float64, shape)
 outp_1 = tf.math.reduce_mean(inp, keepdims=True)
 outp_3 = tf.math.reduce_mean(inp, axis=[0, 2], keepdims=True)

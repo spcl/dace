@@ -1,6 +1,9 @@
-import tensorflow as tf
-import dace
-import numpy as np
+try:
+    import tensorflow as tf
+except ImportError:
+    print("WARNING: Tensorflow not found, skipping test")
+    exit(0)
+
 from dace.frontend.tensorflow import TFSession
 
 t = tf.placeholder(tf.int32, [3, 2, 3])
@@ -10,7 +13,6 @@ output = tf.placeholder(tf.int32, [1, 1, 3])
 output = tf.slice(t, b, s)
 input_tensor = tf.constant([[[1, 1, 1], [2, 2, 2]], [[3, 3, 3], [4, 4, 4]],
                             [[5, 5, 5], [6, 6, 6]]])
-#print(input_tensor.shape)
 
 sess_tf = tf.Session()
 sess_dace = TFSession()

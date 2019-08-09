@@ -1,8 +1,8 @@
 import tensorflow as tf
 import numpy as np
-import dace
 from dace.frontend.tensorflow import TFSession
 import matplotlib.pyplot as plt
+import sys
 
 def data_input_fn(filenames, batch_size=2, shuffle=False):
     def _parser(record):
@@ -20,8 +20,8 @@ def data_input_fn(filenames, batch_size=2, shuffle=False):
 
     def _input_fn():
         dataset = tf.data.TFRecordDataset(filenames).map(_parser)
-        #if shuffle:
-        #    dataset = dataset.shuffle(buffer_size=10_000)
+        if shuffle:
+            dataset = dataset.shuffle(buffer_size=10000)
 
         dataset = dataset.batch(batch_size, drop_remainder=True)
 
@@ -32,31 +32,27 @@ def data_input_fn(filenames, batch_size=2, shuffle=False):
 
     return _input_fn
 
-filenames = ["/home/saurabh/data/mnist/validation.tfrecords"]
 
-#with TFSession() as sess:
-#    output_dace = sess.run(data_input_fn(filenames)())
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print('USAGE: dataset_reader.py <FILENAME> [FILENAMES...]')
+        exit(1)
 
-with tf.Session() as sess:
-    output_tf = sess.run(data_input_fn(filenames)())[0]
-    #print(output_tf)
-    #print(type(output_tf))
-    #print(output_tf.shape)
-    for _out in output_tf:
-        _out = np.multiply(255.0, _out)
-        _out = _out.astype(np.uint8)
-        plt.imshow(_out)
-        plt.show()
+    filenames = list(sys.argv[1:])
 
-with TFSession() as sess:
-    output_dace = sess.run(data_input_fn(filenames)())[0]
-    #print(output_tf)
-    #print(type(output_tf))
-    #print(output_tf.shape)
-    for _out in output_dace:
-        _out = np.multiply(255.0, _out)
-        _out = _out.astype(np.uint8)
-        plt.imshow(_out)
-        plt.show()
+    with tf.Session() as sess:
+        output_tf = sess.run(data_input_fn(filenames)())[0]
+        for _out in output_tf:
+            _out = np.multiply(255.0, _out)
+            _out = _out.astype(np.uint8)
+            plt.imshow(_out)
+            plt.show()
 
-#print(tf.linalg.norm(output_dace[0] - output_tf[0]).eval(session=tf.Session()))
+    with TFSession() as sess:
+        output_dace = sess.run(data_input_fn(filenames)())[0]
+        for _out in output_dace:
+            _out = np.multiply(255.0, _out)
+            _out = _out.astype(np.uint8)
+            plt.imshow(_out)
+            plt.show()
+

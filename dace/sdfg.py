@@ -1451,9 +1451,13 @@ subgraph cluster_state_{state} {{
         from dace.transformation.interstate import StateFusion
 
         self.apply_transformations(
-            [RedundantArray, StateFusion], validate=True, strict=True)
+            [RedundantArray, StateFusion], validate=validate, strict=True)
 
-    def apply_transformations(self, patterns, validate=True, strict=False):
+    def apply_transformations(self,
+                              patterns,
+                              validate=True,
+                              strict=False,
+                              states=None):
         """ This function applies transformations as given in the argument
             patterns. """
         # Avoiding import loops
@@ -1467,11 +1471,12 @@ subgraph cluster_state_{state} {{
             applied = False
             # Find and apply immediately
             for match in opt.get_pattern_matches(
-                    strict=strict, patterns=patterns):
+                    strict=strict, patterns=patterns, states=states):
                 sdfg = self.sdfg_list[match.sdfg_id]
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate:
+                    self.fill_scope_connectors()
                     self.validate()
                 applied = True
                 break
@@ -1481,27 +1486,23 @@ subgraph cluster_state_{state} {{
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
 
-    def apply_gpu_transformations(self, states=None, strict=True):
+    def apply_gpu_transformations(self,
+                                  states=None,
+                                  validate=True,
+                                  strict=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
-            A{Note:} This will not apply any transformations for optimisation. It is recommended to
-            apply redundant array removal transformation after this transformation. Alternatively,
+            @note: It is recommended to apply redundant array removal
+            transformation after this transformation. Alternatively,
             you can apply_strict_transformations() after this transformation.
-            B{Note:} This is an in-place operation on the SDFG.
+            @note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
-        from dace.transformation import optimizer
         from dace.transformation.dataflow import GPUTransformLocalStorage
 
         patterns = [GPUTransformLocalStorage]
-        self.apply_transformations(patterns, True, strict)
-
-        # Apply transformations greedily.
-        # if Config.get_bool("debugprint") and (gpu_maps > 0 or arrays > 0):
-        #    print(
-        #        "Automatically applied {} map GPU transformations and removed"
-        #        " {} redundant array copy-operations.".format(gpu_maps, arrays)
-        #    )
+        self.apply_transformations(
+            patterns, validate=validate, strict=strict, states=states)
 
     def generate_code(self, specialize=None):
         """ Generates code from this SDFG and returns it.
@@ -2627,6 +2628,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
+        print('WARNING: The "SDFGState.add_array" API is deprecated, please '
+              'use "SDFG.add_array" and "SDFGState.add_access"')
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -2689,6 +2692,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
+        print('WARNING: The "SDFGState.add_scalar" API is deprecated, please '
+              'use "SDFG.add_scalar" and "SDFGState.add_access"')
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -2850,7 +2855,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Isolated nodes
             ########################################
             if self.in_degree(node) + self.out_degree(node) == 0:
-                import re
                 # One corner case: OK if this is an empty state and there
                 # is only one empty tasklet
                 if isinstance(node, nd.EmptyTasklet):
@@ -2858,11 +2862,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 # Another corner case: a tasklet with external code
                 elif (isinstance(node, nd.Tasklet)
                       and node.language != types.Language.Python):
-                    pass
-                elif "ShapeN" in node.label:
-                    # Just to make the ShapeN test cases pass
-                    pass
-                elif re.match(r"__s[0-9]*_n[0-9]*.*", node.label) :
                     pass
                 else:
                     raise InvalidSDFGNodeError("Isolated node", sdfg, state_id,

@@ -1,4 +1,9 @@
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except ImportError:
+    print("WARNING: Tensorflow not found, skipping test")
+    exit(0)
+
 from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace
@@ -20,20 +25,9 @@ y, mean, var, _, var_sqrt = gen_nn_ops._fused_batch_norm(
     inp, scale, offset, [], [], epsilon=0.1, is_training=True
 )
 outputs = [y, mean, var]
-# outputs = tf.nn.fused_batch_norm(
-#    inp,
-#    scale,
-#    offset,
-#    populationMean,
-#    populationVariance,
-#    epsilon=1.0,
-#    is_training=False,
-# )
 test_in = np.random.uniform(size=size).astype(np.float32)
 test_scale = np.random.uniform(size=[num_channels]).astype(np.float32)
 test_offset = np.random.uniform(size=[num_channels]).astype(np.float32)
-# test_popvar = np.random.uniform(size=[num_channels]).astype(np.float32)
-# test_popmean = np.random.uniform(size=[num_channels]).astype(np.float32)
 
 sess_tf = tf.Session(config=config)
 sess_dace = TFSession()
@@ -44,8 +38,6 @@ outputs_dace = sess_dace.run(
         inp: test_in,
         scale: test_scale,
         offset: test_offset,
-        # populationMean: test_popmean,
-        # populationVariance: test_popvar,
     },
 )
 outputs_tf = sess_tf.run(
@@ -54,8 +46,6 @@ outputs_tf = sess_tf.run(
         inp: test_in,
         scale: test_scale,
         offset: test_offset,
-        # populationMean: test_popmean,
-        # populationVariance: test_popvar,
     },
 )
 
@@ -121,7 +111,6 @@ except:
     print(tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))
     print(tf.linalg.norm(outputs_tf[1] - outputs_dace[1]).eval(session=sess_tf))
     print(tf.linalg.norm(outputs_tf[2] - outputs_dace[2]).eval(session=sess_tf))
-    print("dace vs reality")
     print(
         tf.linalg.norm(outputs_tf[2] - np.sum(test_outputgrad, axis=(0, 1, 2))).eval(
             session=sess_tf

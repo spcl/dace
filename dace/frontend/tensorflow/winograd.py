@@ -4,18 +4,10 @@ import re
 from dace.memlet import Memlet
 from math import ceil
 
-dace.Config.append(
-    "compiler",
-    "cpu",
-    "libs",
-    value="/home/saurabh/anaconda3/envs/tf14gpu/lib/libcublas.so",
-)
-
 
 def add_cublas_cusolver(sdfg: dace.SDFG):
     """ Add CUBLAS and CUSOLVER handles to the SDFG. """
-    sdfg.set_global_code(
-        """
+    sdfg.set_global_code("""
         #include <iostream>
         #include <cublas_v2.h>
         #include <cusolverDn.h>
@@ -24,10 +16,8 @@ def add_cublas_cusolver(sdfg: dace.SDFG):
         cublasHandle_t handle;
         float* const_zero;
         float* const_pone;
-        """
-    )
-    sdfg.set_init_code(
-        """
+        """)
+    sdfg.set_init_code("""
             cublasCreate(&handle);
             cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
             cudaMalloc<float>(&const_zero, sizeof(float) *
@@ -40,48 +30,49 @@ def add_cublas_cusolver(sdfg: dace.SDFG):
             float pone = 1.0;
             cudaMemcpy(const_pone, &pone, sizeof(float) * 1,
             cudaMemcpyHostToDevice);
-            """
-    )
-    sdfg.set_exit_code(
-        """
-                cublasDestroy(handle);
-                cudaFree(const_zero);
-                cudaFree(const_pone);
-                """
-    )
+        """)
+    sdfg.set_exit_code("""
+            cublasDestroy(handle);
+            cudaFree(const_zero);
+            cudaFree(const_pone);
+        """)
 
 
-##Make sure C_memlet has a wcr if map_exit is used
-# Matrix multiplication with one matrix as constant, but it could be A or B.
+# TODO: Use dace.frontend.common.op_impl
+
+
+# Make sure C_memlet has a wcr if map_exit is used
+# Matrix multiplication with one matrix as constant
 def mm_small(
-    state,
-    A_node,
-    B_node,
-    C_node,
-    A_subset=None,
-    B_subset=None,
-    C_subset=None,
-    A_memlet=None,
-    B_memlet=None,
-    C_memlet=None,
-    map_entry=None,
-    map_exit=None,
-    A_direct=True,
-    B_direct=True,
+        state,
+        A_node,
+        B_node,
+        C_node,
+        A_subset=None,
+        B_subset=None,
+        C_subset=None,
+        A_memlet=None,
+        B_memlet=None,
+        C_memlet=None,
+        map_entry=None,
+        map_exit=None,
+        A_direct=True,
+        B_direct=True,
 ):
-    ###Does C = AXB###
+    # C = A@B
     sdfg = state.parent
     Cshape = C_node.desc(sdfg).shape if C_subset is None else C_subset
     if isinstance(B_node, str):
-        someshape = list(A_node.desc(sdfg).shape) if A_subset is None else A_subset
+        someshape = list(
+            A_node.desc(sdfg).shape) if A_subset is None else A_subset
         someshape = [someshape[0]] + [someshape[1]] + [Cshape[1]]
     elif isinstance(A_node, str):
-        someshape = list(B_node.desc(sdfg).shape) if B_subset is None else B_subset
+        someshape = list(
+            B_node.desc(sdfg).shape) if B_subset is None else B_subset
         someshape = [Cshape[0]] + [someshape[0]] + [someshape[1]]
     else:
         raise AssertionError(
-            "one of these have to be an str, else don't call this function"
-        )
+            "one of these have to be an str, else don't call this function")
 
     mapRange = ["0:" + str(_s) for _s in someshape]
     mapParams = ["i2", "i3", "i4"]
@@ -91,9 +82,8 @@ def mm_small(
         schedule=dace.ScheduleType.Sequential,
     )
     if isinstance(A_node, str):
-        tasklet = state.add_tasklet(
-            "matmul_sequential", {"j1"}, {"out"}, "out=" + A_node + "[i2, i3]" + "*j1"
-        )
+        tasklet = state.add_tasklet("matmul_sequential", {"j1"}, {"out"},
+                                    "out=" + A_node + "[i2, i3]" + "*j1")
         if B_memlet:
             state.add_edge(map_entry, None, mmapEntry, None, B_memlet)
             b_memlet_trailing = [str(_t[0]) for _t in B_memlet.subset[-2:]]
@@ -102,7 +92,8 @@ def mm_small(
                 None,
                 tasklet,
                 "j1",
-                Memlet.simple(B_node, ",".join(["i3", "i4"] + b_memlet_trailing)),
+                Memlet.simple(B_node,
+                              ",".join(["i3", "i4"] + b_memlet_trailing)),
             )
         else:
             state.add_edge(
@@ -120,9 +111,8 @@ def mm_small(
                 Memlet.simple(B_node, ",".join(["i3", "i4"])),
             )
     else:
-        tasklet = state.add_tasklet(
-            "matmul_sequential", {"j0"}, {"out"}, "out=j0*" + B_node + "[i3, i4]"
-        )
+        tasklet = state.add_tasklet("matmul_sequential", {"j0"}, {"out"},
+                                    "out=j0*" + B_node + "[i3, i4]")
         if A_memlet:
             state.add_edge(map_entry, None, mmapEntry, None, A_memlet)
             a_memlet_trailing = [str(_t[0]) for _t in A_memlet.subset[-2:]]
@@ -131,7 +121,8 @@ def mm_small(
                 None,
                 tasklet,
                 "j0",
-                Memlet.simple(A_node, ",".join(["i2", "i3"] + a_memlet_trailing)),
+                Memlet.simple(A_node,
+                              ",".join(["i2", "i3"] + a_memlet_trailing)),
             )
         else:
             state.add_edge(
@@ -191,27 +182,28 @@ def mm_small(
         )
 
 
-# takes input and stores output in column major order. give swapped input, B, A in place of A, B
+# takes input and stores output in column major order. give swapped input (B, A)
+# instead of (A, B)
 def mm(
-    state,
-    A_node,
-    B_node,
-    C_node,
-    A_mode: str = "N",
-    B_mode: str = "N",
-    label: str = None,
-    A_subset=None,
-    B_subset=None,
-    C_subset=None,
-    A_memlet=None,
-    B_memlet=None,
-    C_memlet=None,
-    map_entry=None,
-    map_exit=None,
-    shadow_a=False,
-    shadow_b=False,
-    buffer_a=False,
-    buffer_c=False,
+        state,
+        A_node,
+        B_node,
+        C_node,
+        A_mode: str = "N",
+        B_mode: str = "N",
+        label: str = None,
+        A_subset=None,
+        B_subset=None,
+        C_subset=None,
+        A_memlet=None,
+        B_memlet=None,
+        C_memlet=None,
+        map_entry=None,
+        map_exit=None,
+        shadow_a=False,
+        shadow_b=False,
+        buffer_a=False,
+        buffer_c=False,
 ):
     sdfg = state.parent
     Adesc = A_node.desc(sdfg)
@@ -286,9 +278,8 @@ def mm(
         )
     else:
         # Assume that map_entry is to be used
-        memcopy_tasklet = state.add_tasklet(
-            label + "_" + "buffer_copy", {"j0"}, {"out"}, "out=j0"
-        )
+        memcopy_tasklet = state.add_tasklet(label + "_" + "buffer_copy",
+                                            {"j0"}, {"out"}, "out=j0")
         bufMapEntry, bufMapExit = state.add_map(
             label + "_bufmap",
             dict(zip(["i3", "i4"], ["0:" + str(_s) for _s in A_subset])),
@@ -302,7 +293,8 @@ def mm(
             "j0",
             Memlet.simple(
                 A_node,
-                ",".join(["i3", "i4"] + [str(_t[0]) for _t in A_memlet.subset[-2:]]),
+                ",".join(["i3", "i4"] +
+                         [str(_t[0]) for _t in A_memlet.subset[-2:]]),
             ),
         )
         bufferNode = state.add_transient(
@@ -311,9 +303,8 @@ def mm(
             Adesc.dtype,
             storage=dace.StorageType.GPU_Global,
         )
-        state.add_edge(
-            memcopy_tasklet, "out", bufMapExit, None, Memlet.simple(bufferNode, "i3,i4")
-        )
+        state.add_edge(memcopy_tasklet, "out", bufMapExit, None,
+                       Memlet.simple(bufferNode, "i3,i4"))
         state.add_edge(
             bufMapExit,
             None,
@@ -344,9 +335,8 @@ def mm(
             C_memlet or dace.Memlet.from_array(C_node.data, Cdesc),
         )
     else:
-        memcopy_tasklet = state.add_tasklet(
-            label + "_" + "buffer_copy_output", {"j0"}, {"out"}, "out=j0"
-        )
+        memcopy_tasklet = state.add_tasklet(label + "_" + "buffer_copy_output",
+                                            {"j0"}, {"out"}, "out=j0")
         bufMapEntry, bufMapExit = state.add_map(
             label + "_bufmap",
             dict(zip(["i3", "i4"], ["0:" + str(_s) for _s in C_subset])),
@@ -372,9 +362,8 @@ def mm(
             None,
             dace.Memlet.from_array(bufferNode, bufferNode.desc(sdfg)),
         )
-        state.add_edge(
-            bufMapEntry, None, memcopy_tasklet, "j0", Memlet.simple(bufferNode, "i3,i4")
-        )
+        state.add_edge(bufMapEntry, None, memcopy_tasklet, "j0",
+                       Memlet.simple(bufferNode, "i3,i4"))
 
         state.add_edge(
             memcopy_tasklet,
@@ -383,7 +372,8 @@ def mm(
             None,
             Memlet.simple(
                 C_node,
-                ",".join(["i3", "i4"] + [str(_t[0]) for _t in C_memlet.subset[-2:]]),
+                ",".join(["i3", "i4"] +
+                         [str(_t[0]) for _t in C_memlet.subset[-2:]]),
             ),
         )
         state.add_edge(bufMapExit, None, map_exit, None, C_memlet)
@@ -392,18 +382,14 @@ def mm(
 IMAGE_TILE_SIZE = 4
 OUTPUT_TILE_SIZE = 2
 
-bt = np.array([[1, 0, -1, 0], [0, 1, 1, 0], [0, -1, 1, 0], [0, 1, 0, -1]]).astype(
-    np.float32
-)
-b = np.array([[1, 0, 0, 0], [0, 1, -1, 1], [-1, 1, 1, 0], [0, 0, 0, -1]]).astype(
-    np.float32
-)
-g = np.array([[1.0, 0, 0], [0.5, 0.5, 0.5], [0.5, -0.5, 0.5], [0, 0, 1]]).astype(
-    np.float32
-)
-gt = np.array([[1, 0.5, 0.5, 0], [0, 0.5, -0.5, 0], [0, 0.5, 0.5, 1]]).astype(
-    np.float32
-)
+bt = np.array([[1, 0, -1, 0], [0, 1, 1, 0], [0, -1, 1, 0],
+               [0, 1, 0, -1]]).astype(np.float32)
+b = np.array([[1, 0, 0, 0], [0, 1, -1, 1], [-1, 1, 1, 0],
+              [0, 0, 0, -1]]).astype(np.float32)
+g = np.array([[1.0, 0, 0], [0.5, 0.5, 0.5], [0.5, -0.5, 0.5],
+              [0, 0, 1]]).astype(np.float32)
+gt = np.array([[1, 0.5, 0.5, 0], [0, 0.5, -0.5, 0], [0, 0.5, 0.5,
+                                                     1]]).astype(np.float32)
 at = np.array([[1, 1, 1, 0], [0, 1, -1, -1]]).astype(np.float32)
 a = np.array([[1, 0], [1, 1], [1, -1], [0, -1]]).astype(np.float32)
 
@@ -465,7 +451,8 @@ def winograd_convolution(dace_session, tf_node):
         None,
         kernelGPU,
         None,
-        Memlet.from_array(inputNodes[1], inputNodes[1].desc(dace_session.graph)),
+        Memlet.from_array(inputNodes[1],
+                          inputNodes[1].desc(dace_session.graph)),
     )
     inputNodes[1] = kernelGPU
     outputList = dace_session.create_and_add_output_node(tf_node)
@@ -487,9 +474,8 @@ def winograd_convolution(dace_session, tf_node):
         IMAGE_TILE_SIZE,
         IMAGE_TILE_SIZE,
         tf_node.inputs[0].shape[-1],
-        outputShape[0]
-        * ceil(outputShape[1] / OUTPUT_TILE_SIZE)
-        * ceil(outputShape[2] / OUTPUT_TILE_SIZE),
+        outputShape[0] * ceil(outputShape[1] / OUTPUT_TILE_SIZE) * ceil(
+            outputShape[2] / OUTPUT_TILE_SIZE),
     ]
     inputViewDims = ["0:" + str(_x) for _x in inputViewShape]
     ########Tiling the image#################################
@@ -497,20 +483,16 @@ def winograd_convolution(dace_session, tf_node):
         "i3%" + str(outputShape[0]),
         "(i3/" + str(outputShape[0]) + ")%"
         # + str(output_shape[0] * ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE))
-        + "*"
-        + str(OUTPUT_TILE_SIZE)
-        + "+i0",
+        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
+        str(OUTPUT_TILE_SIZE) + "+i0",
         # + str(
         #    ceil(output_shape[1] / OUTPUT_TILE_SIZE)
         #    * ceil(output_shape[2] / OUTPUT_TILE_SIZE)
         # ),
         "int_floor(i3,"
         # + str(ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE))
-        + ")*"
-        + str(OUTPUT_TILE_SIZE)
-        + "+i1",
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*"
+        + str(OUTPUT_TILE_SIZE) + "+i1",
         "i2",
     ]
     inputView = state.add_transient(
@@ -524,14 +506,12 @@ def winograd_convolution(dace_session, tf_node):
         dict(zip(inputParams[0], inputViewDims)),
     )
     tasklet = state.add_tasklet(
-        string_builder(tf_node.name) + "_input_tile", {"j0"}, {"out"}, "out = j0"
-    )
-    dace_session.add_in_memlets(
-        [inputNodes[0]], mapEntry, tasklet, [inputDims[0]], [inputViewParams]
-    )
-    dace_session.add_out_memlets(
-        [inputView], mapExit, tasklet, [inputViewDims], [inputParams[0]]
-    )
+        string_builder(tf_node.name) + "_input_tile", {"j0"}, {"out"},
+        "out = j0")
+    dace_session.add_in_memlets([inputNodes[0]], mapEntry, tasklet,
+                                [inputDims[0]], [inputViewParams])
+    dace_session.add_out_memlets([inputView], mapExit, tasklet,
+                                 [inputViewDims], [inputParams[0]])
     ##################Transforming all input tiles#########################
     #[TODO] try to re-use memory
     vNode = state.add_transient(
@@ -547,8 +527,11 @@ def winograd_convolution(dace_session, tf_node):
         dace.ScheduleType.GPU_Device,
     )
     intermediateResultNode = state.add_transient(
-        "BtI", bt.shape, dace.float32, dace.StorageType.GPU_Stack, toplevel=False
-    )
+        "BtI",
+        bt.shape,
+        dace.float32,
+        dace.StorageType.GPU_Stack,
+        toplevel=False)
     intermediateResultNode.setzero = True
     state.add_edge(
         inputView,
@@ -564,8 +547,7 @@ def winograd_convolution(dace_session, tf_node):
         intermediateResultNode,
         B_subset=[IMAGE_TILE_SIZE, IMAGE_TILE_SIZE],
         B_memlet=Memlet.simple(
-            inputView, ",".join(inputViewDims[0:2] + inputParams[0][0:2])
-        ),
+            inputView, ",".join(inputViewDims[0:2] + inputParams[0][0:2])),
         map_entry=mapEntry,
         B_direct=False,
     )
@@ -603,18 +585,14 @@ def winograd_convolution(dace_session, tf_node):
         dict(zip(inputParams[1][0:2], inputDims[1][2:4])),
         dace.ScheduleType.GPU_Device,
     )
-    intermediateResultNode = state.add_transient(
-        "GF", g.shape, dace.float32, dace.StorageType.GPU_Stack
-    )
+    intermediateResultNode = state.add_transient("GF", g.shape, dace.float32,
+                                                 dace.StorageType.GPU_Stack)
     intermediateResultNode.setzero = True
     processedKernelNode = state.add_transient(
-        "U"
-        + "_".join(
-            [
-                str(_s)
-                for _s in inputViewShape[0:2] + list(tf_node.inputs[1].shape[-1:-3:-1])
-            ]
-        ),
+        "U" + "_".join([
+            str(_s) for _s in inputViewShape[0:2] +
+            list(tf_node.inputs[1].shape[-1:-3:-1])
+        ]),
         inputViewShape[0:2] + list(tf_node.inputs[1].shape[-1:-3:-1]),
         dace.float32,
         dace.StorageType.GPU_Global,
@@ -625,9 +603,8 @@ def winograd_convolution(dace_session, tf_node):
         None,
         mapEntry,
         None,
-        dace.Memlet.from_array(
-            inputNodes[1].data, inputNodes[1].desc(dace_session.graph)
-        ),
+        dace.Memlet.from_array(inputNodes[1].data,
+                               inputNodes[1].desc(dace_session.graph)),
     )
 
     mm_small(
@@ -638,8 +615,7 @@ def winograd_convolution(dace_session, tf_node):
         map_entry=mapEntry,
         B_subset=tf_node.inputs[1].shape[0:2],
         B_memlet=Memlet.simple(
-            inputNodes[1], ",".join(inputDims[1][0:2] + inputParams[1][0:2])
-        ),
+            inputNodes[1], ",".join(inputDims[1][0:2] + inputParams[1][0:2])),
         B_direct=False,
     )
     mm_small(
@@ -650,7 +626,8 @@ def winograd_convolution(dace_session, tf_node):
         C_subset=[IMAGE_TILE_SIZE, IMAGE_TILE_SIZE],
         C_memlet=Memlet.simple(
             processedKernelNode,
-            ",".join(inputViewDims[0:2] + [inputParams[0][1]] + [inputParams[0][0]]),
+            ",".join(inputViewDims[0:2] + [inputParams[0][1]] +
+                     [inputParams[0][0]]),
             wcr_str="lambda a,b: a+b",
             wcr_conflict=False,
         ),
@@ -665,26 +642,21 @@ def winograd_convolution(dace_session, tf_node):
         None,
         Memlet.simple(
             processedKernelNode.data,
-            ",".join(
-                [
-                    "0:" + str(_s)
-                    for _s in processedKernelNode.desc(dace_session.graph).shape
-                ]
-            ),
+            ",".join([
+                "0:" + str(_s)
+                for _s in processedKernelNode.desc(dace_session.graph).shape
+            ]),
             wcr_str="lambda a,b: a+b",
             wcr_conflict=False,
         ),
     )
     mNode = state.add_transient(
-        "m"
-        + "_".join(
-            [
-                str(_s)
-                for _s in inputViewShape[0:2]
-                + [tf_node.inputs[1].shape[-1], inputViewShape[-1]]
-            ]
-        ),
-        inputViewShape[0:2] + [tf_node.inputs[1].shape[-1], inputViewShape[-1]],
+        "m" + "_".join([
+            str(_s) for _s in inputViewShape[0:2] +
+            [tf_node.inputs[1].shape[-1], inputViewShape[-1]]
+        ]),
+        inputViewShape[0:2] +
+        [tf_node.inputs[1].shape[-1], inputViewShape[-1]],
         dace.float32,
         dace.StorageType.GPU_Global,
     )
@@ -706,9 +678,8 @@ def winograd_convolution(dace_session, tf_node):
         None,
         mapEntry,
         None,
-        Memlet.from_array(
-            processedKernelNode.data, processedKernelNode.desc(dace_session.graph)
-        ),
+        Memlet.from_array(processedKernelNode.data,
+                          processedKernelNode.desc(dace_session.graph)),
     )
     mm(
         state,
@@ -717,50 +688,45 @@ def winograd_convolution(dace_session, tf_node):
         mNode,
         A_subset=inputViewShape[2:4],
         A_memlet=Memlet.simple(
-            vNode, ",".join(inputParams[0][0:2] + inputViewDims[-2:])
-        ),
+            vNode, ",".join(inputParams[0][0:2] + inputViewDims[-2:])),
         B_subset=tf_node.inputs[1].shape[-1:-3:-1],
         B_memlet=Memlet.simple(
             processedKernelNode,
             ",".join(
-                inputParams[0][0:2]
-                + ["0:" + str(_s) for _s in tf_node.inputs[1].shape[-1:-3:-1]]
-            ),
+                inputParams[0][0:2] +
+                ["0:" + str(_s) for _s in tf_node.inputs[1].shape[-1:-3:-1]]),
         ),
         C_subset=[tf_node.inputs[1].shape[-1], inputViewShape[-1]],
-        C_memlet=Memlet.simple(mNode, ",".join(inputParams[0][0:2] + mNodeDims[-2:])),
+        C_memlet=Memlet.simple(mNode,
+                               ",".join(inputParams[0][0:2] + mNodeDims[-2:])),
         map_entry=mapEntry,
         map_exit=mapExit,
         shadow_a=True,
         shadow_b=True,
     )
-    state.add_edge(
-        mapExit, None, mNode, None, Memlet.simple(mNode, ",".join(mNodeDims))
-    )
-    #################OUTPUT TRANSFORMATIION################################
+    state.add_edge(mapExit, None, mNode, None,
+                   Memlet.simple(mNode, ",".join(mNodeDims)))
+    #################OUTPUT TRANSFORMATION################################
     mapRange = [inputDims[1][-1]] + [inputViewDims[-1]]
     mapEntry, mapExit = state.add_map(
         string_builder(tf_node.name) + "_output_txform",
         dict(zip(inputParams[0][0:2], mapRange)),
         dace.ScheduleType.GPU_Device,
     )
-    intermediateResultNode = state.add_transient(
-        "AtM", at.shape, dace.float32, dace.StorageType.GPU_Stack
-    )
+    intermediateResultNode = state.add_transient("AtM", at.shape, dace.float32,
+                                                 dace.StorageType.GPU_Stack)
     intermediateResultNode.setzero = True
     transformedOutputNode = state.add_transient(
-        "inv_txformed_output"
-        + "_".join([str(tf_node.inputs[1].shape[-1])] + [str(inputViewShape[-1])]),
-        [OUTPUT_TILE_SIZE, OUTPUT_TILE_SIZE]
-        + [tf_node.inputs[1].shape[-1]]
-        + [inputViewShape[-1]],
+        "inv_txformed_output" + "_".join([str(tf_node.inputs[1].shape[-1])] +
+                                         [str(inputViewShape[-1])]),
+        [OUTPUT_TILE_SIZE, OUTPUT_TILE_SIZE] + [tf_node.inputs[1].shape[-1]] +
+        [inputViewShape[-1]],
         dace.float32,
         dace.StorageType.GPU_Global,
     )
     transformedOutputNode.setzero = True
-    state.add_edge(
-        mNode, None, mapEntry, None, Memlet.simple(mNode, ",".join(mNodeDims))
-    )
+    state.add_edge(mNode, None, mapEntry, None,
+                   Memlet.simple(mNode, ",".join(mNodeDims)))
     mm_small(
         state,
         aTransposeNode,
@@ -768,8 +734,7 @@ def winograd_convolution(dace_session, tf_node):
         intermediateResultNode,
         B_subset=inputViewShape[0:2],
         B_memlet=Memlet.simple(
-            mNode, ",".join(inputViewDims[0:2] + inputParams[0][0:2])
-        ),
+            mNode, ",".join(inputViewDims[0:2] + inputParams[0][0:2])),
         map_entry=mapEntry,
         B_direct=False,
     )
@@ -782,9 +747,8 @@ def winograd_convolution(dace_session, tf_node):
         C_memlet=Memlet.simple(
             transformedOutputNode,
             ",".join(
-                ["0:" + str(OUTPUT_TILE_SIZE), "0:" + str(OUTPUT_TILE_SIZE)]
-                + inputParams[0][0:2]
-            ),
+                ["0:" + str(OUTPUT_TILE_SIZE), "0:" + str(OUTPUT_TILE_SIZE)] +
+                inputParams[0][0:2]),
             wcr_str="lambda a,b:a+b",
             wcr_conflict=False,
         ),
@@ -799,12 +763,10 @@ def winograd_convolution(dace_session, tf_node):
         None,
         Memlet.simple(
             transformedOutputNode.data,
-            ",".join(
-                [
-                    "0:" + str(_s)
-                    for _s in transformedOutputNode.desc(dace_session.graph).shape
-                ]
-            ),
+            ",".join([
+                "0:" + str(_s)
+                for _s in transformedOutputNode.desc(dace_session.graph).shape
+            ]),
             wcr_str="lambda a,b: a+b",
             wcr_conflict=False,
         ),
@@ -812,45 +774,37 @@ def winograd_convolution(dace_session, tf_node):
     ###################Un-Tile the output to NHWC format###################
     outputParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%"
-        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE))
-        + "*"
-        + str(OUTPUT_TILE_SIZE)
-        + "+i0",
-        "int_floor(i3,"
-        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE))
-        + ")*"
-        + str(OUTPUT_TILE_SIZE)
-        + "+i1",
+        "(i3/" + str(outputShape[0]) + ")%" + str(
+            ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
+        str(OUTPUT_TILE_SIZE) + "+i0",
+        "int_floor(i3," + str(
+            outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" +
+        str(OUTPUT_TILE_SIZE) + "+i1",
         "i2",
     ]
     mapRange = [
-        "0:" + str(_s) for _s in transformedOutputNode.desc(dace_session.graph).shape
+        "0:" + str(_s)
+        for _s in transformedOutputNode.desc(dace_session.graph).shape
     ]
     mapEntry, mapExit = state.add_map(
         string_builder(tf_node.name) + "_output_untile",
         dict(zip(inputParams[0], mapRange)),
     )
     tasklet = state.add_tasklet(
-        string_builder(tf_node.name) + "_output_untile", {"j0"}, {"out"}, "out = j0"
-    )
-    dace_session.add_in_memlets(
-        [transformedOutputNode], mapEntry, tasklet, [mapRange], [inputParams[0]]
-    )
-    dace_session.add_out_memlets(
-        outputList, mapExit, tasklet, [outputDims], [outputParams]
-    )
+        string_builder(tf_node.name) + "_output_untile", {"j0"}, {"out"},
+        "out = j0")
+    dace_session.add_in_memlets([transformedOutputNode], mapEntry, tasklet,
+                                [mapRange], [inputParams[0]])
+    dace_session.add_out_memlets(outputList, mapExit, tasklet, [outputDims],
+                                 [outputParams])
     ################# Debugging with callbacks #############
     taskletInputs = ["i" + str(index) for index in range(len(debugNodes))]
     callback_tasklet = state.add_tasklet(
         string_builder(tf_node.name) + "_printer",
         {*taskletInputs},
         {},
-        string_builder(tf_node.name)
-        + "_printer"
-        + "("
-        + ",".join(taskletInputs)
-        + ");",
+        string_builder(tf_node.name) + "_printer" + "(" +
+        ",".join(taskletInputs) + ");",
         location="cpu",
         language=dace.types.Language.CPP,
     )
@@ -862,9 +816,8 @@ def winograd_convolution(dace_session, tf_node):
             storage=dace.StorageType.CPU_Heap,
             toplevel=True,
         )
-        state.add_edge(
-            _n, None, _n_cpu, None, Memlet.from_array(_n, _n.desc(dace_session.graph))
-        )
+        state.add_edge(_n, None, _n_cpu, None,
+                       Memlet.from_array(_n, _n.desc(dace_session.graph)))
         state.add_edge(
             _n_cpu,
             None,
@@ -875,9 +828,9 @@ def winograd_convolution(dace_session, tf_node):
     callback_input_types = []
     for somenode in debugNodes:
         callback_input_types.append(somenode.desc(dace_session.graph))
-    dace_session.callbackFunctionDict[
-        string_builder(tf_node.name) + "_printer"
-    ] = printer
-    dace_session.callbackTypeDict[
-        string_builder(tf_node.name) + "_printer"
-    ] = dace.data.Scalar(dace.callback(None, *callback_input_types))
+    dace_session.callbackFunctionDict[string_builder(tf_node.name) +
+                                      "_printer"] = printer
+    dace_session.callbackTypeDict[string_builder(tf_node.name) +
+                                  "_printer"] = dace.data.Scalar(
+                                      dace.callback(None,
+                                                    *callback_input_types))
