@@ -19,6 +19,7 @@ class GPUTransformMap(pattern_matching.Transformation):
     """
 
     _maps_transformed = 0
+    _arrays_removed = 0
 
     fullcopy = Property(
         desc="Copy whole arrays rather than used subset",
