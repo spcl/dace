@@ -92,7 +92,7 @@ runtest_cu() {
 
 runtest_optscript() {
     test_start $1
-    testcmd $SCRIPTPATH/scripts/diode --local --headless --optscript=$1
+    testcmd python3 $SCRIPTPATH/diode/diode1.py --local --headless --optscript=$1
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
