@@ -25,7 +25,7 @@ test_diode_serialization:
     - linux
   script:
     - cd tests/diode/
-    - ./test_serialize.sh
+    - ./serialize_test.sh
 
 test_linux_cpu:
   stage: test
