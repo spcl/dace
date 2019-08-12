@@ -166,3 +166,5 @@ perfdata.db
 _dotgraphs/
 
 /dace/codegen/cmake-build-debug/
+
+/tests/diode/*.py.*
