@@ -5,7 +5,7 @@ from __future__ import print_function
 import inspect
 from types import GeneratorType
 import dace
-from dace.properties import make_properties, Property
+from dace.properties import make_properties, Property, SubgraphProperty
 from dace.graph import labeling, graph as gr
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
@@ -91,10 +91,10 @@ class Transformation(object):
     # Static and object methods
 
     # Properties
-    sdfg_id = Property(dtype=int)
-    state_id = Property(dtype=int)
-    subgraph = Property(dtype=dict)
-    expr_index = Property(dtype=int)
+    sdfg_id = Property(dtype=int, category="(Debug)")
+    state_id = Property(dtype=int, category="(Debug)")
+    subgraph = SubgraphProperty(dtype=dict, category="(Debug)")
+    expr_index = Property(dtype=int, category="(Debug)")
 
     @staticmethod
     def annotates_memlets():

@@ -635,6 +635,11 @@ required:
                 title: "Use SQL"
                 default: true
                 description: "Use the SQL backend to analyze values. Set to false to pass all performance data directly to the HTML5 renderer (deprecated)"
+            sql_database_file:
+                type: str
+                title: "Perfdata output database"
+                default: "perfdata.db"
+                description: "Output target sqlite3 file path"
             
             
     #############################################

@@ -4,6 +4,7 @@ from dace.frontend.tensorflow import TFSession
 import matplotlib.pyplot as plt
 import sys
 
+
 def data_input_fn(filenames, batch_size=2, shuffle=False):
     def _parser(record):
         features = {
@@ -12,7 +13,7 @@ def data_input_fn(filenames, batch_size=2, shuffle=False):
         }
         parsed_record = tf.parse_single_example(record, features)
         image = tf.decode_raw(parsed_record["image_raw"], tf.float32)
-        image = tf.reshape(image, [28,28])
+        image = tf.reshape(image, [28, 28])
 
         label = tf.cast(parsed_record["label"], tf.int32)
         label = tf.one_hot(indices=label, depth=10, on_value=1, off_value=0)
@@ -55,4 +56,3 @@ if __name__ == '__main__':
             _out = _out.astype(np.uint8)
             plt.imshow(_out)
             plt.show()
-

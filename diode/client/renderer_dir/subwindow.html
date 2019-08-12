@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <script src="global_vars.js"></script> <!-- Global defines -->
+    <script src="dagre.js"></script> <!-- Graph library -->
+    <script src="renderer_util.js" type="module"></script> <!-- Offloaded display functions and classes -->
+    <script src="sdfg_renderer.js" type="module"></script> <!-- Offloaded sdfg drawing functions -->
+    <script src="datahelper.js" type="module"></script> <!-- Offloaded data analysis functions and classes -->
+    <script src="Chart.bundle.min.js"></script> <!-- Library for charts -->
+
+
+    <script src="parallelization_button.js" type="module"></script>
+    <script src="memory_button.js" type="module"></script>
+    <script src="memop_button.js" type="module"></script>
+    <script src="cache_button.js" type="module"></script>
+    <script src="vectorization_button.js" type="module"></script>
+    
+    
+    
+    <script type="module">
+        import {ClientSide, DiodeWindow} from "./windowing.js"
+        import {ParallelizationButton} from "./parallelization_button.js"
+        import {VectorizationButton} from "./vectorization_button.js"
+
+        window.onload = () => {
+            // This needs to be global
+            let _thisclient = new ClientSide(window);    
+            window._thisclient = _thisclient;
+        }
+    </script>
+</head>
+<body style="margin: 0">
+    <div id="maindiv">
+        <canvas id="subwindowcanvas" width="800" height="800" style="border:1px solid black;">
+
+        </canvas>
+    </div>
+</body>
+</html>

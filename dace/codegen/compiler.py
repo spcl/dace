@@ -312,8 +312,10 @@ def unique_flags(flags):
     return set(re.findall(pattern, flags))
 
 
-def generate_program_folder(sdfg, code_objects: List[CodeObject],
-                            out_path: str):
+def generate_program_folder(sdfg,
+                            code_objects: List[CodeObject],
+                            out_path: str,
+                            config=None):
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
@@ -365,7 +367,10 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject],
         filelist_file.write("\n".join(filelist))
 
     # Copy snapshot of configuration script
-    Config.save(os.path.join(out_path, "dace.conf"))
+    if config != None:
+        config.save(os.path.join(out_path, "dace.conf"))
+    else:
+        Config.save(os.path.join(out_path, "dace.conf"))
 
     # Save the SDFG itself
     sdfg.save(os.path.join(out_path, "program.sdfg"))

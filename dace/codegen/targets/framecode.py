@@ -102,8 +102,8 @@ class DaCeCodeGenerator(object):
             '#include <dace/dace.h>\n', sdfg)
 
         # Added for instrumentation includes
-        if PerfSettings.perf_enable_instrumentation(
-        ) or PerfSettings.perf_enable_timing():
+        if sdfg.parent == None and (PerfSettings.perf_enable_instrumentation()
+                                    or PerfSettings.perf_enable_timing()):
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)

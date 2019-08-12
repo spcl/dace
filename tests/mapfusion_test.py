@@ -30,11 +30,12 @@ def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20],
 
             b = a
 
+
 @dace.program
 def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20],
-                     C:dace.float32[10, 20], out: dace.float32[1]):
-    A_prime = dace.define_local([10, 20], dtype = A.dtype)
-    A_prime_copy = dace.define_local([10, 20], dtype = A.dtype)
+                     C: dace.float32[10, 20], out: dace.float32[1]):
+    A_prime = dace.define_local([10, 20], dtype=A.dtype)
+    A_prime_copy = dace.define_local([10, 20], dtype=A.dtype)
     for i, j in dace.map[0:10, 0:20]:
         with dace.tasklet:
             inp << A[i, j]
@@ -42,8 +43,8 @@ def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20],
             out2 >> A_prime[i, j]
             out3 >> A_prime_copy[i, j]
             out1 = inp
-            out2 = inp*inp
-            out3 = inp*inp
+            out2 = inp * inp
+            out3 = inp * inp
 
     for i, j in dace.map[0:10, 0:20]:
         with dace.tasklet:
@@ -56,7 +57,6 @@ def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20],
             inp << A_prime_copy[i, j]
             out2 >> C[i, j]
             out2 = inp + 2
-    
 
 
 if __name__ == '__main__':
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     print('Difference:', diff)
     if diff > 1e-4:
         exit(1)
-        
+
     # Second test
     sdfg = multiple_fusions.to_sdfg()
     sdfg.apply_transformations([MapFusion])
@@ -82,13 +82,13 @@ if __name__ == '__main__':
     B = np.zeros_like(A)
     C = np.zeros_like(A)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A = A, B = B, C = C, out=out)
+    sdfg(A=A, B=B, C=C, out=out)
     diff1 = np.linalg.norm(A * A + 1 - B)
     diff2 = np.linalg.norm(A * A + 2 - C)
     print('Difference1:', diff1)
     if diff1 > 1e-4:
         exit(1)
-    
+
     print('Difference2:', diff2)
     if diff2 > 1e-4:
         exit(1)

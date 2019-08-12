@@ -22,7 +22,8 @@ class RedundantArray(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArray._in_array, RedundantArray._out_array)
+            nxutil.node_path_graph(RedundantArray._in_array,
+                                   RedundantArray._out_array)
         ]
 
     @staticmethod
@@ -45,23 +46,19 @@ class RedundantArray(pm.Transformation):
         # Find occurrences in this and other states
         occurrences = []
         for state in sdfg.nodes():
-            occurrences.extend(
-                [
-                    n
-                    for n in state.nodes()
-                    if isinstance(n, nodes.AccessNode)
-                    and n.desc(sdfg) == in_array.desc(sdfg)
-                ]
-            )
+            occurrences.extend([
+                n for n in state.nodes() if isinstance(n, nodes.AccessNode)
+                and n.desc(sdfg) == in_array.desc(sdfg)
+            ])
 
         if len(occurrences) > 1:
             return False
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
-        if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
-            i != o
-            for i, o in zip(in_array.desc(sdfg).shape, out_array.desc(sdfg).shape)
-        ):
+        if len(in_array.desc(sdfg).shape) != len(
+                out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
+                    in_array.desc(sdfg).shape,
+                    out_array.desc(sdfg).shape)):
             return False
 
         return True
@@ -99,10 +96,8 @@ class RedundantArray(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} redundant arrays using RedundantArray transform.".format(
-                RedundantArray._arrays_removed
-            )
-        )
+            "Automatically removed {} redundant arrays using RedundantArray transform.".
+            format(RedundantArray._arrays_removed))
 
     def modifies_graph(self):
         return True
