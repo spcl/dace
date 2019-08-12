@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# File helper that creates a diode2 server for test tasks to run with.
-DIODE2BASEPATH="../diode_2.0/"
+# File helper that creates a diode server for test tasks to run with.
+DIODEBASEPATH="../diode/"
 SAMPLESBASEPATH="../samples/"
 
 # Remove old config files if they exist
 rm ./client_configs/default.conf
 # Start the REST server
-python3 $DIODE2BASEPATH/diode_rest.py --localhost --localdace &
+python3 $DIODEBASEPATH/diode_rest.py --localhost --localdace &
 SERVPID=$!
 RETVAL=0
 

@@ -835,9 +835,8 @@ class SdfgState {
 
     setDragHandler() {
         /*
-            The drag handler is used to drag the entire view around. For DIODE version one and onehalf,
-            this handler is not needed, as the WebKit-Instance handles the scrolling.
-            This function is needed only for the new DIODE2.0 user concept.
+            The drag handler is used to drag the entire view around.
+            This function is needed only for the new DIODE user concept.
         */
 
         let canvas = this.getCanvas();

@@ -1,8 +1,8 @@
 #!/usr/bin/python3
-# DIODE2 client using a command line interface
+# DIODE client using a command line interface
 
 
-# Usage example: cat ../samples/simple/gemm.py | ./diode2_client.py --code --compile
+# Usage example: cat ../samples/simple/gemm.py | ./diode_client.py --code --compile
 import argparse, requests, json, sys
 
 parser = argparse.ArgumentParser()

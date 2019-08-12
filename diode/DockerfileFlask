@@ -16,7 +16,7 @@ RUN apt update && apt install libpapi-dev libomp-dev -y
 
 COPY . /home/daceuser
 
-COPY ./diode/ /home/daceuser/diode_2.0/client/renderer_dir
+COPY ./diode/ /home/daceuser/diode/client/renderer_dir
 
 RUN echo "daceuser ALL = NOPASSWD: ALL" >> /etc/sudoers
 
@@ -38,11 +38,7 @@ USER root
 RUN cd /home/daceuser && pip3 install --upgrade .
 
 # Install DaCe dependencies (might be too much)
-RUN apt install libgirepository1.0-dev xdot python3-gi -y
-
-
-# Theoretically unnecessary - there is an include issue in DIODE1
-RUN pip3 install pygobject matplotlib
+RUN apt install xdot -y
 
 # Avoid permission errors
 RUN chmod -R 777 /tmp && chmod -R o+t /tmp
@@ -52,6 +48,6 @@ USER daceuser
 WORKDIR /home/daceuser/rundir
 
 # Adjust the default linker flags (add libpapi to default)
-RUN python3 ../diode_2.0/adjust_settings.py
+RUN python3 ../diode/adjust_settings.py
 
-ENTRYPOINT sudo sh -c "echo -1 > /proc/sys/kernel/perf_event_paranoid"; sudo service ssh start && cd ~/rundir && python3 ~/diode_2.0/diode_rest.py
+ENTRYPOINT sudo sh -c "echo -1 > /proc/sys/kernel/perf_event_paranoid"; sudo service ssh start && cd ~/rundir && python3 ~/diode/diode_rest.py

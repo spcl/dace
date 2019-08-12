@@ -1061,7 +1061,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
     create(hist=[]) {
         let parent_element = this.container.getElement();
         $(parent_element).css('overflow', 'auto');
-        $(parent_element)[0].setAttribute("data-hint", '{"type": "DIODE2_Element", "name": "TransformationHistory"}');
+        $(parent_element)[0].setAttribute("data-hint", '{"type": "DIODE_Element", "name": "TransformationHistory"}');
 
         parent_element = $(parent_element)[0];
 
@@ -2170,7 +2170,7 @@ class DIODE_Context_StartPage extends DIODE_Context {
 
         let header = document.createElement('h1');
         header.id = "startpage_header";
-        header.innerText = "DIODE2";
+        header.innerText = "DIODE";
         parent.appendChild(header);
 
         let startpage_container = document.createElement('div');
@@ -2325,7 +2325,7 @@ class DIODE_Context_StartPage extends DIODE_Context {
 }
 
 
-class DIODE_Context_DIODE2Settings extends DIODE_Context {
+class DIODE_Context_DIODESettings extends DIODE_Context {
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
         
@@ -2335,7 +2335,7 @@ class DIODE_Context_DIODE2Settings extends DIODE_Context {
     }
 
     getThemes() {
-        REST_request('/dace/api/v1.0/diode2/themes', undefined, xhr => {
+        REST_request('/dace/api/v1.0/diode/themes', undefined, xhr => {
             if (xhr.readyState === 4 && xhr.status === 200) {
                 this._editor_themes = JSON.parse(xhr.response);
                 console.log("Got editor themes", this._editor_themes);
@@ -2392,7 +2392,7 @@ class DIODE_Context_DIODE2Settings extends DIODE_Context {
         // (Debug) mode
         {
             let cont = FormBuilder.createContainer(undefined);
-            let label = FormBuilder.createLabel(undefined, "DaCe Debug mode", "When true, the program shows elements primarily useful for debugging and developing DaCe/DIODE2.");
+            let label = FormBuilder.createLabel(undefined, "DaCe Debug mode", "When true, the program shows elements primarily useful for debugging and developing DaCe/DIODE.");
             
             let input = FormBuilder.createToggleSwitch(undefined, x => {
                 let val = x.checked;
@@ -3256,7 +3256,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
 
     createFromState() {
         let p = this.getHTMLContainer();
-        p.setAttribute("data-hint", '{"type": "DIODE2", "name": "Property_Window"}');
+        p.setAttribute("data-hint", '{"type": "DIODE", "name": "Property_Window"}');
         let state = this.getState();
         if(state.params != undefined && state.params.params != null) {
             let p = state.params;
@@ -3424,16 +3424,16 @@ class DIODE {
         this._creation_counter = 0;
 
         // Load a client_id
-        this._client_id = localStorage.getItem("diode2_client_id");
+        this._client_id = localStorage.getItem("diode_client_id");
         if(this._client_id == null) {
             this._client_id = this.getPseudorandom();
-            localStorage.setItem("diode2_client_id", this._client_id);
+            localStorage.setItem("diode_client_id", this._client_id);
         }
 
         // Initialize appearance
-        this._appearance = new Appearance(localStorage.getItem("DIODE2/Appearance"));
+        this._appearance = new Appearance(localStorage.getItem("DIODE/Appearance"));
         this._appearance.setOnChange(x => {
-            localStorage.setItem("DIODE2/Appearance", JSON.stringify(x.toStorable()))
+            localStorage.setItem("DIODE/Appearance", JSON.stringify(x.toStorable()))
         });
     }
 
@@ -3460,7 +3460,7 @@ class DIODE {
     }
 
     getRunConfigs(name=undefined) {
-        let tmp = localStorage.getItem("diode2_run_configs");
+        let tmp = localStorage.getItem("diode_run_configs");
         if(tmp != null) {
             tmp = JSON.parse(tmp);
         }
@@ -3507,15 +3507,15 @@ class DIODE {
             existing.push(config);
         }
         existing.sort((a, b) => a['Configuration name'].localeCompare(b['Configuration name']));
-        localStorage.setItem("diode2_run_configs", JSON.stringify(existing));
+        localStorage.setItem("diode_run_configs", JSON.stringify(existing));
     }
 
     setCurrentRunConfig(name) {
-        sessionStorage.setItem("diode2_current_run_config", name);
+        sessionStorage.setItem("diode_current_run_config", name);
     }
     
     getCurrentRunConfigName() {
-        let tmp = sessionStorage.getItem("diode2_current_run_config");
+        let tmp = sessionStorage.getItem("diode_current_run_config");
         if(tmp == null) {
             return "default";
         }
@@ -3581,7 +3581,7 @@ class DIODE {
     }
 
     pubSSH() {
-        let cached = localStorage.getItem('diode2_pubSSH');
+        let cached = localStorage.getItem('diode_pubSSH');
         if(cached != null) {
             return cached;
         }
@@ -3590,7 +3590,7 @@ class DIODE {
                 let j = JSON.parse(xhr.response);
                 if(j.error == undefined) {
                     let t = j.pubkey;
-                    localStorage.setItem('diode2_pubSSH', t);
+                    localStorage.setItem('diode_pubSSH', t);
                 }
                 else {
                     alert(j.error);
@@ -3600,13 +3600,13 @@ class DIODE {
     }
 
     static getHostList() {
-        let tmp = localStorage.getItem("diode2_host_list");
+        let tmp = localStorage.getItem("diode_host_list");
         if(tmp == null) return ['localhost'];
         else return JSON.parse(tmp);
     }
 
     static setHostList(list) {
-        localStorage.setItem("diode2_host_list", JSON.stringify(list));
+        localStorage.setItem("diode_host_list", JSON.stringify(list));
     }
 
     hint(ev) {
@@ -3832,13 +3832,13 @@ class DIODE {
         this.addContentItem(config);
     }
 
-    open_diode2_settings() {
+    open_diode_settings() {
         let millis = this.getPseudorandom();
 
         let config = {
-            title: "DIODE2 settings",
+            title: "DIODE settings",
             type: 'component',
-            componentName: 'DIODE2SettingsComponent',
+            componentName: 'DIODESettingsComponent',
             componentState: { created: millis }
         };
 
@@ -6043,7 +6043,7 @@ class DIODE {
     }
 
     static editorTheme() {
-        let theme = localStorage.getItem('diode2_ace_editor_theme');
+        let theme = localStorage.getItem('diode_ace_editor_theme');
         if(theme === null) {
             return "github";
         }
@@ -6059,36 +6059,36 @@ class DIODE {
     }
 
     static setTheme(name) {
-        localStorage.setItem('diode2_ace_editor_theme', name);
+        localStorage.setItem('diode_ace_editor_theme', name);
     }
 
     static recompileOnPropertyChange() {
         // Set a tendency towards 'false' 
-        return localStorage.getItem('diode2_recompile_on_prop_change') == "true";
+        return localStorage.getItem('diode_recompile_on_prop_change') == "true";
     }
 
     static setRecompileOnPropertyChange(boolean_value) {
         if(boolean_value) {
-            localStorage.setItem('diode2_recompile_on_prop_change', "true");
+            localStorage.setItem('diode_recompile_on_prop_change', "true");
         }
         else {
-            localStorage.setItem('diode2_recompile_on_prop_change', "false");
+            localStorage.setItem('diode_recompile_on_prop_change', "false");
         }
     }
 
     static setDebugDevMode(boolean_value) {
         if(boolean_value) {
-            localStorage.setItem('diode2_DebugDevMode', "true");
+            localStorage.setItem('diode_DebugDevMode', "true");
         }
         else {
-            localStorage.setItem('diode2_DebugDevMode', "false");
+            localStorage.setItem('diode_DebugDevMode', "false");
         }
     }
     static debugDevMode() {
         /*
             The DebugDev mode determines if internal, not-crucial-for-user properties are shown.
         */
-        let v = localStorage.getItem("diode2_DebugDevMode");
+        let v = localStorage.getItem("diode_DebugDevMode");
         return v === "true";
     }
 }
@@ -6181,6 +6181,6 @@ class ContextMenu {
     }
 }
 
-export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODE2Settings,
+export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODESettings,
     DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations,
     DIODE_Context_Error, DIODE_Context_RunConfig, DIODE_Context_PerfTimes, DIODE_Context_InstrumentationControl, DIODE_Context_Roofline}

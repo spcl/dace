@@ -53,7 +53,6 @@ class ConfigCopy:
     def set(self, *key_hierarchy, value=None, autosave=False):
         raise Exception("ConfigCopy does not allow setting values!")
 
-
     def save(self, path=None):
         """ Nonstatic version of Config::save()
         """
@@ -105,7 +104,7 @@ class ExecutorServer:
         self._slot_available = True  # True if the target machine has a slot for running a program
 
         self._perfdata_available = {}  # Dict mapping client_id => .can-path
-        # (NOTE: We do not handle the raw data in DIODE2.0, i.e. no perfdata.db)
+        # (NOTE: We do not handle the raw data in DIODE, i.e. no perfdata.db)
         # (this may change later)
 
         self._ticket_counter = 0
@@ -493,12 +492,12 @@ class ExecutorServer:
                         from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfPAPIInfo
                         ppi = PerfPAPIInfo()
                         ppi.load_info()
-                        if not ppi.check_counters([PerfSettings.perf_default_papi_counters()]):
+                        if not ppi.check_counters(
+                            [PerfSettings.perf_default_papi_counters()]):
                             yield '{"error": "PAPI Counter check failed. Either your machine does not provide the required counters or /proc/sys/kernel/perf_event_paranoid is not set correctly"}'
                             del self._task_dict[runindex]
                             self._slot_available = True
                             return
-                        
 
                     # Copy the config - this allows releasing the config lock without suffering from potential side effects
                     copied_config = ConfigCopy(Config._config)
@@ -535,6 +534,7 @@ class ExecutorServer:
 def redirect_base():
     return redirect(url_for("index", path="index.html"), code=301)
 
+
 @app.route('/client/<path:path>', methods=['GET'])
 def index(path):
     """
@@ -543,6 +543,7 @@ def index(path):
         Note: This is NOT intended for production environments and security is disregarded!
     """
     return send_from_directory("client", path)
+
 
 @app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
 def getPubSSH():
@@ -736,6 +737,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
     sdfg = applySDFGProperties(sdfg, sdfg_props, step)
     return sdfg
 
+
 def create_DaceState(code, sdfg_dict, errors):
     dace_state = None
     try:
@@ -773,6 +775,7 @@ def create_DaceState(code, sdfg_dict, errors):
         })
 
     return dace_state
+
 
 def compileProgram(request, language, perfopts=None):
     if not request.json or (('code' not in request.json) and
@@ -936,14 +939,15 @@ def compileProgram(request, language, perfopts=None):
                 in_code = ""
             try:
                 dace_state = DaceState(in_code, "fake", headless=True)
-                dace_state.set_sdfg(list(codegen_sdfgs_dace_state.values())[0], list(codegen_sdfgs_dace_state.keys())[0])
+                dace_state.set_sdfg(
+                    list(codegen_sdfgs_dace_state.values())[0],
+                    list(codegen_sdfgs_dace_state.keys())[0])
                 if len(dace_state.errors) > 0:
                     print("ERRORS: " + str(dace_state.errors))
                     errors.extend(dace_state.errors)
             except Exception as e:
                 traceback.print_exc()
                 print("Failed to create DaceState")
-            
 
         # The config won't save back on its own, and we don't want it to - these changes are transient
 
@@ -985,18 +989,27 @@ def get_transformations(sdfgs):
     return opt_per_sdfg
 
 
-@app.route("/dace/api/v1.0/<string:filegroup>/download/<string:client_id>/", methods=['GET'])
+@app.route(
+    "/dace/api/v1.0/<string:filegroup>/download/<string:client_id>/",
+    methods=['GET'])
 def perfdata_download(filegroup, client_id):
     """
         This function returns the perfdata as a download
     """
-    
-    filepath = ExecutorServer.getPerfdataDir(client_id) + ("/perfdata.db" if filegroup == "perfdata" else "/current.can")
+
+    filepath = ExecutorServer.getPerfdataDir(client_id) + (
+        "/perfdata.db" if filegroup == "perfdata" else "/current.can")
     if not os.path.isfile(filepath):
         print("File not existent, cannot download")
         abort(400)
 
-    return send_file(filepath, "application/x-sqlite3", as_attachment=True, attachment_filename="perfdata.sqlite3" if filegroup == "perfdata" else "current.can.sqlite3", conditional=True)
+    return send_file(
+        filepath,
+        "application/x-sqlite3",
+        as_attachment=True,
+        attachment_filename="perfdata.sqlite3"
+        if filegroup == "perfdata" else "current.can.sqlite3",
+        conditional=True)
 
 
 @app.route("/dace/api/v1.0/<string:filegroup>/reset/", methods=['POST'])
@@ -1012,11 +1025,13 @@ def perfdata_delete(filegroup):
         print("Client id not specified, cannot continue")
         abort(400)
 
-    filepath = ExecutorServer.getPerfdataDir(client_id) + ("/perfdata.db" if filegroup == "perfdata" else "/current.can")
+    filepath = ExecutorServer.getPerfdataDir(client_id) + (
+        "/perfdata.db" if filegroup == "perfdata" else "/current.can")
     if os.path.isfile(filepath):
         os.remove(filepath)
 
     return Response("ok")
+
 
 @app.route("/dace/api/v1.0/perfdata/roofline/", methods=['POST'])
 def perfdata_roofline():
@@ -1033,7 +1048,6 @@ def perfdata_roofline():
     except:
         print("Client id not specified, cannot continue")
         abort(400)
-
 
     filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
     retdict = PerfUtils.get_roofline_data(filepath)
@@ -1204,8 +1218,7 @@ def run():
 
         more_options = {}
         more_options['perfopts'] = perfopts
-        runner = es.addRun(client_id,
-                           (sdfgs, code_tuples, dace_state),
+        runner = es.addRun(client_id, (sdfgs, code_tuples, dace_state),
                            more_options)
 
     es.addRun(client_id, "end", {})
@@ -1348,7 +1361,7 @@ def decompile(obj):
         abort(400)
 
 
-@app.route('/dace/api/v1.0/diode2/themes', methods=['GET'])
+@app.route('/dace/api/v1.0/diode/themes', methods=['GET'])
 def get_available_ace_editor_themes():
     import glob, os.path
     path = "./client/external_lib/ace/"
@@ -1435,14 +1448,23 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--localhost", action="store_true",
-                    help="Bind to localhost only")
+    parser.add_argument(
+        "-l",
+        "--localhost",
+        action="store_true",
+        help="Bind to localhost only")
 
-    parser.add_argument("-ld", "--localdace", action="store_true",
-                    help="Use local comamnds instead of ssh")
+    parser.add_argument(
+        "-ld",
+        "--localdace",
+        action="store_true",
+        help="Use local comamnds instead of ssh")
 
-    parser.add_argument("-rd", "--restoredace", action="store_true",
-                    help="Restore the backup file")
+    parser.add_argument(
+        "-rd",
+        "--restoredace",
+        action="store_true",
+        help="Restore the backup file")
 
     args = parser.parse_args()
 
@@ -1456,16 +1478,34 @@ if __name__ == '__main__':
         Config.load()
         Config.save("./dace.conf.bak")
         Config.load()
-        Config.set("execution", "general", "execcmd", value='${command}', autosave=True)
-        Config.set("execution", "general", "copycmd_r2l", value='cp ${srcfile} ${dstfile}', autosave=True)
-        Config.set("execution", "general", "copycmd_l2r", value='cp ${srcfile} ${dstfile}', autosave=True)
+        Config.set(
+            "execution",
+            "general",
+            "execcmd",
+            value='${command}',
+            autosave=True)
+        Config.set(
+            "execution",
+            "general",
+            "copycmd_r2l",
+            value='cp ${srcfile} ${dstfile}',
+            autosave=True)
+        Config.set(
+            "execution",
+            "general",
+            "copycmd_l2r",
+            value='cp ${srcfile} ${dstfile}',
+            autosave=True)
         if not os.path.isdir("./client_configs"):
             os.mkdir("./client_configs")
         Config.save("./client_configs/default.conf")
 
     es = ExecutorServer()
     es_ref.append(es)
-    app.run(host='localhost' if args.localhost else "0.0.0.0", debug=True, use_reloader=False)
+    app.run(
+        host='localhost' if args.localhost else "0.0.0.0",
+        debug=True,
+        use_reloader=False)
 
     es.stop()
 else:
@@ -1474,6 +1514,8 @@ else:
     es_ref.append(es)
 
     import atexit
+
     def tmp():
         es.stop()
+
     atexit.register(tmp)

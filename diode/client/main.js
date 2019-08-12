@@ -4,7 +4,7 @@ window.base_url = base_url;
 
 import {
     DIODE, DIODE_Context_Settings,
-    DIODE_Context_DIODE2Settings,
+    DIODE_Context_DIODESettings,
     DIODE_Context_CodeIn,
     DIODE_Context_CodeOut,
     DIODE_Context_Terminal,
@@ -356,7 +356,7 @@ function start_DIODE() {
             { type: 'break',  id: 'break0' },
             { type: 'menu',   id: 'settings-menu', caption: 'Settings', icon: 'material-icons-outlined gmat-settings', items: [
                 { text: 'DACE settings', icon: 'material-icons-outlined gmat-settings-cloud', id: 'diode-settings' }, 
-                { text: 'DIODE2 settings', icon: 'material-icons-outlined gmat-settings-application', id: 'diode2-settings' }, 
+                { text: 'DIODE settings', icon: 'material-icons-outlined gmat-settings-application', id: 'diode-settings' }, 
                 { text: 'Run Configurations', icon: 'material-icons-outlined gmat-playlist_play', id: 'runoptions' }, 
                 { text: 'Runqueue', icon: 'material-icons-outlined gmat-view_list', id: 'runqueue' }, 
                 { text: 'Perfdata', id: 'perfdata' },
@@ -408,8 +408,8 @@ function start_DIODE() {
             if(event.target === 'file-menu:pickle-sdfg') {
                 diode.openUploader("pickle-sdfg");
             }
-            if(event.target == "settings-menu:diode2-settings") {
-                diode.open_diode2_settings();
+            if(event.target == "settings-menu:diode-settings") {
+                diode.open_diode_settings();
             }
             
             if(event.target == "settings-menu:diode-settings") {
@@ -778,13 +778,13 @@ function start_DIODE() {
         diode_context.setupEvents(diode.getCurrentProject());
     });
 
-    goldenlayout.registerComponent( 'DIODE2SettingsComponent', function( container, componentState ){
-        let diode_context = new DIODE_Context_DIODE2Settings(diode, container, componentState);
-        let divstring = "diode2_settings" + diode_context.created;
+    goldenlayout.registerComponent( 'DIODESettingsComponent', function( container, componentState ){
+        let diode_context = new DIODE_Context_DIODESettings(diode, container, componentState);
+        let divstring = "diode_settings" + diode_context.created;
         let parent_element = $(container.getElement());
         let new_element = $("<div id='" + divstring + "' style='height: 100%; width: 100%; overflow:auto'></div>");
 
-        new_element.append("<h1>DIODE2 settings</h1>");
+        new_element.append("<h1>DIODE settings</h1>");
         diode_context.setContainer(new_element);
         parent_element.append(new_element);
 
@@ -860,7 +860,7 @@ function start_DIODE() {
     diode.addKeyShortcut('gg', () => { diode.groupOptGraph(); diode.groupSDFGsAndCodeOutsTogether(); } );
     diode.addKeyShortcut('gd', () => { diode.groupLikeDIODE1(); } );
     diode.addKeyShortcut('0', () => {
-        diode.open_diode2_settings();
+        diode.open_diode_settings();
     });
     diode.addKeyShortcut('r', () => { diode.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true }); });
 

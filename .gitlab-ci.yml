@@ -18,13 +18,13 @@ setup_dace:
     - echo "Installing DaCe"
     - pip3 install --ignore-installed --upgrade --user .
 
-test_diode2_serialization:
+test_diode_serialization:
   stage: test
   tags:
     - intel
     - linux
   script:
-    - cd tests/diode2/
+    - cd tests/diode/
     - ./test_serialize.sh
 
 test_linux_cpu:
@@ -57,7 +57,7 @@ test_mpihello:
     - mpi
   script: 
     - cd tests/
-    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file mpihello_test_opt.py -d2p "../diode_2.0/" | sh'
+    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello_test_opt.py -d2p "../diode/" | sh'
     - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../scripts/diode --optscript mpihello_test_opt.py --headless --local 
 
 
@@ -69,7 +69,7 @@ test_mpihello2:
     - mpi
   script: 
     - cd tests/
-    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file mpihello2_test_opt.py -d2p "../diode_2.0/" | sh'
+    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello2_test_opt.py -d2p "../diode/" | sh'
     - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../scripts/diode --optscript mpihello2_test_opt.py --headless --local 
 
 
@@ -80,7 +80,7 @@ test_filter:
     - linux
   script: 
     - cd tests/
-    - ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file filter_test_opt.py -d2p "../diode_2.0/" | sh'
+    - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file filter_test_opt.py -d2p "../diode/" | sh'
     - xvfb-run python3 ../scripts/diode --optscript filter_test_opt.py --headless --local 
  
 
@@ -91,7 +91,7 @@ test_spmv:
     - linux
   script: 
     - cd tests/
-    - ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file spmv_test_opt.py -d2p "../diode_2.0/" | sh'
+    - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file spmv_test_opt.py -d2p "../diode/" | sh'
     - xvfb-run python3 ../scripts/diode --optscript spmv_test_opt.py --headless --local 
 
 
@@ -102,7 +102,7 @@ test_simple_stencil:
     - linux
   script: 
     - cd tests/
-    - ./diode2_helper.sh 'python3 ../diode_2.0/diode2_optscript_translator.py --file simple_stencil_test_opt.py -d2p "../diode_2.0/" | sh'
+    - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file simple_stencil_test_opt.py -d2p "../diode/" | sh'
     - xvfb-run python3 ../scripts/diode --optscript simple_stencil_test_opt.py --headless --local 
 
 test_all:on-schedule:

@@ -1,6 +1,6 @@
-DIODE2 errata
+DIODE errata
 
-This file contains a list of potential issues, weird quirks and unintuitive details about DIODE2 and used libraries.
+This file contains a list of potential issues, weird quirks and unintuitive details about DIODE and used libraries.
 
 
 GoldenLayout:EventResponses
