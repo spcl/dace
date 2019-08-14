@@ -58,7 +58,6 @@ test_mpihello:
   script: 
     - cd tests/
     - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello_test_opt.py -d2p "../diode/" | sh'
-    - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../diode/diode1.py --optscript mpihello_test_opt.py --headless --local 
 
 
 test_mpihello2:
@@ -70,7 +69,6 @@ test_mpihello2:
   script: 
     - cd tests/
     - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello2_test_opt.py -d2p "../diode/" | sh'
-    - PATH=$PATH:/opt/mpich3.2.11/bin xvfb-run python3 ../diode/diode1.py --optscript mpihello2_test_opt.py --headless --local 
 
 
 test_filter:
@@ -81,7 +79,6 @@ test_filter:
   script: 
     - cd tests/
     - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file filter_test_opt.py -d2p "../diode/" | sh'
-    - xvfb-run python3 ../diode/diode1.py --optscript filter_test_opt.py --headless --local 
  
 
 test_spmv:
@@ -92,7 +89,6 @@ test_spmv:
   script: 
     - cd tests/
     - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file spmv_test_opt.py -d2p "../diode/" | sh'
-    - xvfb-run python3 ../diode/diode1.py --optscript spmv_test_opt.py --headless --local 
 
 
 test_simple_stencil:
@@ -103,7 +99,6 @@ test_simple_stencil:
   script: 
     - cd tests/
     - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file simple_stencil_test_opt.py -d2p "../diode/" | sh'
-    - xvfb-run python3 ../diode/diode1.py --optscript simple_stencil_test_opt.py --headless --local 
 
 test_all:on-schedule:
   only:
