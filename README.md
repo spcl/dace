@@ -17,9 +17,9 @@ Tutorials
 ---------
 
 * _Implicit Dataflow in Python (coming soon)_
-* [Explicit Dataflow in Python](tutorials/explicit.ipynb)
-* [SDFG API](tutorials/sdfg_api.ipynb)
-* [Transformations](tutorials/transformations.ipynb)
+* [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb)
+* [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
+* [Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)
 
 Installation and Dependencies
 -----------------------------
@@ -30,15 +30,7 @@ Runtime dependencies:
  * A C++14-capable compiler (e.g., gcc 5.3+)
  * Python 3.5 or newer
 
-Running DIODE may require additional dependencies:
- * `sudo apt-get install libgtksourceviewmm-3.0-dev libyaml-dev`
- * `sudo apt-get install python3-cairo python3-gi-cairo libgirepository1.0-dev xdot libwebkitgtk-dev libwebkitgtk-3.0-dev libwebkit2gtk-4.0-dev`
- * `pip install pygobject matplotlib`
-
-To run DIODE on Windows, use MSYS2:
- * Download from http://www.msys2.org/
- * In the MSYS2 console, install all dependencies: `pacman -S mingw-w64-i686-gtk3 mingw-w64-i686-python2-gobject mingw-w64-i686-python3-gobject mingw-w64-i686-python3-cairo mingw-w64-i686-python3-pip mingw-w64-i686-gtksourceviewmm3 mingw-w64-i686-gcc mingw-w64-i686-boost mingw-w64-i686-python3-numpy mingw-w64-i686-python3-scipy mingw-w64-i686-python3-matplotlib`
- * Update MSYS2: `pacman -Syu`, close and restart MSYS2, then run `pacman -Su` to update the rest of the packages.
+To run DIODE, either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions.
 
 Publication
 -----------
