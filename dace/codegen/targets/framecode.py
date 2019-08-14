@@ -10,7 +10,7 @@ from dace.graph import nodes
 from dace import types, config
 
 from dace.frontend.python import ndarray
-from dace.codegen.instrumentation.perfsettings import PerfSettings, InstrumentationProvider
+from dace.codegen.instrumentation.perfsettings import PerfSettings, PAPIInstrumentation
 from dace.codegen import cppunparse
 
 import networkx as nx
@@ -117,7 +117,7 @@ class DaCeCodeGenerator(object):
         if sdfg.parent == None and PerfSettings.perf_enable_instrumentation():
             callsite_stream.write(
                 'dace_perf::PAPI::init();\n' + 'dace_perf::%s __perf_store;\n'
-                % InstrumentationProvider.perf_counter_store_string(
+                % PAPIInstrumentation.perf_counter_store_string(
                     PerfSettings.perf_default_papi_counters()), sdfg)
 
         if sdfg.parent == None and PerfSettings.perf_enable_timing():
@@ -136,11 +136,11 @@ class DaCeCodeGenerator(object):
                      "__perf_store.markSectionStart(-1, 0, 0, 0);\n" +
                      "auto& __perf_global_vs = __perf_store.getNewValueSet(__perf_global, -1, 0, 0);\n"
                      + "__perf_global.enterCritical();\n") %
-                    InstrumentationProvider.perf_counter_string(None), sdfg)
+                    PAPIInstrumentation.perf_counter_string(None), sdfg)
             else:
                 # We need to have a dummy SuperSection to count repetitions
                 callsite_stream.write(
-                    InstrumentationProvider.perf_supersection_start_string(-1),
+                    PAPIInstrumentation.perf_supersection_start_string(-1),
                     sdfg)
 
     def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
@@ -270,13 +270,13 @@ DACE_EXPORTED void __dace_exit(%s)
             #############################################################
             # Instrumentation: Pre-state
             # We cannot have supersections starting in parallel
-            parent_id = InstrumentationProvider.unified_id(-1, sid)
+            parent_id = PAPIInstrumentation.unified_id(-1, sid)
             # #TODO: Check if this is safe when SDFGs are nested...
             if PerfSettings.perf_enable_instrumentation(
             ) and PerfSettings.perf_max_scope_depth() != -1:
                 callsite_stream.write(
                     "__perf_store.markSuperSectionStart(%d);\n" %
-                    InstrumentationProvider.unified_id(-1, sid))
+                    PAPIInstrumentation.unified_id(-1, sid))
             #############################################################
 
             callsite_stream.write("#pragma omp parallel sections\n{")

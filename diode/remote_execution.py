@@ -9,7 +9,7 @@ import dace.types
 from string import Template
 from dace.codegen.compiler import generate_program_folder
 from dace.config import Config
-from dace.codegen.instrumentation.perfsettings import PerfSettings, InstrumentationProvider, PerfMetaInfo, PerfMetaInfoStatic, PerfPAPIInfoStatic
+from dace.codegen.instrumentation.perfsettings import PerfSettings, PAPIInstrumentation, PerfMetaInfo, PerfMetaInfoStatic, PerfPAPIInfoStatic
 
 
 class Executor:
@@ -53,7 +53,7 @@ class Executor:
                 break
 
         # Check counter validity
-        InstrumentationProvider.check_performance_counters(self)
+        PAPIInstrumentation.check_performance_counters(self)
 
         remote_workdir = self.config_get("execution", "general", "workdir")
         remote_dace_dir = remote_workdir + "/.dacecache/%s/" % dace_progname
@@ -119,7 +119,7 @@ class Executor:
             multirun_num = PerfSettings.perf_multirun_num(config=self._config)
 
             for iteration in range(0, multirun_num):
-                optdict, omp_thread_num = InstrumentationProvider.get_run_options(
+                optdict, omp_thread_num = PAPIInstrumentation.get_run_options(
                     self, iteration)
 
                 self.remote_exec_dace(
@@ -144,11 +144,11 @@ class Executor:
                 pass
 
             # Copy back the vectorization results
-            InstrumentationProvider.retrieve_vectorization_report(
+            PAPIInstrumentation.retrieve_vectorization_report(
                 self, code_objects, remote_dace_dir)
 
             # Copy back the instrumentation results
-            InstrumentationProvider.retrieve_instrumentation_results(
+            PAPIInstrumentation.retrieve_instrumentation_results(
                 self, remote_workdir)
 
             if self.running_async:

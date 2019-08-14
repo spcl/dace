@@ -918,8 +918,8 @@ class DIODE:
         print("show hwinfo graph")
 
     def OnReadPAPICounters(self, *args):
-        from dace.codegen.instrumentation.perfsettings import InstrumentationProvider
-        nonderiv, deriv, num_hw_ctrs = InstrumentationProvider.read_available_perfcounters(
+        from dace.codegen.instrumentation.perfsettings import PAPIInstrumentation
+        nonderiv, deriv, num_hw_ctrs = PAPIInstrumentation.read_available_perfcounters(
         )
 
         dialog = Gtk.MessageDialog(
@@ -1004,9 +1004,9 @@ class DIODE:
         dialog.destroy()
 
     def OnReadSystemInfo(self, *args):
-        from dace.codegen.instrumentation.perfsettings import InstrumentationProvider, PerfPAPIInfoStatic
+        from dace.codegen.instrumentation.perfsettings import PAPIInstrumentation, PerfPAPIInfoStatic
 
-        bandwidth = InstrumentationProvider.gather_remote_metrics()
+        bandwidth = PAPIInstrumentation.gather_remote_metrics()
 
         dialog = Gtk.MessageDialog(
             None, 0, Gtk.MessageType.INFO, Gtk.ButtonsType.OK,
