@@ -30,7 +30,7 @@ from dace.properties import LambdaProperty
 
 from dace.codegen.instrumentation.perfsettings import (
     PerfSettings,
-    PerfUtils,
+    InstrumentationProvider,
     PerfMetaInfo,
     PerfMetaInfoStatic,
 )
@@ -435,9 +435,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # For perfcounters, we have to make sure that:
         # 1) No other measurements are done for the containing scope (no map operation containing this copy is instrumented)
-        src_instrumented = PerfUtils.has_surrounding_perfcounters(
+        src_instrumented = InstrumentationProvider.has_surrounding_perfcounters(
             src_node, dfg)
-        dst_instrumented = PerfUtils.has_surrounding_perfcounters(
+        dst_instrumented = InstrumentationProvider.has_surrounding_perfcounters(
             dst_node, dfg)
 
         # From cuda.py
@@ -629,10 +629,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     sym2cpp(dst_strides)))
                 copy_size = "sizeof(%s) * %s * (%s)" % (ctype, memlet.veclen,
                                                         fac3)
-                node_id = PerfUtils.unified_id(dfg.node_id(dst_node), state_id)
+                node_id = InstrumentationProvider.unified_id(
+                    dfg.node_id(dst_node), state_id)
                 # Mark a section start (this is not really a section in itself (it would be a section with 1 entry))
                 stream.write(
-                    PerfUtils.perf_section_start_string(
+                    InstrumentationProvider.perf_section_start_string(
                         node_id, copy_size, copy_size),
                     sdfg,
                     state_id,
@@ -643,7 +644,8 @@ class CPUCodeGen(TargetCodeGenerator):
                      "auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(__perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, dace_perf::ValueSetType::Copy);\n"
                      + "__perf_cpy_{nodeid}_{unique_id}.enterCritical();\n"
                      ).format(
-                         pcs=PerfUtils.perf_counter_string(dst_node),
+                         pcs=InstrumentationProvider.perf_counter_string(
+                             dst_node),
                          nodeid=node_id,
                          unique_id=unique_cpy_id,
                          size=copy_size,
@@ -1376,11 +1378,12 @@ class CPUCodeGen(TargetCodeGenerator):
         #############################################################
         # Instrumentation: Post-tasklet
         if PerfSettings.perf_enable_instrumentation(
-        ) and PerfUtils.has_surrounding_perfcounters(node, dfg):
+        ) and InstrumentationProvider.has_surrounding_perfcounters(node, dfg):
             # Add bytes moved
             callsite_stream.write(
                 "__perf_store.addBytesMoved(%s);" %
-                PerfUtils.get_tasklet_byte_accesses(node, dfg, sdfg, state_id))
+                InstrumentationProvider.get_tasklet_byte_accesses(
+                    node, dfg, sdfg, state_id))
         #############################################################
 
         callsite_stream.write("}\n", sdfg, state_id, node)
@@ -1466,18 +1469,19 @@ class CPUCodeGen(TargetCodeGenerator):
         map_params = node.map.params
         map_name = "__DACEMAP_" + str(state_id) + "_" + str(dfg.node_id(node))
 
-        unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
+        unified_id = InstrumentationProvider.unified_id(
+            dfg.node_id(node), state_id)
 
         #############################################################
         # Instrumentation: Pre-MapEntry
 
         # Intrusively set the depth
-        PerfUtils.set_map_depth(node, dfg)
+        InstrumentationProvider.set_map_depth(node, dfg)
 
         result = callsite_stream
 
-        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id,
-                                                     sym2cpp)
+        input_size = InstrumentationProvider.get_memory_input_size(
+            node, sdfg, dfg, state_id, sym2cpp)
 
         map_header = ""
 
@@ -1487,14 +1491,14 @@ class CPUCodeGen(TargetCodeGenerator):
             PerfMetaInfoStatic.info.add_node(node, idstr)
 
         # Emit supersection if possible
-        map_header += PerfUtils.perf_get_supersection_start_string(
+        map_header += InstrumentationProvider.perf_get_supersection_start_string(
             node, sdfg, dfg, unified_id)
 
-        if PerfUtils.instrument_entry(
+        if InstrumentationProvider.instrument_entry(
                 node, dfg) and PerfSettings.perf_enable_instrumentation_for(
                     sdfg, node):
 
-            size = PerfUtils.accumulate_byte_movements_v2(
+            size = InstrumentationProvider.accumulate_byte_movements_v2(
                 node, node, dfg, sdfg, state_id)
             size = sp.simplify(size)
 
@@ -1513,7 +1517,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             size = sym2cpp(size)
 
-            map_header += PerfUtils.perf_section_start_string(
+            map_header += InstrumentationProvider.perf_section_start_string(
                 unified_id, size, input_size)
 
         #############################################################
@@ -1563,14 +1567,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 "dace_perf::%s __perf_%d;\n" +
                 "auto& __vs_%d = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(), %%s);\n"
                 + "__perf_%d.enterCritical();\n") % (
-                    PerfUtils.perf_counter_string(node),
+                    InstrumentationProvider.perf_counter_string(node),
                     unified_id,
                     unified_id,
                     unified_id,
                     unified_id,
                     unified_id,
                 )
-            perf_entry_string = PerfUtils.perf_counter_start_measurement_string(
+            perf_entry_string = InstrumentationProvider.perf_counter_start_measurement_string(
                 node, unified_id, "%s")
             # If the integer set is constant-sized, emit const_int_range
             if constsize:
@@ -1594,7 +1598,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng::size; ++{mapname}_i
                 # Instrumentation: Post-MapEntry (pre-definitions)
                 # Perfcounters for flattened maps include the calculations
                 # made to obtain the different axis indices
-                if PerfUtils.instrument_entry(
+                if InstrumentationProvider.instrument_entry(
                         node,
                         dfg) and PerfSettings.perf_enable_instrumentation_for(
                             sdfg, node):
@@ -1638,7 +1642,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 # Instrumentation: Post-MapEntry (pre-definitions)
                 # Perfcounters for flattened maps include the calculations
                 # made to obtain the different axis indices
-                if PerfUtils.instrument_entry(
+                if InstrumentationProvider.instrument_entry(
                         node,
                         dfg) and PerfSettings.perf_enable_instrumentation_for(
                             sdfg, node):
@@ -1680,13 +1684,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
                 #############################################################
                 # Instrumentation: Post-MapEntry (pre-definitions)
-                if (PerfUtils.instrument_entry(node, dfg) and
+                if (InstrumentationProvider.instrument_entry(node, dfg) and
                     ((not PerfSettings.perf_debug_profile_innermost and i == 0)
                      or (PerfSettings.perf_debug_profile_innermost
                          and i == len(node.map.range) - 1))
                         and PerfSettings.perf_enable_instrumentation_for(
                             sdfg, node)):
-                    start_string = PerfUtils.perf_counter_start_measurement_string(
+                    start_string = InstrumentationProvider.perf_counter_start_measurement_string(
                         node, unified_id, var)
                     result.write(start_string, sdfg, state_id, node)
                     # remember which map has the counters enabled
@@ -1740,7 +1744,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         #############################################################
         # Instrumentation: Pre-MapExit
-        unified_id = PerfUtils.unified_id(dfg.node_id(map_node), state_id)
+        unified_id = InstrumentationProvider.unified_id(
+            dfg.node_id(map_node), state_id)
         #############################################################
 
         # Emit internal transient array deallocation
@@ -1765,7 +1770,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         if len(map_exits) > 1:
             return
 
-        perf_end_string = PerfUtils.perf_counter_end_measurement_string(
+        perf_end_string = InstrumentationProvider.perf_counter_end_measurement_string(
             unified_id)
         # Map flattening
         if map_node.map.flatten:
@@ -1816,10 +1821,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
     ):
         result = callsite_stream
 
-        unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
+        unified_id = InstrumentationProvider.unified_id(
+            dfg.node_id(node), state_id)
 
         # Intrusively set the depth. (Better solutions are welcome)
-        PerfUtils.set_map_depth(node, dfg)
+        InstrumentationProvider.set_map_depth(node, dfg)
 
         constsize = all([
             not symbolic.issymbolic(v, sdfg.constants) for r in node.map.range
@@ -1860,11 +1866,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         else:
             condition_string = ""
 
-        if PerfUtils.instrument_entry(node, dfg):
+        if InstrumentationProvider.instrument_entry(node, dfg):
             # Mark the SuperSection start (if possible)
             # TODO: Safety checks
             result.write(
-                PerfUtils.perf_get_supersection_start_string(
+                InstrumentationProvider.perf_get_supersection_start_string(
                     node, sdfg, dfg, unified_id),
                 sdfg,
                 state_id,
@@ -1875,7 +1881,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             # TODO
             size = 0
             result.write(
-                PerfUtils.perf_section_start_string(unified_id, size, 0),
+                InstrumentationProvider.perf_section_start_string(
+                    unified_id, size, 0),
                 sdfg,
                 state_id,
                 node,
@@ -1908,11 +1915,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         # Instrumenting this is a bit flaky: Since the consume interally creates threads, it must be instrumented like a normal map. However, it seems to spawn normal std::threads (instead of going for openMP)
         # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
-        if PerfUtils.instrument_entry(node, dfg):
+        if InstrumentationProvider.instrument_entry(node, dfg):
             result.write(
                 ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
                  format(id=unified_id)) +
-                PerfUtils.perf_counter_start_measurement_string(
+                InstrumentationProvider.perf_counter_start_measurement_string(
                     node,
                     unified_id,
                     "__perf_tlp_{id}.getAndIncreaseCounter()".format(
@@ -2006,7 +2013,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         scope_dict = dfg.scope_dict()
         entry_node = scope_dict[node]
 
-        unified_id = PerfUtils.unified_id(dfg.node_id(entry_node), state_id)
+        unified_id = InstrumentationProvider.unified_id(
+            dfg.node_id(entry_node), state_id)
 
         if entry_node is None:
             raise ValueError("Exit node " + str(node.consume.label) +
@@ -2024,9 +2032,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
                                                  None, result)
 
-        if PerfUtils.instrument_entry(entry_node, dfg):
+        if InstrumentationProvider.instrument_entry(entry_node, dfg):
             result.write(
-                PerfUtils.perf_counter_end_measurement_string(unified_id),
+                InstrumentationProvider.perf_counter_end_measurement_string(
+                    unified_id),
                 sdfg,
                 state_id,
                 node,
@@ -2036,10 +2045,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
     def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
 
-        unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
+        unified_id = InstrumentationProvider.unified_id(
+            dfg.node_id(node), state_id)
 
-        input_size = PerfUtils.get_memory_input_size(node, sdfg, dfg, state_id,
-                                                     sym2cpp)
+        input_size = InstrumentationProvider.get_memory_input_size(
+            node, sdfg, dfg, state_id, sym2cpp)
 
         # Try to autodetect reduction type
         redtype = operations.detect_reduction_type(node.wcr)
@@ -2048,7 +2058,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         perf_should_instrument = (
             PerfSettings.perf_enable_instrumentation()
-            and not PerfUtils.has_surrounding_perfcounters(node, dfg)
+            and not InstrumentationProvider.has_surrounding_perfcounters(
+                node, dfg)
             and PerfSettings.perf_enable_instrumentation_for(sdfg, node))
 
         if node.schedule == types.ScheduleType.CPU_Multicore:
@@ -2107,14 +2118,15 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if not dfg.is_parallel():
                 # Now we put a start marker, but only if we are in a serial state
                 callsite_stream.write(
-                    PerfUtils.perf_supersection_start_string(unified_id),
+                    InstrumentationProvider.perf_supersection_start_string(
+                        unified_id),
                     sdfg,
                     state_id,
                     node,
                 )
 
             callsite_stream.write(
-                PerfUtils.perf_section_start_string(
+                InstrumentationProvider.perf_section_start_string(
                     unified_id,
                     str(sp.simplify(perf_expected_data_movement_sympy)) +
                     (" * (sizeof(%s) + sizeof(%s))" % (
@@ -2159,7 +2171,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                             and PerfSettings.perf_debug_profile_innermost):
 
                     callsite_stream.write(
-                        PerfUtils.perf_counter_start_measurement_string(
+                        InstrumentationProvider.
+                        perf_counter_start_measurement_string(
                             node, unified_id, "__o" + str(axis)),
                         sdfg,
                         state_id,
@@ -2173,7 +2186,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         if end_braces == 0 and perf_should_instrument:
             # The outer dimensions no longer exist. We should add instrumentation anyway.
             callsite_stream.write(
-                PerfUtils.perf_counter_start_measurement_string(
+                InstrumentationProvider.perf_counter_start_measurement_string(
                     node, unified_id, 0),
                 sdfg,
                 state_id,
@@ -2284,7 +2297,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 (i == len(axes)
                  and PerfSettings.perf_debug_profile_innermost)):
                 callsite_stream.write(
-                    PerfUtils.perf_counter_end_measurement_string(unified_id),
+                    InstrumentationProvider.
+                    perf_counter_end_measurement_string(unified_id),
                     sdfg,
                     state_id,
                     node,
@@ -2644,7 +2658,8 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         return ""
 
     state_dfg = sdfg.nodes()[state_id]
-    unified_id = PerfUtils.unified_id(dfg.node_id(node), state_id)
+    unified_id = InstrumentationProvider.unified_id(
+        dfg.node_id(node), state_id)
 
     # Not [], "" or None
     if not node.code:
@@ -2715,7 +2730,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     ):
         callsite_stream.write(
             "dace_perf::%s __perf_%s;\n" %
-            (PerfUtils.perf_counter_string(node), node.label),
+            (InstrumentationProvider.perf_counter_string(node), node.label),
             sdfg,
             state_id,
             node,

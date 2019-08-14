@@ -225,7 +225,7 @@ class PerfSettings(object):
     ]
 
 
-class PerfUtils(object):
+class InstrumentationProvider(object):
     @staticmethod
     def unified_id(node_id, state_id):
         if node_id > 0x0FFFF:
@@ -252,7 +252,7 @@ class PerfUtils(object):
                     # Add information about what is being run
                     executor.async_host.notify("Running baseline")
 
-                optdict = PerfUtils.get_cleanrun_options()
+                optdict = InstrumentationProvider.get_cleanrun_options()
 
         return (optdict, omp_thread_num)
 
@@ -290,8 +290,7 @@ forUnifiedID
                 pid, = x
                 print("for pid: " + str(pid))
                 c.execute(
-                    query,
-                    (pid, '%OMP_NUM_THREADS={thread_num}%'.format(
+                    query, (pid, '%OMP_NUM_THREADS={thread_num}%'.format(
                         thread_num=max_thread_num)))
                 d = c.fetchall()
 
@@ -378,8 +377,8 @@ LIMIT
                         })
                     tmpfetch = c.fetchall()
                     if len(tmpfetch) == 0:
-                        print("Error will occur shortly, ran for " +
-                                str(pid) + ", " + str(uid))
+                        print("Error will occur shortly, ran for " + str(pid) +
+                              ", " + str(uid))
                     cpajson, = tmpfetch[0]
 
                     cpa = json.loads(cpajson)
@@ -400,8 +399,8 @@ LIMIT
                                 map(lambda x: x[0] + x[1],
                                     zip(inout, array_to_add)))
 
-                    total_critical_path = list_accum(
-                        total_critical_path, sel_crit_path)
+                    total_critical_path = list_accum(total_critical_path,
+                                                     sel_crit_path)
 
                     # The count of values per repetition (as there could be more than one)
                     count_per_rep = nodecount / global_min
@@ -481,34 +480,28 @@ LIMIT
                     sp_op_sums = list_accum(sp_op_sums, sp_ops_reps)
                     dp_op_sums = list_accum(dp_op_sums, dp_ops_reps)
 
-                    proc_mem_sums = list_accum(proc_mem_sums,
-                                                proc_mem_reps)
+                    proc_mem_sums = list_accum(proc_mem_sums, proc_mem_reps)
                     in_mem_sums = list_accum(in_mem_sums, in_mem_reps)
-                    bytes_from_mem_sums = list_accum(
-                        bytes_from_mem_sums, bytes_from_mem_reps)
+                    bytes_from_mem_sums = list_accum(bytes_from_mem_sums,
+                                                     bytes_from_mem_reps)
 
                 print("Finalizing for pid " + str(pid))
                 # Now we can select the median
                 import statistics
 
                 # First, zip the values together
-                zipped = zip(total_critical_path, sp_op_sums,
-                                dp_op_sums, proc_mem_sums, in_mem_sums,
-                                bytes_from_mem_sums)
+                zipped = zip(total_critical_path, sp_op_sums, dp_op_sums,
+                             proc_mem_sums, in_mem_sums, bytes_from_mem_sums)
 
                 zipped = list(zipped)
 
                 # Create the FLOP/C and Byte/C numbers, respectively for all subtypes
-                sp_flop_per_cyc_arr = map(lambda x: x[1] / x[0],
-                                            zipped)
-                dp_flop_per_cyc_arr = map(lambda x: x[2] / x[0],
-                                            zipped)
+                sp_flop_per_cyc_arr = map(lambda x: x[1] / x[0], zipped)
+                dp_flop_per_cyc_arr = map(lambda x: x[2] / x[0], zipped)
 
-                proc_mem_per_cyc_arr = map(lambda x: x[3] / x[0],
-                                            zipped)
+                proc_mem_per_cyc_arr = map(lambda x: x[3] / x[0], zipped)
                 in_mem_per_cyc_arr = map(lambda x: x[4] / x[0], zipped)
-                bytes_from_mem_per_cyc_arr = map(
-                    lambda x: x[5] / x[0], zipped)
+                bytes_from_mem_per_cyc_arr = map(lambda x: x[5] / x[0], zipped)
 
                 medcyc = statistics.median(total_critical_path)
                 medindex = total_critical_path.index(medcyc)
@@ -519,8 +512,8 @@ LIMIT
 
                 proc_mem_per_cyc = list(proc_mem_per_cyc_arr)[medindex]
                 in_mem_per_cyc = list(in_mem_per_cyc_arr)[medindex]
-                bytes_from_mem_per_cyc = list(
-                    bytes_from_mem_per_cyc_arr)[medindex]
+                bytes_from_mem_per_cyc = list(bytes_from_mem_per_cyc_arr)[
+                    medindex]
 
                 d = {}
                 d["ProgramID"] = pid
@@ -576,10 +569,10 @@ LIMIT
                         )
 
                     if readall:
-                        PerfUtils.print_instrumentation_output(
+                        InstrumentationProvider.print_instrumentation_output(
                             content, config=executor._config)
                     else:
-                        PerfUtils.print_instrumentation_output(
+                        InstrumentationProvider.print_instrumentation_output(
                             ir, config=executor._config)
 
                 os.remove("instrumentation_results.txt")
@@ -644,7 +637,8 @@ LIMIT
         if PerfSettings.perf_enable_instrumentation():
             if executor.running_async:
                 executor.async_host.notify("Reading remote PAPI Counters")
-            print("Counters:\n" + str(PerfUtils.read_available_perfcounters()))
+            print("Counters:\n" +
+                  str(InstrumentationProvider.read_available_perfcounters()))
             if executor.running_async:
                 executor.async_host.notify("Done reading remote PAPI Counters")
 
@@ -841,7 +835,7 @@ LIMIT
             if isinstance(step, SymExpr):
                 step = step.expr
 
-            begin, end, step = PerfUtils.reduce_iteration_count(
+            begin, end, step = InstrumentationProvider.reduce_iteration_count(
                 begin, end, step, retparams)
             num = (end - begin) / step  # The count of iterations
             retparams[_it[i]] = num
@@ -857,10 +851,10 @@ LIMIT
 
         sub = []
         for x in children:
-            sub.extend(PerfUtils.all_maps(x, dfg))
+            sub.extend(InstrumentationProvider.all_maps(x, dfg))
 
         children.extend(sub)
-        #children.extend([PerfUtils.all_maps(x, dfg) for x in children])
+        #children.extend([InstrumentationProvider.all_maps(x, dfg) for x in children])
         return children
 
     @staticmethod
@@ -868,10 +862,10 @@ LIMIT
         from dace import types
         if node.map.schedule == types.ScheduleType.CPU_Multicore:
             # We have to find out if we should mark a section start here or later.
-            children = PerfUtils.all_maps(node, dfg)
+            children = InstrumentationProvider.all_maps(node, dfg)
             #print("children: " + str(children))
             for x in children:
-                if PerfUtils.map_depth(
+                if InstrumentationProvider.map_depth(
                         x) > PerfSettings.perf_max_scope_depth():
                     break  # We have our relevant nodes.
                 if x.map.schedule == types.ScheduleType.CPU_Multicore:
@@ -888,7 +882,7 @@ LIMIT
 
             if PerfSettings.perf_enable_instrumentation_for(
                     sdfg, node
-            ) and PerfUtils.map_depth(
+            ) and InstrumentationProvider.map_depth(
                     node
             ) <= PerfSettings.perf_max_scope_depth(
             ) and node.map._can_be_supersection_start and not dfg.is_parallel(
@@ -900,7 +894,7 @@ LIMIT
                     reasons.append("CANNOT_BE_SS")
                 if dfg.is_parallel():
                     reasons.append("CONTAINER_IS_PARALLEL")
-                if PerfUtils.map_depth(
+                if InstrumentationProvider.map_depth(
                         node) > PerfSettings.perf_max_scope_depth():
                     reasons.append("EXCEED_MAX_DEPTH")
                 if not PerfSettings.perf_enable_instrumentation_for(
@@ -911,10 +905,10 @@ LIMIT
                     reasons) + "\n"
             # dedent end
         elif PerfSettings.perf_enable_instrumentation_for(sdfg, node) and (
-                PerfUtils.map_depth(
+                InstrumentationProvider.map_depth(
                     node) == PerfSettings.perf_max_scope_depth() or
-            (PerfUtils.is_deepest_node(node, dfg))
-                and PerfUtils.map_depth(node) <=
+            (InstrumentationProvider.is_deepest_node(node, dfg))
+                and InstrumentationProvider.map_depth(node) <=
                 PerfSettings.perf_max_scope_depth()
         ) and node.map._can_be_supersection_start and not dfg.is_parallel():
             # Also put this here if it is _REALLY_ safe to do so. (Basically, even if the schedule is sequential, we can serialize to keep buffer usage low)
@@ -990,10 +984,10 @@ LIMIT
     @staticmethod
     def is_deepest_node(check: MapEntry, DFG: SubgraphView):
         nodes = DFG.nodes()
-        checkdepth = PerfUtils.map_depth(check)
-        return all(
-            not isinstance(x, MapEntry) or PerfUtils.map_depth(x) <= checkdepth
-            for x in nodes)
+        checkdepth = InstrumentationProvider.map_depth(check)
+        return all(not isinstance(x, MapEntry)
+                   or InstrumentationProvider.map_depth(x) <= checkdepth
+                   for x in nodes)
 
     @staticmethod
     def instrument_entry(mapEntry: MapEntry, DFG: SubgraphView):
@@ -1001,10 +995,10 @@ LIMIT
         from dace.graph.nodes import ConsumeEntry
         if isinstance(mapEntry, ConsumeEntry):
             return False
-        depth = PerfUtils.map_depth(mapEntry)
+        depth = InstrumentationProvider.map_depth(mapEntry)
         cond1 = PerfSettings.perf_enable_instrumentation(
         ) and depth <= PerfSettings.perf_max_scope_depth() and (
-            PerfUtils.is_deepest_node(mapEntry, DFG)
+            InstrumentationProvider.is_deepest_node(mapEntry, DFG)
             or depth == PerfSettings.perf_max_scope_depth())
         cond2 = mapEntry.map.schedule in PerfSettings.perf_whitelist_schedules
         cond3 = True
@@ -1027,7 +1021,7 @@ LIMIT
         if isinstance(parent, MapEntry):
             if not parent.map.schedule in PerfSettings.perf_whitelist_schedules:
                 return False
-            if parent.map._has_papi_counters or PerfUtils.map_depth(
+            if parent.map._has_papi_counters or InstrumentationProvider.map_depth(
                     parent) > PerfSettings.perf_max_scope_depth():
                 return True
 
@@ -1132,14 +1126,14 @@ LIMIT
                         # write_and_resolve
                         # We have to assume that every reduction costs 3 accesses of the same size
                         out_costs += 3 * sp.sympify(
-                            PerfUtils.get_memlet_byte_size(sdfg, memlet),
-                            sp.abc._clash)
+                            InstrumentationProvider.get_memlet_byte_size(
+                                sdfg, memlet), sp.abc._clash)
                     else:
                         #'%s.write(%s);\n'
                         # This standard operation is already counted
                         out_costs += sp.sympify(
-                            PerfUtils.get_memlet_byte_size(sdfg, memlet),
-                            sp.abc._clash)
+                            InstrumentationProvider.get_memlet_byte_size(
+                                sdfg, memlet), sp.abc._clash)
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
                 pass
@@ -1158,10 +1152,13 @@ LIMIT
         for ie in in_edges:
             # type ie.data == Memlet
             # type ie.data.data == Data
-            in_accum.append(PerfUtils.get_memlet_byte_size(sdfg, ie.data))
+            in_accum.append(
+                InstrumentationProvider.get_memlet_byte_size(sdfg, ie.data))
 
         out_accum.append(
-            str(PerfUtils.get_out_memlet_costs(sdfg, state_id, tasklet, dfg)))
+            str(
+                InstrumentationProvider.get_out_memlet_costs(
+                    sdfg, state_id, tasklet, dfg)))
 
         # Merge (kept split to be able to change the behavior easily)
         full = in_accum
@@ -1184,10 +1181,12 @@ LIMIT
         for ie in in_edges:
             # type ie.data == Memlet
             # type ie.data.data == Data
-            in_accum.append(PerfUtils.get_memlet_byte_size(sdfg, ie.data))
+            in_accum.append(
+                InstrumentationProvider.get_memlet_byte_size(sdfg, ie.data))
 
         for oe in out_edges:
-            out_accum.append(PerfUtils.get_memlet_byte_size(sdfg, oe.data))
+            out_accum.append(
+                InstrumentationProvider.get_memlet_byte_size(sdfg, oe.data))
 
         # Merge (kept split to be able to change the behavior easily)
         full = in_accum
@@ -1216,8 +1215,8 @@ LIMIT
         if (parent == outermost_node):
             return [parent]
 
-        return PerfUtils.get_parents(outermost_node, parent, sdfg,
-                                     state_id) + [parent]
+        return InstrumentationProvider.get_parents(outermost_node, parent,
+                                                   sdfg, state_id) + [parent]
 
     @staticmethod
     def get_memory_input_size(node, sdfg, dfg, state_id, sym2cpp):
@@ -1281,7 +1280,7 @@ LIMIT
         if len(children) > 0:
             size = 0
             for x in children:
-                size = size + PerfUtils.accumulate_byte_movements_v2(
+                size = size + InstrumentationProvider.accumulate_byte_movements_v2(
                     outermost_node, x, dfg, sdfg, state_id)
 
             return size
@@ -1290,8 +1289,8 @@ LIMIT
                 return 0  # We can ignore this.
 
             # If we reached the deepest node, get all parents
-            parent_list = PerfUtils.get_parents(outermost_node, node, sdfg,
-                                                state_id)
+            parent_list = InstrumentationProvider.get_parents(
+                outermost_node, node, sdfg, state_id)
             #print("Parents are " + str(parent_list))
             if isinstance(node, MapEntry):
                 map_list = parent_list + [node]
@@ -1302,7 +1301,7 @@ LIMIT
             # From all iterations, get the iteration count, replacing inner
             # iteration variables with the next outer variables.
             for x in map_list:
-                itvars = PerfUtils.get_iteration_count(x, itvars)
+                itvars = InstrumentationProvider.get_iteration_count(x, itvars)
 
             #print("itvars: " + str(itvars))
 
@@ -1321,7 +1320,7 @@ LIMIT
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
                 return itcount * sp.sympify(
-                    PerfUtils.get_tasklet_byte_accesses(
+                    InstrumentationProvider.get_tasklet_byte_accesses(
                         node, dfg, sdfg, state_id))
             else:
                 if PerfSettings.perf_debug_hard_error:
@@ -1355,11 +1354,11 @@ LIMIT
                 destination = dfg.scope_dict()[edge.dst]
                 if source == node and edge.dst != node:
                     subops.append(
-                        PerfUtils.accumulate_byte_movements(
+                        InstrumentationProvider.accumulate_byte_movements(
                             edge.dst, dfg, sym2cpp, sdfg, state_id))
                 if destination == node and edge.src != node:
                     subops.append(
-                        PerfUtils.accumulate_byte_movements(
+                        InstrumentationProvider.accumulate_byte_movements(
                             edge.src, dfg, sym2cpp, sdfg, state_id))
 
             # We can just simplify that directly
@@ -1373,8 +1372,8 @@ LIMIT
             return ""
         elif isinstance(node, Tasklet):
             # Exact data movement costs depend on the tasklet code
-            return PerfUtils.get_tasklet_byte_accesses(node, dfg, sdfg,
-                                                       state_id)
+            return InstrumentationProvider.get_tasklet_byte_accesses(
+                node, dfg, sdfg, state_id)
 
         else:
             if PerfSettings.perf_debug_hard_error:
@@ -1513,7 +1512,7 @@ LIMIT
         def select_thread(self, thread: int):
             """ Returns a section that only contains entries of `self` that 
                 were obtained in the given thread. """
-            ret = PerfUtils.Section(self.nodeid)
+            ret = InstrumentationProvider.Section(self.nodeid)
 
             for x in self.entries:
                 if int(x.coreid) == int(thread):
@@ -1524,7 +1523,7 @@ LIMIT
         def select_node(self, node: int):
             """ Returns a section that only contains entries of `self` that 
                 were obtained for the given node """
-            ret = PerfUtils.Section(self.nodeid)
+            ret = InstrumentationProvider.Section(self.nodeid)
 
             for x in self.entries:
                 if int(x.nodeid) == int(node):
@@ -1535,7 +1534,7 @@ LIMIT
         def filter(self, predicate):
             """ Returns a section that only contains entries `e` for which 
                 `predicate(e)` returns true"""
-            ret = PerfUtils.Section(self.nodeid)
+            ret = InstrumentationProvider.Section(self.nodeid)
 
             for x in self.entries:
                 if predicate(x):
@@ -1730,12 +1729,12 @@ LIMIT
         if mode == "default":  # Only allow overriding in default mode
             try:
                 assert isinstance(node.papi_counters, list)
-                return PerfUtils.perf_counter_string_from_string_list(
+                return InstrumentationProvider.perf_counter_string_from_string_list(
                     node.papi_counters)
             except Exception as e:
                 pass
 
-        return PerfUtils.perf_counter_string_from_string_list(
+        return InstrumentationProvider.perf_counter_string_from_string_list(
             PerfSettings.perf_default_papi_counters())
 
     @staticmethod
@@ -1743,7 +1742,7 @@ LIMIT
                                               unified_id,
                                               iteration,
                                               core_str="PAPI_thread_id()"):
-        pcs = PerfUtils.perf_counter_string(node)
+        pcs = InstrumentationProvider.perf_counter_string(node)
         return (
             'dace_perf::{counter_str} __perf_{id};\n' +
             'auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});\n'
@@ -1873,14 +1872,14 @@ LIMIT
         sections = []
 
         supersections = []
-        current_supersection = PerfUtils.SuperSection()
-        current_section = PerfUtils.Section()
-        current_entry = PerfUtils.Entry()
+        current_supersection = InstrumentationProvider.SuperSection()
+        current_section = InstrumentationProvider.Section()
+        current_entry = InstrumentationProvider.Entry()
 
         execution_times = [
         ]  # List of execution times, where the last one is a clean execution (no instrumentation other than a simple timer)
 
-        state = PerfUtils.ParseStates.CONTROL
+        state = InstrumentationProvider.ParseStates.CONTROL
         if isinstance(data, str):
             lines = data.split('\n')
             is_string_input = True
@@ -1907,13 +1906,13 @@ LIMIT
                     raise e
 
                 # Reset variables
-                current_section = PerfUtils.Section()
-                current_entry = PerfUtils.Entry()
+                current_section = InstrumentationProvider.Section()
+                current_entry = InstrumentationProvider.Entry()
 
                 sections.extend(current_supersection.getSections())
                 supersections.append(current_supersection)
 
-                current_supersection = PerfUtils.SuperSection()
+                current_supersection = InstrumentationProvider.SuperSection()
 
                 if current_multirun_line != "" and sections != []:
                     multirun_results.append((current_multirun_line.replace(
@@ -1930,9 +1929,9 @@ LIMIT
             if len(line) == 0:
                 continue
             if line[0] == '#':
-                state = PerfUtils.ParseStates.CONTROL
+                state = InstrumentationProvider.ParseStates.CONTROL
                 overhead_values = False  # Reset the overhead flag
-            if state == PerfUtils.ParseStates.CONTROL:
+            if state == InstrumentationProvider.ParseStates.CONTROL:
                 # First try: Entry
                 match = re.search(
                     r"# entry \((?P<entry_node>[0-9]+), (?P<entry_thread>[0-9]+), (?P<entry_iteration>[0-9]+), (?P<entry_flags>[0-9]+)\)",
@@ -1946,13 +1945,13 @@ LIMIT
                         print("Error occurred in line " + str(line_num) + "!")
                         raise e
 
-                    current_entry = PerfUtils.Entry()
+                    current_entry = InstrumentationProvider.Entry()
 
                     current_entry.nodeid = d['entry_node']
                     current_entry.coreid = d['entry_thread']
                     current_entry.iteration = d['entry_iteration']
                     current_entry.flags = d['entry_flags']
-                    state = PerfUtils.ParseStates.VALUES
+                    state = InstrumentationProvider.ParseStates.VALUES
                     continue
 
                 # Next try: Section header
@@ -1968,11 +1967,11 @@ LIMIT
                         print("Error occurred in line " + str(line_num) + "!")
                         raise e
 
-                    current_entry = PerfUtils.Entry()
-                    current_section = PerfUtils.Section(
+                    current_entry = InstrumentationProvider.Entry()
+                    current_section = InstrumentationProvider.Section(
                         d['section_start_node'], d['section_start_core'])
                     current_supersection.addSection(current_section)
-                    state = PerfUtils.ParseStates.SECTION_SIZE
+                    state = InstrumentationProvider.ParseStates.SECTION_SIZE
                     continue
                 # Next try: Supersection header
                 match = re.search(
@@ -1988,7 +1987,7 @@ LIMIT
                     except Exception as e:
                         print("Error occurred in line " + str(line_num) + "!")
                         raise e
-                    current_entry = PerfUtils.Entry()
+                    current_entry = InstrumentationProvider.Entry()
 
                     if (current_section.is_valid()):
                         #sections.append(current_section)
@@ -1997,12 +1996,13 @@ LIMIT
                     sections.extend(current_supersection.getSections())
 
                     supersections.append(current_supersection)
-                    current_supersection = PerfUtils.SuperSection(
+                    current_supersection = InstrumentationProvider.SuperSection(
                         d['section_start_node'])
 
-                    current_section = PerfUtils.Section()  # Clear the record
+                    current_section = InstrumentationProvider.Section(
+                    )  # Clear the record
 
-                    state = PerfUtils.ParseStates.CONTROL
+                    state = InstrumentationProvider.ParseStates.CONTROL
                     continue
                 # Next try: Section data moved
                 match = re.search(r"# moved_bytes: (?P<moved_bytes>[0-9]+)",
@@ -2038,14 +2038,14 @@ LIMIT
                 if match:
                     # We have to switch to overhead value mode. To keep it simple, we just set a flag
                     overhead_values = True
-                    state = PerfUtils.ParseStates.VALUES
+                    state = InstrumentationProvider.ParseStates.VALUES
                     continue
 
                 # Next try: Entry (anonymous)
                 # (Should not happen)
                 print("Error, unexpected: anonymous entry %s" % line)
                 print(str(match))
-            elif state == PerfUtils.ParseStates.VALUES:
+            elif state == InstrumentationProvider.ParseStates.VALUES:
                 match = re.search(r"(?P<counter>[0-9-]+): (?P<value>[0-9-]+)",
                                   line)
                 if match:
@@ -2058,7 +2058,7 @@ LIMIT
                 else:
                     print("Failed to match expected values! " + str(line))
                 continue
-            elif state == PerfUtils.ParseStates.SECTION_SIZE:
+            elif state == InstrumentationProvider.ParseStates.SECTION_SIZE:
                 match = re.search(r"^bytes: (?P<bytes>[0-9-]+)", line)
                 if match:
                     d = match.groupdict()
@@ -2207,7 +2207,7 @@ VALUES
                 str(percent_diff), modestr,
                 PerfSettings.perf_max_scope_depth(), overhead_number_string)
 
-            if False: # Disable debug json and csv by default
+            if False:  # Disable debug json and csv by default
                 with open("perf_%s.json" % modestr, "w") as out:
                     out.write(totstr)
 
@@ -2444,7 +2444,7 @@ class PerfPAPIInfo:
             self.num_hw_counters = -1
             self.preset_cost = dict()
 
-        non_derived, derived, num_ctrs = PerfUtils.read_available_perfcounters(
+        non_derived, derived, num_ctrs = InstrumentationProvider.read_available_perfcounters(
         )
         self.num_hw_counters = num_ctrs
 

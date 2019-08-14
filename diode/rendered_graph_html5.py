@@ -231,8 +231,9 @@ class RenderedGraphHTML5:
                 )
                 return
             else:
-                from dace.codegen.instrumentation.perfsettings import PerfUtils
-                retdict = PerfUtils.get_roofline_data(self.data_source)
+                from dace.codegen.instrumentation.perfsettings import InstrumentationProvider
+                retdict = InstrumentationProvider.get_roofline_data(
+                    self.data_source)
                 with self.comm_queue_lock_roofline:
                     self.command_queue_roofline.append(json.dumps(retdict))
 

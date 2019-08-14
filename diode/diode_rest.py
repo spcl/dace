@@ -1041,7 +1041,7 @@ def perfdata_roofline():
             client_id: string. The client id
 
     """
-    from dace.codegen.instrumentation.perfsettings import PerfUtils
+    from dace.codegen.instrumentation.perfsettings import InstrumentationProvider
 
     try:
         client_id = request.json['client_id']
@@ -1050,7 +1050,7 @@ def perfdata_roofline():
         abort(400)
 
     filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
-    retdict = PerfUtils.get_roofline_data(filepath)
+    retdict = InstrumentationProvider.get_roofline_data(filepath)
     return jsonify(retdict)
 
 
