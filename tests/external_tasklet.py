@@ -31,4 +31,4 @@ if __name__ == '__main__':
     external_tasklet(A, B)
 
     if B[0] != 5 or B[1] != 5:
-        raise RuntimeError("Expected output {}, got {}".format(5, 0))
+        raise RuntimeError("Expected output {}, got {}".format(5, B))

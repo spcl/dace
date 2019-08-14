@@ -54,7 +54,7 @@ class PropertyTests(unittest.TestCase):
         from_string = dace.memlet.Memlet.__properties__["data"].from_string
 
         sdfg = dace.SDFG("test_sdfg", OrderedDict([("foo",
-                                                    dace.types.float32)]), [])
+                                                    dace.types.float32)]))
 
         state0 = dace.SDFGState("s0", sdfg)
         state1 = dace.SDFGState("s1", sdfg)

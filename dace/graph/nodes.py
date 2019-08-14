@@ -274,18 +274,17 @@ class Tasklet(CodeNode):
         self.label = label
         # Set the language directly
         #self.language = language
-        self.code = { 'code_or_block': code, 'language': language }
+        self.code = {'code_or_block': code, 'language': language}
 
         self.location = location
-        self.code_global = { 'code_or_block': code_global, 'language': language }
-        self.code_init = { 'code_or_block': code_init, 'language': language }
-        self.code_exit = { 'code_or_block': code_exit, 'language': language }
+        self.code_global = {'code_or_block': code_global, 'language': language}
+        self.code_init = {'code_or_block': code_init, 'language': language}
+        self.code_exit = {'code_or_block': code_exit, 'language': language}
         self.debuginfo = debuginfo
 
     @property
     def language(self):
-        return CodeProperty.get_language(self, "code_global")
-
+        return self._code['language']
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
@@ -335,6 +334,8 @@ class EmptyTasklet(Tasklet):
         ret = EmptyTasklet("dummylabel")
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret
+
+
 # ------------------------------------------------------------------------------
 
 

@@ -609,12 +609,13 @@ class DIODE:
     def HighlightSDFGElement(self, elem):
         pass
 
-    def ChangeSDFGNodeProperties(self, elem, prop, newval):
+    def ChangeSDFGNodeProperties(self, elem, prop, newval, json=False):
         curr = self.optimization_graph.get_current().get_dace_state()
         sdfg = curr.get_sdfg()
         sid, nid = self.split_nodeid_in_state_and_nodeid(elem)
         node = sdfg.find_node(sid, nid)
-        dace.properties.set_property_from_string(prop, node, newval, sdfg)
+        dace.properties.set_property_from_string(
+            prop, node, newval, sdfg, from_json=json)
         curr.set_sdfg(sdfg)
         self.draw_sdfg_graph()
         self.update_generated_code()

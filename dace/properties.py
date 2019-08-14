@@ -390,7 +390,6 @@ class Property:
                 return _v
         return None
 
-
     @staticmethod
     def json_dumper(obj):
         try:
@@ -825,8 +824,8 @@ class DebugInfoProperty(Property):
         s = json.loads(s)
         if s == None: return None
 
-        return DebugInfo(s['start_line'], s['start_col'],
-                         s['end_line'], s['end_col'], s['filename'])
+        return DebugInfo(s['start_line'], s['start_col'], s['end_line'],
+                         s['end_col'], s['filename'])
 
 
 class ParamsProperty(Property):
@@ -1060,7 +1059,7 @@ class CodeProperty(Property):
 
         if lang == "NoCode":
             return None
-        
+
         if lang == None:
             lang = dace.types.Language.Python
         elif lang.endswith("Python"):
@@ -1071,7 +1070,7 @@ class CodeProperty(Property):
         try:
             cdata = tmp['string_data']
         except:
-            print("tmp is " + str(tmp))
+            print("UNRECOGNIZED CODE JSON: " + str(tmp))
             cdata = ""
 
         return CodeProperty.from_string(cdata, lang)
@@ -1084,16 +1083,9 @@ class CodeProperty(Property):
         if language == dace.types.Language.Python:
             block = CodeBlock(ast.parse(string).body)
             block.as_string = string
-            return {
-                'code_or_block': block,
-                'language': language
-            }
+            return {'code_or_block': block, 'language': language}
         else:
-            # Do nothing for now
-            return {
-                'code_or_block': string,
-                'language': language
-            }
+            return {'code_or_block': string, 'language': language}
 
     @staticmethod
     def to_string(obj):
@@ -1111,7 +1103,7 @@ class CodeProperty(Property):
         return unparse(obj)
 
     def __get__(self, obj, val):
-        
+
         tmp = super(CodeProperty, self).__get__(obj, val)
         try:
             # To stay compatible, return the code only. The language has to be obtained differently
@@ -1121,7 +1113,7 @@ class CodeProperty(Property):
         return tmp
 
     def __set__(self, obj, val):
-        
+
         if val is None:
             # Keep as None. The "allow_none" check in the superclass
             # ensures that this is legal
@@ -1143,9 +1135,12 @@ class CodeProperty(Property):
                 # Default to Python
                 language = dace.types.Language.Python
             try:
-                if language is not dace.types.Language.Python and not isinstance(val, str):
-                    raise TypeError("Only strings accepted for other "
-                                    "languages than Python, got {t} ({s}).".format(t=type(val).__name__, s=str(val)))
+                if language is not dace.types.Language.Python and not isinstance(
+                        val, str):
+                    raise TypeError(
+                        "Only strings accepted for other "
+                        "languages than Python, got {t} ({s}).".format(
+                            t=type(val).__name__, s=str(val)))
             except AttributeError:
                 # Don't check language if it has not been set yet. We will
                 # assume it's Python AST, since it wasn't a string
@@ -1169,7 +1164,10 @@ class CodeProperty(Property):
                         raise TypeError(
                             "Found type {} in list of AST expressions: "
                             "expected ast.AST".format(type(e).__name__))
-        super(CodeProperty, self).__set__(obj, { 'code_or_block': val, 'language': language })
+        super(CodeProperty, self).__set__(obj, {
+            'code_or_block': val,
+            'language': language
+        })
 
 
 class SubsetProperty(Property):
