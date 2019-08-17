@@ -151,17 +151,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if array_node.data in cloned_arrays:
                 cloned_array = cloned_arrays[array_node.data]
             else:
-                cloned_array = sdfg.add_array(
-                    'gpu_' + array_node.data,
-                    array.shape,
-                    array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=types.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
-                    strides=array.strides,
-                    offset=array.offset)
+                cloned_array = array.clone()
+                cloned_array.storage = types.StorageType.GPU_Global
+                cloned_array.transient = True
+                sdfg.add_datadesc('gpu_' + array_node.data, cloned_array)
                 cloned_arrays[array_node.data] = 'gpu_' + array_node.data
             cloned_node = type(array_node)('gpu_' + array_node.data)
 
@@ -171,17 +164,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if array_node.data in cloned_arrays:
                 cloned_array = cloned_arrays[array_node.data]
             else:
-                cloned_array = sdfg.add_array(
-                    'gpu_' + array_node.data,
-                    array.shape,
-                    array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=types.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
-                    strides=array.strides,
-                    offset=array.offset)
+                cloned_array = array.clone()
+                cloned_array.storage = types.StorageType.GPU_Global
+                cloned_array.transient = True
+                sdfg.add_datadesc('gpu_' + array_node.data, cloned_array)
                 cloned_arrays[array_node.data] = 'gpu_' + array_node.data
             cloned_node = type(array_node)('gpu_' + array_node.data)
 
