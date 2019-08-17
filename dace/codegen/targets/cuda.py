@@ -1023,7 +1023,7 @@ void __dace_runkernel_{fname}({fargs})
                     if symbolic.issymbolic(numel, sdfg.constants):
                         dynsmem_size += numel
             elif isinstance(node, nodes.NestedSDFG):
-                for arr in node.sdfg.arrays_recursive():
+                for _, _, arr in node.sdfg.arrays_recursive():
                     if (arr is not None
                             and arr.storage == types.StorageType.GPU_Shared):
                         numel = functools.reduce(lambda a, b: a * b, arr.shape)
