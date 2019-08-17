@@ -233,6 +233,8 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 def negate_expr(node):
     """ Negates an AST expression by adding a `Not` AST node in front of it. 
     """
+    if isinstance(node, dict):
+        node = node['code_or_block']
     if hasattr(node, "__len__"):
         if len(node) > 1:
             raise ValueError("negate_expr only expects "
