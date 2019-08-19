@@ -5747,6 +5747,9 @@ class DIODE {
 
     handleErrors(calling_context, object) {
         let errors = object['error'];
+        if ('traceback' in object) {
+            errors += '\n\n' + object['traceback'];
+        }
 
         this.Error_available(errors);
 
