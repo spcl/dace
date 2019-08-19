@@ -168,3 +168,5 @@ _dotgraphs/
 /dace/codegen/cmake-build-debug/
 
 /tests/diode/*.py.*
+
+client_configs/

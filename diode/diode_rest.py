@@ -1388,17 +1388,20 @@ def get_settings(client_id, name="", cv=None, config_path=""):
     ret = {}
     for i, (cname, cval) in enumerate(sorted(cv.items())):
         cpath = tuple(list(config_path) + [cname])
-        meta = Config.get_metadata(*cpath)
+        try:
+            meta = Config.get_metadata(*cpath)
 
-        # A dict contains more elements
-        if meta['type'] == 'dict':
-            ret[cname] = {
-                "value": get_settings(client_id, cname, cval, cpath),
-                "meta": meta
-            }
-            continue
-        # Other values can be included directly
-        ret[cname] = {"value": cval, "meta": meta}
+            # A dict contains more elements
+            if meta['type'] == 'dict':
+                ret[cname] = {
+                    "value": get_settings(client_id, cname, cval, cpath),
+                    "meta": meta
+                }
+                continue
+            # Other values can be included directly
+            ret[cname] = {"value": cval, "meta": meta}
+        except KeyError:
+            print('WARNING: No metadata for configuration key', cpath)
 
     return ret
 
