@@ -1896,6 +1896,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         default=False,
         desc="Do not synchronize at the end of the state")
 
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
+
     def __init__(self, label=None, sdfg=None, debuginfo=None):
         """ Constructs an SDFG state.
             @param label: Name for the state (optional).
