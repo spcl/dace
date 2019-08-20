@@ -669,9 +669,9 @@ class DIODE:
 
         dace_state = self.optimization_graph.get_current().get_dace_state()
 
-        from dace.codegen.instrumentation.perfsettings import PerfSettings
+        from dace.codegen.instrumentation.papi import PAPISettings
 
-        if PerfSettings.perf_use_sql():
+        if PAPISettings.perf_use_sql():
             from diode.db_scripts.db_setup import db_setup
 
             # Clean database and create tables
@@ -684,7 +684,7 @@ class DIODE:
 
         res = self.executor.run_async(dace_state, fail_on_nonzero)
 
-        if not PerfSettings.perf_use_multimode() or self.headless:
+        if not PAPISettings.perf_use_multimode() or self.headless:
             return res
 
         self.executor.autoquit = False
@@ -711,9 +711,9 @@ class DIODE:
             from diode.db_scripts.sql_to_json import MergeRuns, Conserver
 
             mr = MergeRuns()
-            PerfSettings.merging_print("Merging - do not interrupt")
+            PAPISettings.merging_print("Merging - do not interrupt")
             mr.mergev2("perfdata.db")
-            PerfSettings.merging_print("Merging done")
+            PAPISettings.merging_print("Merging done")
 
             # Obtain the SDFG json
             current_state = self.optimization_graph.get_current(
@@ -918,7 +918,7 @@ class DIODE:
         print("show hwinfo graph")
 
     def OnReadPAPICounters(self, *args):
-        from dace.codegen.instrumentation.perfsettings import PAPIInstrumentation
+        from dace.codegen.instrumentation.papi import PAPIInstrumentation
         nonderiv, deriv, num_hw_ctrs = PAPIInstrumentation.read_available_perfcounters(
         )
 
@@ -1004,7 +1004,7 @@ class DIODE:
         dialog.destroy()
 
     def OnReadSystemInfo(self, *args):
-        from dace.codegen.instrumentation.perfsettings import PAPIInstrumentation, PerfPAPIInfoStatic
+        from dace.codegen.instrumentation.papi import PAPIInstrumentation, PerfPAPIInfoStatic
 
         bandwidth = PAPIInstrumentation.gather_remote_metrics()
 

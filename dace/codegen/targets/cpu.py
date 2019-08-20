@@ -11,9 +11,8 @@ import dace
 from dace.config import Config
 from dace.frontend import operations
 from dace import data, subsets, symbolic, types, memlet as mmlt
+from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets import framecode
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType
 from dace.graph import nodes, nxutil
 from dace.sdfg import (
@@ -27,13 +26,6 @@ from dace.sdfg import (
 
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.properties import LambdaProperty
-
-from dace.codegen.instrumentation.perfsettings import (
-    PerfSettings,
-    PAPIInstrumentation,
-    PerfMetaInfo,
-    PerfMetaInfoStatic,
-)
 
 _REDUCTION_TYPE_TO_OPENMP = {
     types.ReductionType.Max: "max",
@@ -115,10 +107,6 @@ class CPUCodeGen(TargetCodeGenerator):
         compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
         flags = Config.get("compiler", "cpu", "args")
         flags += Config.get("compiler", "cpu", "additional_args")
-
-        # Args for vectorization output
-        if PerfSettings.perf_enable_vectorization_analysis():
-            flags += " -fopt-info-vec-optimized-missed=vecreport.txt "
 
         options = [
             '-DCMAKE_CXX_COMPILER="{}"'.format(compiler),
@@ -430,34 +418,6 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         u, uconn, v, vconn, memlet = edge
 
-        #############################################################
-        # Instrumentation: Pre-copy
-
-        # For perfcounters, we have to make sure that:
-        # 1) No other measurements are done for the containing scope (no map operation containing this copy is instrumented)
-        src_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(
-            src_node, dfg)
-        dst_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(
-            dst_node, dfg)
-
-        # From cuda.py
-        cpu_storage_types = [
-            types.StorageType.CPU_Heap,
-            types.StorageType.CPU_Stack,
-            types.StorageType.CPU_Pinned,
-            types.StorageType.Register,
-        ]
-
-        perf_cpu_only = (src_storage in cpu_storage_types) and (
-            dst_storage in cpu_storage_types)
-
-        perf_should_instrument = (
-            PerfSettings.perf_enable_instrumentation_for(sdfg)
-            and (not src_instrumented) and (not dst_instrumented)
-            and perf_cpu_only)
-
-        #############################################################
-
         # Determine memlet directionality
         if isinstance(src_node,
                       nodes.AccessNode) and memlet.data == src_node.data:
@@ -620,41 +580,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     unparse_cr(sdfg, memlet.wcr)
                 ]) + sym2cpp(stride_tmpl_args))
 
-            #############################################################
-            # Instrumentation: Pre-copy 2
-            unique_cpy_id = PerfSettings.get_unique_number()
-
-            if perf_should_instrument:
-                fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " + "/".join(
-                    sym2cpp(dst_strides)))
-                copy_size = "sizeof(%s) * %s * (%s)" % (ctype, memlet.veclen,
-                                                        fac3)
-                node_id = PAPIInstrumentation.unified_id(
-                    dfg.node_id(dst_node), state_id)
-                # Mark a section start (this is not really a section in itself (it would be a section with 1 entry))
-                stream.write(
-                    PAPIInstrumentation.perf_section_start_string(
-                        node_id, copy_size, copy_size),
-                    sdfg,
-                    state_id,
-                    [src_node, dst_node],
-                )
-                stream.write(
-                    ("dace_perf::{pcs} __perf_cpy_{nodeid}_{unique_id};\n" +
-                     "auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(__perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, dace_perf::ValueSetType::Copy);\n"
-                     + "__perf_cpy_{nodeid}_{unique_id}.enterCritical();\n"
-                     ).format(
-                         pcs=PAPIInstrumentation.perf_counter_string(dst_node),
-                         nodeid=node_id,
-                         unique_id=unique_cpy_id,
-                         size=copy_size,
-                     ),
-                    sdfg,
-                    state_id,
-                    [src_node, dst_node],
-                )
-
-            #############################################################
+            # Instrumentation: Pre-copy
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_begin(sdfg, state_dfg, src_node, dst_node,
+                                        edge, stream, None)
 
             nc = True
             if memlet.wcr is not None:
@@ -693,14 +623,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         #############################################################
         # Instrumentation: Post-copy
-        if perf_should_instrument:
-            stream.write(
-                ("__perf_cpy_%d_%d.leaveCritical(__vs_cpy_%d_%d);\n") %
-                (node_id, unique_cpy_id, node_id, unique_cpy_id),
-                sdfg,
-                state_id,
-                [src_node, dst_node],
-            )
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_copy_end(sdfg, state_dfg, src_node, dst_node, edge,
+                                  stream, None)
         #############################################################
 
     ###########################################################################
@@ -1345,6 +1271,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1)
                 locals_defined = True
 
+        # Instrumentation: Pre-tasklet
+        instr = self._dispatcher.instrumentation[node.instrument]
+        if instr is not None:
+            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream,
+                                function_stream)
+
         callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
                               node)
 
@@ -1374,16 +1306,10 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream,
         )
 
-        #############################################################
         # Instrumentation: Post-tasklet
-        if PerfSettings.perf_enable_instrumentation(
-        ) and PAPIInstrumentation.has_surrounding_perfcounters(node, dfg):
-            # Add bytes moved
-            callsite_stream.write(
-                "__perf_store.addBytesMoved(%s);" %
-                PAPIInstrumentation.get_tasklet_byte_accesses(
-                    node, dfg, sdfg, state_id))
-        #############################################################
+        if instr is not None:
+            instr.on_node_end(sdfg, state_dfg, node, callsite_stream,
+                              callsite_stream, function_stream)
 
         callsite_stream.write("}\n", sdfg, state_id, node)
 
@@ -1465,61 +1391,19 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream,
             callsite_stream,
     ):
+        state_dfg = sdfg.node(state_id)
         map_params = node.map.params
         map_name = "__DACEMAP_" + str(state_id) + "_" + str(dfg.node_id(node))
 
-        unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(node), state_id)
-
-        #############################################################
-        # Instrumentation: Pre-MapEntry
-
-        # Intrusively set the depth
-        PAPIInstrumentation.set_map_depth(node, dfg)
-
         result = callsite_stream
-
-        input_size = PAPIInstrumentation.get_memory_input_size(
-            node, sdfg, dfg, state_id, sym2cpp)
-
         map_header = ""
 
-        if PerfSettings.perf_enable_instrumentation():
-            idstr = "// (Node %d)\n" % unified_id
-            map_header += idstr  # Used to identify line numbers later
-            PerfMetaInfoStatic.info.add_node(node, idstr)
-
-        # Emit supersection if possible
-        map_header += PAPIInstrumentation.perf_get_supersection_start_string(
-            node, sdfg, dfg, unified_id)
-
-        if PAPIInstrumentation.instrument_entry(
-                node, dfg) and PerfSettings.perf_enable_instrumentation_for(
-                    sdfg, node):
-
-            size = PAPIInstrumentation.accumulate_byte_movements_v2(
-                node, node, dfg, sdfg, state_id)
-            size = sp.simplify(size)
-
-            used_symbols = symbolic.symbols_in_sympy_expr(size)
-            defined_symbols = sdfg.symbols_defined_at(node)
-            undefined_symbols = [
-                x for x in used_symbols if x not in defined_symbols
-            ]
-            if len(undefined_symbols) > 0:
-                # We cannot statically determine the size at this point
-                print(
-                    'Failed to determine size because of undefined symbols ("'
-                    + str(undefined_symbols) + '") in "' + str(size) +
-                    '", falling back to 0')
-                size = 0
-
-            size = sym2cpp(size)
-
-            map_header += PAPIInstrumentation.perf_section_start_string(
-                unified_id, size, input_size)
-
-        #############################################################
+        # Instrumentation: Pre-scope
+        instr = INSTRUMENTATION_PROVIDERS[node.map.instrument]
+        if instr is not None:
+            inner_stream = CodeIOStream()
+            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
+                                 inner_stream, function_stream)
 
         if node.map.schedule == types.ScheduleType.CPU_Multicore:
             map_header += "#pragma omp parallel for"
@@ -1559,22 +1443,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Map flattening
         if node.map.flatten:
-
-            #############################################################
-            # Instrumentation: Post-MapEntry (pre-definitions)
-            perf_entry_string = (
-                "dace_perf::%s __perf_%d;\n" +
-                "auto& __vs_%d = __perf_store.getNewValueSet(__perf_%d, %d, PAPI_thread_id(), %%s);\n"
-                + "__perf_%d.enterCritical();\n") % (
-                    PAPIInstrumentation.perf_counter_string(node),
-                    unified_id,
-                    unified_id,
-                    unified_id,
-                    unified_id,
-                    unified_id,
-                )
-            perf_entry_string = PAPIInstrumentation.perf_counter_start_measurement_string(
-                node, unified_id, "%s")
             # If the integer set is constant-sized, emit const_int_range
             if constsize:
                 # Generate the loop
@@ -1592,20 +1460,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng::size; ++{mapname}_i
                     state_id,
                     node,
                 )
-
-                #############################################################
-                # Instrumentation: Post-MapEntry (pre-definitions)
-                # Perfcounters for flattened maps include the calculations
-                # made to obtain the different axis indices
-                if PAPIInstrumentation.instrument_entry(
-                        node,
-                        dfg) and PerfSettings.perf_enable_instrumentation_for(
-                            sdfg, node):
-                    result.write(perf_entry_string % (map_name + "_iter"),
-                                 sdfg, state_id, node)
-                    # remember which map has the counters enabled
-                    node.map._has_papi_counters = True
-                #############################################################
 
                 # Generate the variables
                 for ind, var in enumerate(map_params):
@@ -1637,20 +1491,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     node,
                 )
 
-                #############################################################
-                # Instrumentation: Post-MapEntry (pre-definitions)
-                # Perfcounters for flattened maps include the calculations
-                # made to obtain the different axis indices
-                if PAPIInstrumentation.instrument_entry(
-                        node,
-                        dfg) and PerfSettings.perf_enable_instrumentation_for(
-                            sdfg, node):
-                    result.write(perf_entry_string % (map_name + "_iter"),
-                                 sdfg, state_id, node)
-                    # remember which map has the counters enabled
-                    node.map._has_papi_counters = True
-                #############################################################
-
                 # Generate the variables
                 for ind, var in enumerate(map_params):
                     result.write(
@@ -1681,20 +1521,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     node,
                 )
 
-                #############################################################
-                # Instrumentation: Post-MapEntry (pre-definitions)
-                if (PAPIInstrumentation.instrument_entry(node, dfg) and
-                    ((not PerfSettings.perf_debug_profile_innermost and i == 0)
-                     or (PerfSettings.perf_debug_profile_innermost
-                         and i == len(node.map.range) - 1))
-                        and PerfSettings.perf_enable_instrumentation_for(
-                            sdfg, node)):
-                    start_string = PAPIInstrumentation.perf_counter_start_measurement_string(
-                        node, unified_id, var)
-                    result.write(start_string, sdfg, state_id, node)
-                    # remember which map has the counters enabled
-                    node.map._has_papi_counters = True
-                #############################################################
+        if instr is not None:
+            callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, dfg, node)
@@ -1736,16 +1564,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # Obtain start of map
         scope_dict = dfg.scope_dict()
         map_node = scope_dict[node]
+        state_dfg = sdfg.node(state_id)
 
         if map_node is None:
             raise ValueError("Exit node " + str(node.map.label) +
                              " is not dominated by a scope entry node")
-
-        #############################################################
-        # Instrumentation: Pre-MapExit
-        unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(map_node), state_id)
-        #############################################################
 
         # Emit internal transient array deallocation
         to_allocate = dace.sdfg.local_transients(sdfg, dfg, map_node)
@@ -1759,55 +1582,22 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
                                                  None, result)
 
-        # If there are other non-visited map exits, they are responsible for
-        # closing braces
-        map_exits = [
-            k for k, v in scope_dict.items()
-            if v == map_node and isinstance(k, nodes.ExitNode)
-            and k not in self._generated_nodes
-        ]
-        if len(map_exits) > 1:
-            return
+        # Instrumentation: Post-scope
+        instr = INSTRUMENTATION_PROVIDERS[node.map.instrument]
+        if instr is not None:
+            outer_stream = CodeIOStream()
+            instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
+                                callsite_stream, function_stream)
 
-        perf_end_string = PAPIInstrumentation.perf_counter_end_measurement_string(
-            unified_id)
         # Map flattening
         if map_node.map.flatten:
-            #############################################################
-            # Instrumentation: Pre-MapExit
-            if (PerfSettings.perf_enable_instrumentation()
-                    and map_node.map._has_papi_counters):
-                result.write(perf_end_string, sdfg, state_id, node)
-
-            if PerfSettings.perf_debug_annotate_scopes:
-                result.write("// %s\n" % str(map_node), sdfg, state_id, node)
-            #############################################################
             result.write("}", sdfg, state_id, node)
         else:
             for i, r in enumerate(map_node.map.range):
-                #############################################################
-                # Instrumentation: Pre-MapExit
-                if (PerfSettings.perf_enable_instrumentation()
-                        and map_node.map._has_papi_counters and
-                    ((PerfSettings.perf_debug_profile_innermost and i == 0) or
-                     (not PerfSettings.perf_debug_profile_innermost
-                      and i == len(map_node.map.range) - 1))):
-                    result.write(perf_end_string, sdfg, state_id, node)
-
-                if (PerfSettings.perf_debug_annotate_scopes
-                        and i == len(map_node.map.range) - 1):
-                    result.write("// %s\n" % str(map_node), sdfg, state_id,
-                                 node)
-                #############################################################
                 result.write("}", sdfg, state_id, node)
 
-        #############################################################
-        # Instrumentation: Post-MapExit
-        if PerfSettings.perf_enable_vectorization_analysis():
-            idstr = "// end (Node %d)\n" % unified_id
-            result.write(idstr, sdfg, state_id, node)
-            PerfMetaInfoStatic.info.add_node(node, idstr)
-        #############################################################
+        if instr is not None:
+            result.write(outer_stream.getvalue())
 
     def _generate_ConsumeEntry(
             self,
@@ -1819,12 +1609,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             callsite_stream,
     ):
         result = callsite_stream
-
-        unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(node), state_id)
-
-        # Intrusively set the depth. (Better solutions are welcome)
-        PAPIInstrumentation.set_map_depth(node, dfg)
 
         constsize = all([
             not symbolic.issymbolic(v, sdfg.constants) for r in node.map.range
@@ -1865,35 +1649,12 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         else:
             condition_string = ""
 
-        if PAPIInstrumentation.instrument_entry(node, dfg):
-            # Mark the SuperSection start (if possible)
-            # TODO: Safety checks
-            result.write(
-                PAPIInstrumentation.perf_get_supersection_start_string(
-                    node, sdfg, dfg, unified_id),
-                sdfg,
-                state_id,
-                node,
-            )
-
-            # Mark the section start
-            # TODO
-            size = 0
-            result.write(
-                PAPIInstrumentation.perf_section_start_string(
-                    unified_id, size, 0),
-                sdfg,
-                state_id,
-                node,
-            )
-
-            # Generate a thread locker (could be used for dependency injection)
-            result.write(
-                "dace_perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id,
-                sdfg,
-                state_id,
-                node,
-            )
+        # Instrumentation: Post-scope
+        instr = INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+        if instr is not None:
+            inner_stream = CodeIOStream()
+            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
+                                 inner_stream, function_stream)
 
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
@@ -1911,24 +1672,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             state_id,
             node,
         )
-
-        # Instrumenting this is a bit flaky: Since the consume interally creates threads, it must be instrumented like a normal map. However, it seems to spawn normal std::threads (instead of going for openMP)
-        # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
-        if PAPIInstrumentation.instrument_entry(node, dfg):
-            result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
-                 format(id=unified_id)) +
-                PAPIInstrumentation.perf_counter_start_measurement_string(
-                    node,
-                    unified_id,
-                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(
-                        id=unified_id),
-                    core_str="dace_perf::getThreadID()",
-                ),
-                sdfg,
-                state_id,
-                node,
-            )
 
         # Since consume is an alias node, we create an actual array for the
         # consumed element and modify the outgoing memlet path ("OUT_stream")
@@ -1973,6 +1716,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             e.data.data = ce_node.data
         ## END of SDFG-rewriting code
 
+        # Internal instrumentation code
+        if instr is not None:
+            result.write(inner_stream.getvalue())
+
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, dfg, node)
         allocated = set()
@@ -2011,9 +1758,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # Obtain start of map
         scope_dict = dfg.scope_dict()
         entry_node = scope_dict[node]
-
-        unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(entry_node), state_id)
+        state_dfg = sdfg.node(state_id)
 
         if entry_node is None:
             raise ValueError("Exit node " + str(node.consume.label) +
@@ -2031,40 +1776,26 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
                                                  None, result)
 
-        if PAPIInstrumentation.instrument_entry(entry_node, dfg):
-            result.write(
-                PAPIInstrumentation.perf_counter_end_measurement_string(
-                    unified_id),
-                sdfg,
-                state_id,
-                node,
-            )
+        # Instrumentation: Post-scope
+        instr = INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+        if instr is not None:
+            outer_stream = CodeIOStream()
+            instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
+                                callsite_stream, function_stream)
+
         result.write("});", sdfg, state_id, node)
+
+        if instr is not None:
+            result.write(outer_stream.getvalue())
 
     def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
-
-        unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(node), state_id)
-
-        input_size = PAPIInstrumentation.get_memory_input_size(
-            node, sdfg, dfg, state_id, sym2cpp)
-
         # Try to autodetect reduction type
         redtype = operations.detect_reduction_type(node.wcr)
 
         loop_header = ""
 
-        perf_should_instrument = (
-            PerfSettings.perf_enable_instrumentation() and
-            not PAPIInstrumentation.has_surrounding_perfcounters(node, dfg)
-            and PerfSettings.perf_enable_instrumentation_for(sdfg, node))
-
         if node.schedule == types.ScheduleType.CPU_Multicore:
-            if PerfSettings.perf_enable_vectorization_analysis():
-                idstr = "// (Node %d)\n" % dfg.node_id(node)
-                loop_header += idstr
-                PerfMetaInfoStatic.info.add_node(node, idstr)
             loop_header += "#pragma omp parallel for"
 
         end_braces = 0
@@ -2096,48 +1827,12 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 axis_vars.append("__o%d" % octr)
                 octr += 1
 
-        #############################################################
-        # Instrumentation: Pre-reduce
-        # For measuring the memory bandwidth, we analyze the amount of data
-        # moved.
-        if perf_should_instrument:
-            perf_expected_data_movement_sympy = 1
-
-            for axis in range(output_dims):
-                ao = output_memlet.subset[axis]
-                perf_expected_data_movement_sympy *= (
-                    ao[1] + 1 - ao[0]) / ao[2]
-
-            for axis in axes:
-                ai = input_memlet.subset[axis]
-                perf_expected_data_movement_sympy *= (
-                    ai[1] + 1 - ai[0]) / ai[2]
-
-            if not dfg.is_parallel():
-                # Now we put a start marker, but only if we are in a serial state
-                callsite_stream.write(
-                    PAPIInstrumentation.perf_supersection_start_string(
-                        unified_id),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-            callsite_stream.write(
-                PAPIInstrumentation.perf_section_start_string(
-                    unified_id,
-                    str(sp.simplify(perf_expected_data_movement_sympy)) +
-                    (" * (sizeof(%s) + sizeof(%s))" % (
-                        sdfg.arrays[output_memlet.data].dtype.ctype,
-                        sdfg.arrays[input_memlet.data].dtype.ctype,
-                    )),
-                    input_size,
-                ),
-                sdfg,
-                state_id,
-                node,
-            )
-        #############################################################
+        # Instrumentation: Post-scope
+        instr = INSTRUMENTATION_PROVIDERS[node.instrument]
+        if instr is not None:
+            inner_stream = CodeIOStream()
+            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream,
+                                inner_stream, function_stream)
 
         # Write OpenMP loop pragma if there are output dimensions
         if output_dims > 0:
@@ -2159,38 +1854,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 node,
             )
 
-            #############################################################
-            # Instrumentation: Reduce (part 1)
-            # This could prevent the compiler from parallelizing/vectorizing
-            if perf_should_instrument:
-                if (end_braces == 0
-                        and not PerfSettings.perf_debug_profile_innermost) or (
-                            end_braces == output_dims - 1
-                            and PerfSettings.perf_debug_profile_innermost):
-
-                    callsite_stream.write(
-                        PAPIInstrumentation.
-                        perf_counter_start_measurement_string(
-                            node, unified_id, "__o" + str(axis)),
-                        sdfg,
-                        state_id,
-                        node,
-                    )
-
             end_braces += 1
-
-        #############################################################
-        # Instrumentation: Reduce (part 2)
-        if end_braces == 0 and perf_should_instrument:
-            # The outer dimensions no longer exist. We should add instrumentation anyway.
-            callsite_stream.write(
-                PAPIInstrumentation.perf_counter_start_measurement_string(
-                    node, unified_id, 0),
-                sdfg,
-                state_id,
-                node,
-            )
-        #############################################################
 
         use_tmpout = False
         if len(axes) == input_dims:
@@ -2228,6 +1892,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             )
             end_braces += 1
 
+        # Instrumentation: internal part
+        if instr is not None:
+            callsite_stream.write(inner_stream.getvalue())
+
         # Generate reduction code
         credtype = "dace::ReductionType::" + str(
             redtype)[str(redtype).find(".") + 1:]
@@ -2256,27 +1924,12 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 (output_type, unparse_cr(sdfg, node.wcr), outvar, invar), sdfg,
                 state_id, node)  #cpp_array_expr(), cpp_array_expr()
 
+        if instr is not None:
+            outer_stream = CodeIOStream
+            instr.on_node_end(sdfg, state_dfg, node, outer_stream,
+                              callsite_stream, function_stream)
+
         #############################################################
-        # Instrumentation: Post-Reduce (pre-braces)
-        byte_moved_measurement = "__perf_store.addBytesMoved(%s);\n"
-
-        # For reductions, we assume Read-Modify-Write for all operations
-        # Every reduction statement costs sizeof(input) + sizeof(output).
-        # This is wrong with some custom reductions or extending operations
-        # (e.g., i32 * i32 => i64)
-        # It also is wrong for write-avoiding min/max (min/max that only
-        # overwrite the reduced variable when it needs to be changed)
-
-        if perf_should_instrument:
-            callsite_stream.write(
-                byte_moved_measurement % ("(sizeof(%s) + sizeof(%s))" %
-                                          (outvar, invar)),
-                sdfg,
-                state_id,
-                node,
-            )
-        #############################################################
-
         # Generate closing braces
         for i in range(end_braces):
             # Store back tmpout into the true output
@@ -2287,24 +1940,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     state_id,
                     node,
                 )
-            #############################################################
-            # Instrumentation: Post-Reduce (in-braces)
-            if perf_should_instrument and (
-                (i == end_braces - 1
-                 and not PerfSettings.perf_debug_profile_innermost) or
-                (i == len(axes)
-                 and PerfSettings.perf_debug_profile_innermost)):
-                callsite_stream.write(
-                    PAPIInstrumentation.perf_counter_end_measurement_string(
-                        unified_id),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-            #############################################################
 
             callsite_stream.write("}", sdfg, state_id, node)
+
+        if instr is not None:
+            callsite_stream.write(outer_stream.getvalue())
 
     def _generate_AccessNode(self, sdfg, dfg, state_id, node, function_stream,
                              callsite_stream):
@@ -2656,7 +2296,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         return ""
 
     state_dfg = sdfg.nodes()[state_id]
-    unified_id = PAPIInstrumentation.unified_id(dfg.node_id(node), state_id)
 
     # Not [], "" or None
     if not node.code:
@@ -2721,30 +2360,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         elif v == node:
             memlets[vconn] = (memlet, False, None)
 
-    #############################################################
-    # Instrumentation: Pre-Tasklet
-    if PerfSettings.perf_tasklets and PerfSettings.perf_enable_instrumentation(
-    ):
-        callsite_stream.write(
-            "dace_perf::%s __perf_%s;\n" %
-            (PAPIInstrumentation.perf_counter_string(node), node.label),
-            sdfg,
-            state_id,
-            node,
-        )
-        callsite_stream.write(
-            "auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, %d, PAPI_thread_id(), 0);\n"
-            % (node.label, node.label, unified_id),
-            sdfg,
-            state_id,
-            node,
-        )
-
-        callsite_stream.write("__perf_%s.enterCritical();\n" % node.label,
-                              sdfg, state_id, node)
-
-    #############################################################
-
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg,
                           state_id, node)
     for stmt in body:
@@ -2760,19 +2375,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             result = StringIO()
             cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
-
-    #############################################################
-    # Instrumentation: Post-Tasklet
-    if PerfSettings.perf_tasklets and PerfSettings.perf_enable_instrumentation(
-    ):
-        callsite_stream.write(
-            "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label,
-                                                        node.label),
-            sdfg,
-            state_id,
-            node,
-        )
-    #############################################################
 
 
 def is_array_stream_view(sdfg, dfg, node):

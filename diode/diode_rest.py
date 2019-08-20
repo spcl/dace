@@ -489,11 +489,11 @@ class ExecutorServer:
                             value=str(perfcores))
 
                         # Check if perfcounters are available
-                        from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfPAPIInfo
+                        from dace.codegen.instrumentation.papi import PAPISettings, PerfPAPIInfo
                         ppi = PerfPAPIInfo()
                         ppi.load_info()
                         if not ppi.check_counters(
-                            [PerfSettings.perf_default_papi_counters()]):
+                            [PAPISettings.perf_default_papi_counters()]):
                             yield '{"error": "PAPI Counter check failed. Either your machine does not provide the required counters or /proc/sys/kernel/perf_event_paranoid is not set correctly"}'
                             del self._task_dict[runindex]
                             self._slot_available = True
@@ -1041,7 +1041,7 @@ def perfdata_roofline():
             client_id: string. The client id
 
     """
-    from dace.codegen.instrumentation.perfsettings import PAPIInstrumentation
+    from dace.codegen.instrumentation.papi import PAPIInstrumentation
 
     try:
         client_id = request.json['client_id']

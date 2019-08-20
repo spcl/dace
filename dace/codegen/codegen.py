@@ -2,14 +2,13 @@ import numpy as np
 
 from typing import List
 
-from dace import symbolic
+from dace import types
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 
-from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfMetaInfoStatic, PerfMetaInfo
-
 # Import all code generation targets
 from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx
+from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
 
 
 class CodegenError(Exception):
@@ -42,20 +41,20 @@ def generate_code(sdfg) -> List[CodeObject]:
         for name in _TARGET_REGISTER_ORDER
     }
 
+    # Instantiate all instrumentation providers in SDFG
+    frame._dispatcher.instrumentation[
+        types.InstrumentationType.No_Instrumentation] = None
+    for node in sdfg.all_nodes_recursive():
+        if hasattr(node, 'instrumentation'):
+            frame._dispatcher.instrumentation[node.instrumentation] = \
+                INSTRUMENTATION_PROVIDERS[node.instrumentation]
+
     # Generate frame code (and the rest of the code)
     global_code, frame_code, used_targets = frame.generate_code(sdfg, None)
     target_objects = [
-        CodeObject(
-            sdfg.name,
-            global_code + frame_code,
-            'cpp',
-            cpu.CPUCodeGen,
-            'Frame',
-            meta_info=PerfMetaInfoStatic.info
-            if PerfSettings.perf_enable_vectorization_analysis() else
-            PerfMetaInfo())
+        CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
+                   'Frame')
     ]
-    PerfMetaInfoStatic.info = PerfMetaInfo()
 
     # Create code objects for each target
     for tgt in used_targets:

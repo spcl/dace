@@ -529,7 +529,6 @@ class Map(object):
         should be scheduled (execution order). Code generators can use the
         schedule property to generate appropriate code, e.g., GPU kernels.
     """
-    from dace.codegen.instrumentation.perfsettings import PerfSettings
 
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
@@ -554,11 +553,6 @@ class Map(object):
         enum=types.InstrumentationType,
         desc="Measure execution statistics with given method",
         default=types.InstrumentationType.No_Instrumentation)
-
-    # TODO: REMOVE
-    # We cannot have multiple consecutive papi start/stops inside the same thread. The following variable is used to recognize the map that started the counters.
-    _has_papi_counters = False
-    _can_be_supersection_start = True  # We must have supersections synchronized.
 
     def __init__(self,
                  label,

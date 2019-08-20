@@ -866,6 +866,11 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                 self._frame._dispatcher.dispatch_deallocate(
                     sdfg, state, sid, node, function_stream, callsite_stream)
 
+            # Invoke all instrumentation providers
+            for instr in self._frame._dispatcher.instrumentation.values():
+                instr.on_state_end(sdfg, state, callsite_stream,
+                                   function_stream)
+
     def generate_devicelevel_state(self, sdfg, state, function_stream,
                                    callsite_stream):
 
