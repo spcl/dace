@@ -3688,6 +3688,37 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
     return False
 
 
+def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
+    """ Test whether a stream is directly connected to an array. """
+
+    # Test all memlet paths from the array. If the path goes directly
+    # to/from a stream, construct a stream array view
+    source_paths = []
+    sink_paths = []
+    for e in dfg.in_edges(node):
+        src_node = dfg.memlet_path(e)[0].src
+        if isinstance(src_node, nd.AccessNode) and isinstance(
+                src_node.desc(sdfg), dt.Array):
+            source_paths.append(src_node)
+    for e in dfg.out_edges(node):
+        sink_node = dfg.memlet_path(e)[-1].dst
+        if isinstance(sink_node, nd.AccessNode) and isinstance(
+                sink_node.desc(sdfg), dt.Array):
+            sink_paths.append(sink_node)
+
+    # Special case: stream can be represented as a view of an array
+    if len(source_paths) == 1 or len(sink_paths) == 1:
+        # TODO: What about a source path?
+        arrnode = sink_paths[0]
+        # Only works if the stream itself is not an array of streams
+        if list(node.desc(sdfg).shape) == [1]:
+            node.desc(sdfg).sink = arrnode.data  # For memlet generation
+            arrnode.desc(
+                sdfg).src = node.data  # TODO: Move src/sink to node, not array
+            return True
+    return False
+
+
 def _get_optimizer_class(class_override):
     """ Imports and returns a class string defined in the configuration
         (under "optimizer.interface") or overridden in the input

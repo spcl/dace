@@ -7,19 +7,17 @@ import sympy
 
 import dace
 from dace.frontend import operations
-from dace import subsets, symbolic, types
+from dace import subsets, symbolic, types, data as dt
 from dace.config import Config
 from dace.graph import nodes
-from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel
+from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel, is_array_stream_view
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
 from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, unparse_cr_split,
-                                      cpp_array_expr, is_array_stream_view,
-                                      synchronize_streams)
+                                      cpp_array_expr, synchronize_streams)
 from dace.codegen.targets.framecode import _set_default_schedule_and_storage_types
-from dace.properties import LambdaProperty
 
 from dace.codegen import cppunparse
 
@@ -264,6 +262,12 @@ void __dace_exit_cuda({params}) {{
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
+        try:
+            self._dispatcher.defined_vars.get(node.data)
+            return
+        except KeyError:
+            pass  # The variable was not defined, we can continue
+
         nodedesc = node.desc(sdfg)
         if isinstance(nodedesc, dace.data.Stream):
             return self.allocate_stream(sdfg, dfg, state_id, node,
@@ -353,6 +357,12 @@ void __dace_exit_cuda({params}) {{
                 fmtargs['ptr'] = nodedesc.sink
                 # Assuming 1D array sink/src
                 fmtargs['size'] = sym2cpp(sdfg.arrays[nodedesc.sink].shape[0])
+
+                # (important) Ensure GPU array is allocated before the stream
+                datanode = dfg.out_edges(node)[0].dst
+                self._dispatcher.dispatch_allocate(sdfg, dfg, state_id,
+                                                   datanode, function_stream,
+                                                   callsite_stream)
 
                 function_stream.write(
                     'DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
@@ -581,6 +591,12 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
                             and dst_storage in cpu_storage_types)):
             src_location = 'Device' if src_storage == types.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == types.StorageType.GPU_Global else 'Host'
+
+            # Corner case: A stream is writing to an array
+            if (isinstance(sdfg.arrays[src_node.data], dt.Stream)
+                    and isinstance(sdfg.arrays[dst_node.data],
+                                   (dt.Scalar, dt.Array))):
+                return  # Do nothing (handled by ArrayStreamView)
 
             syncwith = {}  # Dictionary of {stream: event}
             is_sync = False
