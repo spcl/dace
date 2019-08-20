@@ -108,7 +108,7 @@ class DaCeCodeGenerator(object):
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
 
-        self.generate_fileheader(sdfg, callsite_stream)
+        self.generate_fileheader(sdfg, global_stream)
 
         callsite_stream.write(
             'void __program_%s_internal(%s)\n{\n' % (fname, params), sdfg)

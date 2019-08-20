@@ -133,12 +133,15 @@ class GPUTransformMap(pattern_matching.Transformation):
         out_streamarrays = {}
         for e in graph.in_edges(cnode):
             data_node = sd.find_input_arraynode(graph, e)
+            if isinstance(data_node.desc(sdfg), data.Scalar):
+                continue
             if data_node.desc(sdfg).storage not in gpu_storage_types:
                 in_arrays_to_clone.add(data_node)
         for e in all_out_edges:
             data_node = sd.find_output_arraynode(graph, e)
+            if isinstance(data_node.desc(sdfg), data.Scalar):
+                continue
             if data_node.desc(sdfg).storage not in gpu_storage_types:
-
                 # Stream directly connected to an array
                 if sd.is_array_stream_view(sdfg, graph, data_node):
                     datadesc = data_node.desc(sdfg)
