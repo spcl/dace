@@ -568,7 +568,7 @@ class SDFG(OrderedDiGraph):
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(assigned)
-        symbols.update(used)
+        #symbols.update(used)
 
         # Explore scope of node to find iteration variables
         scope_dict = state.scope_dict()
