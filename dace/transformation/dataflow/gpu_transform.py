@@ -130,13 +130,32 @@ class GPUTransformMap(pattern_matching.Transformation):
             all_out_edges.extend(list(graph.out_edges(enode)))
         in_arrays_to_clone = set()
         out_arrays_to_clone = set()
+        out_streamarrays = {}
         for e in graph.in_edges(cnode):
             data_node = sd.find_input_arraynode(graph, e)
+            if isinstance(data_node.desc(sdfg), data.Scalar):
+                continue
             if data_node.desc(sdfg).storage not in gpu_storage_types:
                 in_arrays_to_clone.add(data_node)
         for e in all_out_edges:
             data_node = sd.find_output_arraynode(graph, e)
+            if isinstance(data_node.desc(sdfg), data.Scalar):
+                continue
             if data_node.desc(sdfg).storage not in gpu_storage_types:
+                # Stream directly connected to an array
+                if sd.is_array_stream_view(sdfg, graph, data_node):
+                    datadesc = data_node.desc(sdfg)
+                    if datadesc.transient is False:
+                        raise TypeError('Non-transient stream-array view are '
+                                        'unsupported')
+                    # Add parent node to clone
+                    out_arrays_to_clone.add(graph.out_edges(data_node)[0].dst)
+                    out_streamarrays[graph.out_edges(data_node)[0]
+                                     .dst] = data_node
+
+                    # Do not clone stream
+                    continue
+
                 out_arrays_to_clone.add(data_node)
         if Config.get_bool("debugprint"):
             GPUTransformMap._arrays_removed += len(in_arrays_to_clone) + len(
@@ -151,17 +170,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if array_node.data in cloned_arrays:
                 cloned_array = cloned_arrays[array_node.data]
             else:
-                cloned_array = sdfg.add_array(
-                    'gpu_' + array_node.data,
-                    array.shape,
-                    array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=types.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
-                    strides=array.strides,
-                    offset=array.offset)
+                cloned_array = array.clone()
+                cloned_array.storage = types.StorageType.GPU_Global
+                cloned_array.transient = True
+                sdfg.add_datadesc('gpu_' + array_node.data, cloned_array)
                 cloned_arrays[array_node.data] = 'gpu_' + array_node.data
             cloned_node = type(array_node)('gpu_' + array_node.data)
 
@@ -171,17 +183,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if array_node.data in cloned_arrays:
                 cloned_array = cloned_arrays[array_node.data]
             else:
-                cloned_array = sdfg.add_array(
-                    'gpu_' + array_node.data,
-                    array.shape,
-                    array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=types.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
-                    strides=array.strides,
-                    offset=array.offset)
+                cloned_array = array.clone()
+                cloned_array.storage = types.StorageType.GPU_Global
+                cloned_array.transient = True
+                sdfg.add_datadesc('gpu_' + array_node.data, cloned_array)
                 cloned_arrays[array_node.data] = 'gpu_' + array_node.data
             cloned_node = type(array_node)('gpu_' + array_node.data)
 
@@ -219,6 +224,23 @@ class GPUTransformMap(pattern_matching.Transformation):
                             node.desc(sdfg))
                     edge.data.other_subset = edge.data.subset
                     graph.add_edge(node, None, edge.dst, None, edge.data)
+
+        # Reconnect stream-arrays
+        for array_node, streamnode in out_streamarrays.items():
+            # Set stream storage to GPU
+            streamnode.desc(sdfg).storage = types.StorageType.GPU_Global
+
+            cloned_node = out_cloned_arraynodes[array_node.data]
+
+            e = graph.out_edges(streamnode)[0]
+            graph.remove_edge(e)
+            newmemlet = copy.copy(e.data)
+            newmemlet.data = cloned_node.data
+            # stream -> cloned array
+            graph.add_edge(e.src, e.src_conn, cloned_node, e.dst_conn,
+                           newmemlet)
+            # cloned array -> array
+            graph.add_nedge(cloned_node, array_node, e.data)
 
         # Fourth, replace memlet arrays as necessary
         if self.expr_index == 0:

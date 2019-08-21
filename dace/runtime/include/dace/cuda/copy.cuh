@@ -700,22 +700,23 @@ namespace dace
         bool ASYNC>
     struct ResetShared
     {
-        static DACE_DFI void Reset(T *smem) {
+        static DACE_DFI void Reset(T *smem_) {
+            int *smem = (int *)smem_;
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
             constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
-            constexpr int TOTAL = SMEM_TOTAL_ELEMENTS;
+            constexpr int TOTAL = (SMEM_TOTAL_ELEMENTS * sizeof(T)) / sizeof(int);
             constexpr int WRITES = TOTAL / BLOCK_SIZE;
             constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
-                *(smem + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE) = T(0);
+                *(smem + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE) = 0;
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
-                    *(smem + (ltid + WRITES * BLOCK_SIZE) * DST_XSTRIDE) = T(0);
+                    *(smem + (ltid + WRITES * BLOCK_SIZE) * DST_XSTRIDE) = 0;
             }
 
             if (!ASYNC)

@@ -14,14 +14,9 @@ from dace import data, subsets, symbolic, types, memlet as mmlt
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType
 from dace.graph import nodes, nxutil
-from dace.sdfg import (
-    ScopeSubgraphView,
-    SDFG,
-    scope_contains_scope,
-    find_input_arraynode,
-    find_output_arraynode,
-    is_devicelevel,
-)
+from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
+                       find_input_arraynode, find_output_arraynode,
+                       is_devicelevel, is_array_stream_view)
 
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.properties import LambdaProperty
@@ -2376,37 +2371,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             result = StringIO()
             cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
-
-
-def is_array_stream_view(sdfg, dfg, node):
-    """ Test whether a stream is directly connected to an array. """
-
-    # Test all memlet paths from the array. If the path goes directly
-    # to/from a stream, construct a stream array view
-    source_paths = []
-    sink_paths = []
-    for e in dfg.in_edges(node):
-        src_node = dfg.memlet_path(e)[0].src
-        if isinstance(src_node, nodes.AccessNode) and isinstance(
-                src_node.desc(sdfg), data.Array):
-            source_paths.append(src_node)
-    for e in dfg.out_edges(node):
-        sink_node = dfg.memlet_path(e)[-1].dst
-        if isinstance(sink_node, nodes.AccessNode) and isinstance(
-                sink_node.desc(sdfg), data.Array):
-            sink_paths.append(sink_node)
-
-    # Special case: stream can be represented as a view of an array
-    if len(source_paths) == 1 or len(sink_paths) == 1:
-        # TODO: What about a source path?
-        arrnode = sink_paths[0]
-        # Only works if the stream itself is not an array of streams
-        if list(node.desc(sdfg).shape) == [1]:
-            node.desc(sdfg).sink = arrnode.data  # For memlet generation
-            arrnode.desc(
-                sdfg).src = node.data  # TODO: Move src/sink to node, not array
-            return True
-    return False
 
 
 def find_incoming_edges(node, dfg):
