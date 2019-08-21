@@ -67,7 +67,7 @@ dirichlet_tasklet(mainstate, B, 3, H - 3, W - 6, 3)  # Bottom
 sdfg.fill_scope_connectors()
 sdfg.validate()
 
-# NOTE: If GPUTransformState is applied, boundary kernels will run on separate
+# NOTE: If GPUTransformSDFG is applied, boundary kernels will run on separate
 # streams.
 if __name__ == '__main__':
     sdfg.draw_to_file()

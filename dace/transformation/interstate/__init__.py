@@ -3,6 +3,6 @@
 from .state_fusion import StateFusion
 from .fpga_transform_state import FPGATransformState
 from .fpga_transform_sdfg import FPGATransformSDFG
-from .gpu_transform_state import GPUTransformState
+from .gpu_transform_sdfg import GPUTransformSDFG
 from .sdfg_nesting import NestSDFG
 from .double_buffering import DoubleBuffering
