@@ -849,6 +849,7 @@ class TaskletTransformer(ExtNodeTransformer):
             if isinstance(node.value.op, (ast.LShift, ast.RShift)):
                 if isinstance(node.value.op, ast.LShift):
                     target = node.value.right
+                    has_indirection = False
                     if self.nested: # and isinstance(target, ast.Subscript):
                         name = rname(target)
                         real_name = {**self.variables, **self.scope_vars}[name]
@@ -873,13 +874,21 @@ class TaskletTransformer(ExtNodeTransformer):
                             parent_name = self.scope_vars[name]
                             parent_array = self.scope_arrays[parent_name]
                             sqz_rng = copy.deepcopy(rng)
-                            non_sqz = sqz_rng.squeeze()
-                            shape = sqz_rng.size()
+                            if _subset_has_indirection(rng):
+                                has_indirection = True
+                                non_sqz = list(range(len(rng)))
+                                shape = parent_array.shape
+                            else:
+                                non_sqz = sqz_rng.squeeze()
+                                shape = sqz_rng.size()
                             dtype = parent_array.dtype
                             strides = [parent_array.strides[d] for d in non_sqz]
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
                             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
-                            self.sdfg_inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
+                            if _subset_has_indirection(rng):
+                                self.sdfg_inputs[vname] = (dace.Memlet.from_array(parent_name, parent_array), set())
+                            else:
+                                self.sdfg_inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
                             self.defined[vname] = self.sdfg.arrays[vname]
                             if isinstance(target, ast.Subscript):
                                 node.value.right = ast.Name(id=vname)
@@ -893,6 +902,8 @@ class TaskletTransformer(ExtNodeTransformer):
                                 'Array "{}" used before definition'.format(name))
                     connector, memlet = _parse_memlet(
                         self, node.value.right, node.value.left, self.sdfg.arrays)
+                    if has_indirection:
+                        memlet = dace.Memlet(memlet.data, rng.num_elements(), rng, 1)
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
                             self, node,
