@@ -1103,13 +1103,13 @@ class CodeProperty(Property):
         return unparse(obj)
 
     def __get__(self, obj, val):
-
         tmp = super(CodeProperty, self).__get__(obj, val)
         try:
             # To stay compatible, return the code only. The language has to be obtained differently
             tmp = tmp['code_or_block']
-        except:
-            pass
+        except (KeyError, TypeError):
+            if not isinstance(tmp, str):
+                return ''
         return tmp
 
     def __set__(self, obj, val):
