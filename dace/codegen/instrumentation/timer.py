@@ -1,3 +1,4 @@
+from dace import types
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 
@@ -7,7 +8,14 @@ class TimerProvider(InstrumentationProvider):
         timed execution is complete. """
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
-        sdfg.set_global_code(sdfg.global_code + '\n#include <chrono>')
+        if isinstance(sdfg.global_code, dict):
+            gc = sdfg.global_code['code_or_block']
+        elif isinstance(sdfg.global_code, str):
+            gc = sdfg.global_code
+        else:
+            gc = ''
+
+        sdfg.set_global_code(gc + '\n#include <chrono>')
 
     def on_tbegin(self, stream: CodeIOStream, sdfg=None, state=None,
                   node=None):
@@ -38,22 +46,29 @@ printf("{timer_name}: %lf ms\\n", __dace_tdiff.count());'''
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
-        self.on_tbegin(local_stream, sdfg, state)
+        if state.instrument == types.InstrumentationType.Timer:
+            self.on_tbegin(local_stream, sdfg, state)
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
-        self.on_tend('State %s' % state.label, local_stream, sdfg, state)
+        if state.instrument == types.InstrumentationType.Timer:
+            self.on_tend('State %s' % state.label, local_stream, sdfg, state)
+
+    def _get_sobj(self, node):
+        # Get object behind scope
+        if hasattr(node, 'consume'):
+            return node.consume
+        else:
+            return node.map
 
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):
-        self.on_tbegin(outer_stream, sdfg, state, node)
+        s = self._get_sobj(node)
+        if s.instrument == types.InstrumentationType.Timer:
+            self.on_tbegin(outer_stream, sdfg, state, node)
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
-        # Get object behind scope
-        if hasattr(node, 'consume'):
-            s = node.consume
-        else:
-            s = node.map
-
-        self.on_tend('%s %s' % (type(s).__name__, s.label), outer_stream, sdfg,
-                     state, node)
+        s = self._get_sobj(node)
+        if s.instrument == types.InstrumentationType.Timer:
+            self.on_tend('%s %s' % (type(s).__name__, s.label), outer_stream,
+                         sdfg, state, node)

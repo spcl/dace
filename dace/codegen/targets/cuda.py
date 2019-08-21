@@ -868,8 +868,9 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
 
             # Invoke all instrumentation providers
             for instr in self._frame._dispatcher.instrumentation.values():
-                instr.on_state_end(sdfg, state, callsite_stream,
-                                   function_stream)
+                if instr is not None:
+                    instr.on_state_end(sdfg, state, callsite_stream,
+                                       function_stream)
 
     def generate_devicelevel_state(self, sdfg, state, function_stream,
                                    callsite_stream):

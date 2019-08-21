@@ -44,10 +44,20 @@ def generate_code(sdfg) -> List[CodeObject]:
     # Instantiate all instrumentation providers in SDFG
     frame._dispatcher.instrumentation[
         types.InstrumentationType.No_Instrumentation] = None
-    for node in sdfg.all_nodes_recursive():
-        if hasattr(node, 'instrumentation'):
-            frame._dispatcher.instrumentation[node.instrumentation] = \
-                INSTRUMENTATION_PROVIDERS[node.instrumentation]
+    for node, _ in sdfg.all_nodes_recursive():
+        if hasattr(node, 'instrument'):
+            frame._dispatcher.instrumentation[node.instrument] = \
+                INSTRUMENTATION_PROVIDERS[node.instrument]
+        elif hasattr(node, 'consume'):
+            frame._dispatcher.instrumentation[node.consume.instrument] = \
+                INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+        elif hasattr(node, 'map'):
+            frame._dispatcher.instrumentation[node.map.instrument] = \
+                INSTRUMENTATION_PROVIDERS[node.map.instrument]
+    frame._dispatcher.instrumentation = {
+        k: v() if v is not None else None
+        for k, v in frame._dispatcher.instrumentation.items()
+    }
 
     # Generate frame code (and the rest of the code)
     global_code, frame_code, used_targets = frame.generate_code(sdfg, None)

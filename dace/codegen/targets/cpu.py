@@ -11,7 +11,6 @@ import dace
 from dace.config import Config
 from dace.frontend import operations
 from dace import data, subsets, symbolic, types, memlet as mmlt
-from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType
 from dace.graph import nodes, nxutil
@@ -1399,7 +1398,7 @@ class CPUCodeGen(TargetCodeGenerator):
         map_header = ""
 
         # Instrumentation: Pre-scope
-        instr = INSTRUMENTATION_PROVIDERS[node.map.instrument]
+        instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
             inner_stream = CodeIOStream()
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
@@ -1583,7 +1582,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                                                  None, result)
 
         # Instrumentation: Post-scope
-        instr = INSTRUMENTATION_PROVIDERS[node.map.instrument]
+        instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
             outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
@@ -1650,7 +1649,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             condition_string = ""
 
         # Instrumentation: Post-scope
-        instr = INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+        instr = self._dispatcher.instrumentation[node.consume.instrument]
         if instr is not None:
             inner_stream = CodeIOStream()
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
@@ -1777,7 +1776,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                                                  None, result)
 
         # Instrumentation: Post-scope
-        instr = INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+        instr = self._dispatcher.instrumentation[node.consume.instrument]
         if instr is not None:
             outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
@@ -1828,7 +1827,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 octr += 1
 
         # Instrumentation: Post-scope
-        instr = INSTRUMENTATION_PROVIDERS[node.instrument]
+        instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
             inner_stream = CodeIOStream()
             instr.on_node_begin(sdfg, state_dfg, node, callsite_stream,
