@@ -580,6 +580,8 @@ class SDFG(OrderedDiGraph):
             if isinstance(scope, dace.graph.nodes.MapEntry):
                 for param in scope.params:
                     symbols[param] = dt.Scalar(symbolic.symbol(param).dtype)
+                for sym in scope.range.free_symbols:
+                    symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
             else:
                 raise TypeError("Unsupported entry node type: {}".format(
                     type(scope).__name__))
