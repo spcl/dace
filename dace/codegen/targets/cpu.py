@@ -1583,10 +1583,12 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
-        if instr is not None:
+        if instr is not None and not is_devicelevel(sdfg, state_dfg, node):
             outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
                                 callsite_stream, function_stream)
+        else:
+            outer_stream = None
 
         # Map flattening
         if map_node.map.flatten:
@@ -1595,7 +1597,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             for i, r in enumerate(map_node.map.range):
                 result.write("}", sdfg, state_id, node)
 
-        if instr is not None:
+        if outer_stream is not None:
             result.write(outer_stream.getvalue())
 
     def _generate_ConsumeEntry(

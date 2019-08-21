@@ -972,6 +972,15 @@ dace::GPUStream<{type}, {is_pow2}> __dace_alloc_{location}(uint32_t size, dace::
         self.scope_entry_stream = CodeIOStream()
         self.scope_exit_stream = CodeIOStream()
 
+        # Instrumentation for kernel scope
+        instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
+        if instr is not None:
+            instr.on_scope_entry(sdfg, dfg, scope_entry, callsite_stream,
+                                 self.scope_entry_stream, self._globalcode)
+            outer_stream = CodeIOStream()
+            instr.on_scope_exit(sdfg, dfg, scope_exit, outer_stream,
+                                self.scope_exit_stream, self._globalcode)
+
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map,
                                    kernel_name, grid_dims, block_dims, tbmap,
@@ -1069,6 +1078,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
                             callsite_stream)
+
+        # Instrumentation (post-kernel)
+        if instr is not None:
+            callsite_stream.write(outer_stream.getvalue())
 
     def get_kernel_dimensions(self, dfg_scope):
         """ Determines a CUDA kernel's grid/block dimensions from map
