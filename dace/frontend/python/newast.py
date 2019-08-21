@@ -689,10 +689,10 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     else:
         storage = sdfg.add_array(
             '__' + local_name + '_value',
+            memlet.bounding_box_size(),
             array.dtype,
             storage=dtypes.StorageType.Default,
-            transient=True,
-            shape=memlet.bounding_box_size())
+            transient=True)
     indirectRange = subsets.Range([(0, s - 1, 1) for s in storage.shape])
     # dataNode = nodes.AccessNode('__' + local_name + '_value')
 
@@ -700,13 +700,23 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
     fullMemlet = Memlet(memlet.data, memlet.num_accesses, fullRange,
                         memlet.veclen)
-    full_read_node = graph.add_read(memlet.data)
-    graph.add_memlet_path(
-        full_read_node,
-        src,
-        tasklet,
-        dst_conn='__ind_' + local_name,
-        memlet=fullMemlet)
+    
+    if isinstance(src, nodes.EntryNode):
+        full_read_node = graph.add_read(memlet.data)
+        graph.add_memlet_path(
+            full_read_node,
+            src,
+            tasklet,
+            dst_conn='__ind_' + local_name,
+            memlet=fullMemlet)
+    elif isinstance(src, nodes.AccessNode):
+        graph.add_memlet_path(
+            src,
+            tasklet,
+            dst_conn='__ind_' + local_name,
+            memlet=fullMemlet)
+    else:
+        raise Exception("Src node type for indirection is invalid.")
 
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
