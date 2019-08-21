@@ -7,9 +7,7 @@ from inspect import getframeinfo, stack
 import os
 import pickle
 from pydoc import locate
-from typing import Any, Dict, Set, Tuple, List
-
-import networkx as nx
+from typing import Any, Dict, Set, Tuple, List, Union
 import numpy as np
 import sympy as sp
 
@@ -17,6 +15,7 @@ import dace
 from dace import data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic
 from dace.config import Config
 from dace.frontend.python import ndarray
+from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
 from dace.data import validate_name
@@ -1973,53 +1972,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self._label = label
 
     def replace(self, name: str, new_name: str):
-        """ Finds and replaces all occurrences of a symbol or array in this state.
+        """ Finds and replaces all occurrences of a symbol or array in this
+            state.
             @param name: Name to find.
             @param new_name: Name to replace.
         """
-        from dace.frontend.python.astutils import ASTFindReplace
-        import sympy as sp
-        symrepl = {
-            symbolic.symbol(name):
-            symbolic.symbol(new_name)
-            if isinstance(new_name, str) else new_name
-        }
-
-        def replsym(symlist):
-            if symlist is None:
-                return None
-            if isinstance(symlist,
-                          (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
-                return symlist.subs(symrepl)
-            for i, dim in enumerate(symlist):
-                try:
-                    symlist[i] = tuple(d.subs(symrepl) for d in dim)
-                except TypeError:
-                    symlist[i] = dim.subs(symrepl)
-            return symlist
-
-            # Replace in node properties
-
-        for node in self.nodes():
-            for propclass, propval in node.properties():
-                pname = propclass.attr_name
-                if isinstance(propclass, properties.SymbolicProperty):
-                    setattr(node, pname, propval.subs({name: new_name}))
-                if isinstance(propclass, properties.DataProperty):
-                    if propval == name:
-                        setattr(node, pname, new_name)
-                if isinstance(propclass, properties.RangeProperty):
-                    setattr(node, pname, replsym(propval))
-                if isinstance(propclass, properties.CodeProperty):
-                    for stmt in propval:
-                        ASTFindReplace({name: new_name}).visit(stmt)
-
-        # Replace in memlets
-        for edge in self.edges():
-            if edge.data.data == name:
-                edge.data.data = new_name
-            replsym(edge.data.subset)
-            replsym(edge.data.other_subset)
+        replace(self, name, new_name)
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
@@ -3595,6 +3553,54 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
             parent = sdfg.parent
         sdfg = parent
     return False
+
+
+def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
+            name: str, new_name: str):
+    """ Finds and replaces all occurrences of a symbol or array in the given
+        subgraph.
+        @param subgraph: The given graph or subgraph to replace in.
+        @param name: Name to find.
+        @param new_name: Name to replace.
+    """
+    symrepl = {
+        symbolic.symbol(name):
+        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+    }
+
+    def replsym(symlist):
+        if symlist is None:
+            return None
+        if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
+            return symlist.subs(symrepl)
+        for i, dim in enumerate(symlist):
+            try:
+                symlist[i] = tuple(d.subs(symrepl) for d in dim)
+            except TypeError:
+                symlist[i] = dim.subs(symrepl)
+        return symlist
+
+    # Replace in node properties
+    for node in subgraph.nodes():
+        for propclass, propval in node.properties():
+            pname = propclass.attr_name
+            if isinstance(propclass, properties.SymbolicProperty):
+                setattr(node, pname, propval.subs({name: new_name}))
+            if isinstance(propclass, properties.DataProperty):
+                if propval == name:
+                    setattr(node, pname, new_name)
+            if isinstance(propclass, properties.RangeProperty):
+                setattr(node, pname, replsym(propval))
+            if isinstance(propclass, properties.CodeProperty):
+                for stmt in propval:
+                    ASTFindReplace({name: new_name}).visit(stmt)
+
+    # Replace in memlets
+    for edge in subgraph.edges():
+        if edge.data.data == name:
+            edge.data.data = new_name
+        edge.data.subset = replsym(edge.data.subset)
+        edge.data.other_subset = replsym(edge.data.other_subset)
 
 
 def _get_optimizer_class(class_override):

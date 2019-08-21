@@ -166,3 +166,5 @@ perfdata.db
 /.idea/
 
 _dotgraphs/
+
+.idea/
