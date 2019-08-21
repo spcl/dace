@@ -125,7 +125,7 @@ class DaCeCodeGenerator(object):
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
+                instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
         # Write frame code - footer
         callsite_stream.write('}\n', sdfg)
