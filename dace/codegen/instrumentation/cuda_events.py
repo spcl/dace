@@ -58,63 +58,67 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
+        state_id = sdfg.node_id(state)
         # Create CUDA events for each instrumented scope in the state
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
-                s = self._get_sobj()
+                s = self._get_sobj(node)
                 if s.instrument == types.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(
-                        self._create_event('b' + idstr), sdfg, state, node)
+                        self._create_event('b' + idstr), sdfg, state_id, node)
                     local_stream.write(
-                        self._create_event('e' + idstr), sdfg, state, node)
+                        self._create_event('e' + idstr), sdfg, state_id, node)
 
         # Create and record a CUDA event for the entire state
         if state.instrument == types.InstrumentationType.CUDA_Events:
             idstr = 'b' + self._idstr(sdfg, state)
-            local_stream.write(self._create_event(idstr), sdfg, state)
-            local_stream.write(self._record_event(idstr, 0), sdfg, state)
+            local_stream.write(self._create_event(idstr), sdfg, state_id)
+            local_stream.write(self._record_event(idstr, 0), sdfg, state_id)
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
+        state_id = sdfg.node_id(state)
         # Record and measure state stream event
         if state.instrument == types.InstrumentationType.CUDA_Events:
             idstr = self._idstr(sdfg, state)
-            local_stream.write(self._record_event('e' + idstr, 0), sdfg, state)
+            local_stream.write(self._record_event('e' + idstr, 0), sdfg, state_id)
             local_stream.write(
                 self._report('State %s' % state.label, sdfg, state), sdfg,
-                state)
-            local_stream.write(self._destroy_event('b' + idstr), sdfg, state)
-            local_stream.write(self._destroy_event('e' + idstr), sdfg, state)
+                state_id)
+            local_stream.write(self._destroy_event('b' + idstr), sdfg, state_id)
+            local_stream.write(self._destroy_event('e' + idstr), sdfg, state_id)
 
         # Destroy CUDA events for scopes in the state
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
-                s = self._get_sobj()
+                s = self._get_sobj(node)
                 if s.instrument == types.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(
-                        self._destroy_event('b' + idstr), sdfg, state, node)
+                        self._destroy_event('b' + idstr), sdfg, state_id, node)
                     local_stream.write(
-                        self._destroy_event('e' + idstr), sdfg, state, node)
+                        self._destroy_event('e' + idstr), sdfg, state_id, node)
 
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):
+        state_id = sdfg.node_id(state)
         s = self._get_sobj(node)
         if s.instrument == types.InstrumentationType.CUDA_Events:
             idstr = 'b' + self._idstr(sdfg, state, node)
             outer_stream.write(
-                self._record_event(idstr, node._cuda_stream), sdfg, state,
+                self._record_event(idstr, node._cuda_stream), sdfg, state_id,
                 node)
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
+        state_id = sdfg.node_id(state)
         entry_node = state.entry_node(node)
         s = self._get_sobj(node)
         if s.instrument == types.InstrumentationType.CUDA_Events:
-            idstr = 'e' + self._idstr(sdfg, state, node)
+            idstr = 'e' + self._idstr(sdfg, state, entry_node)
             outer_stream.write(
-                self._record_event(idstr, node._cuda_stream), sdfg, state,
+                self._record_event(idstr, node._cuda_stream), sdfg, state_id,
                 node)
             outer_stream.write(
                 self._report('%s %s' % (type(s).__name__, s.label), sdfg,
-                             state, entry_node), sdfg, state, node)
+                             state, entry_node), sdfg, state_id, node)
