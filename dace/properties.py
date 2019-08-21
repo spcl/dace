@@ -1108,8 +1108,7 @@ class CodeProperty(Property):
             # To stay compatible, return the code only. The language has to be obtained differently
             tmp = tmp['code_or_block']
         except (KeyError, TypeError):
-            if not isinstance(tmp, str):
-                return ''
+            pass
         return tmp
 
     def __set__(self, obj, val):
