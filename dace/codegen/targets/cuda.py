@@ -354,9 +354,17 @@ void __dace_exit_cuda({params}) {{
             self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
 
             if is_array_stream_view(sdfg, dfg, node):
-                fmtargs['ptr'] = nodedesc.sink
-                # Assuming 1D array sink/src
-                fmtargs['size'] = sym2cpp(sdfg.arrays[nodedesc.sink].shape[0])
+                edges = dfg.out_edges(node)
+                if len(edges) > 1:
+                    raise NotImplementedError("Cannot handle streams writing "
+                                              "to multiple arrays.")
+
+                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
+                    sdfg, edges[0].data, with_brackets=False)
+
+                # Assuming 1D subset of sink/src
+                # sym2cpp(edges[0].data.subset[-1])
+                fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
 
                 # (important) Ensure GPU array is allocated before the stream
                 datanode = dfg.out_edges(node)[0].dst
