@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Tuple, Union, Callable
 import dace
 from dace import data, dtypes, subsets, symbolic
 from dace.config import Config
-from dace.frontend.common import op_impl
+from dace.frontend.common import blas, op_impl
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
@@ -186,6 +186,52 @@ def _scalarrmult(sdfg: SDFG,
 @oprepo.replaces_operator('Array', 'Mult', otherclass='Scalar')
 def _arrscalmult(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     return _scalarrmult(sdfg, state, op2, op1, reverse=True)
+
+
+@oprepo.replaces_operator('Array', 'MatMult')
+def _matmult(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+
+    arr1 = sdfg.arrays[op1]
+    arr2 = sdfg.arrays[op2]
+    if (len(arr1.shape) != 2 or len(arr2.shape) != 2
+            or arr1.shape[1] != arr2.shape[0]):
+        raise SyntaxError('Matrix sizes must match')
+
+    op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
+                                        arr1.dtype, arr1.storage)
+
+    state.add_mapped_tasklet(
+        '_MatMult_',
+        {
+            '__i%d' % i: '0:%s' % s for i, s in enumerate(
+                [arr1.shape[0], arr2.shape[1], arr1.shape[1]]
+            )
+        },
+        {
+            'a': Memlet.simple(op1, '__i0, __i2'),
+            'b': Memlet.simple(op2, '__i2, __i1')
+         },
+        'c = a * b',
+        {
+            'c': Memlet.simple(
+                op3, '__i0, __i1', wcr_str='lambda x, y: x + y', wcr_identity=0
+            )
+        },
+        external_edges=True
+    )
+
+    # readA = state.add_read(op1)
+    # readB = state.add_read(op2)
+    # writeC = state.add_write(op3)
+
+    # tasklet = blas.MatMulNode(inputs={'A', 'B'}, outputs={'C'})
+    # state.add_node(tasklet)
+
+    # state.add_edge(readA, None, tasklet, 'A', dace.Memlet.from_array(op1, arr1))
+    # state.add_edge(readB, None, tasklet, 'B', dace.Memlet.from_array(op2, arr2))
+    # state.add_edge(tasklet, 'C', writeC, None, dace.Memlet.from_array(op3, arr3))
+
+    return op3
 
 
 # @oprepo.replaces('dace.define_stream')
