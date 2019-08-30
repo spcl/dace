@@ -13,7 +13,7 @@ if __name__ == '__main__':
     origB = B.copy()
 
     augoptest(A, B)
-    diff = np.linalg.norm(B - (A + B))
+    diff = np.linalg.norm(B - (A + origB))
     print('Difference:', diff)
     if diff > 1e-5:
         exit(1)
