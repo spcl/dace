@@ -371,7 +371,7 @@ void __dace_exit_cuda({params}) {{
                     """
 DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
 void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
-    dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
+    result = dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
 }}""".format(**fmtargs), sdfg, state_id, node)
                 callsite_stream.write(
                     'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({ptr}, {size}, {name});'
@@ -386,7 +386,7 @@ void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type},
                     """
 DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
 void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
-    dace::AllocGPUStream<{type}, {is_pow2}>({size});
+    result = dace::AllocGPUStream<{type}, {is_pow2}>({size});
 }}""".format(**fmtargs), sdfg, state_id, node)
                 callsite_stream.write(
                     'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({size}, {name});'
