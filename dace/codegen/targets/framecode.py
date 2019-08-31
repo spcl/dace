@@ -909,7 +909,8 @@ DACE_EXPORTED void __dace_exit(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, sdfg, None, node, global_stream, callsite_stream)
+                        sdfg, state, None, node, global_stream,
+                        callsite_stream)
                     deallocated.add(node.data)
 
         ###########################

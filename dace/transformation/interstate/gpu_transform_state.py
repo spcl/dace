@@ -94,7 +94,8 @@ class GPUTransformState(pattern_matching.Transformation):
                 if e.data.wcr is not None and e.data.wcr_identity is None:
                     if (e.data.data not in input_nodes
                             and sdfg.arrays[e.data.data].transient == False):
-                        input_nodes.append(e.data.data)
+                        input_nodes.append((e.data.data,
+                                            sdfg.arrays[e.data.data]))
 
         start_state = sdfg.start_state
         end_states = sdfg.sink_nodes()
@@ -103,14 +104,14 @@ class GPUTransformState(pattern_matching.Transformation):
         # Step 1: Create cloned GPU arrays and replace originals
 
         cloned_arrays = {}
-        for inodename, inode in input_nodes:
+        for inodename, inode in set(input_nodes):
             newdesc = inode.clone()
             newdesc.storage = types.StorageType.GPU_Global
             newdesc.transient = True
             sdfg.add_datadesc('gpu_' + inodename, newdesc)
             cloned_arrays[inodename] = 'gpu_' + inodename
 
-        for onodename, onode in output_nodes:
+        for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
                 continue
             newdesc = onode.clone()
