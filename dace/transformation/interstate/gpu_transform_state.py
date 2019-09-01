@@ -43,6 +43,18 @@ class GPUTransformState(pattern_matching.Transformation):
         dtype=bool,
         default=True)
 
+    exclude_copyin = Property(
+        desc="Exclude these arrays from being copied into the device"
+        "(comma-separated)",
+        dtype=str,
+        default='')
+
+    exclude_copyout = Property(
+        desc="Exclude these arrays from being copied out of the device"
+             "(comma-separated)",
+        dtype=str,
+        default='')
+
     @staticmethod
     def annotates_memlets():
         # Skip memlet propagation for now
@@ -135,11 +147,14 @@ class GPUTransformState(pattern_matching.Transformation):
 
         #######################################################
         # Step 2: Create copy-in state
+        excluded_copyin = self.exclude_copyin.split(',')
 
         copyin_state = sdfg.add_state(sdfg.label + '_copyin')
         sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
 
-        for nname, desc in input_nodes:
+        for nname, desc in set(input_nodes):
+            if nname in excluded_copyin:
+                continue
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(
                 cloned_arrays[nname], debuginfo=desc.debuginfo)
@@ -151,12 +166,15 @@ class GPUTransformState(pattern_matching.Transformation):
 
         #######################################################
         # Step 3: Create copy-out state
+        excluded_copyout = self.exclude_copyout.split(',')
 
         copyout_state = sdfg.add_state(sdfg.label + '_copyout')
         for state in end_states:
             sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
 
-        for nname, desc in output_nodes:
+        for nname, desc in set(output_nodes):
+            if nname in excluded_copyout:
+                continue
             src_array = nodes.AccessNode(
                 cloned_arrays[nname], debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
