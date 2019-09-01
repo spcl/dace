@@ -26,7 +26,8 @@ class GPUTransformState(pattern_matching.Transformation):
           4. Re-store Default-top/CPU_Heap transients as GPU_Global
           5. Global tasklets are wrapped with a map of size 1
           6. Global Maps are re-scheduled to use the GPU
-          7. Re-apply strict transformations to get rid of extra states and 
+          7. Make data ready for interstate edges that use them
+          8. Re-apply strict transformations to get rid of extra states and
              transients
     """
 
@@ -51,7 +52,7 @@ class GPUTransformState(pattern_matching.Transformation):
 
     exclude_copyout = Property(
         desc="Exclude these arrays from being copied out of the device"
-             "(comma-separated)",
+        "(comma-separated)",
         dtype=str,
         default='')
 
@@ -264,7 +265,42 @@ class GPUTransformState(pattern_matching.Transformation):
                         node.schedule = types.ScheduleType.Sequential
 
         #######################################################
-        # Step 7: Strict transformations
+        # Step 7: Introduce copy-out if data used in outgoing interstate edges
+
+        for state in list(sdfg.nodes()):
+            arrays_used = set()
+            for e in sdfg.out_edges(state):
+                # Used arrays = intersection between symbols and cloned arrays
+                arrays_used.update(
+                    set(e.data.condition_symbols()) & set(cloned_arrays.keys())
+                )
+
+            # Create a state and copy out used arrays
+            if len(arrays_used) > 0:
+                co_state = sdfg.add_state(state.label + '_icopyout')
+
+                # Reconnect outgoing edges to after interim copyout state
+                for e in sdfg.out_edges(state):
+                    nxutil.change_edge_src(sdfg, state, co_state)
+                # Add unconditional edge to interim state
+                sdfg.add_edge(state, co_state, ed.InterstateEdge())
+
+                # Add copy-out nodes
+                for nname in arrays_used:
+                    desc = sdfg.arrays[nname]
+                    src_array = nodes.AccessNode(
+                        cloned_arrays[nname], debuginfo=desc.debuginfo)
+                    dst_array = nodes.AccessNode(
+                        nname, debuginfo=desc.debuginfo)
+                    co_state.add_node(src_array)
+                    co_state.add_node(dst_array)
+                    co_state.add_nedge(
+                        src_array, dst_array,
+                        memlet.Memlet.from_array(dst_array.data,
+                                                 dst_array.desc(sdfg)))
+
+        #######################################################
+        # Step 8: Strict transformations
         if not self.strict_transform:
             return
 
