@@ -1071,7 +1071,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 gdims=','.join(_topy(grid_dims)),
                 bdims=','.join(_topy(block_dims)),
                 dynsmem=_topy(dynsmem_size),
-                stream=cudastream), sdfg, state_id, node)
+                stream=cudastream), sdfg, state_id, scope_entry)
         self._emit_sync(self._localcode)
 
         # Close the runkernel function
@@ -1080,12 +1080,25 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Add invocation to calling code (in another file)
         function_stream.write(
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id, node)
+            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id,
+            scope_entry)
+
+        # Synchronize all events leading to dynamic map range connectors
+        for e in dfg.in_edges(scope_entry):
+            if not e.dst_conn.startswith('IN_') and hasattr(e, '_cuda_event'):
+                ev = e._cuda_event
+                callsite_stream.write(
+                    'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'.
+                    format(ev=ev),
+                    sdfg,
+                    state_id, [e.src, e.dst])
+
+        # Invoke kernel call
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(kernel_args)), sdfg, state_id, node)
+            (kernel_name, ', '.join(kernel_args)), sdfg, state_id, scope_entry)
 
-        synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
+        synchronize_streams(sdfg, dfg, state_id, scope_entry, scope_exit,
                             callsite_stream)
 
     def get_kernel_dimensions(self, dfg_scope):

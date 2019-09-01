@@ -175,6 +175,14 @@ class GPUTransformState(pattern_matching.Transformation):
                 if isinstance(node,
                               nodes.AccessNode) and node.desc(sdfg).transient:
                     nodedesc = node.desc(sdfg)
+
+                    # Special case: nodes that lead to dynamic map ranges must
+                    # stay on host
+                    if any(isinstance(state.memlet_path(e)[-1].dst,
+                                      nodes.EntryNode)
+                           for e in state.out_edges(node)):
+                        continue
+
                     if sdict[node] is None:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
