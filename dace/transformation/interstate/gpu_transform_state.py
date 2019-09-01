@@ -178,9 +178,10 @@ class GPUTransformState(pattern_matching.Transformation):
 
                     # Special case: nodes that lead to dynamic map ranges must
                     # stay on host
-                    if any(isinstance(state.memlet_path(e)[-1].dst,
-                                      nodes.EntryNode)
-                           for e in state.out_edges(node)):
+                    if any(
+                            isinstance(
+                                state.memlet_path(e)[-1].dst, nodes.EntryNode)
+                            for e in state.out_edges(node)):
                         continue
 
                     if sdict[node] is None:
@@ -189,7 +190,8 @@ class GPUTransformState(pattern_matching.Transformation):
                         nodedesc.storage = types.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
-                        if self.toplevel_trans:
+                        if (self.toplevel_trans
+                                and not isinstance(nodedesc, data.Stream)):
                             nodedesc.toplevel = True
                     else:
                         # Make internal transients registers
