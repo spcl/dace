@@ -237,6 +237,7 @@ class SdfgState {
         let g = layout_sdfg(sdfg, this);
         let bb = calculateBoundingBox(g);
         let cnvs = this.ctx.canvas;
+        cnvs.style.backgroundColor = "#ffffff";
         cnvs.width = Math.min(Math.max(bb.width + 1000, cnvs.width), 16384);
         cnvs.height = Math.min(Math.max(bb.height + 1000, cnvs.height), 16384);
         paint_sdfg(g, null, new DrawNodeState(this.ctx, -1, this));
@@ -877,7 +878,7 @@ class SdfgState {
         
             let comp_x = event => (event.clientX - br().left);
             let comp_y = event => (event.clientY - br().top);
-            this.canvas_manager.scale(e.deltaY / 1000.0, comp_x(e), comp_y(e));
+            this.canvas_manager.scale(-e.deltaY / 1000.0, comp_x(e), comp_y(e));
 
         });
     }
@@ -1074,9 +1075,9 @@ function paint_sdfg(g, sdfg, drawnodestate) {
         ctx.lineTo(topleft_x, topleft_y+g.node(v).height);
         ctx.lineTo(topleft_x, topleft_y);
         ctx.closePath();
-        ctx.strokeStyle="blue";
-        ctx.stroke();
-
+        ctx.fillStyle="#deebf7";
+        ctx.fill();
+        ctx.fillStyle="#000000";
     });
     g.edges().forEach(e => {
         drawnodestate.draw_edge(g.edge(e));
@@ -1223,7 +1224,7 @@ function calculateNodeSize(sdfg_state, node, controller_state = undefined) {
     let size = { width: maxwidth, height: maxheight }
 
     // add something to the size based on the shape of the node
-    if (node.type == "ArrayNode") {
+    if (node.type == "AccessNode") {
         size.width += size.height;
     }
     else if (node.type == "MapEntry") {

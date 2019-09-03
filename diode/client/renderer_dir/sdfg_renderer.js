@@ -22,6 +22,23 @@ class DrawNodeState {
             return "black";
         }
     }
+    
+    // Adapted from https://stackoverflow.com/a/2173084/6489142
+    drawEllipse(ctx, x, y, w, h) {
+        var kappa = .5522848,
+        ox = (w / 2) * kappa, // control point offset horizontal
+        oy = (h / 2) * kappa, // control point offset vertical
+        xe = x + w,           // x-end
+        ye = y + h,           // y-end
+        xm = x + w / 2,       // x-middle
+        ym = y + h / 2;       // y-middle
+
+        ctx.moveTo(x, ym);
+        ctx.bezierCurveTo(x, ym - oy, xm - ox, y, xm, y);
+        ctx.bezierCurveTo(xm + ox, y, xe, ym - oy, xe, ym);
+        ctx.bezierCurveTo(xe, ym + oy, xm + ox, ye, xm, ye);
+        ctx.bezierCurveTo(xm - ox, ye, x, ym + oy, x, ym);
+    }
 
     drawArrow(ctx, p1, p2, size) {
         "use strict";
@@ -49,16 +66,15 @@ class DrawNodeState {
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
         ctx.beginPath();
-        ctx.moveTo(topleft_x + node.height / 2.0, topleft_y);
-        ctx.arc(topleft_x + node.height / 2.0, topleft_y + node.height / 2.0, node.height / 2.0, 1.5 * Math.PI, 0.5 * Math.PI, true);
-        ctx.lineTo(topleft_x + node.width - node.height, topleft_y + node.height);
-        ctx.arc(topleft_x + node.width - node.height / 2.0, topleft_y + node.height / 2.0, node.height / 2.0, 0.5 * Math.PI, 1.5 * Math.PI, true);
-        ctx.lineTo(topleft_x + node.height / 2.0, topleft_y);
+        this.drawEllipse(ctx, topleft_x, topleft_y, node.width, node.height);
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
         ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
-        ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
+        ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 4.0);
     }
 
     drawMapEntryNode(node, nodeid) {
@@ -74,11 +90,14 @@ class DrawNodeState {
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
         ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
 
-        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y);
-        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 2*LINEHEIGHT);
+        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT);
+        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT);
     }
 
     drawMapExitNode(node, nodeid) {
@@ -94,11 +113,14 @@ class DrawNodeState {
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
         ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
 
-        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y);
-        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height-2*LINEHEIGHT);
+        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT);
+        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT);
     }
 
     drawTaskletNode(node, nodeid) {
@@ -119,10 +141,13 @@ class DrawNodeState {
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
         ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
-        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y);
-        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height-2*LINEHEIGHT);
+        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y - 0.5*LINEHEIGHT);
+        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT);
     }
 
     drawReduceNode(node, nodeid) {
@@ -138,6 +163,9 @@ class DrawNodeState {
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
         ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y - node.height / 4.0 + LINEHEIGHT / 2.0);
     }
@@ -146,24 +174,27 @@ class DrawNodeState {
         let next_topleft_x = topleft_x + 5;
         let next_topleft_y = topleft_y;
         var ctx = this.ctx;
+        var ellipse = this.drawEllipse;
         labels.forEach(function(label) {
-            let labelwidth = ctx.measureText(label).width;
+            let textmetrics = ctx.measureText(label);
+            let labelwidth = textmetrics.width * 1.1;
             ctx.beginPath();
-            ctx.moveTo(next_topleft_x, next_topleft_y);
-            ctx.lineTo(next_topleft_x + labelwidth, next_topleft_y);
-            ctx.lineTo(next_topleft_x + labelwidth, next_topleft_y + 2 * LINEHEIGHT);
-            ctx.lineTo(next_topleft_x, next_topleft_y + 2 * LINEHEIGHT);
-            ctx.lineTo(next_topleft_x, next_topleft_y);
+            ellipse(ctx, next_topleft_x, next_topleft_y - 0.1*LINEHEIGHT, labelwidth, LINEHEIGHT*1.2);
             ctx.closePath();
             ctx.strokeStyle = "black";
             ctx.stroke();
-            ctx.fillText(label, next_topleft_x, next_topleft_y + 1.5*LINEHEIGHT);
+            ctx.fillStyle = "#f0fdff";
+            ctx.fill();
+            ctx.fillStyle = "black";
+            
+            ctx.fillText(label, next_topleft_x + (labelwidth / 2.0) - (textmetrics.width / 2.0), 
+                         next_topleft_y + 0.8*LINEHEIGHT);
             next_topleft_x += labelwidth + 10;
         });
     }
 
     draw_node(node, nodeid) {
-        if (node.type == "ArrayNode") {
+        if (node.type == "AccessNode") {
             this.drawArrayNode(node, nodeid)
         }
         else if (node.type == "MapEntry") {
@@ -191,6 +222,8 @@ class DrawNodeState {
             ctx.closePath();
             ctx.strokeStyle = this.nodeColor(nodeid);
             ctx.stroke();
+            ctx.fillStyle = "white";
+            ctx.fill();
             ctx.fillText(node.label, node.x - node.width / 2, node.y);
         }
     }

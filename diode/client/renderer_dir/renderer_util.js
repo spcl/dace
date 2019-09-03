@@ -49,7 +49,6 @@ function createImageDownload(brackets, prefix="") {
     // TODO: Reevalutate this code and adjust to the case that there are more than 10 buttons (implement wrap-around, basically)
 
     let c = document.createElement("canvas");
-    
 
     let ctx = c.getContext("2d");
 
