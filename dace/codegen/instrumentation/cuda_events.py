@@ -72,7 +72,7 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
 
         # Create and record a CUDA event for the entire state
         if state.instrument == types.InstrumentationType.CUDA_Events:
-            idstr = 'b' + self._idstr(sdfg, state)
+            idstr = 'b' + self._idstr(sdfg, state, None)
             local_stream.write(self._create_event(idstr), sdfg, state_id)
             local_stream.write(self._record_event(idstr, 0), sdfg, state_id)
 
@@ -80,13 +80,16 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
         state_id = sdfg.node_id(state)
         # Record and measure state stream event
         if state.instrument == types.InstrumentationType.CUDA_Events:
-            idstr = self._idstr(sdfg, state)
-            local_stream.write(self._record_event('e' + idstr, 0), sdfg, state_id)
+            idstr = self._idstr(sdfg, state, None)
+            local_stream.write(
+                self._record_event('e' + idstr, 0), sdfg, state_id)
             local_stream.write(
                 self._report('State %s' % state.label, sdfg, state), sdfg,
                 state_id)
-            local_stream.write(self._destroy_event('b' + idstr), sdfg, state_id)
-            local_stream.write(self._destroy_event('e' + idstr), sdfg, state_id)
+            local_stream.write(
+                self._destroy_event('b' + idstr), sdfg, state_id)
+            local_stream.write(
+                self._destroy_event('e' + idstr), sdfg, state_id)
 
         # Destroy CUDA events for scopes in the state
         for node in state.nodes():
