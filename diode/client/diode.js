@@ -4885,6 +4885,7 @@ class DIODE {
             return $(elem);
         };
 
+        // TODO: Handle enumeration types better
         let elem = document.createElement('div');
         if(x.type == "bool") {
             let val = x.value;
@@ -5041,6 +5042,16 @@ class DIODE {
             let qualified = x.value;
             if(!storage_types.includes(qualified)) {
                 qualified = "StorageType." + qualified;
+            }
+            elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, storage_types, qualified);
+        }
+        else if(x.type == "InstrumentationType") {
+            let storage_types = this.getEnum('InstrumentationType');
+            let qualified = x.value;
+            if(!storage_types.includes(qualified)) {
+                qualified = "InstrumentationType." + qualified;
             }
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);

@@ -580,7 +580,9 @@ def getEnum(name):
         print("Enum type '" + str(name) + "' is not in Whitelist")
         abort(400)
 
-    return jsonify({'enum': [str(e).split(".")[-1] for e in eval(name)]})
+    return jsonify({
+        'enum': [str(e).split(".")[-1] for e in getattr(dace.types, name)]
+    })
 
 
 def collect_all_SDFG_nodes(sdfg):
