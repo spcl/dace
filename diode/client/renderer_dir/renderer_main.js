@@ -1232,14 +1232,17 @@ function calculateNodeSize(sdfg_state, node, controller_state = undefined) {
     if (node.type == "AccessNode") {
         size.width += size.height;
     }
-    else if (node.type == "MapEntry") {
+    else if (node.type.endsWith("Entry")) {
         size.width += 2.0 * size.height;
+        size.height /= 1.75;
     }
-    else if (node.type == "MapExit") {
+    else if (node.type.endsWith("Exit")) {
         size.width += 2.0 * size.height;
+        size.height /= 1.75;
     }
     else if (node.type == "Tasklet") {
         size.width += 2.0 * (size.height / 3.0);
+        size.height /= 1.75;
     }
     else if (node.type == "Reduce") {
         size.width *= 2;

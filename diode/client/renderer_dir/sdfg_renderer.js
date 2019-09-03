@@ -87,6 +87,7 @@ class DrawNodeState {
         
         ctx.stroke();
         ctx.lineWidth = 1.0;
+        ctx.setLineDash([1,0]);
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
@@ -94,7 +95,7 @@ class DrawNodeState {
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 4.0);
     }
 
-    drawMapEntryNode(node, nodeid) {
+    drawEntryNode(node, nodeid) {
         let ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
@@ -106,18 +107,27 @@ class DrawNodeState {
         ctx.lineTo(topleft_x, topleft_y + node.height);
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
+        
+        // Consume scopes have dashed edges
+        if (node.type.startsWith("Consume"))
+            ctx.setLineDash([5, 3]);
+        else
+            ctx.setLineDash([1, 0]);
+        
+        
         ctx.stroke();
+        ctx.setLineDash([1, 0]);
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
 
-        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT);
-        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT);
+        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT, node.width - 2*node.height);
+        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height);
     }
 
-    drawMapExitNode(node, nodeid) {
+    drawExitNode(node, nodeid) {
         let ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
@@ -129,15 +139,24 @@ class DrawNodeState {
         ctx.lineTo(topleft_x, topleft_y);
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
+        
+        // Consume scopes have dashed edges
+        if (node.type.startsWith("Consume"))
+            ctx.setLineDash([5, 3]);
+        else
+            ctx.setLineDash([1, 0]);
+        
+        
         ctx.stroke();
+        ctx.setLineDash([1, 0]);
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
 
-        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT);
-        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT);
+        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT, node.width - 2*node.height);
+        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height);
     }
 
     drawTaskletNode(node, nodeid) {
@@ -163,8 +182,8 @@ class DrawNodeState {
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
-        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y - 0.5*LINEHEIGHT);
-        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT);
+        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y - 0.5*LINEHEIGHT, node.width - 2*hexseg);
+        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*hexseg);
     }
 
     drawReduceNode(node, nodeid) {
@@ -188,10 +207,19 @@ class DrawNodeState {
     }
 
     drawConnectors(labels, topleft_x, topleft_y, connarea_width) {
-        let next_topleft_x = topleft_x + 5;
+        let next_topleft_x = topleft_x;
         let next_topleft_y = topleft_y;
         var ctx = this.ctx;
         var ellipse = this.drawEllipse;
+        
+        var spacing = 10;
+        var connlength = (labels.length - 1) * spacing;
+        labels.forEach(function(label) {
+            connlength += ctx.measureText(label).width * 1.1;
+        });
+        
+        next_topleft_x += (connarea_width - connlength) / 2.0;
+            
         labels.forEach(function(label) {
             let textmetrics = ctx.measureText(label);
             let labelwidth = textmetrics.width * 1.1;
@@ -214,11 +242,11 @@ class DrawNodeState {
         if (node.type == "AccessNode") {
             this.drawArrayNode(node, nodeid)
         }
-        else if (node.type == "MapEntry") {
-            this.drawMapEntryNode(node, nodeid)
+        else if (node.type.endsWith("Entry")) {
+            this.drawEntryNode(node, nodeid)
         }
-        else if (node.type == "MapExit") {
-            this.drawMapExitNode(node, nodeid)
+        else if (node.type.endsWith("Exit")) {
+            this.drawExitNode(node, nodeid)
         }
         else if (node.type == "Tasklet") {
             this.drawTaskletNode(node, nodeid)
