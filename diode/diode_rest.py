@@ -5,6 +5,7 @@ import dace.frontend.octave.parse as octave_frontend
 import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
+import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory, send_file
 import json, copy
 import re
@@ -18,7 +19,12 @@ from dace import ScheduleType, Language, StorageType
 
 app = Flask(__name__)
 
-enum_list = ['AccessType', 'ScheduleType', 'Language', 'StorageType']
+# Prepare a whitelist of DaCe enumeration types
+enum_list = [
+    typename
+    for typename, dtype in inspect.getmembers(dace.types, inspect.isclass)
+    if issubclass(dtype, dace.types.AutoNumber)
+]
 
 es_ref = []
 

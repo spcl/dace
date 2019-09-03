@@ -354,9 +354,17 @@ void __dace_exit_cuda({params}) {{
             self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
 
             if is_array_stream_view(sdfg, dfg, node):
-                fmtargs['ptr'] = nodedesc.sink
-                # Assuming 1D array sink/src
-                fmtargs['size'] = sym2cpp(sdfg.arrays[nodedesc.sink].shape[0])
+                edges = dfg.out_edges(node)
+                if len(edges) > 1:
+                    raise NotImplementedError("Cannot handle streams writing "
+                                              "to multiple arrays.")
+
+                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
+                    sdfg, edges[0].data, with_brackets=False)
+
+                # Assuming 1D subset of sink/src
+                # sym2cpp(edges[0].data.subset[-1])
+                fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
 
                 # (important) Ensure GPU array is allocated before the stream
                 datanode = dfg.out_edges(node)[0].dst
@@ -371,7 +379,7 @@ void __dace_exit_cuda({params}) {{
                     """
 DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
 void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
-    dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
+    result = dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
 }}""".format(**fmtargs), sdfg, state_id, node)
                 callsite_stream.write(
                     'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({ptr}, {size}, {name});'
@@ -386,7 +394,7 @@ void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type},
                     """
 DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
 void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
-    dace::AllocGPUStream<{type}, {is_pow2}>({size});
+    result = dace::AllocGPUStream<{type}, {is_pow2}>({size});
 }}""".format(**fmtargs), sdfg, state_id, node)
                 callsite_stream.write(
                     'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({size}, {name});'
@@ -1078,7 +1086,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 gdims=','.join(_topy(grid_dims)),
                 bdims=','.join(_topy(block_dims)),
                 dynsmem=_topy(dynsmem_size),
-                stream=cudastream), sdfg, state_id, node)
+                stream=cudastream), sdfg, state_id, scope_entry)
         self._emit_sync(self._localcode)
 
         # Close the runkernel function
@@ -1087,12 +1095,25 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Add invocation to calling code (in another file)
         function_stream.write(
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id, node)
+            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id,
+            scope_entry)
+
+        # Synchronize all events leading to dynamic map range connectors
+        for e in dfg.in_edges(scope_entry):
+            if not e.dst_conn.startswith('IN_') and hasattr(e, '_cuda_event'):
+                ev = e._cuda_event
+                callsite_stream.write(
+                    'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'.
+                    format(ev=ev),
+                    sdfg,
+                    state_id, [e.src, e.dst])
+
+        # Invoke kernel call
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(kernel_args)), sdfg, state_id, node)
+            (kernel_name, ', '.join(kernel_args)), sdfg, state_id, scope_entry)
 
-        synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
+        synchronize_streams(sdfg, dfg, state_id, scope_entry, scope_exit,
                             callsite_stream)
 
         # Instrumentation (post-kernel)
