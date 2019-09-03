@@ -69,7 +69,24 @@ class DrawNodeState {
         this.drawEllipse(ctx, topleft_x, topleft_y, node.width, node.height);
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid);
+        
+        let nodedesc = node.sdfg.attributes._arrays[node.properties.data];
+        // Streams have dashed edges
+        if (nodedesc.type === "Stream") {
+            ctx.setLineDash([5, 3]);
+        } else {
+            ctx.setLineDash([1,0]);
+        }
+        
+        if (nodedesc.attributes.transient === false) {
+            ctx.lineWidth = 3.0;
+        } else {
+            ctx.lineWidth = 1.0;
+        }
+        
+        
         ctx.stroke();
+        ctx.lineWidth = 1.0;
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";

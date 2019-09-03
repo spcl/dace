@@ -220,7 +220,7 @@ class SdfgState {
                     dagre.layout(g);
                 }
                 else {
-                    state_g = layout_state(state, this);
+                    state_g = layout_state(state, this.sdfg, this);
                     addXYOffset(state_g, state_x_offs + 2*LINEHEIGHT, state_y_offs+2*LINEHEIGHT);
                     this.graphcache[state.id] = state_g;
                 }
@@ -250,7 +250,7 @@ class SdfgState {
             let state_y_offs = g.node(state.id).y - g.node(state.id).height / 2.0;
             let ctx = transthis.ctx;
             ctx.fillText(state.id, state_x_offs+1.0*LINEHEIGHT, state_y_offs+1.0*LINEHEIGHT);
-            let state_g = layout_state(state, this);
+            let state_g = layout_state(state, sdfg, this);
             addXYOffset(state_g, state_x_offs + 2*LINEHEIGHT, state_y_offs+2*LINEHEIGHT);
             paint_state(state_g, new DrawNodeState(ctx, state.id, transthis));
             transthis.setGraph(state.id, state_g);
@@ -1112,7 +1112,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
             stateinfo.height = LINEHEIGHT;
         } 
         else {
-            let state_g = layout_state(state, sdfg_state);
+            let state_g = layout_state(state, sdfg, sdfg_state);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 4*LINEHEIGHT;
@@ -1154,7 +1154,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
 
 }
 
-function layout_state(sdfg_state, controller_state = undefined) {
+function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     // layout the state as a dagre graph
 
     if(controller_state === undefined) controller_state = global_state;
@@ -1179,6 +1179,9 @@ function layout_state(sdfg_state, controller_state = undefined) {
         node.attributes.layout.type = node.type;
         node.attributes.layout.in_connectors = node.attributes.in_connectors;
         node.attributes.layout.out_connectors = node.attributes.out_connectors;
+        node.attributes.layout.properties = node.attributes;
+        node.attributes.layout.sdfg = sdfg;
+        node.attributes.layout.state = sdfg_state;
         g.setNode(node.id, node.attributes.layout);
     });
 
@@ -1193,6 +1196,8 @@ function layout_state(sdfg_state, controller_state = undefined) {
             label: label,
             width: textmetrics.width,
             height: LINEHEIGHT,
+            sdfg: sdfg,
+            state: sdfg_state
         };
         g.setEdge(edge.src, edge.dst, edge.attributes.layout);
     });
