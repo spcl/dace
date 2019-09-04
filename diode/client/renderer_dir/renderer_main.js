@@ -1154,7 +1154,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
     });
 
     sdfg.edges.forEach(function (edge) {
-        let label = edge.attributes.data.attributes.condition.string_data;
+        let label = edge.attributes.data.label;
         let textmetrics = ctx.measureText(label);
         g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width,
                                         sdfg: sdfg });

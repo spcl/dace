@@ -43,6 +43,7 @@ class InterstateEdge(object):
         from_string=assignments_from_string,
         to_string=assignments_to_string)
     condition = CodeProperty(desc="Transition condition")
+
     #language = Property(enum=types.Language, default=types.Language.Python)
 
     def __init__(self, condition=None, assignments=None):
@@ -74,7 +75,8 @@ class InterstateEdge(object):
         import json
         ret = {
             'type': type(self).__name__,
-            'attributes': json.loads(Property.all_properties_to_json(self))
+            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'label': self.label
         }
 
         return json.dumps(ret)
