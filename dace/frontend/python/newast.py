@@ -138,6 +138,43 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
     return name
 
 
+def _scalarbinop(sdfg: SDFG, state: SDFGState,
+                 scalop: str, arrop: str,
+                 opcode: str, opname: str,
+                 reverse=False):
+    """ Implements a general Scalar-Array binary operator. """
+    scalar = sdfg.arrays[scalop]
+    arr = sdfg.arrays[arrop]
+
+    # Argument type checking
+    if scalar.dtype != arr.dtype:
+        print(
+            "WARNING: Different types in scalar-array binary op (%s scalar, %s array)"
+            % (scalar.dtype.to_string(), arr.dtype.to_string()))
+    # End of argument type checking
+    
+    name, _ = sdfg.add_temp_transient(arr.shape, arr.dtype, arr.storage)
+    state.add_mapped_tasklet(
+        "_SA%s_" % 'Mult',
+        {
+            '__i%d' % i: '0:%s' % s for i, s in enumerate(arr.shape)},
+        {
+            'in1': Memlet.simple(scalop, '0'),
+            'in2': Memlet.simple(
+                arrop, ','.join(['__i%d' % i for i in range(len(arr.shape))])
+            ),
+         },
+        'out = %s * %s' % ('in1' if reverse else 'in2', 'in2'
+                           if reverse else 'in1'),
+        {
+            'out':
+            Memlet.simple(
+                name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
+        },
+        external_edges=True)
+    return name
+
+
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
     @oprepo.replaces_operator('Array', op)
@@ -151,10 +188,28 @@ def _makeunop(op, opcode):
         return _unop(sdfg, state, op1, opcode, op)
 
 
+def _is_scalar(sdfg, op):
+    shape = sdfg.arrays[op].shape
+    if len(shape) == 1 and shape[0] == 1:
+        return True
+    return False
+
+
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op)
     def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-        return _binop(sdfg, state, op1, op2, opcode, op)
+        isscal1 = _is_scalar(sdfg, op1)
+        isscal2 = _is_scalar(sdfg, op2)
+        if isscal1:
+            if isscal2:
+                raise NotImplementedError
+            else:
+                return _scalarbinop(sdfg, state, op1, op2, opcode, op)
+        else:
+            if isscal2:
+                return _scalarbinop(sdfg, state, op2, op1, opcode, op, True)
+            else:
+                return _binop(sdfg, state, op1, op2, opcode, op)
 
 
 # Define all standard Python augmented assignment operators
@@ -752,6 +807,8 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     for arrname, arr_accesses in accesses.items():
         arr_name = arrname
         for i, access in enumerate(arr_accesses):
+            if isinstance(access, (list, tuple)):
+                access = access[0]
             conn = None
             if PVisitor.nested:
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
@@ -2053,7 +2110,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         if sqz_rng.num_elements() == 1:
                             self._add_tasklet((vname, sqz_rng), result)
                         else:
-                            self._add_copy((vname, sqz_rng), result)
+                            # self._add_copy((vname, sqz_rng), result)
+                            self._add_assignment(
+                                node, (vname, sqz_rng), result, op
+                            )
                     else:
                         if result_size == 1:
                             self._add_mapped_copy(target, vname, result)
@@ -2622,7 +2682,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
                 self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                 self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
-                return (vname, sqz_rng)
+                # return (vname, sqz_rng)
+                return vname
             else:
                 raise DaceSyntaxError(
                     self, target,
