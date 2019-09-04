@@ -301,15 +301,23 @@ class DrawNodeState {
         for(let elem of edge.points) {
             ctx.lineTo(elem.x, elem.y)
         }
-        if (hovered) {
+        if (hovered)
             ctx.strokeStyle = "green";
-        } else {
+        else
             ctx.strokeStyle = "black";
-        }
+
         ctx.stroke();
         if (edge.points.length < 2) return;
         this.drawArrow(ctx, edge.points[edge.points.length - 2], edge.points[edge.points.length - 1], 5);
-        ctx.fillText(edge.label, edge.x - edge.width, edge.y);
+        if (hovered) {
+            let x = hovered.x + 10;
+            let textmetrics = ctx.measureText(edge.label);
+            ctx.fillStyle = "black";
+            ctx.fillRect(x, hovered.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
+            ctx.fillStyle = "white";
+            ctx.fillText(edge.label, x + 0.2*textmetrics.width, hovered.y - 0.1*LINEHEIGHT);
+            ctx.fillStyle = "black";
+        }
     }
 
 }
