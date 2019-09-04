@@ -618,6 +618,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
         if(clicked_nodes.length > 0)
             node_id = clicked_nodes[0].id;
+        else if (clicked_edges.length > 0)
+            node_id = clicked_edges[0].id;
 
         if (omsg.msg_type === "hover") {
             let sdfg = this.initialized_sdfgs[0].sdfg;

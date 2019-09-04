@@ -200,7 +200,9 @@ class SdfgState {
     drawSDFG() {
         let g = this.top_level_graph;
         if(g == null) return; // Nothing to draw (yet)
-        paint_sdfg(g, this.sdfg, new DrawNodeState(this.ctx, -1, this));
+        var renderer = new DrawNodeState(this.ctx, -1, this);
+        renderer.onStartDraw();
+        paint_sdfg(g, this.sdfg, renderer);
 
         // Draw what is inside the state boxes, offset by the top 
         // left corner of the state box
@@ -227,9 +229,12 @@ class SdfgState {
                 }
 
             }
-            
-            paint_state(state_g, new DrawNodeState(ctx, state.id, this));
+
+            renderer.stateid = state.id;
+            paint_state(state_g, renderer);
         });
+
+        renderer.onEndDraw();
     }
 
     init_SDFG() {

@@ -8,10 +8,30 @@ class DrawNodeState {
             sdfg_state = global_state;
         }
         this.sdfg_state = sdfg_state;
+        this.tooltip = null;
     }
 
     highlights() {
         return this.sdfg_state.highlights.filter(x => x['state-id'] == this.stateid).map(x => x['node-id']);
+    }
+
+    onStartDraw() {
+        this.tooltip = null;
+    }
+
+    onEndDraw() {
+        if (this.tooltip) {
+            let pos = this.tooltip[0];
+            let label = this.tooltip[1];
+            let ctx = this.ctx;
+            let x = pos.x + 10;
+            let textmetrics = ctx.measureText(label);
+            ctx.fillStyle = "black";
+            ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
+            ctx.fillStyle = "white";
+            ctx.fillText(label, x + 0.2 * textmetrics.width, pos.y - 0.1 * LINEHEIGHT);
+            ctx.fillStyle = "black";
+        }
     }
 
     nodeColor(nodeid, hovered = false) {
@@ -25,15 +45,9 @@ class DrawNodeState {
     }
 
     showTooltip(pos, label) {
-        let ctx = this.ctx;
-        let x = pos.x + 10;
-        let textmetrics = ctx.measureText(label);
-        ctx.fillStyle = "black";
-        ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
-        ctx.fillStyle = "white";
-        ctx.fillText(label, x + 0.2*textmetrics.width, pos.y - 0.1*LINEHEIGHT);
-        ctx.fillStyle = "black";
+        this.tooltip = [pos, label];
     }
+
 
     // Adapted from https://stackoverflow.com/a/2173084/6489142
     drawEllipse(ctx, x, y, w, h) {
