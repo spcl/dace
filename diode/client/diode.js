@@ -602,7 +602,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         // Check if anything was clicked at all
         if(clicked_states.length == 0 && clicked_interstate_edges.length == 0) {
             // Nothing was selected
-            this.render_free_variables();
+            if (omsg.msg_type !== 'hover')
+                this.render_free_variables();
             return;
         }
         if((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
