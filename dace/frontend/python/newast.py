@@ -14,6 +14,7 @@ from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rn
 from dace.graph import nodes
 from dace.graph.labeling import propagate_memlet
 from dace.memlet import Memlet
+from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
@@ -52,6 +53,36 @@ def _define_streamarray(sdfg: SDFG,
     name = sdfg.temp_data_name()
     sdfg.add_stream(
         name, dtype, shape=dimensions, buffer_size=buffer_size, transient=True)
+    return name
+
+
+def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
+    """ Implements a general element-wise assignment operator. """
+    arr1 = sdfg.arrays[op1]
+
+    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
+    write_memlet = None
+    if opcode:
+        Memlet.simple(
+            name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]),
+            wcr_str='lambda x, y: x %s y' % opcode
+        )
+    else:
+        Memlet.simple(
+            name, ','.join(['__i%d' % i for i in range(len(arr1.shape))])
+        )
+    state.add_mapped_tasklet(
+        "_%s_" % opname,
+        {'__i%d' % i: '0:%s' % s
+         for i, s in enumerate(arr1.shape)}, {
+             'in1':
+             Memlet.simple(
+                 op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
+         },
+        'out = in1', {
+            'out': write_memlet
+        },
+        external_edges=True)
     return name
 
 
@@ -108,6 +139,12 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
 
 
 # Defined as a function in order to include the op and the opcode in the closure
+def _makeassignop(op, opcode):
+    @oprepo.replaces_operator('Array', op)
+    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+        return _assignop(sdfg, state, op1, opcode, op)
+
+
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
     def _op(sdfg: SDFG, state: SDFGState, op1: str, op2=None):
@@ -119,6 +156,20 @@ def _makebinop(op, opcode):
     def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _binop(sdfg, state, op1, op2, opcode, op)
 
+
+# Define all standard Python augmented assignment operators
+for op, opcode in [('None', None), ('Add', '+'), ('Sub', '-'), ('Mult', '*'),
+                   ('Div', '/'), ('FloorDiv', '//'), ('Mod', '%'),
+                   ('Pow', '**'), ('LShift', '<<'), ('RShift', '>>'),
+                   ('BitOr', '|'), ('BitXor', '^'), ('BitAnd', '&'),]:
+    _makeassignop(op, opcode)
+
+
+augassign_ops = {
+    'Add': '+', 'Sub': '-', 'Mult': '*', 'Div': '/', 'FloorDiv': '//',
+    'Mod': '%', 'Pow': '**', 'LShift': '<<', 'RShift': '>>',
+    'BitOr': '|', 'BitXor': '^', 'BitAnd': '&'
+}
 
 # Define all standard Python unary operators
 for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', '!'), ('Invert',
@@ -1865,6 +1916,30 @@ class ProgramVisitor(ExtNodeVisitor):
         state.add_nedge(mx, write_node,
                        dace.Memlet.from_array(target, self.sdfg.arrays[target]))
 
+    def _add_assignment(self, node, target, operand, op):
+        print(target, operand, op)
+
+        if isinstance(target, tuple):
+            name, subset = target
+            memlet = dace.Memlet(name, subset.num_elements(), subset, 1)
+        else:
+            name = target
+            memlet = dace.Memlet.from_array(name, self.sdfg.arrays[name])
+        if isinstance(operand, tuple):
+            rname, rsubset = operand
+        else:
+            rname, rsubset = operand, None
+        memlet.other_subset = rsubset
+        if op is not None:
+            memlet.wcr = LambdaProperty.from_string(
+                'lambda x, y: x {} y'.format(op)
+            )
+
+        state = self._add_state("assign_%d" % node.lineno)
+        op1 = state.add_read(rname)
+        op2 = state.add_write(name)
+        state.add_nedge(op1, op2, memlet)
+
     def _get_variable_name(self, node, name):
         if name in self.variables:
             return self.variables[name]
@@ -1875,6 +1950,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                   'Array "%s" used before definition' % name)
 
     def visit_Assign(self, node: ast.Assign):
+
+        self._visit_assign(node, node.targets[0], None)
         # Validate assignment targets
         # for target in _targets(node):
         #     if isinstance(target, ast.Name) and target.id in self.global_arrays:
@@ -1886,13 +1963,15 @@ class ProgramVisitor(ExtNodeVisitor):
         #     raise DaceSyntaxError(
         #         self, node,
         #         "Only 1 target per assignment is currently supported")
+    
+    def _visit_assign(self, node, node_target, op):
 
-        if not isinstance(node.targets[0], ast.Tuple):
-            elts = [node.targets[0]]
+        if not isinstance(node_target, ast.Tuple):
+            elts = [node_target]
         else:
-            elts = node.targets[0].elts
+            elts = node_target.elts
 
-        state = self._add_state("assign_%d" % node.lineno)
+        # state = self._add_state("assign_%d" % node.lineno)
 
         # Return result (UnaryOp, BinOp, BoolOp, Call, etc.)
         results = self.visit(node.value)
@@ -1907,16 +1986,30 @@ class ProgramVisitor(ExtNodeVisitor):
         for target, result in zip(elts, results):
             # Variable assignment
             if isinstance(target, ast.Name):
-                if target.id in self.scope_vars or target.id in self.variables:
-                    raise DaceSyntaxError(
-                        self, target,
-                        'Cannot reassign value to parameter "%s"' % target.id)
+                if op is None:
+                    if (target.id in self.scope_vars or
+                            target.id in self.variables):
+                        raise DaceSyntaxError(
+                            self, target,
+                            'Cannot reassign value to parameter "%s"'
+                            % target.id)
 
-                name = target.id
-                self.variables[name] = result
+                    name = target.id
+                    self.variables[name] = result
+                    continue
+                else:
+                    name = rname(target)
+                    real_name = {**self.variables, **self.scope_vars}[name]
+                    real_target = copy.deepcopy(target)
+                    real_target.id = real_name
+                    rng = dace.subsets.Range(
+                        astutils.subscript_to_slice(
+                            real_target,
+                            {**self.sdfg.arrays, **self.scope_arrays}
+                    )[1])
 
             # Variable broadcast
-            elif isinstance(target, ast.Subscript):
+            if isinstance(target, ast.Subscript):
                 print(ast.dump(target))
                 name = rname(target)
                 real_name = {**self.variables, **self.scope_vars}[name]
@@ -1924,68 +2017,75 @@ class ProgramVisitor(ExtNodeVisitor):
                 real_target.value.id = real_name
                 rng = dace.subsets.Range(astutils.subscript_to_slice(
                     real_target, {**self.sdfg.arrays, **self.scope_arrays})[1])
-                if self.nested:
-                    if (name, rng, 'w') in self.accesses:
-                        self._add_tasklet(self.accesses[(name, rng, 'w')], result)
-                    elif name in self.variables:
-                        aname = self.variables[name]
-                        self._add_tasklet((aname, rng), result)
-                    elif ((name, rng, 'r') in self.accesses
-                            or name in self.scope_vars):
-                        vname = "__tmp_{l}_{c}".format(
-                            l=target.lineno, c=target.col_offset)
-                        parent_name = self.scope_vars[name]
-                        parent_array = self.scope_arrays[parent_name]
-                        sqz_rng = copy.deepcopy(rng)
-                        sqz_rng.squeeze()
-                        shape = sqz_rng.size()
-                        dtype = parent_array.dtype
-                        self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides)
-                        self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
-                        self.variables[vname] = parent_name
-                        self.outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
-                        if isinstance(result, tuple):
-                            arr, subset = result
-                        else:
-                            arr, subset = result, None
-                        if arr in self.sdfg.arrays:
-                            if subset:
-                                result_size = subset.num_elements()
-                            else: 
-                                result_size = np.prod(self.sdfg.arrays[arr].shape)
-                        else:
-                            result_size = 1
-                        if sqz_rng.num_elements() == result_size:
-                            if sqz_rng.num_elements() == 1:
-                                self._add_tasklet((vname, sqz_rng), result)
-                            else:
-                                self._add_copy((vname, sqz_rng), result)
-                        else:
-                            if result_size == 1:
-                                self._add_mapped_copy(target, vname, result)
-                            else:
-                                raise DaceSyntaxError(
-                                    self, node, 'Incompatible shapes')
-                    else:
-                        raise DaceSyntaxError(
-                            self, target,
-                            'Array "{}" used before definition'.format(name))
-                else:
-                    if name in self.variables:
-                        aname = self.variables[name]
-                        self._add_tasklet((aname, rng), result)
-                    elif name in self.scope_vars:
-                        aname = self.scope_vars[name]
-                    else:
-                        raise DaceSyntaxError(
-                            self, target,
-                            'Array "{}" used before definition'.format(name))
 
+            if self.nested:
+                if (name, rng, 'w') in self.accesses:
+                    self._add_tasklet(self.accesses[(name, rng, 'w')], result)
+                elif name in self.variables:
+                    aname = self.variables[name]
                     self._add_tasklet((aname, rng), result)
+                elif ((name, rng, 'r') in self.accesses
+                        or name in self.scope_vars):
+                    vname = "__tmp_{l}_{c}".format(
+                        l=target.lineno, c=target.col_offset)
+                    parent_name = self.scope_vars[name]
+                    parent_array = self.scope_arrays[parent_name]
+                    sqz_rng = copy.deepcopy(rng)
+                    sqz_rng.squeeze()
+                    shape = sqz_rng.size()
+                    dtype = parent_array.dtype
+                    self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
+                    self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
+                    self.variables[vname] = parent_name
+                    self.outputs[vname] = (dace.Memlet(parent_name, rng.num_elements(), rng, 1), set())
+                    if isinstance(result, tuple):
+                        arr, subset = result
+                    else:
+                        arr, subset = result, None
+                    if arr in self.sdfg.arrays:
+                        if subset:
+                            result_size = subset.num_elements()
+                        else: 
+                            result_size = np.prod(self.sdfg.arrays[arr].shape)
+                    else:
+                        result_size = 1
+                    if sqz_rng.num_elements() == result_size:
+                        if sqz_rng.num_elements() == 1:
+                            self._add_tasklet((vname, sqz_rng), result)
+                        else:
+                            self._add_copy((vname, sqz_rng), result)
+                    else:
+                        if result_size == 1:
+                            self._add_mapped_copy(target, vname, result)
+                        else:
+                            raise DaceSyntaxError(
+                                self, node, 'Incompatible shapes')
+                else:
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Array "{}" used before definition'.format(name))
+            else:
+                if name in self.variables:
+                    aname = self.variables[name]
+                    # self._add_tasklet((aname, rng), result)
+                elif name in self.scope_vars:
+                    aname = self.scope_vars[name]
+                else:
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Array "{}" used before definition'.format(name))
+
+                # self._add_tasklet((aname, rng), result)
+                self._add_assignment(node, (aname, rng), result, op)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
         print(ast.dump(node))
+
+        self._visit_assign(
+            node, node.target, augassign_ops[type(node.op).__name__]
+        )
+        return
 
         state = self._add_state("AugAssignState")
 
@@ -2416,7 +2516,11 @@ class ProgramVisitor(ExtNodeVisitor):
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
         default_impl = Config.get('frontend', 'implementation')
-        opname = type(node.op).__name__
+        opname = None
+        try:
+            opname = type(node.op).__name__
+        except:
+            pass
 
         # Parse operands
         operand1, op1type = self._gettype(op1)
