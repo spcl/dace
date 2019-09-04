@@ -565,7 +565,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
     sdfg_element_selected(msg) {
         let omsg = JSON.parse(msg);
-        if(omsg.msg_type === 'click') {
+        if(omsg.msg_type.endsWith('click')) {
             // ok
         }
         else if(omsg.msg_type === 'contextmenu') {
@@ -637,6 +637,27 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 sdfg.hovered = {'interstate_edge': [isedge_id, pos]};
             } else {
                 sdfg.hovered = {};
+            }
+            return;
+        }
+
+        if (omsg.msg_type === "dblclick") {
+            let sdfg = this.initialized_sdfgs[0].sdfg;
+            let elem;
+            if(state_only) {
+                elem = sdfg.nodes[state_id];
+            } else if(clicked_nodes.length > 0) {
+                elem = sdfg.nodes[state_id].nodes[node_id];
+            } else {
+                return false;
+            }
+            // Toggle collapsed state
+            if ('is_collapsed' in elem.attributes) {
+                elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
+
+                // Re-layout SDFG
+                this.initialized_sdfgs[0].setSDFG(this.initialized_sdfgs[0].sdfg);
+                this.initialized_sdfgs[0].init_SDFG();
             }
             return;
         }
@@ -1034,11 +1055,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // Link the new message handler
             this._message_handler = msg => renderer.message_handler(msg, sdfg_state);
 
-            // Link a new onmousemove handler
-            sdfg_state.setOnMouseMoveHandler(transmitter);
-
-            // Link a new onclick handler
-            sdfg_state.setOnclickHandler(transmitter, true);
+            // Link new mouse handlers
+            sdfg_state.setMouseHandlers(transmitter, true);
 
             // Enable dragging
             sdfg_state.setDragHandler();

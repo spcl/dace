@@ -40,6 +40,7 @@ class SdfgState {
 
         this._canvas_click_event_listener = null;
         this._canvas_hover_event_listener = null;
+        this._canvas_dblclick_event_listener = null;
         this._canvas_oncontextmenu_handler = null;
 
 
@@ -218,9 +219,20 @@ class SdfgState {
             else {
                 if (state.attributes.is_collapsed == true) {
                     state_g = new dagre.graphlib.Graph();
-                    g.setGraph({});
-                    g.setDefaultEdgeLabel(function (u, v) { return {}; });
-                    dagre.layout(g);
+                    state_g.setGraph({});
+                    state_g.setDefaultEdgeLabel(function (u, v) { return {}; });
+                    dagre.layout(state_g);
+
+                    // Draw "+" sign that signifies that this state is collapsed
+                    let x = g.node(state.id).x;
+                    let y = g.node(state.id).y;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, y - LINEHEIGHT);
+                    this.ctx.lineTo(x, y + LINEHEIGHT);
+                    this.ctx.stroke();
+                    this.ctx.moveTo(x - LINEHEIGHT, y);
+                    this.ctx.lineTo(x + LINEHEIGHT, y);
+                    this.ctx.stroke();
                 }
                 else {
                     state_g = layout_state(state, this.sdfg, this);
@@ -803,7 +815,7 @@ class SdfgState {
     }
 
 
-    setOnclickHandler(transmitter, contextmenu = false) {
+    setMouseHandlers(transmitter, contextmenu = false) {
         /*
             transmitter: class instance or object with the following duck-typed properties:
                 .send(data):
@@ -820,11 +832,37 @@ class SdfgState {
         
         let zoom_comp = x => x;
 
+        // Click
         if(this._canvas_click_event_listener != null) {
             canvas().removeEventListener('click', this._canvas_click_event_listener);
         }
         this._canvas_click_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter);
         canvas().addEventListener('click', this._canvas_click_event_listener);
+
+        // Mouse-move (hover)
+        if(this._canvas_hover_event_listener != null) {
+            canvas().removeEventListener('mousemove', this._canvas_hover_event_listener);
+        }
+        this._canvas_hover_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter,
+            'hover');
+        canvas().addEventListener('mousemove', this._canvas_hover_event_listener);
+
+        // Double-click
+        if(this._canvas_dblclick_event_listener != null) {
+            canvas().removeEventListener('dblclick', this._canvas_dblclick_event_listener);
+        }
+        this._canvas_dblclick_event_listener = x => {
+            canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this,
+                transmitter, 'dblclick');
+        }
+        canvas().addEventListener('dblclick', this._canvas_dblclick_event_listener);
+
+        // Prevent double clicking from selecting text (see https://stackoverflow.com/a/43321596/6489142)
+        canvas().addEventListener('mousedown', function (event) {
+            if (event.detail > 1)
+                event.preventDefault();
+        }, false);
+
 
         if(contextmenu) {
 
@@ -840,28 +878,6 @@ class SdfgState {
 
     }
 
-    setOnMouseMoveHandler(transmitter) {
-        /*
-            transmitter: class instance or object with the following duck-typed properties:
-                .send(data):
-                    Sends data to the host.
-        */
-
-        let canvas = () => this.getCanvas();
-        let br = () => canvas().getBoundingClientRect();
-
-        let comp_x = event => this.canvas_manager.mapPixelToCoordsX(event.clientX - br().left);
-        let comp_y = event => this.canvas_manager.mapPixelToCoordsY(event.clientY - br().top);
-
-        let zoom_comp = x => x;
-
-        if(this._canvas_hover_event_listener != null) {
-            canvas().removeEventListener('mousemove', this._canvas_hover_event_listener);
-        }
-        this._canvas_hover_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter,
-            'hover');
-        canvas().addEventListener('mousemove', this._canvas_hover_event_listener);
-    }
 
     setDragHandler() {
         /*
@@ -958,8 +974,11 @@ function canvas_mouse_handler( event,
             clicked_elements.push(elem);
         }
     });
-    if(mode === "click") {
-        transmitter.send(JSON.stringify({"msg_type": "click", "clicked_elements": clicked_elements}));
+    if(mode === "click" || mode === "dblclick") {
+        transmitter.send(JSON.stringify({"msg_type": mode, "clicked_elements": clicked_elements}));
+
+        // Prevent text from being selected etc.
+        event.preventDefault();
     }
     else if(mode === "contextmenu") {
         // Send a message (as with the click handler), but include all information here as well.
@@ -1177,7 +1196,9 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
         let gedge = g.edge(edge.src, edge.dst);
         let bb = calculateEdgeBoundingBox(gedge);
         edge.attributes = {};
-        edge.attributes.label = gedge.label; 
+        edge.attributes.data = {};
+        edge.attributes.data.label = gedge.label;
+        edge.attributes.label = gedge.label;
         edge.attributes.layout = {};
         edge.attributes.layout.width = bb.width;
         edge.attributes.layout.height = bb.height;
