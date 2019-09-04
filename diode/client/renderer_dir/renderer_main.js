@@ -1156,7 +1156,8 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
     sdfg.edges.forEach(function (edge) {
         let label = edge.attributes.data.attributes.condition.string_data;
         let textmetrics = ctx.measureText(label);
-        g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width });
+        g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width,
+                                        sdfg: sdfg });
     });
 
     dagre.layout(g);
@@ -1168,6 +1169,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
         state.attributes.layout.x = gnode.x;
         state.attributes.layout.y = gnode.y;
         state.attributes.layout.width = gnode.width;
+        state.attributes.layout.sdfg = sdfg;
         state.attributes.layout.height = gnode.height;
     });
 
@@ -1181,6 +1183,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
         edge.attributes.layout.height = bb.height;
         edge.attributes.layout.x = bb.x;
         edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.sdfg = sdfg;
         edge.attributes.layout.points = gedge.points;
     });
 
@@ -1195,7 +1198,7 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     let g = new dagre.graphlib.Graph({multigraph: true});
 
     // Set an object for the graph label
-    g.setGraph({});
+    g.setGraph({ranksep: 15});
 
     // Default to assigning a new object as a label for each new edge.
     g.setDefaultEdgeLabel(function (u, v) { return {}; });

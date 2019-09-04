@@ -575,8 +575,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // ok
         } else if (omsg.msg_type === 'hover') {
             // ok
-        }
-        else {
+        } else {
             console.log("Unexpected message type '" + omsg.msg_type + "'");
             return;
         }
@@ -584,7 +583,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let clicked_states = clicked_elems.filter(x => x.type === 'SDFGState');
         let clicked_nodes = clicked_elems.filter(x => x.type !== 'SDFGState' && !x.type.endsWith("Edge"));
         let clicked_edges = clicked_elems.filter(x => x.type === "MultiConnectorEdge");
-        let clicked_interstate_edges = clicked_elems.filter(x => x.type === "InterstateEdge");
+        let clicked_interstate_edges = clicked_elems.filter(x => x.type === "Edge");
 
         let state_id = null;
         let node_id = null;
@@ -637,7 +636,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 let edge_id = clicked_edges[0].true_id;
                 sdfg.hovered = {'edge': [state_id, edge_id, pos]};
             } else if (clicked_interstate_edges.length > 0) {
-                let isedge_id = clicked_interstate_edges[0].id;
+                let isedge_id = clicked_interstate_edges[0].true_id;
                 sdfg.hovered = {'interstate_edge': [isedge_id, pos]};
             } else {
                 sdfg.hovered = {};
