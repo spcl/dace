@@ -38,110 +38,120 @@ class NestSDFG(pattern_matching.Transformation):
         return graph.label
 
     def apply(self, sdfg):
-        # Copy SDFG to nested SDFG
-        nested_sdfg = dace.SDFG('nested_' + sdfg.label)
-        nested_sdfg.add_nodes_from(sdfg.nodes())
-        for src, dst, data in sdfg.edges():
-            nested_sdfg.add_edge(src, dst, data)
 
-        input_orig = {}
-        input_data = set()
-        input_nodes = {}
-        output_orig = {}
-        output_data = set()
-        output_nodes = {}
-        for state in sdfg.nodes():
+        outer_sdfg = sdfg
+        nested_sdfg = dc(sdfg)
+
+        outer_sdfg.arrays.clear()
+        outer_sdfg.remove_nodes_from(outer_sdfg.nodes())
+
+        inputs = {}
+        outputs = {}
+        transients = {}
+
+        for state in nested_sdfg.nodes():
+
             for node in nxutil.find_source_nodes(state):
-                if isinstance(
-                        node,
-                        nodes.AccessNode) and not node.desc(sdfg).transient:
-                    if node.data not in input_data:
-                        input_orig.update({node.data + '_in': node.data})
-                        input_nodes.update({node.data + '_in': dc(node)})
-                        new_data = dc(node.desc(sdfg))
-                        input_data.add(node.data)
-                        sdfg.arrays.update({node.data + '_in': new_data})
-                    node.data = node.data + '_in'
+                if (isinstance(node, nodes.AccessNode) and
+                        not node.desc(nested_sdfg).transient):
+                    arrname = node.data
+                    if arrname not in inputs:
+                        arrobj = nested_sdfg.arrays[arrname]
+                        nested_sdfg.arrays[arrname + '_in'] = arrobj
+                        outer_sdfg.arrays[arrname] = dc(arrobj)
+                        inputs[arrname] = arrname + '_in'
+                    node.data = arrname + '_in'
+
             for node in nxutil.find_sink_nodes(state):
-                if isinstance(
-                        node,
-                        nodes.AccessNode) and not node.desc(sdfg).transient:
-                    if node.data not in output_data:
-                        output_orig.update({node.data + '_out': node.data})
-                        output_nodes.update({node.data + '_out': dc(node)})
-                        new_data = dc(node.desc(sdfg))
-                        output_data.add(node.data)
-                        sdfg.arrays.update({node.data + '_out': new_data})
+                if (isinstance(node, nodes.AccessNode) and
+                        not node.desc(nested_sdfg).transient):
+                    arrname = node.data
+                    if arrname not in outputs:
+                        arrobj = nested_sdfg.arrays[arrname]
+                        nested_sdfg.arrays[arrname + '_out'] = arrobj
+                        if arrname not in inputs:
+                            outer_sdfg.arrays[arrname] = dc(arrobj)
+                        outputs[arrname] = arrname + '_out'
 
-                        # WCR Fix
-                        if self.promote_global_trans:
-                            for edge in state.in_edges(node):
-                                if sd._memlet_path(state, edge)[0].data.wcr:
-                                    if node.data not in input_data:
-                                        input_orig.update({
-                                            node.data + '_in':
-                                            node.data
-                                        })
-                                        input_nodes.update({
-                                            node.data + '_in':
-                                            dc(node)
-                                        })
-                                        new_data = dc(node.desc(sdfg))
-                                        sdfg.arrays.update({
-                                            node.data + '_in':
-                                            new_data
-                                        })
-                                        input_data.add(node.data + '_in')
-                                    break
+                        # TODO: Is this needed any longer ?
+                        # # WCR Fix
+                        # if self.promote_global_trans:
+                        #     for edge in state.in_edges(node):
+                        #         if state.memlet_path(edge)[0].data.wcr:
+                        #             if node.data not in input_data:
+                        #                 input_orig.update({
+                        #                     node.data + '_in':
+                        #                     node.data
+                        #                 })
+                        #                 input_nodes.update({
+                        #                     node.data + '_in':
+                        #                     dc(node)
+                        #                 })
+                        #                 new_data = dc(node.desc(sdfg))
+                        #                 sdfg.arrays.update({
+                        #                     node.data + '_in':
+                        #                     new_data
+                        #                 })
+                        #                 input_data.add(node.data + '_in')
+                        #             break
 
-                    node.data = node.data + '_out'
+                    node.data = arrname + '_out'
+
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
                 for node in state.nodes():
                     if (isinstance(node, nodes.AccessNode)
-                            and node.desc(sdfg).transient
-                            and not scope_dict[node]):
-                        if node.data not in output_data:
-                            output_orig.update({node.data + '_out': node.data})
-                            output_nodes.update({node.data + '_out': dc(node)})
-                            new_data = dc(node.desc(sdfg))
-                            output_data.add(node.data + '_out')
-                            sdfg.arrays.update({node.data + '_out': new_data})
-                        node.data = node.data + '_out'
-                        node.desc(sdfg).transient = False
+                            and node.desc(nested_sdfg).transient):
+                        arrname = node.data
+                        if arrname not in transients and not scope_dict[node]:
+                            arrobj = nested_sdfg.arrays[arrname]
+                            nested_sdfg.arrays[arrname + '_out'] = arrobj
+                            outer_sdfg.arrays[arrname] = dc(arrobj)
+                            transients[arrname] = arrname + '_out'
+                        node.data = arrname + '_out'
+
+        for arrname in inputs.keys():
+            nested_sdfg.arrays.pop(arrname)
+        for arrname in outputs.keys():
+            nested_sdfg.arrays.pop(arrname, None)        
+        for oldarrname, newarrname in transients.items():
+            nested_sdfg.arrays.pop(oldarrname)
+            nested_sdfg.arrays[newarrname].transient = False
+            outer_sdfg.arrays[oldarrname].transient = False
+        outputs.update(transients)
+
+        for state in nested_sdfg.nodes():
             for _, edge in enumerate(state.edges()):
                 _, _, _, _, mem = edge
-                src = sd._memlet_path(state, edge)[0].src
-                dst = sd._memlet_path(state, edge)[-1].dst
-                if isinstance(src,
-                              nodes.AccessNode) and src.data in input_data:
-                    mem.data = src.data
-                if isinstance(src,
-                              nodes.AccessNode) and src.data in output_data:
-                    mem.data = src.data
-                if isinstance(dst,
-                              nodes.AccessNode) and dst.data in output_data:
-                    mem.data = dst.data
+                src = state.memlet_path(edge)[0].src
+                dst = state.memlet_path(edge)[-1].dst
+                if isinstance(src, nodes.AccessNode):
+                    if (mem.data in inputs.keys() and
+                            src.data == inputs[mem.data]):
+                        mem.data = inputs[mem.data]
+                    elif (mem.data in outputs.keys() and
+                            src.data == outputs[mem.data]):
+                        mem.data = outputs[mem.data]
+                elif (isinstance(dst, nodes.AccessNode) and
+                        mem.data in outputs.keys() and
+                        dst.data == outputs[mem.data]):
+                    mem.data = outputs[mem.data]
 
-        sdfg.remove_nodes_from(sdfg.nodes())
+        outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
-        state = sdfg.add_state(sdfg.label)
-        state.add_nodes_from(input_nodes.values())
-        state.add_nodes_from(output_nodes.values())
-
-        nested_node = state.add_nested_sdfg(nested_sdfg, sdfg,
-                                            input_data.keys(),
-                                            output_data.keys())
-        for key, val in input_nodes.items():
-            state.add_edge(
-                val, None, nested_node, key,
-                memlet.Memlet.simple(
-                    val, str(subsets.Range.from_array(val.desc(sdfg)))))
-        for key, val in output_nodes.items():
-            state.add_edge(
-                nested_node, key, val, None,
-                memlet.Memlet.simple(
-                    val, str(subsets.Range.from_array(val.desc(sdfg)))))
+        nested_node = outer_state.add_nested_sdfg(
+            nested_sdfg, outer_sdfg, inputs.values(), outputs.values()
+        )
+        for key, val in inputs.items():
+            arrnode = outer_state.add_read(key)
+            outer_state.add_edge(
+                arrnode, None, nested_node, val,
+                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+        for key, val in outputs.items():
+            arrnode = outer_state.add_write(key)
+            outer_state.add_edge(
+                nested_node, val, arrnode, None,
+                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
 
 
 pattern_matching.Transformation.register_stateflow_pattern(NestSDFG)
