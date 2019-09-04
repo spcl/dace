@@ -39,6 +39,7 @@ class SdfgState {
         this.request_download = "";
 
         this._canvas_click_event_listener = null;
+        this._canvas_hover_event_listener = null;
         this._canvas_oncontextmenu_handler = null;
 
 
@@ -817,7 +818,7 @@ class SdfgState {
         if(this._canvas_click_event_listener != null) {
             canvas().removeEventListener('click', this._canvas_click_event_listener);
         }
-        this._canvas_click_event_listener = x => canvas_onclick_handler(x, comp_x, comp_y, zoom_comp, this, transmitter);
+        this._canvas_click_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter);
         canvas().addEventListener('click', this._canvas_click_event_listener);
 
         if(contextmenu) {
@@ -827,11 +828,34 @@ class SdfgState {
             }
             this._canvas_oncontextmenu_handler = x => {
                 x.preventDefault();
-                canvas_onclick_handler(x, comp_x, comp_y, zoom_comp, this, transmitter, "contextmenu");
+                canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter, "contextmenu");
             };
             canvas().addEventListener('contextmenu', this._canvas_oncontextmenu_handler);
         }
 
+    }
+
+    setOnMouseMoveHandler(transmitter) {
+        /*
+            transmitter: class instance or object with the following duck-typed properties:
+                .send(data):
+                    Sends data to the host.
+        */
+
+        let canvas = () => this.getCanvas();
+        let br = () => canvas().getBoundingClientRect();
+
+        let comp_x = event => this.canvas_manager.mapPixelToCoordsX(event.clientX - br().left);
+        let comp_y = event => this.canvas_manager.mapPixelToCoordsY(event.clientY - br().top);
+
+        let zoom_comp = x => x;
+
+        if(this._canvas_hover_event_listener != null) {
+            canvas().removeEventListener('mousemove', this._canvas_hover_event_listener);
+        }
+        this._canvas_hover_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter,
+            'hover');
+        canvas().addEventListener('mousemove', this._canvas_hover_event_listener);
     }
 
     setDragHandler() {
@@ -884,7 +908,7 @@ class SdfgState {
     }
 }
 
-function canvas_onclick_handler( event,
+function canvas_mouse_handler( event,
                                 comp_x_func,
                                 comp_y_func,
                                 zoom_comp_func,
@@ -913,24 +937,26 @@ function canvas_onclick_handler( event,
                 }
             });
             // Check edges (Memlets). A memlet is considered "clicked" if the label is clicked.
-            state.edges.forEach((edge) => {
+            state.edges.forEach((edge, id) => {
                 if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
-                    let elem = {'type': edge.type, 'id': {src: edge.src, dst: edge.dst }};
+                    let elem = {'type': edge.type, 'true_id': id,
+                        'id': {src: edge.src, dst: edge.dst }};
                     clicked_elements.push(elem);
                 }
             });
         }
     });
-    sdfg_state.sdfg.edges.forEach((edge) => {
+    sdfg_state.sdfg.edges.forEach((edge, id) => {
         if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
-            let elem = {'type': edge.type, 'id': {src: edge.src, dst: edge.dst }};
+            let elem = {'type': edge.type, 'true_id': id,
+                'id': {src: edge.src, dst: edge.dst }};
             clicked_elements.push(elem);
         }
     });
-    if(mode == "click") {
+    if(mode === "click") {
         transmitter.send(JSON.stringify({"msg_type": "click", "clicked_elements": clicked_elements}));
     }
-    else if(mode == "contextmenu") {
+    else if(mode === "contextmenu") {
         // Send a message (as with the click handler), but include all information here as well.
         transmitter.send(JSON.stringify({
             "msg_type": "contextmenu", 
@@ -939,11 +965,13 @@ function canvas_onclick_handler( event,
             'spos': { 'x': event.x, 'y': event.y}, // Screen position, i.e. as reported by the event
         }));
 
-        // #TOOD: What else should the host know about this event?
-
-        // #TODO: It may be discussed whether the rendering context should also take care of rendering a context menu
-        // #TODO: Generally, the context itself does not know enough to provide useful options, but there might be
-        // #TODO: some options that we can add here. For now, leaving this blank is acceptable.
+    } else if(mode === "hover") {
+        transmitter.send(JSON.stringify({
+            "msg_type": "hover",
+            "clicked_elements": clicked_elements,
+            "lpos": {'x': x, 'y': y}, // Logical position (i.e. inside the graph),
+            'spos': {'x': event.x, 'y': event.y}, // Screen position, i.e. as reported by the event
+        }));
     }
 }
 
@@ -1079,8 +1107,8 @@ function paint_sdfg(g, sdfg, drawnodestate) {
         ctx.fill();
         ctx.fillStyle="#000000";
     });
-    g.edges().forEach(e => {
-        drawnodestate.draw_edge(g.edge(e));
+    g.edges().forEach((e, id) => {
+        drawnodestate.draw_edge(g.edge(e), id);
     });
 
 }
@@ -1158,7 +1186,7 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     // layout the state as a dagre graph
 
     if(controller_state === undefined) controller_state = global_state;
-    let g = new dagre.graphlib.Graph();
+    let g = new dagre.graphlib.Graph({multigraph: true});
 
     // Set an object for the graph label
     g.setGraph({});
@@ -1186,7 +1214,7 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     });
 
     let ctx = controller_state.ctx;
-    sdfg_state.edges.forEach(edge => {
+    sdfg_state.edges.forEach((edge, id) => {
         let label = edge.attributes.data.label;
         console.assert(label != undefined);
         let textmetrics = ctx.measureText(label);
@@ -1199,7 +1227,7 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
             sdfg: sdfg,
             state: sdfg_state
         };
-        g.setEdge(edge.src, edge.dst, edge.attributes.layout);
+        g.setEdge(edge.src, edge.dst, edge.attributes.layout, id);
     });
 
     dagre.layout(g);
@@ -1281,7 +1309,7 @@ function paint_state(g, drawnodestate) {
     g.edges().forEach(function (e) {
         let edge = g.edge(e);
         ObjectHelper.assert("edge invalid", edge);
-        drawnodestate.draw_edge(g.edge(e));
+        drawnodestate.draw_edge(g.edge(e), e.name);
     });
 }
 

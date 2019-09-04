@@ -14,11 +14,12 @@ class DrawNodeState {
         return this.sdfg_state.highlights.filter(x => x['state-id'] == this.stateid).map(x => x['node-id']);
     }
 
-    nodeColor(nodeid) {
+    nodeColor(nodeid, hovered = false) {
         if(this.highlights().filter(x => x == nodeid).length > 0) {
             return "red";
-        }
-        else {
+        } else if(hovered) {
+            return "green";
+        } else {
             return "black";
         }
     }
@@ -61,14 +62,14 @@ class DrawNodeState {
         _ctx.restore();
     }
 
-    drawArrayNode(node, nodeid) {
+    drawArrayNode(node, nodeid, hovered) {
         let ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
         ctx.beginPath();
         this.drawEllipse(ctx, topleft_x, topleft_y, node.width, node.height);
         ctx.closePath();
-        ctx.strokeStyle = this.nodeColor(nodeid);
+        ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         
         let nodedesc = node.sdfg.attributes._arrays[node.properties.data];
         // Streams have dashed edges
@@ -95,7 +96,7 @@ class DrawNodeState {
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 4.0);
     }
 
-    drawEntryNode(node, nodeid) {
+    drawEntryNode(node, nodeid, hovered) {
         let ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
@@ -106,7 +107,7 @@ class DrawNodeState {
         ctx.lineTo(topleft_x + node.height, topleft_y);
         ctx.lineTo(topleft_x, topleft_y + node.height);
         ctx.closePath();
-        ctx.strokeStyle = this.nodeColor(nodeid);
+        ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         
         // Consume scopes have dashed edges
         if (node.type.startsWith("Consume"))
@@ -127,7 +128,7 @@ class DrawNodeState {
         this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height);
     }
 
-    drawExitNode(node, nodeid) {
+    drawExitNode(node, nodeid, hovered) {
         let ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
@@ -138,7 +139,7 @@ class DrawNodeState {
         ctx.lineTo(topleft_x + node.height, topleft_y + node.height);
         ctx.lineTo(topleft_x, topleft_y);
         ctx.closePath();
-        ctx.strokeStyle = this.nodeColor(nodeid);
+        ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         
         // Consume scopes have dashed edges
         if (node.type.startsWith("Consume"))
@@ -159,7 +160,7 @@ class DrawNodeState {
         this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height);
     }
 
-    drawTaskletNode(node, nodeid) {
+    drawTaskletNode(node, nodeid, hovered) {
         var ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
@@ -175,7 +176,7 @@ class DrawNodeState {
         ctx.lineTo(topleft_x, topleft_y + 2 * hexseg);
         ctx.lineTo(topleft_x, topleft_y + 1 * hexseg);
         ctx.closePath();
-        ctx.strokeStyle = this.nodeColor(nodeid);
+        ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         ctx.stroke();
         ctx.fillStyle = "white";
         ctx.fill();
@@ -186,7 +187,7 @@ class DrawNodeState {
         this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*hexseg);
     }
 
-    drawReduceNode(node, nodeid) {
+    drawReduceNode(node, nodeid, hovered) {
         let ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
@@ -197,7 +198,7 @@ class DrawNodeState {
         ctx.lineTo(topleft_x + node.width, topleft_y);
         ctx.lineTo(topleft_x, topleft_y);
         ctx.closePath();
-        ctx.strokeStyle = this.nodeColor(nodeid);
+        ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         ctx.stroke();
         ctx.fillStyle = "white";
         ctx.fill();
@@ -239,20 +240,30 @@ class DrawNodeState {
     }
 
     draw_node(node, nodeid) {
+        // Find out whether this node is hovered on
+        var hovered = null;
+        if ('hovered' in node.sdfg) {
+            let hovered_dict = node.sdfg.hovered;
+            if ('node' in hovered_dict) {
+                hovered = (node.state.id == hovered_dict['node'][0] &&
+                    nodeid == hovered_dict['node'][1]) ? hovered_dict['node'][2] : null;
+            }
+        }
+
         if (node.type == "AccessNode") {
-            this.drawArrayNode(node, nodeid)
+            this.drawArrayNode(node, nodeid, hovered)
         }
         else if (node.type.endsWith("Entry")) {
-            this.drawEntryNode(node, nodeid)
+            this.drawEntryNode(node, nodeid, hovered)
         }
         else if (node.type.endsWith("Exit")) {
-            this.drawExitNode(node, nodeid)
+            this.drawExitNode(node, nodeid, hovered)
         }
         else if (node.type == "Tasklet") {
-            this.drawTaskletNode(node, nodeid)
+            this.drawTaskletNode(node, nodeid, hovered)
         }
         else if (node.type == "Reduce") {
-            this.drawReduceNode(node, nodeid)
+            this.drawReduceNode(node, nodeid, hovered)
         }
         else {
             let ctx = this.ctx;
@@ -265,7 +276,7 @@ class DrawNodeState {
             ctx.lineTo(topleft_x, topleft_y + node.height);
             ctx.lineTo(topleft_x, topleft_y);
             ctx.closePath();
-            ctx.strokeStyle = this.nodeColor(nodeid);
+            ctx.strokeStyle = this.nodeColor(nodeid, hovered);
             ctx.stroke();
             ctx.fillStyle = "white";
             ctx.fill();
@@ -273,14 +284,28 @@ class DrawNodeState {
         }
     }
 
-    draw_edge(edge) {
+    draw_edge(edge, edgeid) {
+        // Find out whether this edge is hovered
+        let hovered = null;
+        if ('hovered' in edge.sdfg) {
+            let hovered_dict = edge.sdfg.hovered;
+            if ('edge' in hovered_dict) {
+                hovered = (edge.state.id == hovered_dict['edge'][0] &&
+                    edgeid == hovered_dict['edge'][1]) ? hovered_dict['edge'][2] : null;
+            }
+        }
+
         let ctx = this.ctx;
         ctx.beginPath();
         ctx.moveTo(edge.points[0].x, edge.points[0].y);
         for(let elem of edge.points) {
             ctx.lineTo(elem.x, elem.y)
-        };
-        ctx.strokeStyle = "black";
+        }
+        if (hovered) {
+            ctx.strokeStyle = "green";
+        } else {
+            ctx.strokeStyle = "black";
+        }
         ctx.stroke();
         if (edge.points.length < 2) return;
         this.drawArrow(ctx, edge.points[edge.points.length - 2], edge.points[edge.points.length - 1], 5);

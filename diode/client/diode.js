@@ -570,20 +570,23 @@ class DIODE_Context_SDFG extends DIODE_Context {
         console.log("selected sdfg element", msg);
 
         let omsg = JSON.parse(msg);
-        if(omsg.msg_type == 'click') {
+        if(omsg.msg_type === 'click') {
             // ok
         }
-        else if(omsg.msg_type == 'contextmenu') {
+        else if(omsg.msg_type === 'contextmenu') {
+            // ok
+        } else if (omsg.msg_type === 'hover') {
             // ok
         }
         else {
-            alert("Unexpected message type '" + omsg.type + "'");
+            console.log("Unexpected message type '" + omsg.msg_type + "'");
             return;
         }
         let clicked_elems = omsg.clicked_elements;
-        let clicked_states = clicked_elems.filter(x => x.type == 'SDFGState');
-        let clicked_nodes = clicked_elems.filter(x => x.type != 'SDFGState' && x.type != "Edge");
-        let clicked_interstate_edges = clicked_elems.filter(x => x.type == "Edge");
+        let clicked_states = clicked_elems.filter(x => x.type === 'SDFGState');
+        let clicked_nodes = clicked_elems.filter(x => x.type !== 'SDFGState' && !x.type.endsWith("Edge"));
+        let clicked_edges = clicked_elems.filter(x => x.type === "MultiConnectorEdge");
+        let clicked_interstate_edges = clicked_elems.filter(x => x.type === "InterstateEdge");
 
         let state_id = null;
         let node_id = null;
@@ -604,7 +607,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             this.render_free_variables();
             return;
         }
-        if(clicked_nodes.length == 0) {
+        if((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
             // A state was selected
             state_only = true;
         }
@@ -614,9 +617,30 @@ class DIODE_Context_SDFG extends DIODE_Context {
         else {
             node_id = clicked_interstate_edges[0].id;
         }
-        if(!state_only)
+        if(clicked_nodes.length > 0)
             node_id = clicked_nodes[0].id;
-        
+
+        if (omsg.msg_type === "hover") {
+            let sdfg = this.initialized_sdfgs[0].sdfg;
+
+            // Position for tooltip
+            let spos = omsg.spos;
+
+            if (state_only) {
+                sdfg.hovered = {'state': [state_id, spos]};
+            } else if (clicked_nodes.length > 0)
+                sdfg.hovered = {'node': [state_id, node_id, spos]};
+            else if (clicked_edges.length > 0) {
+                let edge_id = clicked_edges[0].true_id;
+                sdfg.hovered = {'edge': [state_id, edge_id, spos]};
+            } else if (clicked_interstate_edges.length > 0) {
+                let isedge_id = clicked_interstate_edges[0].id;
+                sdfg.hovered = {'interstate_edge': [isedge_id, spos]};
+            } else {
+                sdfg.hovered = {};
+            }
+            return;
+        }
 
         if(omsg.msg_type == "contextmenu") {
             // Context menu was requested
@@ -1000,6 +1024,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
             // Link the new message handler
             this._message_handler = msg => renderer.message_handler(msg, sdfg_state);
+
+            // Link a new onmousemove handler
+            sdfg_state.setOnMouseMoveHandler(transmitter);
 
             // Link a new onclick handler
             sdfg_state.setOnclickHandler(transmitter, true);
