@@ -306,8 +306,9 @@ class DrawNodeState {
         }
         else if (node.type == "Tasklet") {
             this.drawTaskletNode(node, nodeid, hovered)
-        }
-        else if (node.type == "Reduce") {
+        } else if (node.type == "EmptyTasklet") {
+            // Do nothing
+        } else if (node.type == "Reduce") {
             this.drawReduceNode(node, nodeid, hovered)
         }
         else {
@@ -334,9 +335,11 @@ class DrawNodeState {
         let hovered = null;
         if ('hovered' in edge.sdfg) {
             let hovered_dict = edge.sdfg.hovered;
-            if ('edge' in hovered_dict) {
+            if ('edge' in hovered_dict && this.stateid >= 0) {
                 hovered = (edge.state.id == hovered_dict['edge'][0] &&
                     edgeid == hovered_dict['edge'][1]) ? hovered_dict['edge'][2] : null;
+            } else if ('interstate_edge' in hovered_dict && this.stateid < 0) {
+                hovered = (edgeid == hovered_dict['interstate_edge'][0]) ? hovered_dict['interstate_edge'][1] : null;
             }
         }
 
@@ -345,10 +348,15 @@ class DrawNodeState {
 
         // Consider connectors in edge drawing
         let src_offset = 0, dst_offset = 0;
-        let sedge = edge.sdfg.nodes[this.stateid].edges[edgeid];
-        if (sedge.src_connector)
+        let sedge;
+        if (this.stateid >= 0)
+            sedge = edge.sdfg.nodes[this.stateid].edges[edgeid];
+        else
+            sedge = edge.sdfg.edges[edgeid];
+
+        if ('src_connector' in sedge && sedge.src_connector)
             src_offset = 0.5*LINEHEIGHT;
-        if (sedge.dst_connector)
+        if ('dst_connector' in sedge && sedge.dst_connector)
             dst_offset = -0.5*LINEHEIGHT;
 
         ctx.moveTo(edge.points[0].x, edge.points[0].y + src_offset);
@@ -364,14 +372,19 @@ class DrawNodeState {
         if (hovered) {
             ctx.strokeStyle = "green";
             ctx.fillStyle = "green";
-        } else
+        } else if (this.stateid < 0) { // Inter-state edge
+            ctx.strokeStyle = "blue";
+            ctx.fillStyle = "blue";
+        } else {
             ctx.strokeStyle = "black";
+            ctx.fillStyle = "black";
+        }
 
         ctx.stroke();
         if (edge.points.length < 2) return;
         let lastpoint = Object.assign({}, edge.points[edge.points.length - 1]);
         lastpoint.y += dst_offset;
-        this.drawArrow(ctx, edge.points[edge.points.length - 2], lastpoint, 5);
+        this.drawArrow(ctx, edge.points[edge.points.length - 2], lastpoint, 3);
 
         ctx.fillStyle = "black";
         ctx.strokeStyle = "black";
