@@ -511,47 +511,44 @@ class DIODE_Context_SDFG extends DIODE_Context {
         });
     }
 
-    merge_scope_entry_exit_properties(entry_node, exit_node) {
-        /*  Merges entry_node and exit_node into a single node, such that the rendered properties are identical
-            when selecting either entry_node or exit_node.        
+    merge_properties(node_a, aprefix, node_b, bprefix) {
+        /*  Merges node_a and node_b into a single node, such that the rendered properties are identical
+            when selecting either node_a or node_b.
         */
-        console.log("entry_node", entry_node);
-        console.log("exit_node", exit_node);
-
-        let en_attrs = SDFG_PropUtil.getAttributeNames(entry_node);
-        let ex_attrs = SDFG_PropUtil.getAttributeNames(exit_node);
+        let en_attrs = SDFG_PropUtil.getAttributeNames(node_a);
+        let ex_attrs = SDFG_PropUtil.getAttributeNames(node_b);
 
         let new_attrs = {};
        
         for(let na of en_attrs) {
-            let meta = SDFG_PropUtil.getMetaFor(entry_node, na);
+            let meta = SDFG_PropUtil.getMetaFor(node_a, na);
             if(meta.indirected) {
                 // Most likely shared. Don't change.
                 new_attrs['_meta_' + na] = meta;
-                new_attrs[na] = entry_node.attributes[na];
+                new_attrs[na] = node_a.attributes[na];
             }
             else {
                 // Private. Add, but force-set a new Category (in this case, MapEntry)
                 let mcpy = JSON.parse(JSON.stringify(meta));
-                mcpy['category'] = entry_node.type + " - " + mcpy['category'];
-                new_attrs['_meta_' + "entry_" + na] = mcpy;
-                new_attrs["entry_" + na] = entry_node.attributes[na];
+                mcpy['category'] = node_a.type + " - " + mcpy['category'];
+                new_attrs['_meta_' + aprefix + na] = mcpy;
+                new_attrs[aprefix + na] = node_a.attributes[na];
             }
             
         }
         // Same for ex_attrs, but don't add if shared
         for(let xa of ex_attrs) {
-            let meta = SDFG_PropUtil.getMetaFor(exit_node, xa);
+            let meta = SDFG_PropUtil.getMetaFor(node_b, xa);
             if(!meta.indirected) {
                 let mcpy = JSON.parse(JSON.stringify(meta));
-                mcpy['category'] = exit_node.type + " - " + mcpy['category'];
-                mcpy['_noderef'] = exit_node.node_id;
-                new_attrs['_meta_' + "exit_" + xa] = mcpy;
-                new_attrs["exit_" + xa] = exit_node.attributes[xa];
+                mcpy['category'] = node_b.type + " - " + mcpy['category'];
+                mcpy['_noderef'] = node_b.node_id;
+                new_attrs['_meta_' + bprefix + xa] = mcpy;
+                new_attrs[bprefix + xa] = node_b.attributes[xa];
             }
         }
         // Copy the entry node for good measure
-        let ecpy = JSON.parse(JSON.stringify(entry_node));
+        let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
     }
@@ -773,19 +770,24 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
             if(n.type.endsWith("Entry")) {
                 // Find the matching exit node
-                console.log("Got entry", n);
                 let exit_node = this.find_exit_for_entry(nodes, n);
-                let tmp = this.merge_scope_entry_exit_properties(n, exit_node);
+                let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
                 render_props(tmp);
 
                 break;
             }
             else if(n.type.endsWith("Exit")) {
                 // Find the matching entry node and continue with that
-                console.log("Got exit", n);
                 let entry_id = parseInt(n.scope_entry);
                 let entry_node = nodes[entry_id];
-                let tmp = this.merge_scope_entry_exit_properties(entry_node, n);
+                let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
+                render_props(tmp);
+                break;
+            }
+            else if(n.type === "AccessNode") {
+                // Find matching data descriptor and show that as well
+                let ndesc = sdfg.attributes._arrays[n.attributes.data];
+                let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
                 render_props(tmp);
                 break;
             }
@@ -946,6 +948,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
         else if(name.startsWith("entry_")) {
             name = name.substr("entry_".length);
+        }
+        else if(name.startsWith("datadesc_")) {
+            name = name.substr("datadesc_".length);
+            let sdfg = nref[1];
+            nref = [sdfg.attributes._arrays[nref[0].attributes.data], sdfg];
         }
 
         nref[0].attributes[name] = value;
