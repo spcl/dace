@@ -938,7 +938,7 @@ function canvas_mouse_handler( event,
             });
             // Check edges (Memlets). A memlet is considered "clicked" if the label is clicked.
             state.edges.forEach((edge, id) => {
-                if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
+                if (isWithinBBEdge(x, y, edge.attributes.layout)) {
                     let elem = {'type': edge.type, 'true_id': id,
                         'id': {src: edge.src, dst: edge.dst }};
                     clicked_elements.push(elem);
@@ -947,7 +947,7 @@ function canvas_mouse_handler( event,
         }
     });
     sdfg_state.sdfg.edges.forEach((edge, id) => {
-        if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
+        if (isWithinBBEdge(x, y, edge.attributes.layout)) {
             let elem = {'type': edge.type, 'true_id': id,
                 'id': {src: edge.src, dst: edge.dst }};
             clicked_elements.push(elem);
@@ -1059,11 +1059,11 @@ function isWithinBB(x, y, layoutinfo) {
     return false;
 }
 
-function isWithinBBEdgeLabel(x, y, layoutinfo) {
-    if ((x > layoutinfo.x - layoutinfo.width) && 
-        (x < layoutinfo.x) &&
-        (y > layoutinfo.y - layoutinfo.height) &&
-        (y < layoutinfo.y)) {
+function isWithinBBEdge(x, y, layoutinfo) {
+    if ((x >= layoutinfo.x) &&
+        (x <= layoutinfo.x + layoutinfo.width) &&
+        (y >= layoutinfo.y) &&
+        (y <= layoutinfo.y + layoutinfo.height)) {
             return true;
     }
     return false;
@@ -1168,13 +1168,14 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
 
     sdfg.edges.forEach(function (edge) {
         let gedge = g.edge(edge.src, edge.dst);
+        let bb = calculateEdgeBoundingBox(gedge);
         edge.attributes = {};
         edge.attributes.label = gedge.label; 
         edge.attributes.layout = {};
-        edge.attributes.layout.width = gedge.width;
-        edge.attributes.layout.height = gedge.height;
-        edge.attributes.layout.x = gedge.x;
-        edge.attributes.layout.y = gedge.y;
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
         edge.attributes.layout.points = gedge.points;
     });
 
@@ -1231,6 +1232,18 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     });
 
     dagre.layout(g);
+
+
+    sdfg_state.edges.forEach(function (edge, id) {
+        let gedge = g.edge(edge.src, edge.dst, id);
+        let bb = calculateEdgeBoundingBox(gedge);
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.points = gedge.points;
+    });
+
     return g;
 }
 
@@ -1300,6 +1313,33 @@ function calculateBoundingBox(g) {
     return bb;
 }
 
+function calculateEdgeBoundingBox(edge) {
+    // iterate over all points, calculate the size of the bounding box
+    let bb = {};
+    bb.x1 = edge.points[0].x;
+    bb.y1 = edge.points[0].y;
+    bb.x2 = edge.points[0].x;
+    bb.y2 = edge.points[0].y;
+
+    edge.points.forEach(function (p) {
+        bb.x1 = p.x < bb.x1 ? p.x : bb.x1;
+        bb.y1 = p.y < bb.y1 ? p.y : bb.y1;
+        bb.x2 = p.x > bb.x2 ? p.x : bb.x2;
+        bb.y2 = p.y > bb.y2 ? p.y : bb.y2;
+    });
+
+    bb = {'x': bb.x1, 'y': bb.y1, 'width': (bb.x2 - bb.x1),
+          'height': (bb.y2 - bb.y1)};
+    if (bb.width == 0) {
+        bb.width = 10;
+        bb.x -= 5;
+    }
+    if (bb.height == 0) {
+        bb.height = 10;
+        bb.y -= 5;
+    }
+    return bb;
+}
 
 
 function paint_state(g, drawnodestate) {
