@@ -599,20 +599,20 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let state_only = false;
 
         // Check if anything was clicked at all
-        if(clicked_states.length == 0 && clicked_interstate_edges.length == 0) {
+        if(clicked_states.length == 0 && clicked_interstate_edges.length == 0 && omsg.msg_type !== 'hover') {
             // Nothing was selected
-            if (omsg.msg_type !== 'hover')
-                this.render_free_variables();
+            this.render_free_variables();
             return;
         }
         if((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
             // A state was selected
-            state_only = true;
+            if (clicked_states.length > 0)
+                state_only = true;
         }
 
         if(clicked_states.length > 0)
             state_id = clicked_states[0].id;
-        else {
+        else if(clicked_interstate_edges.length > 0) {
             node_id = clicked_interstate_edges[0].id;
         }
         if(clicked_nodes.length > 0)
