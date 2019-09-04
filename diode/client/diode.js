@@ -567,8 +567,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
     sdfg_element_selected(msg) {
-        console.log("selected sdfg element", msg);
-
         let omsg = JSON.parse(msg);
         if(omsg.msg_type === 'click') {
             // ok
@@ -625,6 +623,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
             // Position for tooltip
             let pos = omsg.lpos;
+
+            sdfg.mousepos = pos;
 
             if (state_only) {
                 sdfg.hovered = {'state': [state_id, pos]};

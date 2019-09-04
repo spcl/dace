@@ -23,7 +23,18 @@ class DrawNodeState {
             return "black";
         }
     }
-    
+
+    showTooltip(pos, label) {
+        let ctx = this.ctx;
+        let x = pos.x + 10;
+        let textmetrics = ctx.measureText(label);
+        ctx.fillStyle = "black";
+        ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
+        ctx.fillStyle = "white";
+        ctx.fillText(label, x + 0.2*textmetrics.width, pos.y - 0.1*LINEHEIGHT);
+        ctx.fillStyle = "black";
+    }
+
     // Adapted from https://stackoverflow.com/a/2173084/6489142
     drawEllipse(ctx, x, y, w, h) {
         var kappa = .5522848,
@@ -124,8 +135,10 @@ class DrawNodeState {
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
 
-        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT, node.width - 2*node.height);
-        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height);
+        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT,
+                node.width - 2*node.height, hovered);
+        this.drawConnectors(node.out_connectors, topleft_x+node.height,
+                     topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height, hovered);
     }
 
     drawExitNode(node, nodeid, hovered) {
@@ -156,8 +169,10 @@ class DrawNodeState {
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
 
-        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT, node.width - 2*node.height);
-        this.drawConnectors(node.out_connectors, topleft_x+node.height, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height);
+        this.drawConnectors(node.in_connectors, topleft_x+node.height, topleft_y - 0.5*LINEHEIGHT,
+                node.width - 2*node.height, hovered);
+        this.drawConnectors(node.out_connectors, topleft_x+node.height,
+                     topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*node.height, hovered);
     }
 
     drawTaskletNode(node, nodeid, hovered) {
@@ -183,8 +198,10 @@ class DrawNodeState {
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
-        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y - 0.5*LINEHEIGHT, node.width - 2*hexseg);
-        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT, node.width - 2*hexseg);
+        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y - 0.5*LINEHEIGHT,
+                node.width - 2*hexseg, hovered);
+        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT,
+                node.width - 2*hexseg, hovered);
     }
 
     drawReduceNode(node, nodeid, hovered) {
@@ -207,34 +224,48 @@ class DrawNodeState {
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y - node.height / 4.0 + LINEHEIGHT / 2.0);
     }
 
-    drawConnectors(labels, topleft_x, topleft_y, connarea_width) {
+    drawConnectors(labels, topleft_x, topleft_y, connarea_width, hovered2) {
         let next_topleft_x = topleft_x;
         let next_topleft_y = topleft_y;
         var ctx = this.ctx;
-        var ellipse = this.drawEllipse;
+        var that = this;
+        var hovered = this.sdfg_state.sdfg.mousepos;
         
         var spacing = 10;
         var connlength = (labels.length - 1) * spacing;
         labels.forEach(function(label) {
-            connlength += ctx.measureText(label).width * 1.1;
+            connlength += LINEHEIGHT; //ctx.measureText(label).width * 1.1;
         });
         
         next_topleft_x += (connarea_width - connlength) / 2.0;
             
         labels.forEach(function(label) {
-            let textmetrics = ctx.measureText(label);
-            let labelwidth = textmetrics.width * 1.1;
+            //let textmetrics = ctx.measureText(label);
+            //let labelwidth = textmetrics.width * 1.1;
+            let labelwidth = LINEHEIGHT;
             ctx.beginPath();
-            ellipse(ctx, next_topleft_x, next_topleft_y - 0.1*LINEHEIGHT, labelwidth, LINEHEIGHT*1.2);
+            //that.drawEllipse(ctx, next_topleft_x, next_topleft_y - 0.1*LINEHEIGHT, labelwidth, LINEHEIGHT*1.2);
+            that.drawEllipse(ctx, next_topleft_x, next_topleft_y, labelwidth, LINEHEIGHT);
             ctx.closePath();
-            ctx.strokeStyle = "black";
+
+            // If this connector is being hovered
+            let tooltip = false;
+            if (hovered && hovered.x >= next_topleft_x && hovered.x <= (next_topleft_x + labelwidth) &&
+                hovered.y >= (next_topleft_y - 0.1*LINEHEIGHT) && hovered.y <= (next_topleft_y + LINEHEIGHT*1.1)) {
+                tooltip = true;
+                ctx.strokeStyle = "green";
+            } else {
+                ctx.strokeStyle = "black";
+            }
             ctx.stroke();
             ctx.fillStyle = "#f0fdff";
             ctx.fill();
             ctx.fillStyle = "black";
-            
-            ctx.fillText(label, next_topleft_x + (labelwidth / 2.0) - (textmetrics.width / 2.0), 
-                         next_topleft_y + 0.8*LINEHEIGHT);
+            ctx.strokeStyle = "black";
+
+            if (tooltip)
+                that.showTooltip(hovered, label);
+
             next_topleft_x += labelwidth + 10;
         });
     }
@@ -297,27 +328,42 @@ class DrawNodeState {
 
         let ctx = this.ctx;
         ctx.beginPath();
-        ctx.moveTo(edge.points[0].x, edge.points[0].y);
-        for(let elem of edge.points) {
-            ctx.lineTo(elem.x, elem.y)
+
+        // Consider connectors in edge drawing
+        let src_offset = 0, dst_offset = 0;
+        let sedge = edge.sdfg.nodes[this.stateid].edges[edgeid];
+        if (sedge.src_connector)
+            src_offset = 0.5*LINEHEIGHT;
+        if (sedge.dst_connector)
+            dst_offset = -0.5*LINEHEIGHT;
+
+        ctx.moveTo(edge.points[0].x, edge.points[0].y + src_offset);
+
+        let i;
+        for (i = 1; i < edge.points.length - 2; i++) {
+            let xm = (edge.points[i].x + edge.points[i + 1].x) / 2.0;
+            let ym = (edge.points[i].y + edge.points[i + 1].y) / 2.0;
+            ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, xm, ym);
         }
-        if (hovered)
+        ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, edge.points[i+1].x, edge.points[i+1].y  + dst_offset);
+
+        if (hovered) {
             ctx.strokeStyle = "green";
-        else
+            ctx.fillStyle = "green";
+        } else
             ctx.strokeStyle = "black";
 
         ctx.stroke();
         if (edge.points.length < 2) return;
-        this.drawArrow(ctx, edge.points[edge.points.length - 2], edge.points[edge.points.length - 1], 5);
-        if (hovered) {
-            let x = hovered.x + 10;
-            let textmetrics = ctx.measureText(edge.label);
-            ctx.fillStyle = "black";
-            ctx.fillRect(x, hovered.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
-            ctx.fillStyle = "white";
-            ctx.fillText(edge.label, x + 0.2*textmetrics.width, hovered.y - 0.1*LINEHEIGHT);
-            ctx.fillStyle = "black";
-        }
+        let lastpoint = Object.assign({}, edge.points[edge.points.length - 1]);
+        lastpoint.y += dst_offset;
+        this.drawArrow(ctx, edge.points[edge.points.length - 2], lastpoint, 5);
+
+        ctx.fillStyle = "black";
+        ctx.strokeStyle = "black";
+
+        if (hovered)
+            this.showTooltip(hovered, edge.label);
     }
 
 }
