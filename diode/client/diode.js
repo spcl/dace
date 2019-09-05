@@ -598,6 +598,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         // Check if anything was clicked at all
         if(clicked_states.length == 0 && clicked_interstate_edges.length == 0 && omsg.msg_type !== 'hover') {
             // Nothing was selected
+            let sstate = this.initialized_sdfgs[0];
+            sstate.clearHighlights();
             this.render_free_variables();
             return;
         }
@@ -609,9 +611,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         if(clicked_states.length > 0)
             state_id = clicked_states[0].id;
-        else if(clicked_interstate_edges.length > 0) {
+        if(clicked_interstate_edges.length > 0)
             node_id = clicked_interstate_edges[0].id;
-        }
+
         if(clicked_nodes.length > 0)
             node_id = clicked_nodes[0].id;
         else if (clicked_edges.length > 0)
@@ -719,6 +721,28 @@ class DIODE_Context_SDFG extends DIODE_Context {
             return;
         }
 
+        if (omsg.msg_type !== "click")
+            return;
+
+        // Highlight selected items
+        let sstate = this.initialized_sdfgs[0];
+        sstate.clearHighlights();
+        if (state_only) {
+            clicked_states.forEach(n => {
+                sstate.addHighlight({'state-id': state_id});
+            });
+        } else {
+            clicked_nodes.forEach(n => {
+                sstate.addHighlight({'state-id': state_id, 'node-id': n.id});
+            });
+            clicked_edges.forEach(e => {
+                sstate.addHighlight({'state-id': state_id, 'edge-id': e.true_id});
+            });
+            clicked_interstate_edges.forEach(e => {
+                sstate.addHighlight({'state-id': state_id, 'isedge-id': e.true_id});
+            });
+        }
+
         // Get and render the properties from now on
         let sdfg_data = this.getSDFGDataFromState();
         let sdfg = sdfg_data.sdfg;
@@ -767,7 +791,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
             this.renderProperties(propobj);
         };
-        if(state == null && clicked_interstate_edges.length > 0) {
+        if(clicked_interstate_edges.length > 0) {
             let edges = sdfg.edges;
             for(let e of edges) {
                 if(e.src == node_id.src && e.dst == node_id.dst) {
@@ -792,6 +816,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
             if(n.type.endsWith("Entry")) {
                 // Find the matching exit node
                 let exit_node = this.find_exit_for_entry(nodes, n);
+                // Highlight both entry and exit nodes
+                sstate.addHighlight({'state-id': state_id, 'node-id': exit_node.id});
                 let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
                 render_props(tmp);
 
@@ -801,6 +827,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 // Find the matching entry node and continue with that
                 let entry_id = parseInt(n.scope_entry);
                 let entry_node = nodes[entry_id];
+                // Highlight both entry and exit nodes
+                sstate.addHighlight({'state-id': state_id, 'node-id': entry_id});
                 let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
                 render_props(tmp);
                 break;
@@ -4737,7 +4765,6 @@ class DIODE {
             elem.addEventListener("click", (_click) => {
                 this.project().request(['sdfg_object'], resp => {
                     let tmp = resp['sdfg_object'];
-                    tmp = JSON.parse(tmp);
                     let syms = [];
                     for(let v of Object.values(tmp)) {
                         let tsyms = SDFG_Parser.lookup_symbols(v, node.state_id, node.node_id, null);

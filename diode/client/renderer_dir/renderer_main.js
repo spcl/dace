@@ -1114,22 +1114,8 @@ function paint_sdfg(g, sdfg, drawnodestate) {
 
     ObjectHelper.assert("drawnodestate must be defined", drawnodestate != undefined);
 
-    let ctx = drawnodestate.ctx;
-
     g.nodes().forEach( v => {
-        let topleft_x = g.node(v).x - g.node(v).width / 2.0;
-        let topleft_y = g.node(v).y - g.node(v).height / 2.0;
-        
-        ctx.beginPath();
-        ctx.moveTo(topleft_x, topleft_y);
-        ctx.lineTo(topleft_x + g.node(v).width, topleft_y);
-        ctx.lineTo(topleft_x + g.node(v).width, topleft_y+g.node(v).height);
-        ctx.lineTo(topleft_x, topleft_y+g.node(v).height);
-        ctx.lineTo(topleft_x, topleft_y);
-        ctx.closePath();
-        ctx.fillStyle="#deebf7";
-        ctx.fill();
-        ctx.fillStyle="#000000";
+        drawnodestate.draw_state(g.node(v), v);
     });
     g.edges().forEach((e, id) => {
         drawnodestate.draw_edge(g.edge(e), id);
@@ -1363,11 +1349,11 @@ function calculateEdgeBoundingBox(edge) {
 
     bb = {'x': bb.x1, 'y': bb.y1, 'width': (bb.x2 - bb.x1),
           'height': (bb.y2 - bb.y1)};
-    if (bb.width == 0) {
+    if (bb.width <= 5) {
         bb.width = 10;
         bb.x -= 5;
     }
-    if (bb.height == 0) {
+    if (bb.height <= 5) {
         bb.height = 10;
         bb.y -= 5;
     }

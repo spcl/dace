@@ -12,7 +12,22 @@ class DrawNodeState {
     }
 
     highlights() {
-        return this.sdfg_state.highlights.filter(x => x['state-id'] == this.stateid).map(x => x['node-id']);
+        return this.sdfg_state.highlights.filter(x => (x['state-id'] == this.stateid &&
+                                                       'node-id' in x)).map(x => x['node-id']);
+    }
+
+    highlight_edges() {
+        return this.sdfg_state.highlights.filter(x => (x['state-id'] == this.stateid &&
+                                                       'edge-id' in x)).map(x => x['edge-id']);
+    }
+
+    highlight_interstate_edges() {
+        return this.sdfg_state.highlights.filter(x => ('isedge-id' in x)).map(x => x['isedge-id']);
+    }
+
+    highlight_states() {
+        return this.sdfg_state.highlights.filter(x => (Object.keys(x).length == 1 &&
+                                                       'state-id' in x)).map(x => x['state-id']);
     }
 
     onStartDraw() {
@@ -34,13 +49,25 @@ class DrawNodeState {
         }
     }
 
-    nodeColor(nodeid, hovered = false) {
+    nodeColor(nodeid, hovered = null) {
         if(this.highlights().filter(x => x == nodeid).length > 0) {
             return "red";
         } else if(hovered) {
             return "green";
         } else {
             return "black";
+        }
+    }
+
+    edgeColor(edgeid, hovered = null) {
+        if (this.stateid < 0) { // Inter-state edge
+            if (this.highlight_interstate_edges().filter(x => x == edgeid).length > 0)
+                return "red";
+            return hovered ? "green" : "blue";
+        } else {
+            if (this.highlight_edges().filter(x => x == edgeid).length > 0)
+                return "red";
+            return hovered ? "green" : "black";
         }
     }
 
@@ -369,16 +396,9 @@ class DrawNodeState {
         }
         ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, edge.points[i+1].x, edge.points[i+1].y  + dst_offset);
 
-        if (hovered) {
-            ctx.strokeStyle = "green";
-            ctx.fillStyle = "green";
-        } else if (this.stateid < 0) { // Inter-state edge
-            ctx.strokeStyle = "blue";
-            ctx.fillStyle = "blue";
-        } else {
-            ctx.strokeStyle = "black";
-            ctx.fillStyle = "black";
-        }
+
+        ctx.strokeStyle = this.edgeColor(edgeid, hovered);
+        ctx.fillStyle = this.edgeColor(edgeid, hovered);
 
         ctx.stroke();
         if (edge.points.length < 2) return;
@@ -392,6 +412,33 @@ class DrawNodeState {
         if (hovered)
             this.showTooltip(hovered, edge.label);
     }
+
+    draw_state(state, state_id) {
+        let topleft_x = state.x - state.width / 2.0;
+        let topleft_y = state.y - state.height / 2.0;
+
+        let ctx = this.ctx;
+        ctx.beginPath();
+        ctx.moveTo(topleft_x, topleft_y);
+        ctx.lineTo(topleft_x + state.width, topleft_y);
+        ctx.lineTo(topleft_x + state.width, topleft_y+state.height);
+        ctx.lineTo(topleft_x, topleft_y+state.height);
+        ctx.lineTo(topleft_x, topleft_y);
+        ctx.closePath();
+        ctx.fillStyle="#deebf7";
+
+        ctx.fill();
+        ctx.fillStyle="#000000";
+
+        // If this state is highlighted
+        if (this.highlight_states()[0] == state_id) {
+            ctx.strokeStyle = "red";
+            ctx.stroke();
+            ctx.strokeStyle = "black";
+        }
+
+    }
+
 
 }
 
