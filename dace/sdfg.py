@@ -1788,7 +1788,7 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         self._scope_dict_toparent_cached = None
         self._scope_dict_tochildren_cached = None
 
-    def scope_dict(self, node_to_children=False):
+    def scope_dict(self, node_to_children=False, return_ids=False):
         """ Returns a dictionary that segments an SDFG state into
             entry-node/exit-node scopes.
 
@@ -1798,30 +1798,38 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
                                      mapping of each parent node to a list of
                                      children nodes.
             @type node_to_children: bool
+            @param return_ids: Return node ID numbers instead of node objects.
+            @type return_ids: bool
             @return: The mapping from a node to its parent scope node, or the
                      mapping from a node to a list of children nodes.
             @rtype: dict(Node, Node) or dict(Node, list(Node))
         """
+        result = None
         if not node_to_children and self._scope_dict_toparent_cached is not None:
-            return copy.copy(self._scope_dict_toparent_cached)
+            result = copy.copy(self._scope_dict_toparent_cached)
         elif node_to_children and self._scope_dict_tochildren_cached is not None:
-            return copy.copy(self._scope_dict_tochildren_cached)
+            result = copy.copy(self._scope_dict_tochildren_cached)
 
-        result = {}
-        node_queue = collections.deque(self.source_nodes())
-        eq = _scope_dict_inner(self, node_queue, None, node_to_children,
-                               result)
+        if result is None:
+            result = {}
+            node_queue = collections.deque(self.source_nodes())
+            eq = _scope_dict_inner(self, node_queue, None, node_to_children,
+                                   result)
 
-        # Sanity check
-        assert len(eq) == 0
+            # Sanity check
+            assert len(eq) == 0
 
-        # Cache result
-        if node_to_children:
-            self._scope_dict_tochildren_cached = result
-        else:
-            self._scope_dict_toparent_cached = result
+            # Cache result
+            if node_to_children:
+                self._scope_dict_tochildren_cached = result
+            else:
+                self._scope_dict_toparent_cached = result
 
-        return copy.copy(result)
+            result = copy.copy(result)
+
+        if return_ids:
+            return _scope_dict_to_ids(self, result)
+        return result
 
     def scope_subgraph(self, entry_node, include_entry=True,
                        include_exit=True):
@@ -2041,6 +2049,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             'label': self.name,
             'id': parent.node_id(self) if parent != None else None,
             'collapsed': self.is_collapsed,
+            'scope_dict': self.scope_dict(
+                node_to_children=True, return_ids=True),
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
             'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
             'attributes': json.loads(Property.all_properties_to_json(self)),
@@ -2102,7 +2112,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         return ret
 
-    def scope_dict(self, node_to_children=False):
+    def scope_dict(self, node_to_children=False, return_ids=False):
         """ Returns a dictionary that segments an SDFG state into
             entry-node/exit-node scopes.
 
@@ -2112,31 +2122,39 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                                      mapping of each parent node to a list of
                                      children nodes.
             @type node_to_children: bool
+            @param return_ids: Return node ID numbers instead of node objects.
+            @type return_ids: bool
             @return: The mapping from a node to its parent scope node, or the
                      mapping from a node to a list of children nodes.
             @rtype: dict(Node, Node) or dict(Node, list(Node))
         """
+        result = None
         if not node_to_children and self._scope_dict_toparent_cached is not None:
-            return copy.copy(self._scope_dict_toparent_cached)
+            result = copy.copy(self._scope_dict_toparent_cached)
         elif node_to_children and self._scope_dict_tochildren_cached is not None:
-            return copy.copy(self._scope_dict_tochildren_cached)
+            result = copy.copy(self._scope_dict_tochildren_cached)
 
-        result = {}
-        node_queue = collections.deque(self.source_nodes())
-        eq = _scope_dict_inner(self, node_queue, None, node_to_children,
-                               result)
+        if result is None:
+            result = {}
+            node_queue = collections.deque(self.source_nodes())
+            eq = _scope_dict_inner(self, node_queue, None, node_to_children,
+                                   result)
 
-        # Sanity check
-        if len(eq) != 0:
-            raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+            # Sanity check
+            if len(eq) != 0:
+                raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
-        # Cache result
-        if node_to_children:
-            self._scope_dict_tochildren_cached = result
-        else:
-            self._scope_dict_toparent_cached = result
+            # Cache result
+            if node_to_children:
+                self._scope_dict_tochildren_cached = result
+            else:
+                self._scope_dict_toparent_cached = result
 
-        return copy.copy(result)
+            result = copy.copy(result)
+
+        if return_ids:
+            return _scope_dict_to_ids(self, result)
+        return result
 
     def scope_subgraph(self, entry_node, include_entry=True,
                        include_exit=True):
@@ -3416,6 +3434,20 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,
             node_queue.extend(successors)
 
     return external_queue
+
+
+def _scope_dict_to_ids(state: SDFGState, scope_dict: Dict[Any, List[Any]]):
+    """ Return a JSON-serializable dictionary of a scope dictionary,
+        using integral node IDs instead of object references. """
+
+    def node_id_or_none(node):
+        if node is None: return -1
+        return state.node_id(node)
+
+    return {
+        node_id_or_none(k): [node_id_or_none(vi) for vi in v]
+        for k, v in scope_dict.items()
+    }
 
 
 def concurrent_subgraphs(graph):
