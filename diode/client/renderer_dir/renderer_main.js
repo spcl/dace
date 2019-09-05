@@ -907,7 +907,62 @@ class SdfgState {
                 this.canvas_manager.translate(...movement);
             }
         });
-        
+
+        // Touch event management
+        var lastTouch = null, secondTouch = null;
+        canvas.addEventListener("touchstart", function (e) {
+            let touch = e.touches[0];
+            lastTouch = touch;
+            if (e.targetTouches.length > 1)
+                secondTouch = e.touches[1];
+            let mouseEvent = new MouseEvent("mousedown", {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+        canvas.addEventListener("touchend", function (e) {
+            let mouseEvent = new MouseEvent("mouseup", {});
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+        canvas.addEventListener("touchmove", e => {
+            if (e.targetTouches.length == 2) { // zoom (pinching)
+                e.stopPropagation();
+                e.preventDefault();
+
+                // Find distance between two points and center, zoom to that
+                let centerX = (lastTouch.clientX + secondTouch.clientX) / 2.0;
+                let centerY = (lastTouch.clientY + secondTouch.clientY) / 2.0;
+                let initialDistance = Math.sqrt((lastTouch.clientX - secondTouch.clientX) ** 2 +
+                                                (lastTouch.clientY - secondTouch.clientY) ** 2);
+                let currentDistance = Math.sqrt((e.touches[0].clientX - e.touches[1].clientX) ** 2 +
+                                                (e.touches[0].clientY - e.touches[1].clientY) ** 2);
+
+                let br = () => canvas.getBoundingClientRect();
+
+                let comp_x = event => (centerX - br().left);
+                let comp_y = event => (centerY - br().top);
+                // TODO: Better scaling formula w.r.t. distance between touches
+                this.canvas_manager.scale((currentDistance - initialDistance) / 30000.0, comp_x(e), comp_y(e));
+
+                lastTouch = e.touches[0];
+                secondTouch = e.touches[1];
+            } else if (e.targetTouches.length == 1) { // dragging
+                let touch = e.touches[0];
+                if (!lastTouch)
+                    lastTouch = touch;
+                let mouseEvent = new MouseEvent("mousemove", {
+                    clientX: touch.clientX,
+                    clientY: touch.clientY,
+                    movementX: touch.clientX - lastTouch.clientX,
+                    movementY: touch.clientY - lastTouch.clientY,
+                    buttons: 1
+                });
+                lastTouch = touch;
+                canvas.dispatchEvent(mouseEvent);
+            }
+        }, false);
+        // End of touch-based events
     }
 
     setZoomHandler() {
