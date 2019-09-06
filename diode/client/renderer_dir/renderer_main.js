@@ -1253,6 +1253,26 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
 
 }
 
+function check_and_redirect_edge(edge, drawn_nodes, sdfg_state) {
+    // If destination is not drawn, no need to draw the edge
+    if (!drawn_nodes.has(edge.dst))
+        return null;
+    // If both source and destination are in the graph, draw edge as-is
+    if (drawn_nodes.has(edge.src))
+        return edge;
+
+    // If immediate scope parent node is in the graph, redirect
+    let scope_src = sdfg_state.nodes[edge.src].scope_entry;
+    if (!drawn_nodes.has(scope_src))
+        return null;
+
+    // Clone edge for redirection, change source to parent
+    let new_edge = Object.assign({}, edge);
+    new_edge.src = scope_src;
+
+    return new_edge;
+}
+
 function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     // layout the state as a dagre graph
 
@@ -1269,8 +1289,12 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     // second is metadata about the node (label, width, height),
     // which will be updated by dagre.layout (will add x,y).
 
-    sdfg_state.nodes.forEach(function (node) {
-        let nodesize = calculateNodeSize(sdfg_state, node, controller_state)
+    // Process nodes hierarchically
+    let toplevel_nodes = sdfg_state.scope_dict[-1];
+    let drawn_nodes = new Set();
+
+    function draw_node(node) {
+        let nodesize = calculateNodeSize(sdfg_state, node, controller_state);
         node.attributes.layout = {}
         node.attributes.layout.width = nodesize.width;
         node.attributes.layout.height = nodesize.height;
@@ -1282,10 +1306,30 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
         node.attributes.layout.sdfg = sdfg;
         node.attributes.layout.state = sdfg_state;
         g.setNode(node.id, node.attributes.layout);
+        drawn_nodes.add(node.id.toString());
+
+        // Recursively draw nodes
+        if (node.id in sdfg_state.scope_dict) {
+            if (node.attributes.is_collapsed)
+                return;
+            sdfg_state.scope_dict[node.id].forEach(function (nodeid) {
+                let node = sdfg_state.nodes[nodeid];
+                draw_node(node);
+            });
+        }
+    }
+
+
+    toplevel_nodes.forEach(function (nodeid) {
+        let node = sdfg_state.nodes[nodeid];
+        draw_node(node);
     });
 
     let ctx = controller_state.ctx;
     sdfg_state.edges.forEach((edge, id) => {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
+
         let label = edge.attributes.data.label;
         console.assert(label != undefined);
         let textmetrics = ctx.measureText(label);
@@ -1305,6 +1349,8 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
 
 
     sdfg_state.edges.forEach(function (edge, id) {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
         let gedge = g.edge(edge.src, edge.dst, id);
         let bb = calculateEdgeBoundingBox(gedge);
         edge.attributes.layout.width = bb.width;

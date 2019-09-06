@@ -589,7 +589,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             return;
         }
         if(clicked_nodes.length > 1) {
-            console.warning("Multiple nodes could be selected - #TODO: Arbitrate");
+            console.warn("Multiple nodes cannot be selected");
             //#TODO: Arbitrate this - for now, we select the element with the lowest id
         }
 

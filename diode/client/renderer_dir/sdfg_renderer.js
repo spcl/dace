@@ -75,6 +75,20 @@ class DrawNodeState {
         this.tooltip = [pos, label];
     }
 
+    drawHexagon(ctx, x, y, w, h) {
+        var topleft_x = x - w / 2.0;
+        var topleft_y = y - h / 2.0;
+        var hexseg = h / 3.0;
+        ctx.beginPath();
+        ctx.moveTo(topleft_x, y);
+        ctx.lineTo(topleft_x + hexseg, topleft_y);
+        ctx.lineTo(topleft_x + w - hexseg, topleft_y);
+        ctx.lineTo(topleft_x + w, y);
+        ctx.lineTo(topleft_x + w - hexseg, topleft_y + h);
+        ctx.lineTo(topleft_x + hexseg, topleft_y + h);
+        ctx.lineTo(topleft_x, y);
+        ctx.closePath();
+    }
 
     // Adapted from https://stackoverflow.com/a/2173084/6489142
     drawEllipse(ctx, x, y, w, h) {
@@ -150,15 +164,20 @@ class DrawNodeState {
 
     drawEntryNode(node, nodeid, hovered) {
         let ctx = this.ctx;
-        var topleft_x = node.x - node.width / 2.0;
-        var topleft_y = node.y - node.height / 2.0;
-        ctx.beginPath();
-        ctx.moveTo(topleft_x, topleft_y + node.height);
-        ctx.lineTo(topleft_x + node.width, topleft_y + node.height);
-        ctx.lineTo(topleft_x + node.width - node.height, topleft_y);
-        ctx.lineTo(topleft_x + node.height, topleft_y);
-        ctx.lineTo(topleft_x, topleft_y + node.height);
-        ctx.closePath();
+
+        if (node.properties.is_collapsed) {
+            this.drawHexagon(this.ctx, node.x, node.y, node.width, node.height);
+        } else {
+            var topleft_x = node.x - node.width / 2.0;
+            var topleft_y = node.y - node.height / 2.0;
+            ctx.beginPath();
+            ctx.moveTo(topleft_x, topleft_y + node.height);
+            ctx.lineTo(topleft_x + node.width, topleft_y + node.height);
+            ctx.lineTo(topleft_x + node.width - node.height, topleft_y);
+            ctx.lineTo(topleft_x + node.height, topleft_y);
+            ctx.lineTo(topleft_x, topleft_y + node.height);
+            ctx.closePath();
+        }
         ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         
         // Consume scopes have dashed edges
@@ -220,17 +239,17 @@ class DrawNodeState {
         var ctx = this.ctx;
         var topleft_x = node.x - node.width / 2.0;
         var topleft_y = node.y - node.height / 2.0;
-        var hexseg = node.height / 3.0;
+        var octseg = node.height / 3.0;
         ctx.beginPath();
-        ctx.moveTo(topleft_x, topleft_y + hexseg);
-        ctx.lineTo(topleft_x + hexseg, topleft_y);
-        ctx.lineTo(topleft_x + node.width - hexseg, topleft_y);
-        ctx.lineTo(topleft_x + node.width, topleft_y + hexseg);
-        ctx.lineTo(topleft_x + node.width, topleft_y + 2 * hexseg);
-        ctx.lineTo(topleft_x + node.width - hexseg, topleft_y + node.height);
-        ctx.lineTo(topleft_x + hexseg, topleft_y + node.height);
-        ctx.lineTo(topleft_x, topleft_y + 2 * hexseg);
-        ctx.lineTo(topleft_x, topleft_y + 1 * hexseg);
+        ctx.moveTo(topleft_x, topleft_y + octseg);
+        ctx.lineTo(topleft_x + octseg, topleft_y);
+        ctx.lineTo(topleft_x + node.width - octseg, topleft_y);
+        ctx.lineTo(topleft_x + node.width, topleft_y + octseg);
+        ctx.lineTo(topleft_x + node.width, topleft_y + 2 * octseg);
+        ctx.lineTo(topleft_x + node.width - octseg, topleft_y + node.height);
+        ctx.lineTo(topleft_x + octseg, topleft_y + node.height);
+        ctx.lineTo(topleft_x, topleft_y + 2 * octseg);
+        ctx.lineTo(topleft_x, topleft_y + 1 * octseg);
         ctx.closePath();
         ctx.strokeStyle = this.nodeColor(nodeid, hovered);
         ctx.stroke();
@@ -239,10 +258,10 @@ class DrawNodeState {
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(node.label);
         ctx.fillText(node.label, node.x - textmetrics.width / 2.0, node.y + LINEHEIGHT / 2.0);
-        this.drawConnectors(node.in_connectors, topleft_x+hexseg, topleft_y - 0.5*LINEHEIGHT,
-                node.width - 2*hexseg, hovered);
-        this.drawConnectors(node.out_connectors, topleft_x+hexseg, topleft_y+node.height - 0.5*LINEHEIGHT,
-                node.width - 2*hexseg, hovered);
+        this.drawConnectors(node.in_connectors, topleft_x+octseg, topleft_y - 0.5*LINEHEIGHT,
+                node.width - 2*octseg, hovered);
+        this.drawConnectors(node.out_connectors, topleft_x+octseg, topleft_y+node.height - 0.5*LINEHEIGHT,
+                node.width - 2*octseg, hovered);
     }
 
     drawReduceNode(node, nodeid, hovered) {
