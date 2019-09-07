@@ -82,7 +82,7 @@ class SdfgState {
     }
 
     setCtx(ctx) { this.ctx = ctx; this.canvas_manager = new CanvasDrawManager(ctx, this); this.canvas_manager.draw(); }
-    setSDFG(sdfg) { this.sdfg = sdfg; this.graphcache = {}; }
+    setSDFG(sdfg) { this.sdfg = sdfg; this.graphcache = {}; this.canvas_manager.draw(); }
     perfdataIsLazy() {
         return this.perfdata != null && this.perfdata.type == "DataReady";
     }
@@ -905,6 +905,7 @@ class SdfgState {
                 ];
 
                 this.canvas_manager.translate(...movement);
+                this.canvas_manager.draw_async();
             }
         });
 
@@ -979,6 +980,7 @@ class SdfgState {
             let comp_x = event => (event.clientX - br().left);
             let comp_y = event => (event.clientY - br().top);
             this.canvas_manager.scale(-e.deltaY / 1000.0, comp_x(e), comp_y(e));
+            this.canvas_manager.draw_async();
 
         });
     }
@@ -1052,6 +1054,9 @@ function canvas_mouse_handler( event,
             'spos': {'x': event.x, 'y': event.y}, // Screen position, i.e. as reported by the event
         }));
     }
+
+    // TODO: Draw only if changed
+    sdfg_state.canvas_manager.draw_async();
 }
 
 function message_handler(msg, sdfg_state = undefined) {

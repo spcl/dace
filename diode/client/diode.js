@@ -1072,7 +1072,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 sdfg = tmp.sdfg;
             }
 
-            
+            // TODO: Remove
             let transmitter = {
                 send: x => this.sdfg_element_selected(x)
             };
