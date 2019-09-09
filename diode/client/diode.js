@@ -565,10 +565,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
     sdfg_element_selected(msg) {
         let omsg = JSON.parse(msg);
-        if(omsg.msg_type.endsWith('click')) {
+        if (omsg.msg_type.endsWith('click')) {
             // ok
-        }
-        else if(omsg.msg_type === 'contextmenu') {
+        } else if (omsg.msg_type === 'contextmenu') {
             // ok
         } else if (omsg.msg_type === 'hover') {
             // ok
@@ -584,11 +583,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         let state_id = null;
         let node_id = null;
-        if(clicked_states.length > 1) {
+        if (clicked_states.length > 1) {
             alert("Cannot determine clicked state!");
             return;
         }
-        if(clicked_nodes.length > 1) {
+        if (clicked_nodes.length > 1) {
             console.warn("Multiple nodes cannot be selected");
             //#TODO: Arbitrate this - for now, we select the element with the lowest id
         }
@@ -596,25 +595,25 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let state_only = false;
 
         // Check if anything was clicked at all
-        if(clicked_states.length == 0 && clicked_interstate_edges.length == 0 && omsg.msg_type !== 'hover') {
+        if (clicked_states.length == 0 && clicked_interstate_edges.length == 0 && omsg.msg_type !== 'hover') {
             // Nothing was selected
             let sstate = this.initialized_sdfgs[0];
             sstate.clearHighlights();
             this.render_free_variables();
             return;
         }
-        if((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
+        if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
             // A state was selected
             if (clicked_states.length > 0)
                 state_only = true;
         }
 
-        if(clicked_states.length > 0)
+        if (clicked_states.length > 0)
             state_id = clicked_states[0].id;
-        if(clicked_interstate_edges.length > 0)
+        if (clicked_interstate_edges.length > 0)
             node_id = clicked_interstate_edges[0].id;
 
-        if(clicked_nodes.length > 0)
+        if (clicked_nodes.length > 0)
             node_id = clicked_nodes[0].id;
         else if (clicked_edges.length > 0)
             node_id = clicked_edges[0].id;
@@ -646,9 +645,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if (omsg.msg_type === "dblclick") {
             let sdfg = this.initialized_sdfgs[0].sdfg;
             let elem;
-            if(state_only) {
+            if (state_only) {
                 elem = sdfg.nodes[state_id];
-            } else if(clicked_nodes.length > 0) {
+            } else if (clicked_nodes.length > 0) {
                 elem = sdfg.nodes[state_id].nodes[node_id];
             } else {
                 return false;
@@ -664,7 +663,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             return;
         }
 
-        if(omsg.msg_type == "contextmenu") {
+        if (omsg.msg_type == "contextmenu") {
             // Context menu was requested
             let spos = omsg.spos;
             let lpos = omsg.lpos;
@@ -674,7 +673,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 console.log("'Show transformations' was clicked");
 
                 this.project().request(['highlight-transformations-' + this.getState()['sdfg_name']], x => {
-                    
+
                 }, {
                     params: {
                         state_id: state_id,
@@ -695,12 +694,14 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
 
                     let submenu = new ContextMenu();
-                    
-                    for(let y of tmp) {
+
+                    for (let y of tmp) {
                         submenu.addOption(y.opt_name, x => {
-                            this.project().request(['apply-transformation-' + this.getState()['sdfg_name']], x => {},
-                            { params: y.id_name
-                            });
+                            this.project().request(['apply-transformation-' + this.getState()['sdfg_name']], x => {
+                                },
+                                {
+                                    params: y.id_name
+                                });
                         });
                     }
 
@@ -743,115 +744,116 @@ class DIODE_Context_SDFG extends DIODE_Context {
             });
         }
 
-        // Get and render the properties from now on
-        let sdfg_data = this.getSDFGDataFromState();
-        let sdfg = sdfg_data.sdfg;
-        let sdfg_name = sdfg_data.sdfg_name;
+        // Render properties asynchronously
+        setTimeout(() => {
+            // Get and render the properties from now on
+            let sdfg_data = this.getSDFGDataFromState();
+            let sdfg = sdfg_data.sdfg;
+            let sdfg_name = sdfg_data.sdfg_name;
 
-        console.log("sdfg", sdfg);
+            console.log("sdfg", sdfg);
 
-        let states = sdfg.nodes;
-        let state = null;
-        for(let x of states) {
-            if(x.id == state_id) {
-                state = x;
-                break;
+            let states = sdfg.nodes;
+            let state = null;
+            for (let x of states) {
+                if (x.id == state_id) {
+                    state = x;
+                    break;
+                }
             }
-        }
-        let render_props = n => {
-            let attr = n.attributes;
+            let render_props = n => {
+                let attr = n.attributes;
 
-            let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
+                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
 
-            let proplist = [];
-            for(let k of akeys) {
+                let proplist = [];
+                for (let k of akeys) {
 
-                let value = attr[k];
-                let meta = attr["_meta_" + k];
-                if(meta == undefined) {
+                    let value = attr[k];
+                    let meta = attr["_meta_" + k];
+                    if (meta == undefined) {
+                        continue;
+                    }
+
+                    let pdata = JSON.parse(JSON.stringify(meta));
+                    pdata.value = value;
+                    pdata.name = k;
+
+                    proplist.push(pdata);
+                }
+                let nid = parseInt(n.id);
+                if (isNaN(nid) || node_id == null) {
+                    nid = node_id
+                }
+                let propobj = {
+                    node_id: nid,
+                    state_id: state_id,
+                    sdfg_name: sdfg_name,
+                    data: () => ({props: proplist})
+                };
+
+                this.renderProperties(propobj);
+            };
+            if (clicked_interstate_edges.length > 0) {
+                let edges = sdfg.edges;
+                for (let e of edges) {
+                    if (e.src == node_id.src && e.dst == node_id.dst) {
+                        render_props(e.attributes.data);
+                        break;
+                    }
+                }
+                return;
+            }
+            if (state_only) {
+                render_props(state);
+                return;
+            }
+
+            let nodes = state.nodes;
+            for (let ni = 0; ni < nodes.length; ++ni) {
+                let n = nodes[ni];
+                if (n.id != node_id)
                     continue;
+
+                // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
+                if (n.type.endsWith("Entry")) {
+                    // Find the matching exit node
+                    let exit_node = this.find_exit_for_entry(nodes, n);
+                    // Highlight both entry and exit nodes
+                    sstate.addHighlight({'state-id': state_id, 'node-id': exit_node.id});
+                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
+                    render_props(tmp);
+
+                    break;
+                } else if (n.type.endsWith("Exit")) {
+                    // Find the matching entry node and continue with that
+                    let entry_id = parseInt(n.scope_entry);
+                    let entry_node = nodes[entry_id];
+                    // Highlight both entry and exit nodes
+                    sstate.addHighlight({'state-id': state_id, 'node-id': entry_id});
+                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
+                    render_props(tmp);
+                    break;
+                } else if (n.type === "AccessNode") {
+                    // Find matching data descriptor and show that as well
+                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
+                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
+                    render_props(tmp);
+                    break;
                 }
 
-                let pdata = JSON.parse(JSON.stringify(meta));
-                pdata.value = value;
-                pdata.name = k;
-
-                proplist.push(pdata);
+                render_props(n);
+                break;
             }
-            let nid = parseInt(n.id);
-            if(isNaN(nid) || node_id == null) {
-                nid = node_id
-            }
-            let propobj = {
-                node_id: nid,
-                state_id: state_id,
-                sdfg_name: sdfg_name,
-                data: () => ({props: proplist})
-            };
 
-            this.renderProperties(propobj);
-        };
-        if(clicked_interstate_edges.length > 0) {
-            let edges = sdfg.edges;
-            for(let e of edges) {
-                if(e.src == node_id.src && e.dst == node_id.dst) {
+            let edges = state.edges;
+            for (let e of edges) {
+                if (e.src == node_id.src && e.dst == node_id.dst) {
                     render_props(e.attributes.data);
                     break;
                 }
             }
-            return;
-        }
-        if(state_only) {
-            render_props(state);
-            return;
-        }
-
-        let nodes = state.nodes;
-        for(let ni = 0; ni < nodes.length; ++ni) {
-            let n = nodes[ni];
-            if(n.id != node_id)
-                continue;
-
-            // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
-            if(n.type.endsWith("Entry")) {
-                // Find the matching exit node
-                let exit_node = this.find_exit_for_entry(nodes, n);
-                // Highlight both entry and exit nodes
-                sstate.addHighlight({'state-id': state_id, 'node-id': exit_node.id});
-                let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
-                render_props(tmp);
-
-                break;
-            }
-            else if(n.type.endsWith("Exit")) {
-                // Find the matching entry node and continue with that
-                let entry_id = parseInt(n.scope_entry);
-                let entry_node = nodes[entry_id];
-                // Highlight both entry and exit nodes
-                sstate.addHighlight({'state-id': state_id, 'node-id': entry_id});
-                let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
-                render_props(tmp);
-                break;
-            }
-            else if(n.type === "AccessNode") {
-                // Find matching data descriptor and show that as well
-                let ndesc = sdfg.attributes._arrays[n.attributes.data];
-                let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
-                render_props(tmp);
-                break;
-            }
-
-            render_props(n);
-            break;
-        }
-
-        let edges = state.edges;
-        for(let e of edges) {
-            if(e.src == node_id.src && e.dst == node_id.dst) {
-                render_props(e.attributes.data);
-                break;
-            }
-        }
+        }, 0);
     }
 
     getSDFGPropertiesFromState() {

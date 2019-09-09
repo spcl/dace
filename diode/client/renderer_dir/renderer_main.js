@@ -1047,6 +1047,9 @@ function canvas_mouse_handler( event,
         }));
 
     } else if(mode === "hover") {
+        if (event.buttons & 1) // Dragging does not induce redaw/hover
+            return;
+
         transmitter.send(JSON.stringify({
             "msg_type": "hover",
             "clicked_elements": clicked_elements,

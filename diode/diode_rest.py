@@ -1464,7 +1464,7 @@ if __name__ == '__main__':
         "-ld",
         "--localdace",
         action="store_true",
-        help="Use local comamnds instead of ssh")
+        help="Use local commands instead of ssh")
 
     parser.add_argument(
         "-rd",
