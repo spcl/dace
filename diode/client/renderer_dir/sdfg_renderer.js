@@ -435,6 +435,11 @@ class DrawNodeState {
     draw_state(state, state_id) {
         let topleft_x = state.x - state.width / 2.0;
         let topleft_y = state.y - state.height / 2.0;
+        let hovered = this.sdfg_state.sdfg.hovered;
+        if (hovered && 'state' in hovered)
+            hovered = state_id == hovered['state'][0] ? hovered['state'][1] : null;
+        else
+            hovered = null;
 
         let ctx = this.ctx;
         ctx.beginPath();
@@ -449,9 +454,9 @@ class DrawNodeState {
         ctx.fill();
         ctx.fillStyle="#000000";
 
-        // If this state is highlighted
-        if (this.highlight_states()[0] == state_id) {
-            ctx.strokeStyle = "red";
+        // If this state is highlighted or hovered
+        if (hovered || this.highlight_states()[0] == state_id) {
+            ctx.strokeStyle = (this.highlight_states()[0] == state_id) ? "red" : "green";
             ctx.stroke();
             ctx.strokeStyle = "black";
         }
