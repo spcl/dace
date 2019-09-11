@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
+#!/bin/sh
 
-from diode import diode
-
-if __name__ == '__main__':
-    diode.run_main()
+exec python3 -m diode.diode_rest

@@ -3,6 +3,7 @@ from functools import reduce
 import operator
 import copy as cp
 
+import json
 import dace
 from dace import data as dt, subsets, symbolic, types
 from dace.frontend.operations import detect_reduction_type
@@ -93,14 +94,29 @@ class Memlet(object):
 
         self.debuginfo = debuginfo
 
-    def toJSON(self, indent=0):
-        json = " " * indent + "{\n"
-        indent += 2
-        json += " " * indent + "\"type\" : \"" + type(self).__name__ + "\",\n"
-        json += " " * indent + "\"label\" : \"" + str(self) + "\"\n"
-        indent -= 2
-        json += " " * indent + "}\n"
-        return json
+    def toJSON(self, parent_graph=None):
+        try:
+            attrs = json.loads(
+                Property.all_properties_to_json(self, {'no_meta': False}))
+        except Exception as e:
+            print("Got exception: " + str(e))
+            import traceback
+            traceback.print_exc()
+
+        retdict = {"type": "Memlet", "label": str(self), "attributes": attrs}
+
+        return json.dumps(retdict)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "Memlet":
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Memlet("", dace.types.DYNAMIC, None, 1)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
 
     @staticmethod
     def simple(data,
@@ -212,7 +228,7 @@ class Memlet(object):
         return self.subset.bounding_box_size()
 
     def validate(self, sdfg, state):
-        if self.data not in sdfg.arrays:
+        if self.data != None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
     def __label__(self, sdfg, state):
@@ -243,8 +259,9 @@ class Memlet(object):
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:
-                # Don't draw array if we're accessing a single element
-                arrayNotation = False
+                # Don't draw array if we're accessing a single element and it's zero
+                if all(s == 0 for s in self.subset.min_element()):
+                    arrayNotation = False
         except TypeError:
             # Will fail if trying to check the truth value of a sympy expr
             pass

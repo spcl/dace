@@ -212,9 +212,9 @@ namespace dace {
         DACE_CUDA_CHECK(cudaMalloc(&gStart, sizeof(uint32_t)));
         DACE_CUDA_CHECK(cudaMalloc(&gEnd, sizeof(uint32_t)));
         DACE_CUDA_CHECK(cudaMalloc(&gPending, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMemsetAsync(gStart, 0, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMemsetAsync(gEnd, 0, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMemsetAsync(gPending, 0, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(cudaMemset(gStart, 0, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(cudaMemset(gEnd, 0, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(cudaMemset(gPending, 0, sizeof(uint32_t)));
         return GPUStream<T, IS_POW2>(ptr, capacity, gStart, gEnd, gPending);
     }
 

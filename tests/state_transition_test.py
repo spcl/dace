@@ -115,7 +115,8 @@ if __name__ == "__main__":
         s4,
         s6_else,
         dace.InterstateEdge(
-            condition=dace.frontend.python.astutils.negate_expr(if_cond)))
+            condition=dace.frontend.python.astutils.negate_expr(if_cond[
+                'code_or_block'])))
 
     sdfg.add_edge(
         s5_then, s7_then_then, dace.InterstateEdge(condition=nested_if_cond))
@@ -123,8 +124,8 @@ if __name__ == "__main__":
         s5_then,
         s8_end,
         dace.InterstateEdge(
-            condition=dace.frontend.python.astutils.negate_expr(
-                nested_if_cond)))
+            condition=dace.frontend.python.astutils.negate_expr(nested_if_cond[
+                'code_or_block'])))
 
     sdfg.add_edge(s7_then_then, s8_end, dace.InterstateEdge())
 

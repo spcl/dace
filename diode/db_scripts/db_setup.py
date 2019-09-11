@@ -2,13 +2,14 @@ import sqlite3
 import os
 
 
-def db_setup():
+def db_setup(basepath="."):
+    perfdata_path = os.path.join(basepath, "perfdata.db")
     try:
-        os.remove("perfdata.db")
+        os.remove(perfdata_path)
     except:
         pass
     # Create the database by connecting to it
-    conn = sqlite3.connect('perfdata.db')
+    conn = sqlite3.connect(perfdata_path)
 
     # This is no "production db". On power outage, we WILL lose data.
     conn.execute(

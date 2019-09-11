@@ -68,7 +68,7 @@ class DaCeCodeGenerator(object):
         # Custom types
         types = set()
         # Types of this SDFG
-        for sdfg, arrname, arr in sdfg.arrays_recursive():
+        for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 types.add(arr.dtype)
 
@@ -82,6 +82,8 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Write constants
         self.generate_constants(sdfg, global_stream)
+
+        global_stream.write(sdfg.global_code, sdfg)
 
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
@@ -100,13 +102,13 @@ class DaCeCodeGenerator(object):
             '#include <dace/dace.h>\n', sdfg)
 
         # Added for instrumentation includes
-        if PerfSettings.perf_enable_instrumentation(
-        ) or PerfSettings.perf_enable_timing():
+        if sdfg.parent == None and (PerfSettings.perf_enable_instrumentation()
+                                    or PerfSettings.perf_enable_timing()):
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
 
-        self.generate_fileheader(sdfg, callsite_stream)
+        self.generate_fileheader(sdfg, global_stream)
 
         callsite_stream.write(
             'void __program_%s_internal(%s)\n{\n' % (fname, params), sdfg)
@@ -199,6 +201,8 @@ DACE_EXPORTED int __dace_init(%s)
                     'result |= __dace_init_%s(%s);' % (target.target_name,
                                                        paramnames), sdfg)
 
+        callsite_stream.write(sdfg.init_code, sdfg)
+
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
         callsite_stream.write(
@@ -211,6 +215,8 @@ DACE_EXPORTED void __dace_exit(%s)
 """ % params, sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
+
+        callsite_stream.write(sdfg.exit_code, sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -903,7 +909,8 @@ DACE_EXPORTED void __dace_exit(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, sdfg, None, node, global_stream, callsite_stream)
+                        sdfg, state, None, node, global_stream,
+                        callsite_stream)
                     deallocated.add(node.data)
 
         ###########################

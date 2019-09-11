@@ -1,0 +1,37 @@
+DIODE errata
+
+This file contains a list of potential issues, weird quirks and unintuitive details about DIODE and used libraries.
+
+
+GoldenLayout:EventResponses
+Because individual elements can be closed, new data can go two ways:
+1) Update the existing component
+and, if the component could not be reached
+2) Create a new component
+This allows more fluent behavior, i.e. there are no windows flashing / layout changing transitions.
+The function replaceOrCreate() facilitates this mechanic.
+For a sending element to know whether or not case 1) has happened, the receiving component must answer with arbitrary data.
+Directly responding works without an issue when event and sender are the same window. If this is not the case, the responding event is dropped,
+because GL modifies the sending eventHub such that there are no cycles (i.e. you cannot receive while sending something).
+Therefore, instead of using `eh.emit(...)`, one must execute the sending outside of the receive handler, best using a Timeout:
+`setTimeout(() => eh.emit(...), 1)`
+
+
+
+GoldenLayout:AddingElements
+Adding elements inside a popup is not possible (as it has limited sense). However, one can still call
+`goldenlayout.root.contentItems[0].addChild()`. This, however, corrupts the element, making
+merging it back into the main window impossible. (There is no error when this happens).
+Therefore, all operations that are valid only the main window should use events/requests and not access the layout directly.
+
+
+GoldenLayout:createContentItem
+Even though exposed as public method, this function is unusable and fails to setup event handlers and establish invariants.
+Do not use; use addChild() instead.
+
+
+GoldenLayout:StateSavingNull
+The standard state saving functions replace null with the empty object {}. If this is inacceptable, the component should save its
+state in a JSON-string and load as such.
+
+

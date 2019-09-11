@@ -43,7 +43,8 @@ class InterstateEdge(object):
         from_string=assignments_from_string,
         to_string=assignments_to_string)
     condition = CodeProperty(desc="Transition condition")
-    language = Property(enum=types.Language, default=types.Language.Python)
+
+    #language = Property(enum=types.Language, default=types.Language.Python)
 
     def __init__(self, condition=None, assignments=None):
 
@@ -70,11 +71,26 @@ class InterstateEdge(object):
     def condition_symbols(self):
         return dace.symbolic.symbols_in_ast(self.condition[0])
 
-    def toJSON(self, indent=0):
-        json = str(self.label)
-        # get rid of newlines (why are they there in the first place?)
-        json = re.sub(r"\n", " ", json)
-        return "\"" + json + "\""
+    def toJSON(self, parent=None):
+        import json
+        ret = {
+            'type': type(self).__name__,
+            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'label': self.label
+        }
+
+        return json.dumps(ret)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "InterstateEdge":
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = InterstateEdge()
+        Property.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
 
     @property
     def label(self):

@@ -4,6 +4,8 @@ from collections import deque, OrderedDict
 import itertools
 import networkx as nx
 from dace.types import deduplicate
+from dace.properties import Property
+import json
 
 
 class NodeNotFoundError(Exception):
@@ -37,10 +39,29 @@ class Edge(object):
         yield self._dst
         yield self._data
 
-    def toJSON(self, indent=0):
-        if self._data is None:
-            return "null"
-        return self._data.toJSON(indent)
+    def toJSON(self, parent_graph):
+        # Slight hack to preserve the old format (attributes should not behave like this)
+        memlet_ret = json.loads(self.data.toJSON(parent_graph))
+        ret = {
+            'type': type(self).__name__,
+            'attributes': {
+                'data':
+                memlet_ret  #TODO: FIXME: Why is data() not a Property instance? (Would need MemletProperty class)
+            },
+            'src': str(parent_graph.node_id(self.src)),
+            'dst': str(parent_graph.node_id(self.dst)),
+        }
+
+        return json.dumps(ret)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "Edge":
+            raise TypeError("Invalid data type")
+
+        ret = Edge(json_obj['src'], json_obj['dst'], json_obj['attributes']['data'])
+
+        return ret
 
     @staticmethod
     def __len__():
@@ -55,12 +76,6 @@ class MultiEdge(Edge):
         super(MultiEdge, self).__init__(src, dst, data)
         self._key = key
 
-    def toJSON(self, indent=0):
-        # we loose the key here, what is that even?
-        if self._data is None:
-            return "null"
-        return self._data.toJSON(indent)
-
     @property
     def key(self):
         return self._key
@@ -72,10 +87,37 @@ class MultiConnectorEdge(MultiEdge):
         self._src_conn = src_conn
         self._dst_conn = dst_conn
 
-    def toJSON(self, indent=0):
-        # we lose the key here, what is that even?
-        return ('%s' % ("null"
-                        if self._data is None else self._data.toJSON(indent)))
+    def toJSON(self, parent_graph):
+        ret = json.loads(super(MultiConnectorEdge, self).toJSON(parent_graph))
+
+        ret['dst_connector'] = self.dst_conn
+        ret['src_connector'] = self.src_conn
+        ret['key'] = self.key
+
+        ret['type'] = "MultiConnectorEdge"
+
+        return json.dumps(ret)
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+
+        sdfg = context['sdfg_state']
+        if sdfg == None:
+            raise Exception("parent_graph must be defined for this method")
+        data = json_obj['attributes']['data']
+        src_nid = json_obj['src']
+        dst_nid = json_obj['dst']
+
+        dst = sdfg.nodes()[int(dst_nid)]
+        src = sdfg.nodes()[int(src_nid)]
+
+        dst_conn = json_obj['dst_connector']
+        src_conn = json_obj['src_connector']
+
+        # TODO: What is the key for?
+        ret = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, 0)
+
+        return ret
 
     @property
     def src_conn(self):
@@ -109,48 +151,15 @@ class Graph(object):
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
 
-    def toJSON(self, indent=0):
-        json = " " * indent + "{\n"
-        indent += 2
-        json += " " * indent + "\"type\": \"" + type(self).__name__ + "\",\n"
-        json += " " * indent + "\"nodes\": [\n"
-        indent += 2
-        for n in self.nodes():
-            json += " " * indent + "{\n"
-            indent += 2
-            json += " " * indent + "\"id\" : \"" + str(
-                self.node_id(n)) + "\",\n"
-            json += " " * indent + "\"attributes\" : " + n.toJSON(indent) + "\n"
-            indent -= 2
-            if n == self.nodes()[-1]:
-                json += " " * indent + "}\n"
-            else:
-                json += " " * indent + "},\n"
-        indent -= 2
-        json += " " * indent + "],\n"
-
-        json += " " * indent + "\"edges\": [\n"
-        for e in self.edges():
-            json += " " * indent + "{\n"
-            indent += 2
-            json += " " * indent + "\"src\" : \"" + str(self.node_id(
-                e.src)) + "\",\n"
-            if isinstance(e, MultiConnectorEdge):
-                json += " " * indent + '"src_connector" : "%s",\n' % e.src_conn
-            json += " " * indent + "\"dst\" : \"" + str(self.node_id(
-                e.dst)) + "\",\n"
-            if isinstance(e, MultiConnectorEdge):
-                json += " " * indent + '"dst_connector" : "%s",\n' % e.dst_conn
-            json += " " * indent + "\"attributes\" : " + e.toJSON(indent) + "\n"
-            indent -= 2
-            if e == self.edges()[-1]:
-                json += " " * indent + "}\n"
-            else:
-                json += " " * indent + "},\n"
-        indent -= 2
-        json += " " * indent + "]\n"
-        json += " " * indent + "}\n"
-        return json
+    def toJSON(self):
+        import json
+        ret = {
+            'type': type(self).__name__,
+            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
+            'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
+        }
+        return json.dumps(ret)
 
     def nodes(self):
         """Returns an iterable to internal graph nodes."""

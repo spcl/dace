@@ -161,3 +161,13 @@ sdaccel_timeline_*
 *~
 
 perfdata.db
+
+.idea/
+_dotgraphs/
+
+/dace/codegen/cmake-build-debug/
+
+/tests/diode/*.py.*
+
+client_configs/
+perfdata-dir/

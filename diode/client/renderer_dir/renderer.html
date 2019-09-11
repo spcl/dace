@@ -1,0 +1,99 @@
+<html>
+
+<head>
+    <meta charset="utf-8" />
+</head>
+
+<body>
+    <canvas id="myCanvas" width="1200" height="1200" style="border:1px solid #000000;"> </canvas>
+    <script src="global_vars.js"></script> <!-- Global defines -->
+    <script src="dagre.js"></script> <!-- Graph library -->
+    <script src="renderer_util.js"></script> <!-- Offloaded display functions and classes -->
+    <script src="sdfg_renderer.js"></script> <!-- Offloaded SDFG drawing functions -->
+    <script src="datahelper.js"></script> <!-- Offloaded data analysis functions and classes -->
+    <script src="Chart.bundle.min.js"></script> <!-- Library for charts -->
+    <script src="lazy_fetch.js"></script>
+
+    <script src="renderer_main.js"></script> <!-- Offloaded state and drawing -->
+
+    <!-- Offloaded button constructors -->
+    <script src="parallelization_button.js"></script>
+    <script src="memory_button.js"></script>
+    <script src="vectorization_button.js"></script>
+    <script src="cache_button.js"></script>
+    <script src="memop_button.js"></script>
+
+    <!-- Subwindow magic -->
+    <script src="windowing.js"></script>
+
+    <script>
+
+        var socket = 0; // this is the websocket we use to communicate with the Python part
+
+        var global_state = null;
+
+        // This is a zoom function
+        // To be called only by DIODE itself!
+        window.zoom_func = scale => {
+            console.log("Zooming");
+            global_state.canvas_manager.scale(scale);
+        };
+
+        window.get_zoom = () => {
+            return global_state.canvas_manager.getScale();
+        };
+
+        window.onerror = (msg, url, lineNo, colNo, error) => {
+            if(error == null) {
+                console.log("Error object was null.");
+            }
+            console.log("Error: " + msg + " in " + url.toString() + ":" + lineNo + ":" + colNo);
+            console.log("Error occurred.\n" + error.message);
+        }
+
+        window.onload = function () {
+            global_state = new SdfgState();
+            global_state.setCtx(document.getElementById("myCanvas").getContext("2d"));
+            socket = new WebSocket('ws://localhost:8023/');
+            setInterval(x => socket.send(JSON.stringify({ "msg_type": "heartbeat" })), 100); // Set the heartbeat.
+            socket.onopen = function (event) {
+                socket.send(JSON.stringify({"msg_type": "info", "info": "client connected"}));
+            }
+            socket.onmessage = function (event) {
+                message_handler(event.data);
+            }
+            socket.onclose = function (event) {
+                console.log("Connection closed");
+            }
+            socket.onerror = function (event) {
+                console.log("There was an error with the connection");
+            }
+            
+        }
+
+        document.getElementById("myCanvas").addEventListener('click', function(event) { 
+            let comp_x = event => event.pageX - document.getElementById("myCanvas").offsetLeft;
+            let comp_y = event => event.pageY - document.getElementById("myCanvas").offsetTop;
+            
+            let zoom_comp = x => x;
+            if(window.get_zoom != undefined) {
+                zoom_comp = x => x / window.get_zoom();
+            }
+            canvas_onclick_handler(event, comp_x, comp_y, zoom_comp, global_state, socket);
+        });
+
+        window.addEventListener('keypress', function(event) {
+            ObjectHelper.logObject("Keypress event", event);
+            console.log("Code was: " + event.code);
+            console.log("Key was: " + event.key);
+            if(event.key == "s") {
+                let subpath = "perf_extracts/manual_";
+                createImageDownload(global_state.brackets, subpath);
+                alert("Image saved to " + subpath);
+            }
+        });
+
+    </script>
+</body>
+
+</html>

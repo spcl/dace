@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <script src="dagre.js"></script> <!-- Graph library -->
+    <script src="Chart.bundle.min.js"></script> <!-- Library for charts -->
+
+
+    <script type="module">
+        import {SettingsWindow} from "./DataViewSettings.js";
+        window.onload = () => {
+            console.log("Creating settings window");
+            let _thisclient = new SettingsWindow(window);
+            console.log("Logic initialization done");
+            window._thisclient = _thisclient;
+        };
+    </script>
+</head>
+<body>
+    <h3>Settings for $NAME</h3>    
+    <div id="settingsdiv">
+        <!-- Setting options should be inserted here... -->
+
+    </div>
+</body>
+</html>

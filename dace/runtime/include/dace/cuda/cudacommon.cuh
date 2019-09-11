@@ -13,6 +13,8 @@ namespace dace {
     namespace cuda {
         extern cudaStream_t __streams[];
         extern cudaEvent_t __events[];
+        extern int num_streams;
+        extern int num_events;
     }  // namespace cuda
 }  // namespace dace
 

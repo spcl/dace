@@ -25,7 +25,7 @@ class MPICodeGen(TargetCodeGenerator):
 
         self._codeobj = CodeObject(
             sdfg.name + '_mpi', """
-#include <dace/dace_runtime.h>
+#include <dace/dace.h>
 #include <mpi.h>
 
 MPI_Comm __dace_mpi_comm;

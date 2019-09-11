@@ -26,7 +26,8 @@ class GPUTransformState(pattern_matching.Transformation):
           4. Re-store Default-top/CPU_Heap transients as GPU_Global
           5. Global tasklets are wrapped with a map of size 1
           6. Global Maps are re-scheduled to use the GPU
-          7. Re-apply strict transformations to get rid of extra states and 
+          7. Make data ready for interstate edges that use them
+          8. Re-apply strict transformations to get rid of extra states and
              transients
     """
 
@@ -42,6 +43,18 @@ class GPUTransformState(pattern_matching.Transformation):
         desc='Reapply strict transformations after modifying graph',
         dtype=bool,
         default=True)
+
+    exclude_copyin = Property(
+        desc="Exclude these arrays from being copied into the device"
+        "(comma-separated)",
+        dtype=str,
+        default='')
+
+    exclude_copyout = Property(
+        desc="Exclude these arrays from being copied out of the device"
+        "(comma-separated)",
+        dtype=str,
+        default='')
 
     @staticmethod
     def annotates_memlets():
@@ -94,7 +107,8 @@ class GPUTransformState(pattern_matching.Transformation):
                 if e.data.wcr is not None and e.data.wcr_identity is None:
                     if (e.data.data not in input_nodes
                             and sdfg.arrays[e.data.data].transient == False):
-                        input_nodes.append(e.data.data)
+                        input_nodes.append((e.data.data,
+                                            sdfg.arrays[e.data.data]))
 
         start_state = sdfg.start_state
         end_states = sdfg.sink_nodes()
@@ -103,14 +117,14 @@ class GPUTransformState(pattern_matching.Transformation):
         # Step 1: Create cloned GPU arrays and replace originals
 
         cloned_arrays = {}
-        for inodename, inode in input_nodes:
+        for inodename, inode in set(input_nodes):
             newdesc = inode.clone()
             newdesc.storage = types.StorageType.GPU_Global
             newdesc.transient = True
             sdfg.add_datadesc('gpu_' + inodename, newdesc)
             cloned_arrays[inodename] = 'gpu_' + inodename
 
-        for onodename, onode in output_nodes:
+        for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
                 continue
             newdesc = onode.clone()
@@ -134,11 +148,14 @@ class GPUTransformState(pattern_matching.Transformation):
 
         #######################################################
         # Step 2: Create copy-in state
+        excluded_copyin = self.exclude_copyin.split(',')
 
         copyin_state = sdfg.add_state(sdfg.label + '_copyin')
         sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
 
-        for nname, desc in input_nodes:
+        for nname, desc in set(input_nodes):
+            if nname in excluded_copyin:
+                continue
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(
                 cloned_arrays[nname], debuginfo=desc.debuginfo)
@@ -150,12 +167,15 @@ class GPUTransformState(pattern_matching.Transformation):
 
         #######################################################
         # Step 3: Create copy-out state
+        excluded_copyout = self.exclude_copyout.split(',')
 
         copyout_state = sdfg.add_state(sdfg.label + '_copyout')
         for state in end_states:
             sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
 
-        for nname, desc in output_nodes:
+        for nname, desc in set(output_nodes):
+            if nname in excluded_copyout:
+                continue
             src_array = nodes.AccessNode(
                 cloned_arrays[nname], debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
@@ -174,13 +194,23 @@ class GPUTransformState(pattern_matching.Transformation):
                 if isinstance(node,
                               nodes.AccessNode) and node.desc(sdfg).transient:
                     nodedesc = node.desc(sdfg)
+
+                    # Special case: nodes that lead to dynamic map ranges must
+                    # stay on host
+                    if any(
+                            isinstance(
+                                state.memlet_path(e)[-1].dst, nodes.EntryNode)
+                            for e in state.out_edges(node)):
+                        continue
+
                     if sdict[node] is None:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = types.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
-                        if self.toplevel_trans:
+                        if (self.toplevel_trans
+                                and not isinstance(nodedesc, data.Stream)):
                             nodedesc.toplevel = True
                     else:
                         # Make internal transients registers
@@ -235,7 +265,42 @@ class GPUTransformState(pattern_matching.Transformation):
                         node.schedule = types.ScheduleType.Sequential
 
         #######################################################
-        # Step 7: Strict transformations
+        # Step 7: Introduce copy-out if data used in outgoing interstate edges
+
+        for state in list(sdfg.nodes()):
+            arrays_used = set()
+            for e in sdfg.out_edges(state):
+                # Used arrays = intersection between symbols and cloned arrays
+                arrays_used.update(
+                    set(e.data.condition_symbols()) & set(cloned_arrays.keys())
+                )
+
+            # Create a state and copy out used arrays
+            if len(arrays_used) > 0:
+                co_state = sdfg.add_state(state.label + '_icopyout')
+
+                # Reconnect outgoing edges to after interim copyout state
+                for e in sdfg.out_edges(state):
+                    nxutil.change_edge_src(sdfg, state, co_state)
+                # Add unconditional edge to interim state
+                sdfg.add_edge(state, co_state, ed.InterstateEdge())
+
+                # Add copy-out nodes
+                for nname in arrays_used:
+                    desc = sdfg.arrays[nname]
+                    src_array = nodes.AccessNode(
+                        cloned_arrays[nname], debuginfo=desc.debuginfo)
+                    dst_array = nodes.AccessNode(
+                        nname, debuginfo=desc.debuginfo)
+                    co_state.add_node(src_array)
+                    co_state.add_node(dst_array)
+                    co_state.add_nedge(
+                        src_array, dst_array,
+                        memlet.Memlet.from_array(dst_array.data,
+                                                 dst_array.desc(sdfg)))
+
+        #######################################################
+        # Step 8: Strict transformations
         if not self.strict_transform:
             return
 
