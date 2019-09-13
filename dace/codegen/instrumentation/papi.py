@@ -503,7 +503,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                 # Add bytes moved
                 inner_stream.write(
                     "__perf_store.addBytesMoved(%s);" %
-                    PAPIInstrumentation.get_tasklet_byte_accesses(
+                    PAPIUtils.reduce_iteration_count(
                         node, state, sdfg, state_id))
         elif isinstance(node, nodes.Reduce):
             result = inner_stream
@@ -631,17 +631,18 @@ class PAPIInstrumentation(InstrumentationProvider):
                 # remember which map has the counters enabled
                 node.map._has_papi_counters = True
         else:
-            if (PAPIInstrumentation.instrument_entry(node, dfg) and
-                ((not PAPISettings.perf_debug_profile_innermost and i == 0) or
-                 (PAPISettings.perf_debug_profile_innermost
-                  and i == len(node.map.range) - 1))
-                    and PAPISettings.perf_enable_instrumentation_for(
-                        sdfg, node)):
-                start_string = PAPIInstrumentation.perf_counter_start_measurement_string(
-                    node, unified_id, var)
-                result.write(start_string, sdfg, state_id, node)
-                # remember which map has the counters enabled
-                node.map._has_papi_counters = True
+            for i, var in enumerate(node.map.params):
+                if (PAPIInstrumentation.instrument_entry(node, dfg) and
+                    ((not PAPISettings.perf_debug_profile_innermost and i == 0) or
+                     (PAPISettings.perf_debug_profile_innermost
+                      and i == len(node.map.range) - 1))
+                        and PAPISettings.perf_enable_instrumentation_for(
+                            sdfg, node)):
+                    start_string = PAPIInstrumentation.perf_counter_start_measurement_string(
+                        node, unified_id, var)
+                    result.write(start_string, sdfg, state_id, node)
+                    # remember which map has the counters enabled
+                    node.map._has_papi_counters = True
 
     def on_consume_entry(self, sdfg, state, node, outer_stream, inner_stream,
                          global_stream):
@@ -2067,7 +2068,7 @@ LIMIT
             if isinstance(step, SymExpr):
                 step = step.expr
 
-            begin, end, step = PAPIInstrumentation.reduce_iteration_count(
+            begin, end, step = PAPIUtils.reduce_iteration_count(
                 begin, end, step, retparams)
             num = (end - begin) / step  # The count of iterations
             retparams[_it[i]] = num
@@ -2185,13 +2186,13 @@ LIMIT
                         # write_and_resolve
                         # We have to assume that every reduction costs 3 accesses of the same size
                         out_costs += 3 * sp.sympify(
-                            PAPIInstrumentation.get_memlet_byte_size(
+                            PAPIUtils.get_memlet_byte_size(
                                 sdfg, memlet), sp.abc._clash)
                     else:
                         #'%s.write(%s);\n'
                         # This standard operation is already counted
                         out_costs += sp.sympify(
-                            PAPIInstrumentation.get_memlet_byte_size(
+                            PAPIUtils.get_memlet_byte_size(
                                 sdfg, memlet), sp.abc._clash)
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
@@ -2212,11 +2213,11 @@ LIMIT
             # type ie.data == Memlet
             # type ie.data.data == Data
             in_accum.append(
-                PAPIInstrumentation.get_memlet_byte_size(sdfg, ie.data))
+                PAPIUtils.get_memlet_byte_size(sdfg, ie.data))
 
         out_accum.append(
             str(
-                PAPIInstrumentation.get_out_memlet_costs(
+                PAPIUtils.get_out_memlet_costs(
                     sdfg, state_id, tasklet, dfg)))
 
         # Merge (kept split to be able to change the behavior easily)
@@ -2241,11 +2242,11 @@ LIMIT
             # type ie.data == Memlet
             # type ie.data.data == Data
             in_accum.append(
-                PAPIInstrumentation.get_memlet_byte_size(sdfg, ie.data))
+                PAPIUtils.get_memlet_byte_size(sdfg, ie.data))
 
         for oe in out_edges:
             out_accum.append(
-                PAPIInstrumentation.get_memlet_byte_size(sdfg, oe.data))
+                PAPIUtils.get_memlet_byte_size(sdfg, oe.data))
 
         # Merge (kept split to be able to change the behavior easily)
         full = in_accum
@@ -2274,7 +2275,7 @@ LIMIT
         if (parent == outermost_node):
             return [parent]
 
-        return PAPIInstrumentation.get_parents(outermost_node, parent, sdfg,
+        return PAPIUtils.get_parents(outermost_node, parent, sdfg,
                                                state_id) + [parent]
 
     @staticmethod
@@ -2348,7 +2349,7 @@ LIMIT
                 return 0  # We can ignore this.
 
             # If we reached the deepest node, get all parents
-            parent_list = PAPIInstrumentation.get_parents(
+            parent_list = PAPIUtils.get_parents(
                 outermost_node, node, sdfg, state_id)
             #print("Parents are " + str(parent_list))
             if isinstance(node, MapEntry):
@@ -2360,7 +2361,7 @@ LIMIT
             # From all iterations, get the iteration count, replacing inner
             # iteration variables with the next outer variables.
             for x in map_list:
-                itvars = PAPIInstrumentation.get_iteration_count(x, itvars)
+                itvars = PAPIUtils.get_iteration_count(x, itvars)
 
             #print("itvars: " + str(itvars))
 
@@ -2379,7 +2380,7 @@ LIMIT
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
                 return itcount * sp.sympify(
-                    PAPIInstrumentation.get_tasklet_byte_accesses(
+                    PAPIUtils.get_tasklet_byte_accesses(
                         node, dfg, sdfg, state_id))
             else:
                 if PAPISettings.perf_debug_hard_error:
@@ -2431,7 +2432,7 @@ LIMIT
             return ""
         elif isinstance(node, Tasklet):
             # Exact data movement costs depend on the tasklet code
-            return PAPIInstrumentation.get_tasklet_byte_accesses(
+            return PAPIUtils.reduce_iteration_count(
                 node, dfg, sdfg, state_id)
 
         else:
