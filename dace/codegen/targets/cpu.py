@@ -578,7 +578,7 @@ class CPUCodeGen(TargetCodeGenerator):
             for instr in self._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_copy_begin(sdfg, state_dfg, src_node, dst_node,
-                                        edge, stream, None)
+                                        edge, stream, None, copy_shape, src_strides, dst_strides)
 
             nc = True
             if memlet.wcr is not None:
@@ -1155,7 +1155,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
-        callsite_stream.write("{\n", sdfg, state_id, node)
+        outer_stream_begin = CodeIOStream()
+        outer_stream_end = CodeIOStream()
+        inner_stream = CodeIOStream()
 
         # Add code to init and exit functions
         self._frame._initcode.write(node.code_init, sdfg)
@@ -1178,7 +1180,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     shared_data_name = edge.data.data
 
                     # Read variable from shared storage
-                    callsite_stream.write(
+                    inner_stream.write(
                         "const dace::vec<%s, %s>& %s = %s;" % (
                             sdfg.arrays[memlet.data].dtype.ctype,
                             sym2cpp(memlet.veclen),
@@ -1203,14 +1205,14 @@ class CPUCodeGen(TargetCodeGenerator):
                         state_dfg,
                         state_id,
                         function_stream,
-                        callsite_stream,
+                        inner_stream,
                     )
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1)
                 arrays.add(edge.dst_conn)
 
-        callsite_stream.write("\n", sdfg, state_id, node)
+        inner_stream.write("\n", sdfg, state_id, node)
 
         # Use outgoing edges to preallocate output local vars
         # in two stages: first we preallocate for data<->code cases,
@@ -1235,7 +1237,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         state_dfg,
                         state_id,
                         function_stream,
-                        callsite_stream,
+                        inner_stream,
                     )
 
                 # Also define variables in the C++ unparser scope
@@ -1249,7 +1251,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif (isinstance(edge.dst, nodes.CodeNode)
                   and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
-                callsite_stream.write(
+                inner_stream.write(
                     "dace::vec<%s, %s> %s;" % (
                         sdfg.arrays[memlet.data].dtype.ctype,
                         sym2cpp(memlet.veclen),
@@ -1268,10 +1270,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-tasklet
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream,
+            instr.on_node_begin(sdfg, state_dfg, node, outer_stream_begin, inner_stream,
                                 function_stream)
 
-        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
+        inner_stream.write("\n    ///////////////////\n", sdfg, state_id,
                               node)
 
         unparse_tasklet(
@@ -1280,12 +1282,12 @@ class CPUCodeGen(TargetCodeGenerator):
             dfg,
             node,
             function_stream,
-            callsite_stream,
+            inner_stream,
             self._locals,
             self._ldepth,
         )
 
-        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
+        inner_stream.write("    ///////////////////\n\n", sdfg, state_id,
                               node)
 
         # Process outgoing memlets
@@ -1295,17 +1297,21 @@ class CPUCodeGen(TargetCodeGenerator):
             node,
             state_dfg,
             self._dispatcher,
-            callsite_stream,
+            inner_stream,
             True,
             function_stream,
         )
 
         # Instrumentation: Post-tasklet
         if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, callsite_stream,
-                              callsite_stream, function_stream)
+            instr.on_node_end(sdfg, state_dfg, node, outer_stream_end, inner_stream,
+                              function_stream)
 
+        callsite_stream.write(outer_stream_begin.getvalue(), sdfg, state_id, node)
+        callsite_stream.write("{\n", sdfg, state_id, node)
+        callsite_stream.write(inner_stream.getvalue(), sdfg, state_id, node)
         callsite_stream.write("}\n", sdfg, state_id, node)
+        callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
         self._dispatcher.defined_vars.exit_scope(node)
 
@@ -1921,7 +1927,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 state_id, node)  #cpp_array_expr(), cpp_array_expr()
 
         if instr is not None:
-            outer_stream = CodeIOStream
+            outer_stream = CodeIOStream()
             instr.on_node_end(sdfg, state_dfg, node, outer_stream,
                               callsite_stream, function_stream)
 

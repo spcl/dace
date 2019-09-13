@@ -81,7 +81,7 @@ class InstrumentationProvider(object):
         pass
 
     def on_copy_begin(self, sdfg, state, src_node, dst_node, edge,
-                      local_stream, global_stream):
+                      local_stream, global_stream, copy_shape, src_strides, dst_strides):
         """ Event called at the beginning of generating a copy operation.
             @param sdfg: The generated SDFG object.
             @param state: The generated SDFGState object.
@@ -90,6 +90,9 @@ class InstrumentationProvider(object):
             @param edge: An edge in the memlet path of the copy.
             @param local_stream: Code generator for the internal code.
             @param global_stream: Code generator for global (external) code.
+            @param copy_shape: Tuple representing the shape of the copy.
+            @param src_strides: Element-skipping strides for each dimension of the copied source.
+            @param dst_strides: Element-skipping strides for each dimension of the copied destination.
         """
         pass
 
