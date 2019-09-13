@@ -4,7 +4,7 @@ from dace.graph.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.data import Array
 
-from dace import symbolic
+from dace import symbolic, subsets
 from dace.codegen import cppunparse
 
 from dace.config import Config
@@ -17,6 +17,7 @@ import re
 import sympy as sp
 import os
 import ast
+import copy
 import sqlite3
 import dace
 from dace import types
@@ -26,13 +27,66 @@ from dace.graph import nodes
 if __name__ == "__main__":
     print("path: " + os.path.dirname(__file__))
 
-
+############# COPIED FROM cpu.py TO AVOID IMPORT LOOPS. TODO: Move elsewhere #############
 def sym2cpp(s):
     """ Converts an array of symbolic variables (or one) to C++ strings. """
     if not isinstance(s, list):
         return cppunparse.pyexpr2cpp(symbolic.symstr(s))
     return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in s]
 
+def cpp_offset_expr(d,
+                    subset_in,
+                    offset=None,
+                    packed_veclen=1):
+    """ Creates a C++ expression that can be added to a pointer in order
+        to offset it to the beginning of the given subset and offset.
+        @param d: The data structure to use for sizes/strides.
+        @param subset: The subset to offset by.
+        @param offset: An additional list of offsets or a Subset object
+        @param packed_veclen: If packed types are targeted, specifies the
+                              vector length that the final offset should be
+                              divided by.
+        @return: A string in C++ syntax with the correct offset
+    """
+    subset = copy.deepcopy(subset_in)
+
+    # Offset according to parameters
+    if offset is not None:
+        if isinstance(offset, subsets.Subset):
+            subset.offset(offset, False)
+        else:
+            subset.offset(subsets.Indices(offset), False)
+
+    # Then, offset according to array
+    subset.offset(subsets.Indices(d.offset), False)
+
+    # Obtain start range from offsetted subset
+    slice = [0] * len(d.strides)  # subset.min_element()
+
+    index = subset.at(slice, d.strides)
+    if packed_veclen > 1:
+        index /= packed_veclen
+
+    return sym2cpp(index)
+
+
+def cpp_array_expr(sdfg,
+                   memlet,
+                   with_brackets=True,
+                   offset=None,
+                   relative_offset=True,
+                   packed_veclen=1):
+    """ Converts an Indices/Range object to a C++ array access string. """
+    s = memlet.subset if relative_offset else subsets.Indices(offset)
+    o = offset if relative_offset else None
+    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o,
+                                    packed_veclen)
+
+    if with_brackets:
+        return "%s[%s]" % (memlet.data, offset_cppstr)
+    else:
+        return offset_cppstr
+############# END OF COPY FROM cpu.py #############
 
 class PAPISettings(object):
     @staticmethod
@@ -200,7 +254,6 @@ class PAPISettings(object):
         return PAPISettings.get_config(
             "instrumentation", "max_scope_depth", config=config)
 
-    perf_debug_profile_innermost = False  # innermost = False implies outermost
     perf_debug_annotate_scopes = True
     perf_debug_annotate_memlets = False
     perf_debug_hard_error = False  # If set to true, untreated cases cause program abort.
@@ -303,7 +356,10 @@ class PAPIInstrumentation(InstrumentationProvider):
             )  # Keep in mind not to add supersection start markers!
 
     def on_copy_begin(self, sdfg, state, src_node, dst_node, edge,
-                      local_stream, global_stream):
+                      local_stream, global_stream, copy_shape, src_strides, dst_strides):
+        state_id = sdfg.node_id(state)
+        memlet = edge.data
+
         # For perfcounters, we have to make sure that:
         # 1) No other measurements are done for the containing scope (no map operation containing this copy is instrumented)
         src_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(
@@ -334,11 +390,15 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         unique_cpy_id = PAPISettings.get_unique_number()
 
+        dst_nodedesc = dst_node.desc(sdfg)
+        ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype,
+                                       memlet.veclen)
+
         fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " + "/".join(
             sym2cpp(dst_strides)))
         copy_size = "sizeof(%s) * %s * (%s)" % (ctype, memlet.veclen, fac3)
         node_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(dst_node), state_id)
+            state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it would be a section with 1 entry))
         local_stream.write(
             PAPIInstrumentation.perf_section_start_string(
@@ -364,7 +424,10 @@ class PAPIInstrumentation(InstrumentationProvider):
     def on_copy_end(self, sdfg, state, src_node, dst_node, edge, local_stream,
                     global_stream):
         state_id = sdfg.node_id(state)
+        node_id = state.node_id(dst_node)
         if self.perf_should_instrument:
+            unique_cpy_id = PAPISettings._unique_counter
+
             local_stream.write(
                 ("__perf_cpy_%d_%d.leaveCritical(__vs_cpy_%d_%d);\n") %
                 (node_id, unique_cpy_id, node_id, unique_cpy_id),
@@ -375,6 +438,8 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
+        state_id = sdfg.node_id(state)
+        unified_id = PAPIInstrumentation.unified_id(state.node_id(node), state_id)
         if isinstance(node, nodes.Tasklet):
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 inner_stream.write(
@@ -397,15 +462,15 @@ class PAPIInstrumentation(InstrumentationProvider):
                                    sdfg, state_id, node)
         elif isinstance(node, nodes.Reduce):
             unified_id = PAPIInstrumentation.unified_id(
-                dfg.node_id(node), state_id)
+                state.node_id(node), state_id)
 
             input_size = PAPIUtils.get_memory_input_size(
-                node, sdfg, dfg, state_id, sym2cpp)
+                node, sdfg, state, state_id, sym2cpp)
 
             perf_should_instrument = (
                 node.instrument == dace.InstrumentationType.PAPI_Counters
                 and not PAPIInstrumentation.has_surrounding_perfcounters(
-                    node, dfg)
+                    node, state)
                 and PAPISettings.perf_enable_instrumentation_for(sdfg, node))
 
             # For measuring the memory bandwidth, we analyze the amount of data
@@ -413,6 +478,15 @@ class PAPIInstrumentation(InstrumentationProvider):
             result = outer_stream
             if perf_should_instrument:
                 perf_expected_data_movement_sympy = 1
+
+                input_memlet = state.in_edges(node)[0].data
+                output_memlet = state.out_edges(node)[0].data
+                # If axes were not defined, use all input dimensions
+                input_dims = input_memlet.subset.dims()
+                output_dims = output_memlet.subset.data_dims()
+                axes = node.axes
+                if axes is None:
+                    axes = tuple(range(input_dims))
 
                 for axis in range(output_dims):
                     ao = output_memlet.subset[axis]
@@ -424,9 +498,9 @@ class PAPIInstrumentation(InstrumentationProvider):
                     perf_expected_data_movement_sympy *= (
                         ai[1] + 1 - ai[0]) / ai[2]
 
-                if not dfg.is_parallel():
+                if not state.is_parallel():
                     # Now we put a start marker, but only if we are in a serial state
-                    callsite_stream.write(
+                    result.write(
                         PAPIInstrumentation.perf_supersection_start_string(
                             unified_id),
                         sdfg,
@@ -434,7 +508,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                         node,
                     )
 
-                callsite_stream.write(
+                result.write(
                     PAPIInstrumentation.perf_section_start_string(
                         unified_id,
                         str(sp.simplify(perf_expected_data_movement_sympy)) +
@@ -451,13 +525,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                 # Outer part
                 result = outer_stream
                 # This could prevent the compiler from parallelizing/vectorizing
-                # TODO: Some of the code here refers to innermost vs. outermost
-                #       loop in the generated code. Fix
                 if perf_should_instrument:
-                    if (end_braces == 0
-                            and not PAPISettings.perf_debug_profile_innermost
-                        ) or (end_braces == output_dims - 1
-                              and PAPISettings.perf_debug_profile_innermost):
                         result.write(
                             PAPIInstrumentation.
                             perf_counter_start_measurement_string(
@@ -470,7 +538,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             #############################################################
             # Internal part
             result = inner_stream
-            if end_braces == 0 and perf_should_instrument:
+            if perf_should_instrument:
                 # The outer dimensions no longer exist. We should add instrumentation anyway.
                 result.write(
                     PAPIInstrumentation.perf_counter_start_measurement_string(
@@ -482,6 +550,10 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
+        state_id = sdfg.node_id(state)
+        node_id = state.node_id(node)
+        unified_id = PAPIInstrumentation.unified_id(node_id, state_id)
+
         if isinstance(node, nodes.CodeNode):
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 inner_stream.write(
@@ -513,6 +585,35 @@ class PAPIInstrumentation(InstrumentationProvider):
             # overwrite the reduced variable when it needs to be changed)
 
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
+                input_memlet = state.in_edges(node)[0].data
+                output_memlet = state.out_edges(node)[0].data
+                # If axes were not defined, use all input dimensions
+                input_dims = input_memlet.subset.dims()
+                output_dims = output_memlet.subset.data_dims()
+                axes = node.axes
+                if axes is None:
+                    axes = tuple(range(input_dims))
+                # Obtain variable names per output and reduction axis
+                axis_vars = []
+                octr = 0
+                for d in range(input_dims):
+                    if d in axes:
+                        axis_vars.append("__i%d" % d)
+                    else:
+                        axis_vars.append("__o%d" % octr)
+                        octr += 1
+
+                use_tmpout = (len(axes) == input_dims)
+
+                outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
+                    sdfg,
+                    output_memlet,
+                    offset=["__o%d" % i for i in range(output_dims)],
+                    relative_offset=False,
+                ))
+                invar = cpp_array_expr(
+                    sdfg, input_memlet, offset=axis_vars, relative_offset=False)
+
                 result.write(
                     byte_moved_measurement % ("(sizeof(%s) + sizeof(%s))" %
                                               (outvar, invar)),
@@ -553,6 +654,8 @@ class PAPIInstrumentation(InstrumentationProvider):
                      global_stream):
         dfg = state.scope_subgraph(node)
         state_id = sdfg.node_id(state)
+        if node.map.instrument != dace.InstrumentationType.PAPI_Counters:
+            return
 
         unified_id = PAPIInstrumentation.unified_id(
             dfg.node_id(node), state_id)
@@ -567,10 +670,9 @@ class PAPIInstrumentation(InstrumentationProvider):
         input_size = PAPIUtils.get_memory_input_size(
             node, sdfg, dfg, state_id, sym2cpp)
 
-        if PAPISettings.perf_enable_instrumentation():
-            idstr = "// (Node %d)\n" % unified_id
-            result.write(idstr)  # Used to identify line numbers later
-            #PerfMetaInfoStatic.info.add_node(node, idstr)
+        idstr = "// (Node %d)\n" % unified_id
+        result.write(idstr)  # Used to identify line numbers later
+        #PerfMetaInfoStatic.info.add_node(node, idstr)
 
         # Emit supersection if possible
         result.write(
@@ -615,41 +717,41 @@ class PAPIInstrumentation(InstrumentationProvider):
                     node,
                     dfg) and PAPISettings.perf_enable_instrumentation_for(
                         sdfg, node):
-                result.write(perf_entry_string % (map_name + "_iter"), sdfg,
-                             state_id, node)
+                map_name = "__DACEMAP_" + str(state_id) + "_" + str(state.node_id(node))
+                start_string = PAPIInstrumentation.perf_counter_start_measurement_string(
+                    node, unified_id, map_name + "_iter")
+                result.write(start_string, sdfg, state_id, node)
+
                 # remember which map has the counters enabled
                 node.map._has_papi_counters = True
         else:
-            for i, var in enumerate(node.map.params):
-                if (PAPIInstrumentation.instrument_entry(node, dfg) and
-                    ((not PAPISettings.perf_debug_profile_innermost and i == 0) or
-                     (PAPISettings.perf_debug_profile_innermost
-                      and i == len(node.map.range) - 1))
-                        and PAPISettings.perf_enable_instrumentation_for(
-                            sdfg, node)):
-                    start_string = PAPIInstrumentation.perf_counter_start_measurement_string(
-                        node, unified_id, var)
-                    result.write(start_string, sdfg, state_id, node)
-                    # remember which map has the counters enabled
-                    node.map._has_papi_counters = True
+            var = node.map.params[-1]
+            if (PAPIInstrumentation.instrument_entry(node, dfg) and PAPISettings.perf_enable_instrumentation_for(
+                        sdfg, node)):
+                start_string = PAPIInstrumentation.perf_counter_start_measurement_string(
+                    node, unified_id, var)
+                result.write(start_string, sdfg, state_id, node)
+                # remember which map has the counters enabled
+                node.map._has_papi_counters = True
 
     def on_consume_entry(self, sdfg, state, node, outer_stream, inner_stream,
                          global_stream):
+        state_id = sdfg.node_id(state)
         unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(node), state_id)
+            state.node_id(node), state_id)
 
         # Intrusively set the depth. (Better solutions are welcome)
-        PAPIInstrumentation.set_map_depth(node, dfg)
+        PAPIInstrumentation.set_map_depth(node, state)
 
         # Outer part
         result = outer_stream
 
-        if PAPIInstrumentation.instrument_entry(node, dfg):
+        if PAPIInstrumentation.instrument_entry(node, state):
             # Mark the SuperSection start (if possible)
             # TODO: Safety checks
             result.write(
                 PAPIInstrumentation.perf_get_supersection_start_string(
-                    node, sdfg, dfg, unified_id),
+                    node, sdfg, state, unified_id),
                 sdfg,
                 state_id,
                 node,
@@ -679,7 +781,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         # Instrumenting this is a bit flaky: Since the consume interally creates threads, it must be instrumented like a normal map. However, it seems to spawn normal std::threads (instead of going for openMP)
         # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
-        if PAPIInstrumentation.instrument_entry(node, dfg):
+        if PAPIInstrumentation.instrument_entry(node, state):
             result.write(
                 ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
                  format(id=unified_id)) +
@@ -718,23 +820,11 @@ class PAPIInstrumentation(InstrumentationProvider):
                 result.write("// %s\n" % str(node), sdfg, state_id, node)
 
         else:
-            # TODO: Some of the code here refers to innermost vs. outermost
-            #       loop in the generated code. Fix
-            for i in range(len(node.map.params)):
-                if (PAPISettings.perf_enable_instrumentation()
-                    and node.map._has_papi_counters and
-                    ((PAPISettings.perf_debug_profile_innermost and i == 0) or
-                     (not PAPISettings.perf_debug_profile_innermost
-                      and i == len(node.map.range) - 1))):
-                    result.write(perf_end_string, sdfg, state_id, node)
+            if node.map._has_papi_counters:
+                result.write(perf_end_string, sdfg, state_id, node)
 
-                if (PAPISettings.perf_debug_annotate_scopes
-                    and i == len(node.map.range) - 1):
-                    result.write("// %s\n" % str(node), sdfg, state_id, node)
-                result.write('}', sdfg, state_id, node)
-
-            # Write another set of braces to ensure closing braces work
-            result.write('{'*len(node.map.params))
+            if PAPISettings.perf_debug_annotate_scopes:
+                result.write("// %s\n" % str(node), sdfg, state_id, node)
 
         #############################################################
         # Outer part
@@ -747,12 +837,13 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     def on_consume_exit(self, sdfg, state, node, outer_stream, inner_stream,
                         global_stream):
-
+        state_id = sdfg.node_id(state)
+        entry_node = state.entry_node(node)
         unified_id = PAPIInstrumentation.unified_id(
-            dfg.node_id(entry_node), state_id)
+            state.node_id(entry_node), state_id)
 
         result = inner_stream
-        if PAPIInstrumentation.instrument_entry(entry_node, dfg):
+        if PAPIInstrumentation.instrument_entry(entry_node, state):
             result.write(
                 PAPIInstrumentation.perf_counter_end_measurement_string(
                     unified_id),
