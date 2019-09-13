@@ -4,9 +4,13 @@ from dace.graph.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.data import Array
 
+from dace import symbolic
+from dace.codegen import cppunparse
+
 from dace.config import Config
 
 from dace.types import ScheduleType
+
 
 import re
 
@@ -21,6 +25,13 @@ from dace.graph import nodes
 # Helper function to get the module path
 if __name__ == "__main__":
     print("path: " + os.path.dirname(__file__))
+
+
+def sym2cpp(s):
+    """ Converts an array of symbolic variables (or one) to C++ strings. """
+    if not isinstance(s, list):
+        return cppunparse.pyexpr2cpp(symbolic.symstr(s))
+    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in s]
 
 
 class PAPISettings(object):
@@ -391,7 +402,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             unified_id = PAPIInstrumentation.unified_id(
                 dfg.node_id(node), state_id)
 
-            input_size = PAPIInstrumentation.get_memory_input_size(
+            input_size = PAPIUtils.get_memory_input_size(
                 node, sdfg, dfg, state_id, sym2cpp)
 
             perf_should_instrument = (
@@ -564,13 +575,13 @@ class PAPIInstrumentation(InstrumentationProvider):
         # Intrusively set the depth
         PAPIInstrumentation.set_map_depth(node, dfg)
 
-        input_size = PAPIInstrumentation.get_memory_input_size(
+        input_size = PAPIUtils.get_memory_input_size(
             node, sdfg, dfg, state_id, sym2cpp)
 
         if PAPISettings.perf_enable_instrumentation():
             idstr = "// (Node %d)\n" % unified_id
             result.write(idstr)  # Used to identify line numbers later
-            PerfMetaInfoStatic.info.add_node(node, idstr)
+            #PerfMetaInfoStatic.info.add_node(node, idstr)
 
         # Emit supersection if possible
         result.write(
@@ -581,7 +592,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                 node, dfg) and PAPISettings.perf_enable_instrumentation_for(
                     sdfg, node):
 
-            size = PAPIInstrumentation.accumulate_byte_movements_v2(
+            size = PAPIUtils.accumulate_byte_movements_v2(
                 node, node, dfg, sdfg, state_id)
             size = sp.simplify(size)
 
@@ -707,25 +718,30 @@ class PAPIInstrumentation(InstrumentationProvider):
         result = inner_stream
         if node.map.flatten:
             if (PAPISettings.perf_enable_instrumentation()
-                    and map_node.map._has_papi_counters):
+                    and node.map._has_papi_counters):
                 result.write(perf_end_string, sdfg, state_id, node)
 
             if PAPISettings.perf_debug_annotate_scopes:
-                result.write("// %s\n" % str(map_node), sdfg, state_id, node)
+                result.write("// %s\n" % str(node), sdfg, state_id, node)
 
         else:
             # TODO: Some of the code here refers to innermost vs. outermost
             #       loop in the generated code. Fix
-            if (PAPISettings.perf_enable_instrumentation()
-                    and map_node.map._has_papi_counters and
-                ((PAPISettings.perf_debug_profile_innermost and i == 0) or
-                 (not PAPISettings.perf_debug_profile_innermost
-                  and i == len(map_node.map.range) - 1))):
-                result.write(perf_end_string, sdfg, state_id, node)
+            for i in range(len(node.map.params)):
+                if (PAPISettings.perf_enable_instrumentation()
+                    and node.map._has_papi_counters and
+                    ((PAPISettings.perf_debug_profile_innermost and i == 0) or
+                     (not PAPISettings.perf_debug_profile_innermost
+                      and i == len(node.map.range) - 1))):
+                    result.write(perf_end_string, sdfg, state_id, node)
 
-            if (PAPISettings.perf_debug_annotate_scopes
-                    and i == len(map_node.map.range) - 1):
-                result.write("// %s\n" % str(map_node), sdfg, state_id, node)
+                if (PAPISettings.perf_debug_annotate_scopes
+                    and i == len(node.map.range) - 1):
+                    result.write("// %s\n" % str(node), sdfg, state_id, node)
+                result.write('}', sdfg, state_id, node)
+
+            # Write another set of braces to ensure closing braces work
+            result.write('{'*len(node.map.params))
 
         #############################################################
         # Outer part
@@ -734,7 +750,7 @@ class PAPIInstrumentation(InstrumentationProvider):
         if PAPISettings.perf_enable_vectorization_analysis():
             idstr = "// end (Node %d)\n" % unified_id
             result.write(idstr, sdfg, state_id, node)
-            PerfMetaInfoStatic.info.add_node(node, idstr)
+            #PerfMetaInfoStatic.info.add_node(node, idstr)
 
     def on_consume_exit(self, sdfg, state, node, outer_stream, inner_stream,
                         global_stream):
@@ -756,10 +772,16 @@ class PAPIInstrumentation(InstrumentationProvider):
     def perf_get_supersection_start_string(node, sdfg, dfg, unified_id):
         from dace import types
         if node.map.schedule == types.ScheduleType.CPU_Multicore:
+
+            if not hasattr(node.map, '_can_be_supersection_start'):
+                node.map._can_be_supersection_start = True
+
             # We have to find out if we should mark a section start here or later.
-            children = PAPIInstrumentation.all_maps(node, dfg)
+            children = PAPIUtils.all_maps(node, dfg)
             #print("children: " + str(children))
             for x in children:
+                if not hasattr(x.map, '_can_be_supersection_start'):
+                    x.map._can_be_supersection_start = True
                 if PAPIInstrumentation.map_depth(
                         x) > PAPISettings.perf_max_scope_depth():
                     break  # We have our relevant nodes.
@@ -845,7 +867,10 @@ class PAPIInstrumentation(InstrumentationProvider):
                 if following_nodes_invalid and depth:
                     e._map_depth = invalid_index  # Set an invalid index (this will never be instrumented)
                 else:
-                    e._map_depth = max(e._map_depth, depth)
+                    if hasattr(e, '_map_depth'):
+                        e._map_depth = max(e._map_depth, depth)
+                    else:
+                        e._map_depth = depth
 
                 # The consume node has no concept of fencing, yet is also executed in parallel. Therefore, we needed to be defensive here.
                 try:
@@ -2314,7 +2339,7 @@ LIMIT
         if len(children) > 0:
             size = 0
             for x in children:
-                size = size + PAPIInstrumentation.accumulate_byte_movements_v2(
+                size = size + PAPIUtils.accumulate_byte_movements_v2(
                     outermost_node, x, dfg, sdfg, state_id)
 
             return size
@@ -2388,11 +2413,11 @@ LIMIT
                 destination = dfg.scope_dict()[edge.dst]
                 if source == node and edge.dst != node:
                     subops.append(
-                        PAPIInstrumentation.accumulate_byte_movements(
+                        PAPIUtils.accumulate_byte_movements(
                             edge.dst, dfg, sym2cpp, sdfg, state_id))
                 if destination == node and edge.src != node:
                     subops.append(
-                        PAPIInstrumentation.accumulate_byte_movements(
+                        PAPIUtils.accumulate_byte_movements(
                             edge.src, dfg, sym2cpp, sdfg, state_id))
 
             # We can just simplify that directly
