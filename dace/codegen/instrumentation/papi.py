@@ -709,8 +709,10 @@ class PAPIInstrumentation(InstrumentationProvider):
     def on_map_exit(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
         state_id = sdfg.node_id(state)
+        entry_node = state.entry_node(node)
+
         unified_id = PAPIInstrumentation.unified_id(
-            state.node_id(node), state_id)
+            state.node_id(entry_node), state_id)
 
         perf_end_string = PAPIInstrumentation.perf_counter_end_measurement_string(
             unified_id)
