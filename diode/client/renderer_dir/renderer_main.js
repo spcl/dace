@@ -1136,25 +1136,6 @@ function message_handler(msg, sdfg_state = undefined) {
 
 }
 
-function isWithinBB(x, y, layoutinfo) {
-    if ((x > layoutinfo.x - layoutinfo.width/2.0) && 
-        (x < layoutinfo.x + layoutinfo.width/2.0) &&
-        (y > layoutinfo.y - layoutinfo.height/2.0) &&
-        (y < layoutinfo.y + layoutinfo.height/2.0)) {
-            return true;
-    }
-    return false;
-}
-
-function isWithinBBEdge(x, y, layoutinfo) {
-    if ((x >= layoutinfo.x) &&
-        (x <= layoutinfo.x + layoutinfo.width) &&
-        (y >= layoutinfo.y) &&
-        (y <= layoutinfo.y + layoutinfo.height)) {
-            return true;
-    }
-    return false;
-}
 
 function addXYOffset(g, x_offs, y_offs) {
     "use strict";

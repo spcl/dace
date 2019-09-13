@@ -1,10 +1,9 @@
 import {REST_request, FormBuilder, setup_drag_n_drop} from "./main.js"
-import * as renderer from "./renderer_dir/renderer_main.js"
 import { Appearance } from "./diode_appearance.js"
-import { SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
+import { SDFG_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 import * as Roofline from "./renderer_dir/Roofline/main.js"
-
+import { SDFGRenderer } from "./renderer.js"
 
 class DIODE_Settings {
     constructor(denormalized = {}) {
@@ -190,7 +189,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this._message_handler = x => alert(x);
 
-        this.initialized_sdfgs = [];
+        this.renderer_panes = [];
 
         this._analysis_values = {};
 
@@ -246,7 +245,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 return;
             }
             setTimeout(() => eh.emit(this.project().eventString('new-sdfg'), 'ok'), 1);
-            this.render_sdfg(msg, true);
+            this.create_renderer_pane(msg, true);
         });
 
         // #TODO: When multiple sdfgs are present, the event name
@@ -306,7 +305,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 forSection: x[5],
                 data: JSON.parse(x[6]),
             }));
-            for(let x of this.initialized_sdfgs) {
+            for(let x of this.renderer_panes) {
                 x.drawAllPerfInfo();
             }
         });
@@ -563,299 +562,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         return null;
     }
 
-    sdfg_element_selected(msg) {
-        let omsg = JSON.parse(msg);
-        if (omsg.msg_type.endsWith('click')) {
-            // ok
-        } else if (omsg.msg_type === 'contextmenu') {
-            // ok
-        } else if (omsg.msg_type === 'hover') {
-            // ok
-        } else {
-            console.log("Unexpected message type '" + omsg.msg_type + "'");
-            return;
-        }
-        let clicked_elems = omsg.clicked_elements;
-        let clicked_states = clicked_elems.filter(x => x.type === 'SDFGState');
-        let clicked_nodes = clicked_elems.filter(x => x.type !== 'SDFGState' && !x.type.endsWith("Edge"));
-        let clicked_edges = clicked_elems.filter(x => x.type === "MultiConnectorEdge");
-        let clicked_interstate_edges = clicked_elems.filter(x => x.type === "Edge");
-
-        let state_id = null;
-        let node_id = null;
-        if (clicked_states.length > 1) {
-            alert("Cannot determine clicked state!");
-            return;
-        }
-        if (clicked_nodes.length > 1) {
-            console.warn("Multiple nodes cannot be selected");
-            //#TODO: Arbitrate this - for now, we select the element with the lowest id
-        }
-
-        let state_only = false;
-
-        // Check if anything was clicked at all
-        if (clicked_states.length == 0 && clicked_interstate_edges.length == 0 && omsg.msg_type !== 'hover') {
-            // Nothing was selected
-            let sstate = this.initialized_sdfgs[0];
-            sstate.clearHighlights();
-            this.render_free_variables();
-            return;
-        }
-        if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
-            // A state was selected
-            if (clicked_states.length > 0)
-                state_only = true;
-        }
-
-        if (clicked_states.length > 0)
-            state_id = clicked_states[0].id;
-        if (clicked_interstate_edges.length > 0)
-            node_id = clicked_interstate_edges[0].id;
-
-        if (clicked_nodes.length > 0)
-            node_id = clicked_nodes[0].id;
-        else if (clicked_edges.length > 0)
-            node_id = clicked_edges[0].id;
-
-        if (omsg.msg_type === "hover") {
-            let sdfg = this.initialized_sdfgs[0].sdfg;
-
-            // Position for tooltip
-            let pos = omsg.lpos;
-
-            sdfg.mousepos = pos;
-
-            if (state_only) {
-                sdfg.hovered = {'state': [state_id, pos]};
-            } else if (clicked_nodes.length > 0)
-                sdfg.hovered = {'node': [state_id, node_id, pos]};
-            else if (clicked_edges.length > 0) {
-                let edge_id = clicked_edges[0].true_id;
-                sdfg.hovered = {'edge': [state_id, edge_id, pos]};
-            } else if (clicked_interstate_edges.length > 0) {
-                let isedge_id = clicked_interstate_edges[0].true_id;
-                sdfg.hovered = {'interstate_edge': [isedge_id, pos]};
-            } else {
-                sdfg.hovered = {};
-            }
-            return;
-        }
-
-        if (omsg.msg_type === "dblclick") {
-            let sdfg = this.initialized_sdfgs[0].sdfg;
-            let elem;
-            if (state_only) {
-                elem = sdfg.nodes[state_id];
-            } else if (clicked_nodes.length > 0) {
-                elem = sdfg.nodes[state_id].nodes[node_id];
-            } else {
-                return false;
-            }
-            // Toggle collapsed state
-            if ('is_collapsed' in elem.attributes) {
-                elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
-
-                // Re-layout SDFG
-                this.initialized_sdfgs[0].setSDFG(this.initialized_sdfgs[0].sdfg);
-                this.initialized_sdfgs[0].init_SDFG();
-            }
-            return;
-        }
-
-        if (omsg.msg_type == "contextmenu") {
-            // Context menu was requested
-            let spos = omsg.spos;
-            let lpos = omsg.lpos;
-
-            let cmenu = new ContextMenu();
-            cmenu.addOption("Show transformations", x => {
-                console.log("'Show transformations' was clicked");
-
-                this.project().request(['highlight-transformations-' + this.getState()['sdfg_name']], x => {
-
-                }, {
-                    params: {
-                        state_id: state_id,
-                        node_id: node_id
-                    }
-                });
-            });
-            cmenu.addOption("Apply transformation \u25B6", x => {
-                console.log("'Apply transformation' was clicked");
-
-                // Find available transformations for this node
-                this.project().request(['get-transformations-' + this.getState()['sdfg_name']], x => {
-                    console.log("get-transformations response: ", x);
-
-                    let tmp = Object.values(x)[0];
-
-                    // Create a sub-menu at the correct position
-
-
-                    let submenu = new ContextMenu();
-
-                    for (let y of tmp) {
-                        submenu.addOption(y.opt_name, x => {
-                            this.project().request(['apply-transformation-' + this.getState()['sdfg_name']], x => {
-                                },
-                                {
-                                    params: y.id_name
-                                });
-                        });
-                    }
-
-                    submenu.show(spos.x + cmenu.width(), spos.y);
-                }, {
-                    params: {
-                        state_id: state_id,
-                        node_id: node_id
-                    }
-                });
-
-                // Don't close the current context menu from this event
-                x.preventDefault();
-                x.stopPropagation();
-            });
-            cmenu.show(spos.x, spos.y);
-
-            return;
-        }
-
-        if (omsg.msg_type !== "click")
-            return;
-
-        // Highlight selected items
-        let sstate = this.initialized_sdfgs[0];
-        sstate.clearHighlights();
-        if (state_only) {
-            clicked_states.forEach(n => {
-                sstate.addHighlight({'state-id': state_id});
-            });
-        } else {
-            clicked_nodes.forEach(n => {
-                sstate.addHighlight({'state-id': state_id, 'node-id': n.id});
-            });
-            clicked_edges.forEach(e => {
-                sstate.addHighlight({'state-id': state_id, 'edge-id': e.true_id});
-            });
-            clicked_interstate_edges.forEach(e => {
-                sstate.addHighlight({'state-id': state_id, 'isedge-id': e.true_id});
-            });
-        }
-
-        // Render properties asynchronously
-        setTimeout(() => {
-            // Get and render the properties from now on
-            let sdfg_data = this.getSDFGDataFromState();
-            let sdfg = sdfg_data.sdfg;
-            let sdfg_name = sdfg_data.sdfg_name;
-
-            console.log("sdfg", sdfg);
-
-            let states = sdfg.nodes;
-            let state = null;
-            for (let x of states) {
-                if (x.id == state_id) {
-                    state = x;
-                    break;
-                }
-            }
-            let render_props = n => {
-                let attr = n.attributes;
-
-                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
-
-                let proplist = [];
-                for (let k of akeys) {
-
-                    let value = attr[k];
-                    let meta = attr["_meta_" + k];
-                    if (meta == undefined) {
-                        continue;
-                    }
-
-                    let pdata = JSON.parse(JSON.stringify(meta));
-                    pdata.value = value;
-                    pdata.name = k;
-
-                    proplist.push(pdata);
-                }
-                let nid = parseInt(n.id);
-                if (isNaN(nid) || node_id == null) {
-                    nid = node_id
-                }
-                let propobj = {
-                    node_id: nid,
-                    state_id: state_id,
-                    sdfg_name: sdfg_name,
-                    data: () => ({props: proplist})
-                };
-
-                this.renderProperties(propobj);
-            };
-            if (clicked_interstate_edges.length > 0) {
-                let edges = sdfg.edges;
-                for (let e of edges) {
-                    if (e.src == node_id.src && e.dst == node_id.dst) {
-                        render_props(e.attributes.data);
-                        break;
-                    }
-                }
-                return;
-            }
-            if (state_only) {
-                render_props(state);
-                return;
-            }
-
-            let nodes = state.nodes;
-            for (let ni = 0; ni < nodes.length; ++ni) {
-                let n = nodes[ni];
-                if (n.id != node_id)
-                    continue;
-
-                // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
-                if (n.type.endsWith("Entry")) {
-                    // Find the matching exit node
-                    let exit_node = this.find_exit_for_entry(nodes, n);
-                    // Highlight both entry and exit nodes
-                    sstate.addHighlight({'state-id': state_id, 'node-id': exit_node.id});
-                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
-                    render_props(tmp);
-
-                    break;
-                } else if (n.type.endsWith("Exit")) {
-                    // Find the matching entry node and continue with that
-                    let entry_id = parseInt(n.scope_entry);
-                    let entry_node = nodes[entry_id];
-                    // Highlight both entry and exit nodes
-                    sstate.addHighlight({'state-id': state_id, 'node-id': entry_id});
-                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
-                    render_props(tmp);
-                    break;
-                } else if (n.type === "AccessNode") {
-                    // Find matching data descriptor and show that as well
-                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
-                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
-                    render_props(tmp);
-                    break;
-                }
-
-                render_props(n);
-                break;
-            }
-
-            let edges = state.edges;
-            for (let e of edges) {
-                if (e.src == node_id.src && e.dst == node_id.dst) {
-                    render_props(e.attributes.data);
-                    break;
-                }
-            }
-        }, 0);
-    }
-
     getSDFGPropertiesFromState() {
         let o = this.getSDFGDataFromState();
         let props = o['sdfg_props'];
@@ -1020,7 +726,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
 
-    render_sdfg(sdfg_data = undefined, update = false) {
+    create_renderer_pane(sdfg_data = undefined, update = false) {
         if(sdfg_data == undefined) {
             sdfg_data = this.getState()["sdfg_data"];
         }
@@ -1048,73 +754,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
             "sdfg_data": tmp
         });
 
-        let _dbg_state = this.getState();
+        let sdfv = new SDFGRenderer(tmp, this, this.container.getElement());
+        this.renderer_panes.push(sdfv);
 
-        console.assert(JSON.stringify(_dbg_state.sdfg_data) == JSON.stringify(tmp));
-
-
-        // The HTML5 Renderer originally has been written for a WebSocket interface
-        // Not all functionality will work as expected in this environment!
-
-        let create = () => {
-
-            for(let x of this.initialized_sdfgs) {
-                this.container.getElement()[0].removeChild(x.getCanvas());
-                x.destroy();
-            }
-            this.initialized_sdfgs = [];
-            let sdfg_state = renderer.create_local();
-            let cnvs = document.createElement('canvas');
-            this.container.getElement().append(cnvs);
-            sdfg_state.setCtx(cnvs.getContext("2d"));
-            let sdfg = null;
-            if(tmp.type == "SDFG") {
-                sdfg = tmp;
-            } else {
-                sdfg = tmp.sdfg;
-            }
-
-            // TODO: Remove
-            let transmitter = {
-                send: x => this.sdfg_element_selected(x)
-            };
-
-            sdfg_state.setSDFG(sdfg);
-            sdfg_state.init_SDFG();
-
-            // Link the new message handler
-            this._message_handler = msg => renderer.message_handler(msg, sdfg_state);
-
-            // Link new mouse handlers
-            sdfg_state.setMouseHandlers(transmitter, true);
-
-            // Enable dragging
-            sdfg_state.setDragHandler();
-
-            // Enable scroll-zooming
-            sdfg_state.setZoomHandler();
-
-            // Link the analysis provider from which to pull values
-            sdfg_state.setAnalysisProvider((x, y) => this.analysisProvider(x,y));
-
-            this.initialized_sdfgs.push(sdfg_state);
-        };
-
-        jQuery.when(
-            jQuery.getScript('renderer_dir/global_vars.js'),
-            jQuery.getScript('renderer_dir/dagre.js'),
-            jQuery.getScript('renderer_dir/Chart.bundle.min.js'),
-            $.Deferred(function( deferred ){
-                $( deferred.resolve );
-            })
-        ).done(function() {
-            create();
-        });
-
-        // Prepare to display the access nodes for this sdfg (this is parallel to the creation of the sdfg, ideally)
-        let state = new SDFG_Parser(tmp['type'] == 'SDFG' ? tmp : tmp.sdfg);
-        let access_nodes = state.getStates().map(x => x.getNodes()).map(x => x.filter(y => y.isNodeType("AccessNode"))).filter(x => x.length > 0);
-        console.log("Access nodes", access_nodes);
+        // Display data descriptors by default (in parallel to the creation of the renderer)
+        this.render_free_variables();
     }
 
 
