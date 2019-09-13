@@ -906,7 +906,7 @@ class SetProperty(Property):
     @staticmethod
     def to_json(l):
         import json
-        return json.dumps([*l])
+        return json.dumps(list(sorted(l)))
 
     @staticmethod
     def from_json(l, sdfg=None):
