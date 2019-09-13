@@ -107,8 +107,6 @@ class PAPISettings(object):
     def perf_multirun_num(config=None):
         """ Amount of iterations with different PAPI configurations to run.
             (1 means no multirun). """
-        if not PAPISettings.perf_enable_instrumentation(config):
-            return 1
         return 1 + len(PAPISettings.perf_get_thread_nums(config))
 
     @staticmethod
@@ -161,19 +159,8 @@ class PAPISettings(object):
                            str(mode) + "_papi_counters"))
 
     @staticmethod
-    def perf_enable_timing(config=None):
-        return PAPISettings.get_config(
-            "instrumentation", "timeit", config=config)
-
-    @staticmethod
-    def perf_enable_instrumentation(config=None):
-        return PAPISettings.get_bool_config(
-            "instrumentation", "enable_papi", config=config)
-
-    @staticmethod
     def perf_enable_instrumentation_for(sdfg, node=None):
-        return PAPISettings.perf_enable_instrumentation(
-        ) and not sdfg.has_instrumented_parent()
+        return not sdfg.has_instrumented_parent()
 
     @staticmethod
     def perf_enable_overhead_collection():
@@ -229,35 +216,51 @@ class PAPIInstrumentation(InstrumentationProvider):
         database of performance results. """
 
     def __init__(self):
-        # Compiler arguments for vectorization output
-        if PAPISettings.perf_enable_vectorization_analysis():
-            Config.append(
-                'compiler',
-                'cpu',
-                'additional_args',
-                value=' -fopt-info-vec-optimized-missed=vecreport.txt ')
-        if PAPISettings.perf_enable_instrumentation():
+        self._papi_used = False
+        self._configured = False
+
+    def configure_papi(self):
+        if self._papi_used and not self._configured:
+            # Link with libpapi
             Config.append('compiler', 'cpu', 'libs', value=' papi ')
 
+            # Compiler arguments for vectorization output
+            if PAPISettings.perf_enable_vectorization_analysis():
+                Config.append(
+                    'compiler',
+                    'cpu',
+                    'additional_args',
+                    value=' -fopt-info-vec-optimized-missed=vecreport.txt ')
+
+            self._configured = True
+
+
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+        # Checking for PAPI usage
+        if sdfg.parent is None:
+            for node, _ in sdfg.all_nodes_recursive():
+                if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
+                    self._papi_used = True
+                    break
+                if hasattr(node, 'instrument') and node.instrument == dace.InstrumentationType.PAPI_Counters:
+                    self._papi_used = True
+                    break
+        # Configure CMake project
+        self.configure_papi()
+
+
         # Added for instrumentation includes
-        if sdfg.parent is None and (PAPISettings.perf_enable_instrumentation()
-                                    or PAPISettings.perf_enable_timing()):
+        if sdfg.parent is None and self._papi_used:
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
                 '#include <dace/perf/instrumentation.h>\n', sdfg)
 
-        # Define the performance store (autocleanup on destruction)
-        if sdfg.parent is None and PAPISettings.perf_enable_instrumentation():
+            # Define the performance store (autocleanup on destruction)
             local_stream.write(
                 'dace_perf::PAPI::init();\n' + 'dace_perf::%s __perf_store;\n'
                 % PAPIInstrumentation.perf_counter_store_string(
                     PAPISettings.perf_default_papi_counters()), sdfg)
 
-        if sdfg.parent is None and PAPISettings.perf_enable_timing():
-            local_stream.write("dace_perf::Timer __perf_timer;\n", sdfg)
-
-        if sdfg.parent is None and PAPISettings.perf_enable_instrumentation():
             if PAPISettings.perf_enable_overhead_collection():
                 # Get the measured overhead and take the minimum to compensate later.
                 local_stream.write("__perf_store.getMeasuredOverhead();\n",
@@ -278,15 +281,9 @@ class PAPIInstrumentation(InstrumentationProvider):
                     sdfg)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
-        if sdfg.parent is None and PAPISettings.perf_enable_instrumentation(
-        ) and PAPISettings.perf_max_scope_depth() == -1:
+        if sdfg.parent is None and self._papi_used and PAPISettings.perf_max_scope_depth() == -1:
             local_stream.write(
                 "__perf_global.leaveCritical(__perf_global_vs);\n", sdfg)
-
-        if sdfg.parent is None and PAPISettings.perf_enable_instrumentation(
-        ) and PAPISettings.perf_enable_timing():
-            local_stream.write(
-                "__perf_store.set_time(__perf_timer.collect());\n", sdfg)
 
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
         sid = sdfg.node_id(state)
@@ -294,8 +291,7 @@ class PAPIInstrumentation(InstrumentationProvider):
         # Supersections must be emitted before parallel sections
         parent_id = PAPIInstrumentation.unified_id(-1, sid)
         # TODO: Check if this is safe when SDFGs are nested...
-        if PAPISettings.perf_enable_instrumentation(
-        ) and PAPISettings.perf_max_scope_depth() != -1:
+        if (state.instrument == dace.InstrumentationType.PAPI_Counters and PAPISettings.perf_max_scope_depth() != -1):
             local_stream.write("__perf_store.markSuperSectionStart(%d);\n" %
                                PAPIInstrumentation.unified_id(-1, sid))
         #############################################################
@@ -380,8 +376,7 @@ class PAPIInstrumentation(InstrumentationProvider):
     def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
         if isinstance(node, nodes.Tasklet):
-            if PAPISettings.perf_tasklets and PAPISettings.perf_enable_instrumentation(
-            ):
+            if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 inner_stream.write(
                     "dace_perf::%s __perf_%s;\n" %
                     (PAPIInstrumentation.perf_counter_string(node),
@@ -408,7 +403,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                 node, sdfg, dfg, state_id, sym2cpp)
 
             perf_should_instrument = (
-                PAPISettings.perf_enable_instrumentation()
+                node.instrument == dace.InstrumentationType.PAPI_Counters
                 and not PAPIInstrumentation.has_surrounding_perfcounters(
                     node, dfg)
                 and PAPISettings.perf_enable_instrumentation_for(sdfg, node))
@@ -488,8 +483,7 @@ class PAPIInstrumentation(InstrumentationProvider):
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
         if isinstance(node, nodes.CodeNode):
-            if PAPISettings.perf_tasklets and PAPISettings.perf_enable_instrumentation(
-            ):
+            if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 inner_stream.write(
                     "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label,
                                                                 node.label),
@@ -498,15 +492,13 @@ class PAPIInstrumentation(InstrumentationProvider):
                     node,
                 )
 
-            if PAPISettings.perf_enable_instrumentation(
-            ) and PAPIInstrumentation.has_surrounding_perfcounters(
-                    node, state):
-                state_id = sdfg.node_id(state)
-                # Add bytes moved
-                inner_stream.write(
-                    "__perf_store.addBytesMoved(%s);" %
-                    PAPIUtils.reduce_iteration_count(
-                        node, state, sdfg, state_id))
+                if PAPIInstrumentation.has_surrounding_perfcounters(node, state):
+                    state_id = sdfg.node_id(state)
+                    # Add bytes moved
+                    inner_stream.write(
+                        "__perf_store.addBytesMoved(%s);" %
+                        PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, state_id),
+                    sdfg, state_id, node)
         elif isinstance(node, nodes.Reduce):
             result = inner_stream
             #############################################################
@@ -520,7 +512,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             # It also is wrong for write-avoiding min/max (min/max that only
             # overwrite the reduced variable when it needs to be changed)
 
-            if perf_should_instrument:
+            if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 result.write(
                     byte_moved_measurement % ("(sizeof(%s) + sizeof(%s))" %
                                               (outvar, invar)),
@@ -529,12 +521,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                     node,
                 )
 
-            if perf_should_instrument and (
-                (i == end_braces - 1
-                 and not PAPISettings.perf_debug_profile_innermost) or
-                (i == len(axes)
-                 and PAPISettings.perf_debug_profile_innermost)):
-                callsite_stream.write(
+                outer_stream.write(
                     PAPIInstrumentation.perf_counter_end_measurement_string(
                         unified_id),
                     sdfg,
@@ -712,6 +699,8 @@ class PAPIInstrumentation(InstrumentationProvider):
                     global_stream):
         state_id = sdfg.node_id(state)
         entry_node = state.entry_node(node)
+        if node.map.instrument != dace.InstrumentationType.PAPI_Counters:
+            return
 
         unified_id = PAPIInstrumentation.unified_id(
             state.node_id(entry_node), state_id)
@@ -722,8 +711,7 @@ class PAPIInstrumentation(InstrumentationProvider):
         # Inner part
         result = inner_stream
         if node.map.flatten:
-            if (PAPISettings.perf_enable_instrumentation()
-                    and node.map._has_papi_counters):
+            if node.map._has_papi_counters:
                 result.write(perf_end_string, sdfg, state_id, node)
 
             if PAPISettings.perf_debug_annotate_scopes:
@@ -915,13 +903,14 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     @staticmethod
     def instrument_entry(mapEntry: MapEntry, DFG: SubgraphView):
-        # Skip consume entries please
+        # Skip consume entries
         from dace.graph.nodes import ConsumeEntry
         if isinstance(mapEntry, ConsumeEntry):
             return False
+        if mapEntry.map.instrument != dace.InstrumentationType.PAPI_Counters:
+            return False
         depth = PAPIInstrumentation.map_depth(mapEntry)
-        cond1 = PAPISettings.perf_enable_instrumentation(
-        ) and depth <= PAPISettings.perf_max_scope_depth() and (
+        cond1 = depth <= PAPISettings.perf_max_scope_depth() and (
             PAPIInstrumentation.is_deepest_node(mapEntry, DFG)
             or depth == PAPISettings.perf_max_scope_depth())
         cond2 = mapEntry.map.schedule in PAPISettings.perf_whitelist_schedules
@@ -1779,46 +1768,45 @@ LIMIT
 
     @staticmethod
     def retrieve_instrumentation_results(executor, remote_workdir):
-        if PAPISettings.perf_enable_instrumentation(config=executor._config):
-            if executor.running_async:
-                # Add information about what is being run
-                executor.async_host.notify("Analyzing performance data")
-            try:
-                executor.copy_file_from_remote(
-                    remote_workdir + "/instrumentation_results.txt", ".")
-                executor.remote_delete_file(remote_workdir +
-                                            "/instrumentation_results.txt")
-                content = ""
-                readall = False
-                with open("instrumentation_results.txt") as ir:
+        if executor.running_async:
+            # Add information about what is being run
+            executor.async_host.notify("Analyzing performance data")
+        try:
+            executor.copy_file_from_remote(
+                remote_workdir + "/instrumentation_results.txt", ".")
+            executor.remote_delete_file(remote_workdir +
+                                        "/instrumentation_results.txt")
+            content = ""
+            readall = False
+            with open("instrumentation_results.txt") as ir:
 
-                    if readall:
-                        content = ir.read()
+                if readall:
+                    content = ir.read()
 
-                    if readall and PAPISettings.perf_print_instrumentation_output(
-                    ):
-                        print(
-                            "vvvvvvvvvvvvv Instrumentation Results vvvvvvvvvvvvvv"
-                        )
-                        print(content)
-                        print(
-                            "^^^^^^^^^^^^^ Instrumentation Results ^^^^^^^^^^^^^^"
-                        )
+                if readall and PAPISettings.perf_print_instrumentation_output(
+                ):
+                    print(
+                        "vvvvvvvvvvvvv Instrumentation Results vvvvvvvvvvvvvv"
+                    )
+                    print(content)
+                    print(
+                        "^^^^^^^^^^^^^ Instrumentation Results ^^^^^^^^^^^^^^"
+                    )
 
-                    if readall:
-                        PAPIInstrumentation.print_instrumentation_output(
-                            content, config=executor._config)
-                    else:
-                        PAPIInstrumentation.print_instrumentation_output(
-                            ir, config=executor._config)
+                if readall:
+                    PAPIInstrumentation.print_instrumentation_output(
+                        content, config=executor._config)
+                else:
+                    PAPIInstrumentation.print_instrumentation_output(
+                        ir, config=executor._config)
 
-                os.remove("instrumentation_results.txt")
-            except FileNotFoundError:
-                print("[Warning] Could not transmit instrumentation results")
+            os.remove("instrumentation_results.txt")
+        except FileNotFoundError:
+            print("[Warning] Could not transmit instrumentation results")
 
-            if executor.running_async:
-                # Add information about what is being run
-                executor.async_host.notify("Done Analyzing performance data")
+        if executor.running_async:
+            # Add information about what is being run
+            executor.async_host.notify("Done Analyzing performance data")
 
     @staticmethod
     def retrieve_vectorization_report(executor, code_objects, remote_dace_dir):
@@ -1843,8 +1831,7 @@ LIMIT
 
     @staticmethod
     def check_performance_counters(executor):
-        if PAPISettings.perf_enable_instrumentation(
-        ) and PAPISettings.perf_enable_counter_sanity_check():
+        if PAPISettings.perf_enable_counter_sanity_check():
             if executor.running_async:
                 executor.async_host.notify("Checking remote PAPI Counters")
             PerfPAPIInfoStatic.info.load_info()
@@ -1871,13 +1858,12 @@ LIMIT
 
     @staticmethod
     def dump_counter_information(executor):
-        if PAPISettings.perf_enable_instrumentation():
-            if executor.running_async:
-                executor.async_host.notify("Reading remote PAPI Counters")
-            print("Counters:\n" +
-                  str(PAPIInstrumentation.read_available_perfcounters()))
-            if executor.running_async:
-                executor.async_host.notify("Done reading remote PAPI Counters")
+        if executor.running_async:
+            executor.async_host.notify("Reading remote PAPI Counters")
+        print("Counters:\n" +
+              str(PAPIInstrumentation.read_available_perfcounters()))
+        if executor.running_async:
+            executor.async_host.notify("Done reading remote PAPI Counters")
 
     @staticmethod
     def gather_remote_metrics(config=None):

@@ -556,14 +556,9 @@ required:
         title: Instrumentation
         description: Instrumentation preferences
         required:
-            enable_papi:
-                type: bool
-                title: Enable PAPI
-                default: false
-                description: Enable instrumentation using PAPI
             thread_nums:
                 type: str
-                title: OMP_NUM_THREADS test set
+                title: PAPI thread test set
                 default: "[1,2,3,4]"
                 description: >
                     Measures performance of all provided values for OMP_NUM_THREADS.
@@ -615,11 +610,6 @@ required:
                     Sets the maximum depth of instrumentations in
                     map/consume scopes. Scopes that are deeper will not 
                     be instrumented.
-            timeit:
-                type: bool
-                title: "Measure execution time"
-                default: false
-                description: "Measures execution time using system timers. This can be used to determine instrumentation overhead"
             papi_mode:
                 type: str
                 title: "PAPI counter mode"
