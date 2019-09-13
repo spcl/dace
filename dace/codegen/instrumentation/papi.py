@@ -236,6 +236,8 @@ class PAPIInstrumentation(InstrumentationProvider):
                 'cpu',
                 'additional_args',
                 value=' -fopt-info-vec-optimized-missed=vecreport.txt ')
+        if PAPISettings.perf_enable_instrumentation():
+            Config.append('compiler', 'cpu', 'libs', value=' papi ')
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
         # Added for instrumentation includes
