@@ -811,7 +811,7 @@ class OpenCLCodeTransform(cpu.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs, constants=sdfg.constants)  ## Tiziano:  Added 'constants' argument for constructor
 
     def visit_Subscript(self, node):
         target = rname(node)
