@@ -170,4 +170,5 @@ _dotgraphs/
 /tests/diode/*.py.*
 
 client_configs/
+
 perfdata-dir/

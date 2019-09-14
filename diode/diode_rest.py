@@ -495,11 +495,11 @@ class ExecutorServer:
                             value=str(perfcores))
 
                         # Check if perfcounters are available
-                        from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfPAPIInfo
+                        from dace.codegen.instrumentation.papi import PAPISettings, PerfPAPIInfo
                         ppi = PerfPAPIInfo()
                         ppi.load_info()
                         if not ppi.check_counters(
-                            [PerfSettings.perf_default_papi_counters()]):
+                            [PAPISettings.perf_default_papi_counters()]):
                             yield '{"error": "PAPI Counter check failed. Either your machine does not provide the required counters or /proc/sys/kernel/perf_event_paranoid is not set correctly"}'
                             del self._task_dict[runindex]
                             self._slot_available = True
@@ -580,7 +580,9 @@ def getEnum(name):
         print("Enum type '" + str(name) + "' is not in Whitelist")
         abort(400)
 
-    return jsonify({'enum': [str(e).split(".")[-1] for e in eval(name)]})
+    return jsonify({
+        'enum': [str(e).split(".")[-1] for e in getattr(dace.types, name)]
+    })
 
 
 def collect_all_SDFG_nodes(sdfg):
@@ -1047,7 +1049,7 @@ def perfdata_roofline():
             client_id: string. The client id
 
     """
-    from dace.codegen.instrumentation.perfsettings import PerfUtils
+    from dace.codegen.instrumentation.papi import PAPIInstrumentation
 
     try:
         client_id = request.json['client_id']
@@ -1056,7 +1058,7 @@ def perfdata_roofline():
         abort(400)
 
     filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
-    retdict = PerfUtils.get_roofline_data(filepath)
+    retdict = PAPIInstrumentation.get_roofline_data(filepath)
     return jsonify(retdict)
 
 
@@ -1394,17 +1396,20 @@ def get_settings(client_id, name="", cv=None, config_path=""):
     ret = {}
     for i, (cname, cval) in enumerate(sorted(cv.items())):
         cpath = tuple(list(config_path) + [cname])
-        meta = Config.get_metadata(*cpath)
+        try:
+            meta = Config.get_metadata(*cpath)
 
-        # A dict contains more elements
-        if meta['type'] == 'dict':
-            ret[cname] = {
-                "value": get_settings(client_id, cname, cval, cpath),
-                "meta": meta
-            }
-            continue
-        # Other values can be included directly
-        ret[cname] = {"value": cval, "meta": meta}
+            # A dict contains more elements
+            if meta['type'] == 'dict':
+                ret[cname] = {
+                    "value": get_settings(client_id, cname, cval, cpath),
+                    "meta": meta
+                }
+                continue
+            # Other values can be included directly
+            ret[cname] = {"value": cval, "meta": meta}
+        except KeyError:
+            print('WARNING: No metadata for configuration key', cpath)
 
     return ret
 

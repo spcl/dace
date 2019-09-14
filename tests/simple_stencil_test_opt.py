@@ -1,2 +1,2 @@
-diode.OpenPythonFile("../samples/simple/simple_stencil.py")
+diode.OpenPythonFile("../samples/simple/jacobi.py")
 diode.Run()

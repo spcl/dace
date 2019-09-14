@@ -91,7 +91,7 @@ test_spmv:
     - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file spmv_test_opt.py -d2p "../diode/" | sh'
 
 
-test_simple_stencil:
+test_jacobi:
   stage: test
   tags: 
     - intel

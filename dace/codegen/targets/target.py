@@ -1,8 +1,11 @@
 import os
 import shutil  # which
+from typing import Dict
+
 import dace
 from dace import types
 from dace.graph import nodes, nxutil
+from dace.codegen.instrumentation.provider import InstrumentationProvider
 
 
 class TargetCodeGenerator(object):
@@ -222,6 +225,9 @@ class TargetDispatcher(object):
 
     def __init__(self):
         self._used_targets = set()
+
+        # type: Dict[dace.types.InstrumentationType, InstrumentationProvider]
+        self.instrumentation = {}
 
         self._array_dispatchers = {
         }  # Type: types.StorageType -> TargetCodeGenerator
