@@ -440,26 +440,34 @@ class PAPIInstrumentation(InstrumentationProvider):
                       global_stream):
         state_id = sdfg.node_id(state)
         unified_id = PAPIInstrumentation.unified_id(state.node_id(node), state_id)
-        if isinstance(node, nodes.Tasklet):
-            if node.instrument == dace.InstrumentationType.PAPI_Counters:
-                inner_stream.write(
-                    "dace_perf::%s __perf_%s;\n" %
-                    (PAPIInstrumentation.perf_counter_string(node),
-                     node.label),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-                inner_stream.write(
-                    "auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, %d, PAPI_thread_id(), 0);\n"
-                    % (node.label, node.label, unified_id),
-                    sdfg,
-                    state_id,
-                    node,
-                )
 
-                inner_stream.write("__perf_%s.enterCritical();\n" % node.label,
-                                   sdfg, state_id, node)
+        perf_should_instrument = (
+                node.instrument == dace.InstrumentationType.PAPI_Counters
+                and not PAPIInstrumentation.has_surrounding_perfcounters(
+                    node, state)
+                and PAPISettings.perf_enable_instrumentation_for(sdfg, node))
+        if not perf_should_instrument:
+            return
+
+        if isinstance(node, nodes.Tasklet):
+            inner_stream.write(
+                "dace_perf::%s __perf_%s;\n" %
+                (PAPIInstrumentation.perf_counter_string(node),
+                 node.label),
+                sdfg,
+                state_id,
+                node,
+            )
+            inner_stream.write(
+                "auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, %d, PAPI_thread_id(), 0);\n"
+                % (node.label, node.label, unified_id),
+                sdfg,
+                state_id,
+                node,
+            )
+
+            inner_stream.write("__perf_%s.enterCritical();\n" % node.label,
+                               sdfg, state_id, node)
         elif isinstance(node, nodes.Reduce):
             unified_id = PAPIInstrumentation.unified_id(
                 state.node_id(node), state_id)
@@ -467,73 +475,65 @@ class PAPIInstrumentation(InstrumentationProvider):
             input_size = PAPIUtils.get_memory_input_size(
                 node, sdfg, state, state_id, sym2cpp)
 
-            perf_should_instrument = (
-                node.instrument == dace.InstrumentationType.PAPI_Counters
-                and not PAPIInstrumentation.has_surrounding_perfcounters(
-                    node, state)
-                and PAPISettings.perf_enable_instrumentation_for(sdfg, node))
-
             # For measuring the memory bandwidth, we analyze the amount of data
             # moved.
             result = outer_stream
-            if perf_should_instrument:
-                perf_expected_data_movement_sympy = 1
+            perf_expected_data_movement_sympy = 1
 
-                input_memlet = state.in_edges(node)[0].data
-                output_memlet = state.out_edges(node)[0].data
-                # If axes were not defined, use all input dimensions
-                input_dims = input_memlet.subset.dims()
-                output_dims = output_memlet.subset.data_dims()
-                axes = node.axes
-                if axes is None:
-                    axes = tuple(range(input_dims))
+            input_memlet = state.in_edges(node)[0].data
+            output_memlet = state.out_edges(node)[0].data
+            # If axes were not defined, use all input dimensions
+            input_dims = input_memlet.subset.dims()
+            output_dims = output_memlet.subset.data_dims()
+            axes = node.axes
+            if axes is None:
+                axes = tuple(range(input_dims))
 
-                for axis in range(output_dims):
-                    ao = output_memlet.subset[axis]
-                    perf_expected_data_movement_sympy *= (
-                        ao[1] + 1 - ao[0]) / ao[2]
+            for axis in range(output_dims):
+                ao = output_memlet.subset[axis]
+                perf_expected_data_movement_sympy *= (
+                    ao[1] + 1 - ao[0]) / ao[2]
 
-                for axis in axes:
-                    ai = input_memlet.subset[axis]
-                    perf_expected_data_movement_sympy *= (
-                        ai[1] + 1 - ai[0]) / ai[2]
+            for axis in axes:
+                ai = input_memlet.subset[axis]
+                perf_expected_data_movement_sympy *= (
+                    ai[1] + 1 - ai[0]) / ai[2]
 
-                if not state.is_parallel():
-                    # Now we put a start marker, but only if we are in a serial state
-                    result.write(
-                        PAPIInstrumentation.perf_supersection_start_string(
-                            unified_id),
-                        sdfg,
-                        state_id,
-                        node,
-                    )
-
+            if not state.is_parallel():
+                # Now we put a start marker, but only if we are in a serial state
                 result.write(
-                    PAPIInstrumentation.perf_section_start_string(
-                        unified_id,
-                        str(sp.simplify(perf_expected_data_movement_sympy)) +
-                        (" * (sizeof(%s) + sizeof(%s))" % (
-                            sdfg.arrays[output_memlet.data].dtype.ctype,
-                            sdfg.arrays[input_memlet.data].dtype.ctype,
-                        )),
-                        input_size,
-                    ),
+                    PAPIInstrumentation.perf_supersection_start_string(
+                        unified_id),
                     sdfg,
                     state_id,
                     node,
                 )
+
+            result.write(
+                PAPIInstrumentation.perf_section_start_string(
+                    unified_id,
+                    str(sp.simplify(perf_expected_data_movement_sympy)) +
+                    (" * (sizeof(%s) + sizeof(%s))" % (
+                        sdfg.arrays[output_memlet.data].dtype.ctype,
+                        sdfg.arrays[input_memlet.data].dtype.ctype,
+                    )),
+                    input_size,
+                ),
+                sdfg,
+                state_id,
+                node,
+            )
 
             #############################################################
             # Internal part
             result = inner_stream
-            if perf_should_instrument:
-                result.write(
-                    PAPIInstrumentation.perf_counter_start_measurement_string(
-                        node, unified_id, '__o%d' % (output_dims - 1)),
-                    sdfg,
-                    state_id,
-                    node,
-                )
+            result.write(
+                PAPIInstrumentation.perf_counter_start_measurement_string(
+                    node, unified_id, '__o%d' % (output_dims - 1)),
+                sdfg,
+                state_id,
+                node,
+            )
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
@@ -543,21 +543,20 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         if isinstance(node, nodes.CodeNode):
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
-                inner_stream.write(
-                    "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label,
-                                                                node.label),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-                if PAPIInstrumentation.has_surrounding_perfcounters(node, state):
-                    state_id = sdfg.node_id(state)
-                    # Add bytes moved
+                if not PAPIInstrumentation.has_surrounding_perfcounters(node, state):
                     inner_stream.write(
-                        "__perf_store.addBytesMoved(%s);" %
-                        PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, state_id),
-                    sdfg, state_id, node)
+                        "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label,
+                                                                    node.label),
+                        sdfg,
+                        state_id,
+                        node,
+                    )
+
+                # Add bytes moved
+                inner_stream.write(
+                    "__perf_store.addBytesMoved(%s);" %
+                    PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, state_id),
+                sdfg, state_id, node)
         elif isinstance(node, nodes.Reduce):
             result = inner_stream
             #############################################################
@@ -589,6 +588,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                         else:
                             num_reduced_inputs *= input_size[d]
 
+
                 result.write(
                     byte_moved_measurement % ("%s * (sizeof(%s) + sizeof(%s))" %
                                               (sym2cpp(num_reduced_inputs),
@@ -599,13 +599,14 @@ class PAPIInstrumentation(InstrumentationProvider):
                     node,
                 )
 
-                result.write(
-                    PAPIInstrumentation.perf_counter_end_measurement_string(
-                        unified_id),
-                    sdfg,
-                    state_id,
-                    node,
-                )
+                if not PAPIInstrumentation.has_surrounding_perfcounters(node, state):
+                    result.write(
+                        PAPIInstrumentation.perf_counter_end_measurement_string(
+                            unified_id),
+                        sdfg,
+                        state_id,
+                        node,
+                    )
 
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):
