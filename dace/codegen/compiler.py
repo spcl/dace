@@ -17,8 +17,6 @@ import re
 from typing import List
 import numpy as np
 
-from inspect import isfunction
-
 import dace
 from dace.frontend import operations
 from dace.frontend.python import ndarray
@@ -26,10 +24,7 @@ from dace import symbolic, types, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets.cpu import CPUCodeGen
 from dace.codegen.targets.target import make_absolute
-
-from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfMetaInfoStatic
 
 
 # Specialized exception classes
@@ -353,11 +348,6 @@ def generate_program_folder(sdfg,
         with open(code_path, "w") as code_file:
             clean_code = re.sub(r'[ \t]*////__DACE:[^\n]*', '',
                                 code_object.code)
-
-            if PerfSettings.perf_enable_vectorization_analysis():
-                # Generate line number information from the code
-                # TODO: Make per code stream
-                code_object.perf_meta_info.resolve(clean_code)
             code_file.write(clean_code)
 
         filelist.append("{},{}".format(target_name, basename))

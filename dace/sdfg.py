@@ -580,6 +580,8 @@ class SDFG(OrderedDiGraph):
             if isinstance(scope, dace.graph.nodes.MapEntry):
                 for param in scope.params:
                     symbols[param] = dt.Scalar(symbolic.symbol(param).dtype)
+                for sym in scope.range.free_symbols:
+                    symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
             else:
                 raise TypeError("Unsupported entry node type: {}".format(
                     type(scope).__name__))
@@ -1903,6 +1905,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         dtype=bool,
         default=False,
         desc="Do not synchronize at the end of the state")
+
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
 
     def __init__(self, label=None, sdfg=None, debuginfo=None):
         """ Constructs an SDFG state.

@@ -89,6 +89,17 @@ class AccessType(AutoNumber):
     ReadWrite = ()
 
 
+class InstrumentationType(AutoNumber):
+    """ Types of instrumentation providers.
+        @note: Might be determined automatically in future versions.
+    """
+
+    No_Instrumentation = ()
+    Timer = ()
+    PAPI_Counters = ()
+    CUDA_Events = ()
+
+
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
     None: StorageType.CPU_Heap,
