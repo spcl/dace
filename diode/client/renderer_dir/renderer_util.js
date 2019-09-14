@@ -49,7 +49,6 @@ function createImageDownload(brackets, prefix="") {
     // TODO: Reevalutate this code and adjust to the case that there are more than 10 buttons (implement wrap-around, basically)
 
     let c = document.createElement("canvas");
-    
 
     let ctx = c.getContext("2d");
 
@@ -1906,6 +1905,7 @@ class CanvasDrawManager {
     }
     constructor(ctx, ref_global_state) {
         this.ctx = ctx;
+        this.anim_id = null;
         this.drawables = [];
         this.ref_global_state = ref_global_state;
         this.indices = [];
@@ -2127,9 +2127,12 @@ class CanvasDrawManager {
             ctx.fillText("(" + this.translation.x.toFixed(1) + "|" + this.translation.y.toFixed(1) + ")",  mx, my + 10);
             ctx.fillText("s:" + this.getScale().toFixed(1),  mx, my + 20);
         }
-        let _this = this;
-        window.requestAnimationFrame(() => _this.draw());
         this.contention -= 1;
+    }
+
+    draw_async() {
+        let _this = this;
+        this.anim_id = window.requestAnimationFrame(() => _this.draw());
     }
 }
 

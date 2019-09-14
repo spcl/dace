@@ -39,6 +39,8 @@ class SdfgState {
         this.request_download = "";
 
         this._canvas_click_event_listener = null;
+        this._canvas_hover_event_listener = null;
+        this._canvas_dblclick_event_listener = null;
         this._canvas_oncontextmenu_handler = null;
 
 
@@ -80,7 +82,7 @@ class SdfgState {
     }
 
     setCtx(ctx) { this.ctx = ctx; this.canvas_manager = new CanvasDrawManager(ctx, this); this.canvas_manager.draw(); }
-    setSDFG(sdfg) { this.sdfg = sdfg; this.graphcache = {}; }
+    setSDFG(sdfg) { this.sdfg = sdfg; this.graphcache = {}; this.canvas_manager.draw(); }
     perfdataIsLazy() {
         return this.perfdata != null && this.perfdata.type == "DataReady";
     }
@@ -199,7 +201,9 @@ class SdfgState {
     drawSDFG() {
         let g = this.top_level_graph;
         if(g == null) return; // Nothing to draw (yet)
-        paint_sdfg(g, this.sdfg, new DrawNodeState(this.ctx, -1, this));
+        var renderer = new DrawNodeState(this.ctx, -1, this);
+        renderer.onStartDraw();
+        paint_sdfg(g, this.sdfg, renderer);
 
         // Draw what is inside the state boxes, offset by the top 
         // left corner of the state box
@@ -215,20 +219,34 @@ class SdfgState {
             else {
                 if (state.attributes.is_collapsed == true) {
                     state_g = new dagre.graphlib.Graph();
-                    g.setGraph({});
-                    g.setDefaultEdgeLabel(function (u, v) { return {}; });
-                    dagre.layout(g);
+                    state_g.setGraph({});
+                    state_g.setDefaultEdgeLabel(function (u, v) { return {}; });
+                    dagre.layout(state_g);
+
+                    // Draw "+" sign that signifies that this state is collapsed
+                    let x = g.node(state.id).x;
+                    let y = g.node(state.id).y;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, y - LINEHEIGHT);
+                    this.ctx.lineTo(x, y + LINEHEIGHT);
+                    this.ctx.stroke();
+                    this.ctx.moveTo(x - LINEHEIGHT, y);
+                    this.ctx.lineTo(x + LINEHEIGHT, y);
+                    this.ctx.stroke();
                 }
                 else {
-                    state_g = layout_state(state, this);
+                    state_g = layout_state(state, this.sdfg, this);
                     addXYOffset(state_g, state_x_offs + 2*LINEHEIGHT, state_y_offs+2*LINEHEIGHT);
                     this.graphcache[state.id] = state_g;
                 }
 
             }
-            
-            paint_state(state_g, new DrawNodeState(ctx, state.id, this));
+
+            renderer.stateid = state.id;
+            paint_state(state_g, renderer);
         });
+
+        renderer.onEndDraw();
     }
 
     init_SDFG() {
@@ -237,6 +255,7 @@ class SdfgState {
         let g = layout_sdfg(sdfg, this);
         let bb = calculateBoundingBox(g);
         let cnvs = this.ctx.canvas;
+        cnvs.style.backgroundColor = "#ffffff";
         cnvs.width = Math.min(Math.max(bb.width + 1000, cnvs.width), 16384);
         cnvs.height = Math.min(Math.max(bb.height + 1000, cnvs.height), 16384);
         paint_sdfg(g, null, new DrawNodeState(this.ctx, -1, this));
@@ -249,7 +268,7 @@ class SdfgState {
             let state_y_offs = g.node(state.id).y - g.node(state.id).height / 2.0;
             let ctx = transthis.ctx;
             ctx.fillText(state.id, state_x_offs+1.0*LINEHEIGHT, state_y_offs+1.0*LINEHEIGHT);
-            let state_g = layout_state(state, this);
+            let state_g = layout_state(state, sdfg, this);
             addXYOffset(state_g, state_x_offs + 2*LINEHEIGHT, state_y_offs+2*LINEHEIGHT);
             paint_state(state_g, new DrawNodeState(ctx, state.id, transthis));
             transthis.setGraph(state.id, state_g);
@@ -796,7 +815,7 @@ class SdfgState {
     }
 
 
-    setOnclickHandler(transmitter, contextmenu = false) {
+    setMouseHandlers(transmitter, contextmenu = false) {
         /*
             transmitter: class instance or object with the following duck-typed properties:
                 .send(data):
@@ -813,11 +832,37 @@ class SdfgState {
         
         let zoom_comp = x => x;
 
+        // Click
         if(this._canvas_click_event_listener != null) {
             canvas().removeEventListener('click', this._canvas_click_event_listener);
         }
-        this._canvas_click_event_listener = x => canvas_onclick_handler(x, comp_x, comp_y, zoom_comp, this, transmitter);
+        this._canvas_click_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter);
         canvas().addEventListener('click', this._canvas_click_event_listener);
+
+        // Mouse-move (hover)
+        if(this._canvas_hover_event_listener != null) {
+            canvas().removeEventListener('mousemove', this._canvas_hover_event_listener);
+        }
+        this._canvas_hover_event_listener = x => canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter,
+            'hover');
+        canvas().addEventListener('mousemove', this._canvas_hover_event_listener);
+
+        // Double-click
+        if(this._canvas_dblclick_event_listener != null) {
+            canvas().removeEventListener('dblclick', this._canvas_dblclick_event_listener);
+        }
+        this._canvas_dblclick_event_listener = x => {
+            canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this,
+                transmitter, 'dblclick');
+        }
+        canvas().addEventListener('dblclick', this._canvas_dblclick_event_listener);
+
+        // Prevent double clicking from selecting text (see https://stackoverflow.com/a/43321596/6489142)
+        canvas().addEventListener('mousedown', function (event) {
+            if (event.detail > 1)
+                event.preventDefault();
+        }, false);
+
 
         if(contextmenu) {
 
@@ -826,12 +871,13 @@ class SdfgState {
             }
             this._canvas_oncontextmenu_handler = x => {
                 x.preventDefault();
-                canvas_onclick_handler(x, comp_x, comp_y, zoom_comp, this, transmitter, "contextmenu");
+                canvas_mouse_handler(x, comp_x, comp_y, zoom_comp, this, transmitter, "contextmenu");
             };
             canvas().addEventListener('contextmenu', this._canvas_oncontextmenu_handler);
         }
 
     }
+
 
     setDragHandler() {
         /*
@@ -859,9 +905,65 @@ class SdfgState {
                 ];
 
                 this.canvas_manager.translate(...movement);
+                this.canvas_manager.draw_async();
             }
         });
-        
+
+        // Touch event management
+        var lastTouch = null, secondTouch = null;
+        canvas.addEventListener("touchstart", function (e) {
+            let touch = e.touches[0];
+            lastTouch = touch;
+            if (e.targetTouches.length > 1)
+                secondTouch = e.touches[1];
+            let mouseEvent = new MouseEvent("mousedown", {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+        canvas.addEventListener("touchend", function (e) {
+            let mouseEvent = new MouseEvent("mouseup", {});
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+        canvas.addEventListener("touchmove", e => {
+            if (e.targetTouches.length == 2) { // zoom (pinching)
+                e.stopPropagation();
+                e.preventDefault();
+
+                // Find distance between two points and center, zoom to that
+                let centerX = (lastTouch.clientX + secondTouch.clientX) / 2.0;
+                let centerY = (lastTouch.clientY + secondTouch.clientY) / 2.0;
+                let initialDistance = Math.sqrt((lastTouch.clientX - secondTouch.clientX) ** 2 +
+                                                (lastTouch.clientY - secondTouch.clientY) ** 2);
+                let currentDistance = Math.sqrt((e.touches[0].clientX - e.touches[1].clientX) ** 2 +
+                                                (e.touches[0].clientY - e.touches[1].clientY) ** 2);
+
+                let br = () => canvas.getBoundingClientRect();
+
+                let comp_x = event => (centerX - br().left);
+                let comp_y = event => (centerY - br().top);
+                // TODO: Better scaling formula w.r.t. distance between touches
+                this.canvas_manager.scale((currentDistance - initialDistance) / 30000.0, comp_x(e), comp_y(e));
+
+                lastTouch = e.touches[0];
+                secondTouch = e.touches[1];
+            } else if (e.targetTouches.length == 1) { // dragging
+                let touch = e.touches[0];
+                if (!lastTouch)
+                    lastTouch = touch;
+                let mouseEvent = new MouseEvent("mousemove", {
+                    clientX: touch.clientX,
+                    clientY: touch.clientY,
+                    movementX: touch.clientX - lastTouch.clientX,
+                    movementY: touch.clientY - lastTouch.clientY,
+                    buttons: 1
+                });
+                lastTouch = touch;
+                canvas.dispatchEvent(mouseEvent);
+            }
+        }, false);
+        // End of touch-based events
     }
 
     setZoomHandler() {
@@ -877,13 +979,14 @@ class SdfgState {
         
             let comp_x = event => (event.clientX - br().left);
             let comp_y = event => (event.clientY - br().top);
-            this.canvas_manager.scale(e.deltaY / 1000.0, comp_x(e), comp_y(e));
+            this.canvas_manager.scale(-e.deltaY / 1000.0, comp_x(e), comp_y(e));
+            this.canvas_manager.draw_async();
 
         });
     }
 }
 
-function canvas_onclick_handler( event,
+function canvas_mouse_handler( event,
                                 comp_x_func,
                                 comp_y_func,
                                 zoom_comp_func,
@@ -912,24 +1015,29 @@ function canvas_onclick_handler( event,
                 }
             });
             // Check edges (Memlets). A memlet is considered "clicked" if the label is clicked.
-            state.edges.forEach((edge) => {
-                if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
-                    let elem = {'type': edge.type, 'id': {src: edge.src, dst: edge.dst }};
+            state.edges.forEach((edge, id) => {
+                if (isWithinBBEdge(x, y, edge.attributes.layout)) {
+                    let elem = {'type': edge.type, 'true_id': id,
+                        'id': {src: edge.src, dst: edge.dst }};
                     clicked_elements.push(elem);
                 }
             });
         }
     });
-    sdfg_state.sdfg.edges.forEach((edge) => {
-        if (isWithinBBEdgeLabel(x, y, edge.attributes.layout)) {
-            let elem = {'type': edge.type, 'id': {src: edge.src, dst: edge.dst }};
+    sdfg_state.sdfg.edges.forEach((edge, id) => {
+        if (isWithinBBEdge(x, y, edge.attributes.layout)) {
+            let elem = {'type': edge.type, 'true_id': id,
+                'id': {src: edge.src, dst: edge.dst }};
             clicked_elements.push(elem);
         }
     });
-    if(mode == "click") {
-        transmitter.send(JSON.stringify({"msg_type": "click", "clicked_elements": clicked_elements}));
+    if(mode === "click" || mode === "dblclick") {
+        transmitter.send(JSON.stringify({"msg_type": mode, "clicked_elements": clicked_elements}));
+
+        // Prevent text from being selected etc.
+        event.preventDefault();
     }
-    else if(mode == "contextmenu") {
+    else if(mode === "contextmenu") {
         // Send a message (as with the click handler), but include all information here as well.
         transmitter.send(JSON.stringify({
             "msg_type": "contextmenu", 
@@ -938,12 +1046,20 @@ function canvas_onclick_handler( event,
             'spos': { 'x': event.x, 'y': event.y}, // Screen position, i.e. as reported by the event
         }));
 
-        // #TOOD: What else should the host know about this event?
+    } else if(mode === "hover") {
+        if (event.buttons & 1) // Dragging does not induce redaw/hover
+            return;
 
-        // #TODO: It may be discussed whether the rendering context should also take care of rendering a context menu
-        // #TODO: Generally, the context itself does not know enough to provide useful options, but there might be
-        // #TODO: some options that we can add here. For now, leaving this blank is acceptable.
+        transmitter.send(JSON.stringify({
+            "msg_type": "hover",
+            "clicked_elements": clicked_elements,
+            "lpos": {'x': x, 'y': y}, // Logical position (i.e. inside the graph),
+            'spos': {'x': event.x, 'y': event.y}, // Screen position, i.e. as reported by the event
+        }));
     }
+
+    // TODO: Draw only if changed
+    sdfg_state.canvas_manager.draw_async();
 }
 
 function message_handler(msg, sdfg_state = undefined) {
@@ -1030,11 +1146,11 @@ function isWithinBB(x, y, layoutinfo) {
     return false;
 }
 
-function isWithinBBEdgeLabel(x, y, layoutinfo) {
-    if ((x > layoutinfo.x - layoutinfo.width) && 
-        (x < layoutinfo.x) &&
-        (y > layoutinfo.y - layoutinfo.height) &&
-        (y < layoutinfo.y)) {
+function isWithinBBEdge(x, y, layoutinfo) {
+    if ((x >= layoutinfo.x) &&
+        (x <= layoutinfo.x + layoutinfo.width) &&
+        (y >= layoutinfo.y) &&
+        (y <= layoutinfo.y + layoutinfo.height)) {
             return true;
     }
     return false;
@@ -1061,25 +1177,11 @@ function paint_sdfg(g, sdfg, drawnodestate) {
 
     ObjectHelper.assert("drawnodestate must be defined", drawnodestate != undefined);
 
-    let ctx = drawnodestate.ctx;
-
     g.nodes().forEach( v => {
-        let topleft_x = g.node(v).x - g.node(v).width / 2.0;
-        let topleft_y = g.node(v).y - g.node(v).height / 2.0;
-        
-        ctx.beginPath();
-        ctx.moveTo(topleft_x, topleft_y);
-        ctx.lineTo(topleft_x + g.node(v).width, topleft_y);
-        ctx.lineTo(topleft_x + g.node(v).width, topleft_y+g.node(v).height);
-        ctx.lineTo(topleft_x, topleft_y+g.node(v).height);
-        ctx.lineTo(topleft_x, topleft_y);
-        ctx.closePath();
-        ctx.strokeStyle="blue";
-        ctx.stroke();
-
+        drawnodestate.draw_state(g.node(v), v);
     });
-    g.edges().forEach(e => {
-        drawnodestate.draw_edge(g.edge(e));
+    g.edges().forEach((e, id) => {
+        drawnodestate.draw_edge(g.edge(e), id);
     });
 
 }
@@ -1111,7 +1213,7 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
             stateinfo.height = LINEHEIGHT;
         } 
         else {
-            let state_g = layout_state(state, sdfg_state);
+            let state_g = layout_state(state, sdfg, sdfg_state);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 4*LINEHEIGHT;
@@ -1120,9 +1222,10 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
     });
 
     sdfg.edges.forEach(function (edge) {
-        let label = edge.attributes.data.attributes.condition.string_data;
+        let label = edge.attributes.data.label;
         let textmetrics = ctx.measureText(label);
-        g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width });
+        g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width,
+                                        sdfg: sdfg });
     });
 
     dagre.layout(g);
@@ -1134,18 +1237,23 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
         state.attributes.layout.x = gnode.x;
         state.attributes.layout.y = gnode.y;
         state.attributes.layout.width = gnode.width;
+        state.attributes.layout.sdfg = sdfg;
         state.attributes.layout.height = gnode.height;
     });
 
     sdfg.edges.forEach(function (edge) {
         let gedge = g.edge(edge.src, edge.dst);
+        let bb = calculateEdgeBoundingBox(gedge);
         edge.attributes = {};
-        edge.attributes.label = gedge.label; 
+        edge.attributes.data = {};
+        edge.attributes.data.label = gedge.label;
+        edge.attributes.label = gedge.label;
         edge.attributes.layout = {};
-        edge.attributes.layout.width = gedge.width;
-        edge.attributes.layout.height = gedge.height;
-        edge.attributes.layout.x = gedge.x;
-        edge.attributes.layout.y = gedge.y;
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.sdfg = sdfg;
         edge.attributes.layout.points = gedge.points;
     });
 
@@ -1153,14 +1261,34 @@ function layout_sdfg(sdfg, sdfg_state = undefined) {
 
 }
 
-function layout_state(sdfg_state, controller_state = undefined) {
+function check_and_redirect_edge(edge, drawn_nodes, sdfg_state) {
+    // If destination is not drawn, no need to draw the edge
+    if (!drawn_nodes.has(edge.dst))
+        return null;
+    // If both source and destination are in the graph, draw edge as-is
+    if (drawn_nodes.has(edge.src))
+        return edge;
+
+    // If immediate scope parent node is in the graph, redirect
+    let scope_src = sdfg_state.nodes[edge.src].scope_entry;
+    if (!drawn_nodes.has(scope_src))
+        return null;
+
+    // Clone edge for redirection, change source to parent
+    let new_edge = Object.assign({}, edge);
+    new_edge.src = scope_src;
+
+    return new_edge;
+}
+
+function layout_state(sdfg_state, sdfg, controller_state = undefined) {
     // layout the state as a dagre graph
 
     if(controller_state === undefined) controller_state = global_state;
-    let g = new dagre.graphlib.Graph();
+    let g = new dagre.graphlib.Graph({multigraph: true});
 
     // Set an object for the graph label
-    g.setGraph({});
+    g.setGraph({ranksep: 15});
 
     // Default to assigning a new object as a label for each new edge.
     g.setDefaultEdgeLabel(function (u, v) { return {}; });
@@ -1169,8 +1297,12 @@ function layout_state(sdfg_state, controller_state = undefined) {
     // second is metadata about the node (label, width, height),
     // which will be updated by dagre.layout (will add x,y).
 
-    sdfg_state.nodes.forEach(function (node) {
-        let nodesize = calculateNodeSize(sdfg_state, node, controller_state)
+    // Process nodes hierarchically
+    let toplevel_nodes = sdfg_state.scope_dict[-1];
+    let drawn_nodes = new Set();
+
+    function draw_node(node) {
+        let nodesize = calculateNodeSize(sdfg_state, node, controller_state);
         node.attributes.layout = {}
         node.attributes.layout.width = nodesize.width;
         node.attributes.layout.height = nodesize.height;
@@ -1178,11 +1310,34 @@ function layout_state(sdfg_state, controller_state = undefined) {
         node.attributes.layout.type = node.type;
         node.attributes.layout.in_connectors = node.attributes.in_connectors;
         node.attributes.layout.out_connectors = node.attributes.out_connectors;
+        node.attributes.layout.properties = node.attributes;
+        node.attributes.layout.sdfg = sdfg;
+        node.attributes.layout.state = sdfg_state;
         g.setNode(node.id, node.attributes.layout);
+        drawn_nodes.add(node.id.toString());
+
+        // Recursively draw nodes
+        if (node.id in sdfg_state.scope_dict) {
+            if (node.attributes.is_collapsed)
+                return;
+            sdfg_state.scope_dict[node.id].forEach(function (nodeid) {
+                let node = sdfg_state.nodes[nodeid];
+                draw_node(node);
+            });
+        }
+    }
+
+
+    toplevel_nodes.forEach(function (nodeid) {
+        let node = sdfg_state.nodes[nodeid];
+        draw_node(node);
     });
 
     let ctx = controller_state.ctx;
-    sdfg_state.edges.forEach(edge => {
+    sdfg_state.edges.forEach((edge, id) => {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
+
         let label = edge.attributes.data.label;
         console.assert(label != undefined);
         let textmetrics = ctx.measureText(label);
@@ -1192,11 +1347,27 @@ function layout_state(sdfg_state, controller_state = undefined) {
             label: label,
             width: textmetrics.width,
             height: LINEHEIGHT,
+            sdfg: sdfg,
+            state: sdfg_state
         };
-        g.setEdge(edge.src, edge.dst, edge.attributes.layout);
+        g.setEdge(edge.src, edge.dst, edge.attributes.layout, id);
     });
 
     dagre.layout(g);
+
+
+    sdfg_state.edges.forEach(function (edge, id) {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
+        let gedge = g.edge(edge.src, edge.dst, id);
+        let bb = calculateEdgeBoundingBox(gedge);
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.points = gedge.points;
+    });
+
     return g;
 }
 
@@ -1223,17 +1394,24 @@ function calculateNodeSize(sdfg_state, node, controller_state = undefined) {
     let size = { width: maxwidth, height: maxheight }
 
     // add something to the size based on the shape of the node
-    if (node.type == "ArrayNode") {
+    if (node.type == "AccessNode") {
         size.width += size.height;
     }
-    else if (node.type == "MapEntry") {
+    else if (node.type.endsWith("Entry")) {
         size.width += 2.0 * size.height;
+        size.height /= 1.75;
     }
-    else if (node.type == "MapExit") {
+    else if (node.type.endsWith("Exit")) {
         size.width += 2.0 * size.height;
+        size.height /= 1.75;
     }
     else if (node.type == "Tasklet") {
         size.width += 2.0 * (size.height / 3.0);
+        size.height /= 1.75;
+    }
+    else if (node.type == "EmptyTasklet") {
+        size.width = 0.0;
+        size.height = 0.0;
     }
     else if (node.type == "Reduce") {
         size.width *= 2;
@@ -1263,6 +1441,33 @@ function calculateBoundingBox(g) {
     return bb;
 }
 
+function calculateEdgeBoundingBox(edge) {
+    // iterate over all points, calculate the size of the bounding box
+    let bb = {};
+    bb.x1 = edge.points[0].x;
+    bb.y1 = edge.points[0].y;
+    bb.x2 = edge.points[0].x;
+    bb.y2 = edge.points[0].y;
+
+    edge.points.forEach(function (p) {
+        bb.x1 = p.x < bb.x1 ? p.x : bb.x1;
+        bb.y1 = p.y < bb.y1 ? p.y : bb.y1;
+        bb.x2 = p.x > bb.x2 ? p.x : bb.x2;
+        bb.y2 = p.y > bb.y2 ? p.y : bb.y2;
+    });
+
+    bb = {'x': bb.x1, 'y': bb.y1, 'width': (bb.x2 - bb.x1),
+          'height': (bb.y2 - bb.y1)};
+    if (bb.width <= 5) {
+        bb.width = 10;
+        bb.x -= 5;
+    }
+    if (bb.height <= 5) {
+        bb.height = 10;
+        bb.y -= 5;
+    }
+    return bb;
+}
 
 
 function paint_state(g, drawnodestate) {
@@ -1272,7 +1477,7 @@ function paint_state(g, drawnodestate) {
     g.edges().forEach(function (e) {
         let edge = g.edge(e);
         ObjectHelper.assert("edge invalid", edge);
-        drawnodestate.draw_edge(g.edge(e));
+        drawnodestate.draw_edge(g.edge(e), e.name);
     });
 }
 
