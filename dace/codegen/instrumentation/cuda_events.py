@@ -107,6 +107,10 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
         state_id = sdfg.node_id(state)
         s = self._get_sobj(node)
         if s.instrument == types.InstrumentationType.CUDA_Events:
+            if s.schedule != types.ScheduleType.GPU_Device:
+                raise TypeError('CUDA Event instrumentation only applies to '
+                                'GPU_Device map scopes')
+            
             idstr = 'b' + self._idstr(sdfg, state, node)
             outer_stream.write(
                 self._record_event(idstr, node._cuda_stream), sdfg, state_id,
