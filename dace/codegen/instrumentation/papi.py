@@ -522,27 +522,14 @@ class PAPIInstrumentation(InstrumentationProvider):
                     state_id,
                     node,
                 )
-                # Outer part
-                result = outer_stream
-                # This could prevent the compiler from parallelizing/vectorizing
-                if perf_should_instrument:
-                        result.write(
-                            PAPIInstrumentation.
-                            perf_counter_start_measurement_string(
-                                node, unified_id, "__o" + str(axis)),
-                            sdfg,
-                            state_id,
-                            node,
-                        )
 
             #############################################################
             # Internal part
             result = inner_stream
             if perf_should_instrument:
-                # The outer dimensions no longer exist. We should add instrumentation anyway.
                 result.write(
                     PAPIInstrumentation.perf_counter_start_measurement_string(
-                        node, unified_id, 0),
+                        node, unified_id, '__o%d' % (output_dims - 1)),
                     sdfg,
                     state_id,
                     node,
@@ -589,40 +576,30 @@ class PAPIInstrumentation(InstrumentationProvider):
                 output_memlet = state.out_edges(node)[0].data
                 # If axes were not defined, use all input dimensions
                 input_dims = input_memlet.subset.dims()
-                output_dims = output_memlet.subset.data_dims()
                 axes = node.axes
                 if axes is None:
                     axes = tuple(range(input_dims))
-                # Obtain variable names per output and reduction axis
-                axis_vars = []
-                octr = 0
+
+                num_reduced_inputs = None
+                input_size = input_memlet.subset.size()
                 for d in range(input_dims):
                     if d in axes:
-                        axis_vars.append("__i%d" % d)
-                    else:
-                        axis_vars.append("__o%d" % octr)
-                        octr += 1
-
-                use_tmpout = (len(axes) == input_dims)
-
-                outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
-                    sdfg,
-                    output_memlet,
-                    offset=["__o%d" % i for i in range(output_dims)],
-                    relative_offset=False,
-                ))
-                invar = cpp_array_expr(
-                    sdfg, input_memlet, offset=axis_vars, relative_offset=False)
+                        if num_reduced_inputs is None:
+                            num_reduced_inputs = input_size[d]
+                        else:
+                            num_reduced_inputs *= input_size[d]
 
                 result.write(
-                    byte_moved_measurement % ("(sizeof(%s) + sizeof(%s))" %
-                                              (outvar, invar)),
+                    byte_moved_measurement % ("%s * (sizeof(%s) + sizeof(%s))" %
+                                              (sym2cpp(num_reduced_inputs),
+                                               sdfg.arrays[output_memlet.data].dtype.ctype,
+                                               sdfg.arrays[input_memlet.data].dtype.ctype)),
                     sdfg,
                     state_id,
                     node,
                 )
 
-                outer_stream.write(
+                result.write(
                     PAPIInstrumentation.perf_counter_end_measurement_string(
                         unified_id),
                     sdfg,

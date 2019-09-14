@@ -1877,6 +1877,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             end_braces += 1
             use_tmpout = True
 
+        # Instrumentation: internal part
+        if instr is not None:
+            callsite_stream.write(inner_stream.getvalue())
+
         # Generate inner loops (reducing)
         input_subset = input_memlet.subset
         for axis in axes:
@@ -1893,10 +1897,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 node,
             )
             end_braces += 1
-
-        # Instrumentation: internal part
-        if instr is not None:
-            callsite_stream.write(inner_stream.getvalue())
 
         # Generate reduction code
         credtype = "dace::ReductionType::" + str(
@@ -1926,14 +1926,16 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 (output_type, unparse_cr(sdfg, node.wcr), outvar, invar), sdfg,
                 state_id, node)  #cpp_array_expr(), cpp_array_expr()
 
-        if instr is not None:
-            outer_stream = CodeIOStream()
-            instr.on_node_end(sdfg, state_dfg, node, outer_stream,
-                              callsite_stream, function_stream)
-
         #############################################################
         # Generate closing braces
         for i in range(end_braces):
+            if i == len(axes):
+                # Instrumentation: post-scope
+                if instr is not None:
+                    outer_stream = CodeIOStream()
+                    instr.on_node_end(sdfg, state_dfg, node, outer_stream,
+                                      callsite_stream, function_stream)
+
             # Store back tmpout into the true output
             if i == end_braces - 1 and use_tmpout:
                 callsite_stream.write(
