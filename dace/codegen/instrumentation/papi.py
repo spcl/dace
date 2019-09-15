@@ -1186,7 +1186,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             ret = ""
             for x in self.entries:
                 ret += delim.join([
-                    prepend, "node" + self.nodeid, self.threadid,
+                    prepend, "node" + str(self.nodeid), self.threadid,
                     x.toCSVsubstring(delim)
                 ]) + linedelim
             return ret
@@ -1547,7 +1547,7 @@ class PAPIUtils(object):
                     # Add information about what is being run
                     executor.async_host.notify("Running baseline")
 
-                optdict = PAPIInstrumentation.get_cleanrun_options()
+                optdict = PAPIUtils.get_cleanrun_options()
 
         return (optdict, omp_thread_num)
 
@@ -1829,9 +1829,6 @@ LIMIT
     @staticmethod
     def get_cleanrun_options():
         optdict = {}
-        optdict[
-            "DACE_instrumentation_timeit"] = "1"  # Actually, should be "true"
-        optdict["DACE_instrumentation_enable_papi"] = "0"  # Disable PAPI
         optdict["DACE_compiler_use_cache"] = "0"  # Force recompilation
         return optdict
 
@@ -1863,10 +1860,10 @@ LIMIT
                     )
 
                 if readall:
-                    PAPIInstrumentation.print_instrumentation_output(
+                    PAPIUtils.print_instrumentation_output(
                         content, config=executor._config)
                 else:
-                    PAPIInstrumentation.print_instrumentation_output(
+                    PAPIUtils.print_instrumentation_output(
                         ir, config=executor._config)
 
             os.remove("instrumentation_results.txt")
@@ -2034,7 +2031,7 @@ LIMIT
     @staticmethod
     def reduce_iteration_count(begin, end, step, retparams: dict):
 
-        from dace.symbolic import symbols_in_sympy_expr, SymExpr
+        from dace.symbolic import symbols_in_sympy_expr
 
         # There are different rules when expanding depending on where the expand should happen
 
@@ -2105,7 +2102,7 @@ LIMIT
     @staticmethod
     def get_iteration_count(mapEntry: MapEntry, vars: dict):
         """ Get the number of iterations for this map, allowing other variables as bounds. """
-        from dace.symbolic import symbols_in_sympy_expr, SymExpr
+        from dace.symbolic import SymExpr
 
         _map = mapEntry.map
         _it = _map.params
@@ -2143,7 +2140,7 @@ LIMIT
 
         sub = []
         for x in children:
-            sub.extend(PAPIInstrumentation.all_maps(x, dfg))
+            sub.extend(PAPIUtils.all_maps(x, dfg))
 
         children.extend(sub)
         # children.extend([PAPIInstrumentation.all_maps(x, dfg) for x in children])
@@ -2184,7 +2181,7 @@ LIMIT
     @staticmethod
     def get_out_memlet_costs(sdfg, state_id, node, dfg):
         from dace.graph import nodes
-        from dace.sdfg import ScopeSubgraphView, SDFG, scope_contains_scope
+        from dace.sdfg import scope_contains_scope
         scope_dict = sdfg.nodes()[state_id].scope_dict()
 
         out_costs = 0
