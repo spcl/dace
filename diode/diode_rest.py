@@ -561,7 +561,7 @@ def getPubSSH():
     except:
         print("Failed to open keyfile")
         traceback.print_exc()
-        return jsonify({"error": "Could not open keyfile"})
+        return jsonify({"pubkey": "0"})
 
 
 @app.route('/dace/api/v1.0/getEnum/<string:name>', methods=['GET'])
