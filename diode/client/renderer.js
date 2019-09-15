@@ -557,7 +557,7 @@ class SDFGRenderer {
 
             // Recursively lay out nested SDFGs
             if (node.type === "NestedSDFG") {
-                let nested_g = this_.relayout_sdfg(node.sdfg);
+                let nested_g = this_.relayout_sdfg(node.attributes.sdfg);
                 let sdfginfo = calculateBoundingBox(nested_g);
                 node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
                 node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
@@ -623,6 +623,8 @@ class SDFGRenderer {
     // Render SDFG
     draw() {
         let ctx = this.ctx;
+
+
 
         this.on_post_draw();
     }

@@ -962,7 +962,9 @@ def compileProgram(request, language, perfopts=None):
         if len(errors) > 0:
             return errors
 
-        return (sdfg_dict, code_tuple_dict, dace_state)
+        # Only return top-level SDFG
+        return ({k: v for k,v in sdfg_dict.items() if v.parent is None}, code_tuple_dict, dace_state)
+        #return sdfg_dict, code_tuple_dict, dace_state
 
 
 def get_transformations(sdfgs):

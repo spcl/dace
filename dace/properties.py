@@ -645,7 +645,7 @@ class SDFGReferenceProperty(Property):
     def to_json(obj):
         if obj == None: return 'null'
 
-        return json.dumps(obj.label)
+        return obj.toJSON()
 
     @staticmethod
     def from_json(s, context=None):
