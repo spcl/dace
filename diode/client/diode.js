@@ -754,7 +754,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             "sdfg_data": tmp
         });
 
-        let sdfv = new SDFGRenderer(tmp, this, this.container.getElement());
+        let sdfv = new SDFGRenderer(tmp.sdfg, this, this.container.getElement());
         this.renderer_panes.push(sdfv);
 
         // Display data descriptors by default (in parallel to the creation of the renderer)
@@ -5834,7 +5834,7 @@ class DIODE {
 }
 
 
-class ContextMenu {
+export class ContextMenu {
     /*
         Implementation for a custom context menu
     */
