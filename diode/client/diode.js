@@ -5744,6 +5744,7 @@ class DIODE {
         If the addressed element does not respond within a given threshold,
         a new element created.
     */
+    // TODO: Likely to cause race conditions and unnecessary open tabs!! Rewrite
     replaceOrCreate(replace_request, replace_params, recreate_func) {
 
         //#TODO: Find out if it is a bug that one cannot use clearTimeout(recreation_timeout) instead of clearTimeout(tid) when replaceOrCreate-Calls are nested

@@ -1,4 +1,5 @@
 import {ContextMenu} from "./diode.js";
+import * as elements from "./renderer_elements.js";
 
 class CanvasManager {
     // Manages translation and scaling of canvas rendering
@@ -218,16 +219,21 @@ class CanvasManager {
     }
 }
 
-function isWithinBB(x, y, w, h, layoutinfo) {
+function isWithinBB(x, y, layoutinfo) {
     return (x >= layoutinfo.x - layoutinfo.width / 2.0) &&
-        (x + w <= layoutinfo.x + layoutinfo.width / 2.0) &&
+        (x <= layoutinfo.x + layoutinfo.width / 2.0) &&
         (y >= layoutinfo.y - layoutinfo.height / 2.0) &&
-        (y + h <= layoutinfo.y + layoutinfo.height / 2.0);
-
+        (y <= layoutinfo.y + layoutinfo.height / 2.0);
 }
 
-function isWithinBBEdge(x, y, w, h, layoutinfo) {
-    // TODO: Use w and h
+function isBBoverlapped(x, y, w, h, layoutinfo) {
+    return (x <= layoutinfo.x + layoutinfo.width / 2.0) &&
+        (x + w >= layoutinfo.x - layoutinfo.width / 2.0) &&
+        (y <= layoutinfo.y + layoutinfo.height / 2.0) &&
+        (y + h >= layoutinfo.y - layoutinfo.height / 2.0);
+}
+
+function isWithinBBEdge(x, y, layoutinfo) {
     // Compute distance between point and line for each point in curve
     for (let i = 0; i < layoutinfo.points.length - 1; i++) {
         let dist = ptLineDistance({x: x, y: y}, layoutinfo.points[i], layoutinfo.points[i + 1]);
@@ -238,9 +244,9 @@ function isWithinBBEdge(x, y, w, h, layoutinfo) {
     // Bounding box method
     /*
     return (x >= layoutinfo.x) &&
-        (x + w <= layoutinfo.x + layoutinfo.width) &&
+        (x <= layoutinfo.x + layoutinfo.width) &&
         (y >= layoutinfo.y) &&
-        (y + h <= layoutinfo.y + layoutinfo.height);
+        (y <= layoutinfo.y + layoutinfo.height);
     */
 }
 
@@ -369,6 +375,168 @@ function equals(a, b) {
      return JSON.stringify(a) === JSON.stringify(b);
 }
 
+// Layout SDFG elements (states, nodes, scopes, nested SDFGs)
+function relayout_sdfg(ctx, sdfg) {
+    let measureText = ctx.measureText;
+
+    // Layout the SDFG as a dagre graph
+    let g = new dagre.graphlib.Graph();
+    g.setGraph({});
+    g.setDefaultEdgeLabel(function (u, v) { return {}; });
+
+    // layout each state to get its size
+    sdfg.nodes.forEach((state) => {
+        let stateinfo = {};
+        stateinfo.label = state.id;
+        let state_g = null;
+        if (state.attributes.is_collapsed) {
+            stateinfo.width = measureText(stateinfo.label).width;
+            stateinfo.height = LINEHEIGHT;
+        }
+        else {
+            state_g = relayout_state(ctx, state, sdfg);
+            stateinfo = calculateBoundingBox(state_g);
+        }
+        stateinfo.width += 4*LINEHEIGHT;
+        stateinfo.height += 4*LINEHEIGHT;
+        g.setNode(state.id, new elements.State({state: state,
+                                                      layout: stateinfo,
+                                                      graph: state_g}, state.id, sdfg));
+    });
+
+    sdfg.edges.forEach(function (edge, id) {
+        let label = edge.attributes.data.label;
+        let textmetrics = measureText(label);
+        g.setEdge(edge.src, edge.dst, new elements.Edge({ name: label, label: label, height: LINEHEIGHT,
+                                                                width: textmetrics.width}, id, sdfg));
+    });
+
+    dagre.layout(g);
+
+    // annotate the sdfg with its layout info
+    sdfg.nodes.forEach(function (state) {
+        let gnode = g.node(state.id);
+        state.attributes.layout = {};
+        state.attributes.layout.x = gnode.x;
+        state.attributes.layout.y = gnode.y;
+        state.attributes.layout.width = gnode.width;
+        state.attributes.layout.height = gnode.height;
+    });
+
+    sdfg.edges.forEach(function (edge) {
+        let gedge = g.edge(edge.src, edge.dst);
+        let bb = calculateEdgeBoundingBox(gedge);
+        edge.attributes = {};
+        edge.attributes.data = {};
+        edge.attributes.data.label = gedge.label;
+        edge.attributes.label = gedge.label;
+        edge.attributes.layout = {};
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.points = gedge.points;
+    });
+
+    return g;
+}
+
+function relayout_state(ctx, sdfg_state, sdfg) {
+    // layout the state as a dagre graph
+    let g = new dagre.graphlib.Graph({multigraph: true});
+
+    // Set an object for the graph label
+    g.setGraph({ranksep: 15});
+
+    g.setDefaultEdgeLabel(function (u, v) { return {}; });
+
+    // Add nodes to the graph. The first argument is the node id. The
+    // second is metadata about the node (label, width, height),
+    // which will be updated by dagre.layout (will add x,y).
+
+    // Process nodes hierarchically
+    let toplevel_nodes = sdfg_state.scope_dict[-1];
+    let drawn_nodes = new Set();
+
+    function layout_node(node) {
+        let nested_g = null;
+        let nodesize = calculateNodeSize(sdfg_state, node, ctx);
+        node.attributes.layout = {}
+        node.attributes.layout.width = nodesize.width;
+        node.attributes.layout.height = nodesize.height;
+        node.attributes.layout.label = node.label;
+        node.attributes.layout.type = node.type;
+        node.attributes.layout.in_connectors = node.attributes.in_connectors;
+        node.attributes.layout.out_connectors = node.attributes.out_connectors;
+        node.attributes.layout.properties = node.attributes;
+        node.attributes.layout.sdfg = sdfg;
+        node.attributes.layout.state = sdfg_state;
+
+        // Recursively lay out nested SDFGs
+        if (node.type === "NestedSDFG") {
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg);
+            let sdfginfo = calculateBoundingBox(nested_g);
+            node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
+            node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
+        }
+
+        // Dynamically create node type
+        let obj = new elements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
+
+        g.setNode(node.id, obj);
+        drawn_nodes.add(node.id.toString());
+
+        // Recursively draw nodes
+        if (node.id in sdfg_state.scope_dict) {
+            if (node.attributes.is_collapsed)
+                return;
+            sdfg_state.scope_dict[node.id].forEach(function (nodeid) {
+                let node = sdfg_state.nodes[nodeid];
+                layout_node(node);
+            });
+        }
+    }
+
+
+    toplevel_nodes.forEach(function (nodeid) {
+        let node = sdfg_state.nodes[nodeid];
+        layout_node(node);
+    });
+
+    sdfg_state.edges.forEach((edge, id) => {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
+
+        let label = edge.attributes.data.label;
+        console.assert(label != undefined);
+        let textmetrics = ctx.measureText(label);
+
+        // Inject layout information analogous to state nodes
+        edge.attributes.layout = {
+            label: label,
+            width: textmetrics.width,
+            height: LINEHEIGHT
+        };
+        g.setEdge(edge.src, edge.dst, new elements.Edge(edge.attributes.layout, id, sdfg, sdfg_state.id), id);
+    });
+
+    dagre.layout(g);
+
+
+    sdfg_state.edges.forEach(function (edge, id) {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
+        let gedge = g.edge(edge.src, edge.dst, id);
+        let bb = calculateEdgeBoundingBox(gedge);
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.points = gedge.points;
+    });
+
+    return g;
+}
 
 class SDFGRenderer {
     constructor(sdfg, diode_context, container) {
@@ -386,6 +554,7 @@ class SDFGRenderer {
         this.last_clicked_elements = null;
 
         // Mouse-related fields
+        this.mousepos = null; // Last position of the mouse pointer
         this.drag_start = null; // Null if the mouse/touch is not activated
         this.drag_second_start = null; // Null if two touch points are not activated
 
@@ -410,7 +579,7 @@ class SDFGRenderer {
             this.canvas_manager = new CanvasManager(this.ctx, this);
 
             // Create the initial SDFG layout
-            this.relayout_sdfg();
+            this.relayout();
 
             // Set mouse event handlers
             this.set_mouse_handlers();
@@ -454,180 +623,53 @@ class SDFGRenderer {
         */
     }
 
-    // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-    relayout_sdfg(sdfg = null) {
-        let measureText = this.ctx.measureText;
+    // Re-layout graph and nested graphs
+    relayout() {
+        this.graph = relayout_sdfg(this.ctx, this.sdfg);
 
-        // Layout the SDFG as a dagre graph
-        let g = new dagre.graphlib.Graph();
-        g.setGraph({});
-        g.setDefaultEdgeLabel(function (u, v) { return {}; });
+        // Set canvas background and size according to SDFG size
+        this.canvas.style.backgroundColor = "#ffffff";
+        let bb = calculateBoundingBox(this.graph);
+        this.canvas.width = Math.min(Math.max(bb.width + 1000, this.canvas.width), 16384);
+        this.canvas.height = Math.min(Math.max(bb.height + 1000, this.canvas.height), 16384);
 
-        if (sdfg === null)
-            sdfg = this.sdfg;
-
-        // layout each state to get its size
-        sdfg.nodes.forEach((state) => {
-            let stateinfo = {};
-            stateinfo.label = state.id;
-            if (state.attributes.is_collapsed) {
-                stateinfo.width = measureText(stateinfo.label).width;
-                stateinfo.height = LINEHEIGHT;
-            }
-            else {
-                let state_g = this.relayout_state(state, sdfg);
-                stateinfo = calculateBoundingBox(state_g);
-            }
-            stateinfo.width += 4*LINEHEIGHT;
-            stateinfo.height += 4*LINEHEIGHT;
-            g.setNode(state.id, stateinfo);
-        });
-
-        sdfg.edges.forEach(function (edge) {
-            let label = edge.attributes.data.label;
-            let textmetrics = measureText(label);
-            g.setEdge(edge.src, edge.dst, { name: label, label: label, height: LINEHEIGHT, width: textmetrics.width,
-                                            sdfg: sdfg });
-        });
-
-        dagre.layout(g);
-
-        // annotate the sdfg with its layout info
-        sdfg.nodes.forEach(function (state) {
-            let gnode = g.node(state.id);
-            state.attributes.layout = {};
-            state.attributes.layout.x = gnode.x;
-            state.attributes.layout.y = gnode.y;
-            state.attributes.layout.width = gnode.width;
-            state.attributes.layout.sdfg = sdfg;
-            state.attributes.layout.height = gnode.height;
-        });
-
-        sdfg.edges.forEach(function (edge) {
-            let gedge = g.edge(edge.src, edge.dst);
-            let bb = calculateEdgeBoundingBox(gedge);
-            edge.attributes = {};
-            edge.attributes.data = {};
-            edge.attributes.data.label = gedge.label;
-            edge.attributes.label = gedge.label;
-            edge.attributes.layout = {};
-            edge.attributes.layout.width = bb.width;
-            edge.attributes.layout.height = bb.height;
-            edge.attributes.layout.x = bb.x;
-            edge.attributes.layout.y = bb.y;
-            edge.attributes.layout.sdfg = sdfg;
-            edge.attributes.layout.points = gedge.points;
-        });
-
-        return g;
-    }
-
-
-    relayout_state(sdfg_state, sdfg) {
-        // layout the state as a dagre graph
-        let g = new dagre.graphlib.Graph({multigraph: true});
-
-        // Set an object for the graph label
-        g.setGraph({ranksep: 15});
-
-        g.setDefaultEdgeLabel(function (u, v) { return {}; });
-
-        // Add nodes to the graph. The first argument is the node id. The
-        // second is metadata about the node (label, width, height),
-        // which will be updated by dagre.layout (will add x,y).
-
-        // Process nodes hierarchically
-        let toplevel_nodes = sdfg_state.scope_dict[-1];
-        let drawn_nodes = new Set();
-        let ctx = this.ctx;
-        let this_ = this;
-
-        function layout_node(node) {
-            let nodesize = calculateNodeSize(sdfg_state, node, ctx);
-            node.attributes.layout = {}
-            node.attributes.layout.width = nodesize.width;
-            node.attributes.layout.height = nodesize.height;
-            node.attributes.layout.label = node.label;
-            node.attributes.layout.type = node.type;
-            node.attributes.layout.in_connectors = node.attributes.in_connectors;
-            node.attributes.layout.out_connectors = node.attributes.out_connectors;
-            node.attributes.layout.properties = node.attributes;
-            node.attributes.layout.sdfg = sdfg;
-            node.attributes.layout.state = sdfg_state;
-
-            // Recursively lay out nested SDFGs
-            if (node.type === "NestedSDFG") {
-                let nested_g = this_.relayout_sdfg(node.attributes.sdfg);
-                let sdfginfo = calculateBoundingBox(nested_g);
-                node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
-                node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
-            }
-
-            g.setNode(node.id, node.attributes.layout);
-            drawn_nodes.add(node.id.toString());
-
-            // Recursively draw nodes
-            if (node.id in sdfg_state.scope_dict) {
-                if (node.attributes.is_collapsed)
-                    return;
-                sdfg_state.scope_dict[node.id].forEach(function (nodeid) {
-                    let node = sdfg_state.nodes[nodeid];
-                    layout_node(node);
-                });
-            }
-        }
-
-
-        toplevel_nodes.forEach(function (nodeid) {
-            let node = sdfg_state.nodes[nodeid];
-            layout_node(node);
-        });
-
-        sdfg_state.edges.forEach((edge, id) => {
-            edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
-            if (!edge) return;
-
-            let label = edge.attributes.data.label;
-            console.assert(label != undefined);
-            let textmetrics = ctx.measureText(label);
-
-            // Inject layout information analogous to state nodes
-            edge.attributes.layout = {
-                label: label,
-                width: textmetrics.width,
-                height: LINEHEIGHT,
-                sdfg: sdfg,
-                state: sdfg_state
-            };
-            g.setEdge(edge.src, edge.dst, edge.attributes.layout, id);
-        });
-
-        dagre.layout(g);
-
-
-        sdfg_state.edges.forEach(function (edge, id) {
-            edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
-            if (!edge) return;
-            let gedge = g.edge(edge.src, edge.dst, id);
-            let bb = calculateEdgeBoundingBox(gedge);
-            edge.attributes.layout.width = bb.width;
-            edge.attributes.layout.height = bb.height;
-            edge.attributes.layout.x = bb.x;
-            edge.attributes.layout.y = bb.y;
-            edge.attributes.layout.points = gedge.points;
-        });
-
-        return g;
+        return this.graph;
     }
 
     // Render SDFG
     draw() {
         let ctx = this.ctx;
+        let g = this.graph;
+        let curx = this.canvas_manager.translation.x;
+        let cury = this.canvas_manager.translation.y;
+        let curw = this.container.width();
+        let curh = this.container.height();
 
+        this.on_pre_draw();
 
+        // Render state machine
+        g.nodes().forEach( v => { g.node(v).draw(ctx, false, this.mousepos); });
+        g.edges().forEach( e => { g.edge(e).draw(ctx, false, this.mousepos); });
+
+        // TODO: Render each visible state's contents
+        g.nodes().forEach( v => {
+            let ng = g.node(v).data.graph;
+            let layout = g.node(v).data.state.attributes.layout;
+            //if (isBBoverlapped(curx, cury, curw, curh, layout))
+            {
+                ng.nodes().forEach(v => {
+                    ng.node(v).draw(ctx, false, this.mousepos);
+                });
+                ng.edges().forEach(e => {
+                    ng.edge(e).draw(ctx, false, this.mousepos);
+                });
+            }
+        });
 
         this.on_post_draw();
     }
+
+    on_pre_draw() { }
 
     on_post_draw() {
         let ctx = this.ctx;
@@ -649,12 +691,12 @@ class SDFGRenderer {
         function traverse_recursive(sdfg, elements) {
             let sdfg_name = sdfg.attributes.name;
             sdfg.nodes.forEach(function (state, state_id) {
-                if (isWithinBB(x, y, w, h, state.attributes.layout)) {
+                if (isWithinBB(x, y, state.attributes.layout)) {
                     // Selected states
                     elements.states.push({sdfg: sdfg_name, state: state_id});
 
                     state.nodes.forEach(function (node, node_id) {
-                        if (isWithinBB(x, y, w, h, node.attributes.layout)) {
+                        if (isWithinBB(x, y, node.attributes.layout)) {
                             // Selected nodes
                             elements.nodes.push({
                                 sdfg: sdfg_name, state: state_id, node: node_id
@@ -700,7 +742,7 @@ class SDFGRenderer {
 
                     // Selected edges
                     state.edges.forEach((edge, edge_id) => {
-                        if (isWithinBBEdge(x, y, w, h, edge.attributes.layout)) {
+                        if (isWithinBBEdge(x, y, edge.attributes.layout)) {
                             elements.edges.push({sdfg: sdfg_name, state: state_id, edge: edge_id});
                         }
                     });
@@ -709,7 +751,7 @@ class SDFGRenderer {
 
             // Selected inter-state edges
             sdfg.edges.forEach((edge, isedge_id) => {
-                if (isWithinBBEdge(x, y, w, h, edge.attributes.layout)) {
+                if (isWithinBBEdge(x, y, edge.attributes.layout)) {
                     elements.isedges.push({sdfg: sdfg_name, edge: isedge_id});
                 }
             });
@@ -735,6 +777,8 @@ class SDFGRenderer {
             this.drag_second_start = null;
 
         } else if (evtype === "mousemove" || evtype === "touchmove") {
+            this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
+
             // Zoom (pinching)
             if (evtype === "touchmove" && e.targetTouches.length == 2) {
                 // Find distance between two points and center, zoom to that
@@ -773,8 +817,8 @@ class SDFGRenderer {
                 if (ev.buttons & 1) {
                     // Only accept the primary (~left) mouse button as dragging source
                     let movement = [
-                        e.movementX,
-                        e.movementY
+                        ev.movementX,
+                        ev.movementY
                     ];
 
                     this.canvas_manager.translate(...movement);
@@ -820,11 +864,12 @@ class SDFGRenderer {
         let state_only = false;
 
         // Check if anything was clicked at all
-        if (clicked_states.length == 0 && clicked_interstate_edges.length == 0 && evtype !== 'hover') {
+        if (clicked_states.length == 0 && clicked_interstate_edges.length == 0 &&
+            (evtype === 'click' || evtype === 'contextmenu')) {
             // Nothing was selected
-            let sstate = this.initialized_sdfgs[0];
-            sstate.clearHighlights();
-            this.render_free_variables();
+            //let sstate = this.sdfg;
+            //sstate.clearHighlights();
+            this.diode.render_free_variables();
             return;
         }
         if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
