@@ -749,7 +749,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
 def create_DaceState(code, sdfg_dict, errors):
     dace_state = None
     try:
-        dace_state = DaceState(code, "fake", headless=True)
+        dace_state = DaceState(code, "fake.py", headless=True)
         for x in dace_state.sdfgs:
             name, sdfg = x
             sdfg_dict[name] = sdfg
@@ -946,7 +946,7 @@ def compileProgram(request, language, perfopts=None):
             else:
                 in_code = ""
             try:
-                dace_state = DaceState(in_code, "fake", headless=True)
+                dace_state = DaceState(in_code, "fake.py", headless=True)
                 dace_state.set_sdfg(
                     list(codegen_sdfgs_dace_state.values())[0],
                     list(codegen_sdfgs_dace_state.keys())[0])
