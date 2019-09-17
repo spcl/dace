@@ -289,15 +289,10 @@ class PAPIInstrumentation(InstrumentationProvider):
 
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
-        # Checking for PAPI usage
-        if sdfg.parent is None:
-            for node, _ in sdfg.all_nodes_recursive():
-                if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
-                    self._papi_used = True
-                    break
-                if hasattr(node, 'instrument') and node.instrument == dace.InstrumentationType.PAPI_Counters:
-                    self._papi_used = True
-                    break
+        self._papi_used = False
+        if sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
+            self._papi_used = True
+
         # Configure CMake project
         self.configure_papi()
 
@@ -1488,6 +1483,16 @@ class PAPIUtils(object):
     _unique_counter = 0
 
     @staticmethod
+    def is_papi_used(sdfg):
+        # Checking for PAPI usage
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
+                return True
+            if hasattr(node, 'instrument') and node.instrument == dace.InstrumentationType.PAPI_Counters:
+                return True
+        return False
+
+    @staticmethod
     def fallback_dict(available_events):
         """
         Defines potential fallbacks for unavailable PAPI (preset) events
@@ -1861,10 +1866,10 @@ LIMIT
 
                 if readall:
                     PAPIUtils.print_instrumentation_output(
-                        content, config=executor._config)
+                        content, config=executor._config or dace.Config)
                 else:
                     PAPIUtils.print_instrumentation_output(
-                        ir, config=executor._config)
+                        ir, config=executor._config or dace.Config)
 
             os.remove("instrumentation_results.txt")
         except FileNotFoundError:
