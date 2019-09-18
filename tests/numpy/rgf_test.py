@@ -5,8 +5,8 @@ import numpy as np
 N, BS = (dace.symbol(name) for name in ['N', 'BS'])
 
 
-def Her(A):
-    return np.transpose(np.conjugate(A))
+def Her(A, B):
+    np.copyto(B, np.transpose(np.conjugate(A)))
 
 
 @dace.program
@@ -30,13 +30,20 @@ def rgf_dense(HD: dace.complex128[N, BS, BS],
               fr: dace.complex128[1],
               GL: dace.complex128[N, BS, BS],
               GG: dace.complex128[N, BS, BS],
-              dTGL: dace.complex128[N]):
+              dTGL: dace.complex128[N],
+              Her: dace.callback(None, dace.complex128[BS, BS],
+                                 dace.complex128[BS, BS])):
 
     gR = np.ndarray((N, BS, BS), np.complex128)
     gL = np.ndarray((N, BS, BS), np.complex128)
     gG = np.ndarray((N, BS, BS), np.complex128)
     GR = np.ndarray((N, BS, BS), np.complex128)
     GLnd = np.ndarray((N, BS, BS), np.complex128)
+
+    her_gR = np.ndarray((BS, BS), np.complex128)
+    her_GR = np.ndarray((BS, BS), np.complex128)
+    her_M1 = np.ndarray((BS, BS), np.complex128)
+    her_M2 = np.ndarray((BS, BS), np.complex128)
 
     # sigLl = fl * 1j * gammaleft
     # sigLr = fr * 1j * gammaright
@@ -64,8 +71,9 @@ def rgf_dense(HD: dace.complex128[N, BS, BS],
     # gL[-1] = gR[-1] @ (sigmaLSD[-1] + sigLr) @ Her(gR[-1])
     # gG[-1] = gR[-1] @ (sigmaGSD[-1] + sigGr) @ Her(gR[-1])
     gR[-1] = HD[-1] - sigRr
-    gL[-1] = gR[-1] @ (sigmaLSD[-1] + sigLr) @ Her(gR[-1])
-    gG[-1] = gR[-1] @ (sigmaGSD[-1] + sigGr) @ Her(gR[-1])
+    Her(gR[-1], her_gR)
+    gL[-1] = gR[-1] @ (sigmaLSD[-1] + sigLr) @ her_gR
+    gG[-1] = gR[-1] @ (sigmaGSD[-1] + sigGr) @ her_gR
 
     for n in range(N - 2, -1, -1):
         sig = HF[n] @ gR[n + 1] @ HE[n + 1]
