@@ -14,8 +14,8 @@ from dace.transformation.interstate import StateFusion
 
 
 @make_properties
-class GPUTransformState(pattern_matching.Transformation):
-    """ Implements the GPUTransformState transformation.
+class GPUTransformSDFG(pattern_matching.Transformation):
+    """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
         Steps of the full GPU transform
@@ -331,4 +331,4 @@ class GPUTransformState(pattern_matching.Transformation):
                   ' {} redundant arrays.'.format(fusions, arrays))
 
 
-pattern_matching.Transformation.register_stateflow_pattern(GPUTransformState)
+pattern_matching.Transformation.register_stateflow_pattern(GPUTransformSDFG)

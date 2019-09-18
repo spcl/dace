@@ -890,6 +890,12 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                 self._frame._dispatcher.dispatch_deallocate(
                     sdfg, state, sid, node, function_stream, callsite_stream)
 
+            # Invoke all instrumentation providers
+            for instr in self._frame._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_state_end(sdfg, state, callsite_stream,
+                                       function_stream)
+
     def generate_devicelevel_state(self, sdfg, state, function_stream,
                                    callsite_stream):
 
@@ -989,6 +995,15 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         old_exit_stream = self.scope_exit_stream
         self.scope_entry_stream = CodeIOStream()
         self.scope_exit_stream = CodeIOStream()
+
+        # Instrumentation for kernel scope
+        instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
+        if instr is not None:
+            instr.on_scope_entry(sdfg, dfg, scope_entry, callsite_stream,
+                                 self.scope_entry_stream, self._globalcode)
+            outer_stream = CodeIOStream()
+            instr.on_scope_exit(sdfg, dfg, scope_exit, outer_stream,
+                                self.scope_exit_stream, self._globalcode)
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map,
@@ -1100,6 +1115,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         synchronize_streams(sdfg, dfg, state_id, scope_entry, scope_exit,
                             callsite_stream)
+
+        # Instrumentation (post-kernel)
+        if instr is not None:
+            callsite_stream.write(outer_stream.getvalue())
 
     def get_kernel_dimensions(self, dfg_scope):
         """ Determines a CUDA kernel's grid/block dimensions from map

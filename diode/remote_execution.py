@@ -1,15 +1,13 @@
 import os
 import sys
 import stat
-import dace
 import tempfile
 import traceback
 import subprocess
-import dace.types
 from string import Template
 from dace.codegen.compiler import generate_program_folder
 from dace.config import Config
-from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfUtils, PerfMetaInfo, PerfMetaInfoStatic, PerfPAPIInfoStatic
+from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
 
 
 class Executor:
@@ -53,7 +51,7 @@ class Executor:
                 break
 
         # Check counter validity
-        PerfUtils.check_performance_counters(self)
+        PAPIUtils.check_performance_counters(self)
 
         remote_workdir = self.config_get("execution", "general", "workdir")
         remote_dace_dir = remote_workdir + "/.dacecache/%s/" % dace_progname
@@ -65,8 +63,11 @@ class Executor:
                 # Add information about what is being run
                 self.async_host.notify("Generating remote workspace")
             tmpfolder = tempfile.mkdtemp()
-            generate_program_folder(dace_state.get_sdfg(), code_objects,
-                                    tmpfolder, config=self._config)
+            generate_program_folder(
+                dace_state.get_sdfg(),
+                code_objects,
+                tmpfolder,
+                config=self._config)
             self.create_remote_directory(remote_dace_dir)
             self.copy_folder_to_remote(tmpfolder, remote_dace_dir)
 
@@ -111,27 +112,36 @@ class Executor:
                 # Add information about what is being run
                 self.async_host.notify("All files copied to remote")
 
+            papi = PAPIUtils.is_papi_used(sdfg)
+
+
             # We got the file there, now we can run with different
             # configurations.
-            multirun_num = PerfSettings.perf_multirun_num(config=self._config)
+            if papi:
+                multirun_num = PAPISettings.perf_multirun_num(config=self._config)
+                for iteration in range(multirun_num):
+                    optdict, omp_thread_num = PAPIUtils.get_run_options(
+                        self, iteration)
 
-            for iteration in range(0, multirun_num):
-                optdict, omp_thread_num = PerfUtils.get_run_options(
-                    self, iteration)
+                    self.remote_exec_dace(
+                        remote_workdir,
+                        remote_dace_file,
+                        use_mpi,
+                        fail_on_nonzero,
+                        omp_num_threads=omp_thread_num,
+                        additional_options_dict=optdict)
 
+                    if self.running_async:
+                        # Add information about what is being run
+                        self.async_host.notify("Done option threads=" +
+                                               str(omp_thread_num))
+            else:
                 self.remote_exec_dace(
                     remote_workdir,
                     remote_dace_file,
                     use_mpi,
-                    fail_on_nonzero,
-                    omp_num_threads=omp_thread_num,
-                    additional_options_dict=optdict)
-
-                if self.running_async:
-                    # Add information about what is being run
-                    self.async_host.notify("Done option threads=" +
-                                           str(omp_thread_num))
-
+                    fail_on_nonzero)
+                
             self.show_output("Execution Terminated\n")
 
             try:
@@ -140,12 +150,13 @@ class Executor:
             except:
                 pass
 
-            # Copy back the vectorization results
-            PerfUtils.retrieve_vectorization_report(self, code_objects,
-                                                    remote_dace_dir)
+            if papi:
+                # Copy back the vectorization results
+                PAPIUtils.retrieve_vectorization_report(self, code_objects,
+                                                        remote_dace_dir)
 
-            # Copy back the instrumentation results
-            PerfUtils.retrieve_instrumentation_results(self, remote_workdir)
+                # Copy back the instrumentation results
+                PAPIUtils.retrieve_instrumentation_results(self, remote_workdir)
 
             if self.running_async:
                 # Add information about what is being run

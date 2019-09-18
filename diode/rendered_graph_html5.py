@@ -16,7 +16,7 @@ from gi.repository import GObject
 
 import sqlite3
 from diode.db_scripts.sql_to_json import MetaFetcher
-from dace.codegen.instrumentation.perfsettings import PerfSettings
+from dace.codegen.instrumentation.papi import PAPIInstrumentation
 
 
 class RenderedGraphHTML5:
@@ -231,8 +231,8 @@ class RenderedGraphHTML5:
                 )
                 return
             else:
-                from dace.codegen.instrumentation.perfsettings import PerfUtils
-                retdict = PerfUtils.get_roofline_data(self.data_source)
+                retdict = PAPIInstrumentation.get_roofline_data(
+                    self.data_source)
                 with self.comm_queue_lock_roofline:
                     self.command_queue_roofline.append(json.dumps(retdict))
 
@@ -528,7 +528,7 @@ WHERE
                                 mode="",
                                 data_source_path="fresh",
                                 forProgramID=None):
-        from dace.codegen.instrumentation.perfsettings import PerfSettings
+        from dace.codegen.instrumentation.papi import PAPISettings
 
         self.data_source = data_source_path
 
@@ -555,7 +555,7 @@ WHERE
             suffix = mode
 
             # If sql is enabled, use that
-            if PerfSettings.perf_use_sql():
+            if PAPISettings.perf_use_sql():
                 # Don't just send data, but send a message allowing the JS client to request data
                 self.add_to_command_queue("""
                 {
@@ -576,7 +576,7 @@ WHERE
             pass
 
     def set_memspeed_target(self):
-        from dace.codegen.instrumentation.perfsettings import PerfPAPIInfoStatic
+        from dace.codegen.instrumentation.papi import PerfPAPIInfoStatic
         self.command_queue.append('{ "type": "MemSpeed", "payload": "%s" }' %
                                   str(PerfPAPIInfoStatic.info.memspeed))
 

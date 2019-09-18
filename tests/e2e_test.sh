@@ -39,7 +39,7 @@ runtestopt() {
 runone() {
     echo "Running $1"
     runtest $1 gemm.py $2
-    runtest $1 simple_stencil.py $2
+    runtest $1 jacobi.py $2
     runtest $1 filter.py $2
     runtest $1 histogram.py $2
     runtest $1 spmv.py $2

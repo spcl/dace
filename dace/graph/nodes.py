@@ -13,7 +13,7 @@ from dace.properties import (
     DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, types
-import pickle, json
+import json
 
 # -----------------------------------------------------------------------------
 
@@ -244,7 +244,6 @@ class Tasklet(CodeNode):
     """
 
     label = Property(dtype=str, desc="Name of the tasklet")
-    #language = Property(enum=types.Language, default=types.Language.Python)
     code = CodeProperty(desc="Tasklet code")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -256,6 +255,11 @@ class Tasklet(CodeNode):
     location = Property(
         dtype=str, desc="Tasklet execution location descriptor")
     debuginfo = DebugInfoProperty()
+
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -365,6 +369,11 @@ class NestedSDFG(CodeNode):
         desc="Show this node/scope/state as collapsed",
         default=False)
 
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
+
     def __init__(self,
                  label,
                  sdfg,
@@ -452,7 +461,6 @@ class MapEntry(EntryNode):
         if map is None:
             raise ValueError("Map for MapEntry can not be None.")
         self._map = map
-        self._map_depth = 0
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
@@ -521,7 +529,6 @@ class Map(object):
         should be scheduled (execution order). Code generators can use the
         schedule property to generate appropriate code, e.g., GPU kernels.
     """
-    from dace.codegen.instrumentation.perfsettings import PerfSettings
 
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
@@ -536,21 +543,16 @@ class Map(object):
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
-    fence_instrumentation = Property(
-        dtype=bool, desc="Disable instrumentation in all subnodes")
-    #papi_counters = ListProperty(
-    #    dtype=list,
-    #    desc="List of PAPI counter preset identifiers.",
-    #    default=PerfSettings.perf_default_papi_counters())
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
         desc="Show this node/scope/state as collapsed",
         default=False)
 
-    # We cannot have multiple consecutive papi start/stops inside the same thread. The following variable is used to recognize the map that started the counters.
-    _has_papi_counters = False
-    _can_be_supersection_start = True  # We must have supersections synchronized.
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -614,7 +616,6 @@ class ConsumeEntry(EntryNode):
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
-        import dace.subsets
         c = Consume("", ['i', 1], None)
         ret = ConsumeEntry(consume=c)
         Property.set_properties_from_json(ret, json_obj, context=context)
@@ -695,7 +696,6 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements")
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    #language = Property(enum=types.Language, default=types.Language.Python)
     schedule = Property(
         dtype=types.ScheduleType,
         desc="Consume schedule",
@@ -710,6 +710,11 @@ class Consume(object):
         dtype=bool,
         desc="Show this node/scope/state as collapsed",
         default=False)
+
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -766,10 +771,8 @@ class Reduce(Node):
     """ An SDFG node that reduces an N-dimensional array to an 
         (N-k)-dimensional array, with a list of axes to reduce and
         a reduction binary function. """
-    from dace.codegen.instrumentation.perfsettings import PerfSettings
 
     # Properties
-    #axes = Property(dtype=tuple, allow_none=True)
     axes = ListProperty(dtype=list, allow_none=True)
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
@@ -778,12 +781,12 @@ class Reduce(Node):
         desc="Reduction execution policy",
         enum=types.ScheduleType,
         from_string=lambda x: types.ScheduleType[x])
-
-    #papi_counters = ListProperty(
-    #    dtype=list,
-    #    desc="List of PAPI counter preset identifiers.",
-    #    default=PerfSettings.perf_default_papi_counters())
     debuginfo = DebugInfoProperty()
+
+    instrument = Property(
+        enum=types.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=types.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  wcr,

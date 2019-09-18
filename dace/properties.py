@@ -906,7 +906,7 @@ class SetProperty(Property):
     @staticmethod
     def to_json(l):
         import json
-        return json.dumps([*l])
+        return json.dumps(list(sorted(l)))
 
     @staticmethod
     def from_json(l, sdfg=None):
@@ -1103,12 +1103,11 @@ class CodeProperty(Property):
         return unparse(obj)
 
     def __get__(self, obj, val):
-
         tmp = super(CodeProperty, self).__get__(obj, val)
         try:
             # To stay compatible, return the code only. The language has to be obtained differently
             tmp = tmp['code_or_block']
-        except:
+        except (KeyError, TypeError):
             pass
         return tmp
 
