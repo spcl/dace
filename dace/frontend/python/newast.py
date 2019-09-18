@@ -590,8 +590,9 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
     # Extend slices to unspecified dimensions
     for i in range(len(ast_ndslice), len(array.shape)):
-        ndslice[i] = (0, array.shape[idx] - 1, 1)
-        idx += 1
+        # ndslice[i] = (0, array.shape[idx] - 1, 1)
+        # idx += 1
+        ndslice[i] = (0, array.shape[i] - 1, 1)
         offsets.append(i)
 
     return ndslice, offsets
@@ -2696,13 +2697,17 @@ class ProgramVisitor(ExtNodeVisitor):
                                     'Type "%s" cannot be sliced' % arrtype)
 
             # Try to construct memlet from subscript
-            expr: MemletExpr = ParseMemlet(self, self.defined, node)
+            # expr: MemletExpr = ParseMemlet(self, self.defined, node)
+            # TODO: This needs to be formalized better
+            node.value.id = array
+            expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
             arrobj = self.sdfg.arrays[array]
 
             # TODO: Check dimensionality of access and extend as necessary
 
             # Add slicing state
             self._add_state('slice_%s_%d' % (array, node.lineno))
+            expr.subset.squeeze()
             tmp, tmparr = self.sdfg.add_temp_transient(
                 expr.subset.size(), arrobj.dtype, arrobj.storage)
             rnode = self.last_state.add_read(array)
