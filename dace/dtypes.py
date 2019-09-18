@@ -318,6 +318,120 @@ class struct(typeclass):
             ]))
 
 
+####### Utility function ##############
+def ptrtonumpy(ptr, inner_ctype, shape):
+    import ctypes
+    import numpy as np
+    return np.ctypeslib.as_array(
+        ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
+
+
+def _atomic_counter_generator():
+    ctr = 0
+    while True:
+        ctr += 1
+        yield ctr
+
+
+class callback(typeclass):
+    """ Looks like dace.callback([None, <some_native_type>], *types)"""
+
+    def __init__(self, return_type, *variadic_args):
+        self.uid = next(_atomic_counter_generator())
+        from dace import data
+        if isinstance(return_type, data.Array):
+            raise TypeError(
+                "Callbacks that return arrays are not supported as per SDFG semantics"
+            )
+        self.dtype = self
+        self.return_type = return_type
+        self.input_types = variadic_args
+        self.bytes = int64.bytes
+        self.materialize_func = None
+        self.type = self
+        self.ctype = self
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        from dace import data
+
+        return_ctype = (self.return_type.as_ctypes()
+                        if self.return_type is not None else None)
+        input_ctypes = []
+        for some_arg in self.input_types:
+            if isinstance(some_arg, data.Array):
+                input_ctypes.append(ctypes.c_void_p)
+            else:
+                input_ctypes.append(some_arg.as_ctypes()
+                                    if some_arg is not None else None)
+        if input_ctypes == [None]:
+            input_ctypes = []
+        cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
+        return cf_object
+
+    def signature(self, name):
+        from dace import data
+
+        return_type_cstring = (self.return_type.ctype
+                               if self.return_type is not None else "void")
+        input_type_cstring = []
+        for arg in self.input_types:
+            if isinstance(arg, data.Array):
+                # const hack needed to prevent error in casting const int* to int*
+                input_type_cstring.append(arg.dtype.ctype + " const *")
+            else:
+                input_type_cstring.append(arg.ctype if arg is not None else "")
+        cstring = return_type_cstring + " " + "(*" + name + ")("
+        for index, inp_arg in enumerate(input_type_cstring):
+            if index > 0:
+                cstring = cstring + ","
+            cstring = cstring + inp_arg
+        cstring = cstring + ")"
+        return cstring
+
+    def get_trampoline(self, pyfunc):
+        from functools import partial
+        from dace import data, symbolic
+
+        arraypos = []
+        types_and_sizes = []
+        for index, arg in enumerate(self.input_types):
+            if isinstance(arg, data.Array):
+                arraypos.append(index)
+                types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+        if len(arraypos) == 0:
+            return pyfunc
+
+        def trampoline(orig_function, indices, data_types_and_sizes,
+                       *other_inputs):
+            list_of_other_inputs = list(other_inputs)
+            for i in indices:
+                data_type, size = data_types_and_sizes[i]
+                non_symbolic_sizes = []
+                for s in size:
+                    if isinstance(s, symbolic.symbol):
+                        non_symbolic_sizes.append(s.get())
+                    else:
+                        non_symbolic_sizes.append(s)
+                list_of_other_inputs[i] = ptrtonumpy(
+                    other_inputs[i], data_type, non_symbolic_sizes)
+            return orig_function(*list_of_other_inputs)
+
+        return partial(trampoline, pyfunc, arraypos, types_and_sizes)
+
+    def __hash__(self):
+        return hash((self.uid, self.return_type, *self.input_types))
+
+    def __str__(self):
+        return "dace.callback"
+
+    def __repr__(self):
+        return "dace.callback"
+
+    def __eq__(self, other):
+        return self.uid == other.uid
+
+
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
