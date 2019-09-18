@@ -489,6 +489,22 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
     }
 
+    // Returns a goldenlayout component if exists, or null if doesn't
+    has_component(comp_name, parent=null) {
+        // If parent component not provided, use root window
+        if (!parent)
+            parent = this.diode.goldenlayout.root;
+        if ('componentName' in parent && parent.componentName === comp_name)
+            return parent;
+        if ('contentItems' in parent) {
+            for (let ci of parent.contentItems) {
+                let result = this.has_component(comp_name, ci);
+                if (result) return result;
+            }
+        }
+        return null;
+    }
+
     render_free_variables() {
         let sdfg_dat = this.getSDFGDataFromState();
         if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
@@ -497,6 +513,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
             calling_context: this.created
         },
         () => {
+            if (this.has_component('PropWinComponent'))
+                return;
+
             console.log("Calling recreation function");
             let config = {
                 type: 'component',
