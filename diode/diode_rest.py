@@ -963,7 +963,9 @@ def compileProgram(request, language, perfopts=None):
             return errors
 
         # Only return top-level SDFG
-        return ({k: v for k,v in sdfg_dict.items() if v.parent is None}, code_tuple_dict, dace_state)
+        return ({k: v
+                 for k, v in sdfg_dict.items()
+                 if v.parent is None}, code_tuple_dict, dace_state)
         #return sdfg_dict, code_tuple_dict, dace_state
 
 
@@ -1479,6 +1481,8 @@ if __name__ == '__main__':
         action="store_true",
         help="Restore the backup file")
 
+    parser.add_argument("-p", "--port", type=int, help="Port to listen on")
+
     args = parser.parse_args()
 
     if args.restoredace:
@@ -1518,6 +1522,7 @@ if __name__ == '__main__':
     app.run(
         host='localhost' if args.localhost else "0.0.0.0",
         debug=True,
+        port=args.port,
         use_reloader=False)
 
     es.stop()
