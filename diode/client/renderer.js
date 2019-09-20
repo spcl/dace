@@ -377,7 +377,7 @@ function equals(a, b) {
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
 function relayout_sdfg(ctx, sdfg) {
-    let measureText = ctx.measureText;
+    let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
     let g = new dagre.graphlib.Graph();
@@ -387,33 +387,34 @@ function relayout_sdfg(ctx, sdfg) {
     // layout each state to get its size
     sdfg.nodes.forEach((state) => {
         let stateinfo = {};
+
         stateinfo.label = state.id;
         let state_g = null;
         if (state.attributes.is_collapsed) {
-            stateinfo.width = measureText(stateinfo.label).width;
+            stateinfo.width = ctx.measureText(stateinfo.label).width;
             stateinfo.height = LINEHEIGHT;
         }
         else {
             state_g = relayout_state(ctx, state, sdfg);
             stateinfo = calculateBoundingBox(state_g);
         }
-        stateinfo.width += 4*LINEHEIGHT;
-        stateinfo.height += 4*LINEHEIGHT;
+        stateinfo.width += 2*STATE_MARGIN;
+        stateinfo.height += 2*STATE_MARGIN;
         g.setNode(state.id, new elements.State({state: state,
-                                                      layout: stateinfo,
-                                                      graph: state_g}, state.id, sdfg));
+                                                layout: stateinfo,
+                                                graph: state_g}, state.id, sdfg));
     });
 
-    sdfg.edges.forEach(function (edge, id) {
+    sdfg.edges.forEach((edge, id) => {
         let label = edge.attributes.data.label;
-        let textmetrics = measureText(label);
+        let textmetrics = ctx.measureText(label);
         g.setEdge(edge.src, edge.dst, new elements.Edge({ name: label, label: label, height: LINEHEIGHT,
                                                                 width: textmetrics.width}, id, sdfg));
     });
 
     dagre.layout(g);
 
-    // annotate the sdfg with its layout info
+    // Annotate the sdfg with its layout info
     sdfg.nodes.forEach(function (state) {
         let gnode = g.node(state.id);
         state.attributes.layout = {};
@@ -436,6 +437,29 @@ function relayout_sdfg(ctx, sdfg) {
         edge.attributes.layout.x = bb.x;
         edge.attributes.layout.y = bb.y;
         edge.attributes.layout.points = gedge.points;
+    });
+
+    // Offset node and edge locations to be in state margins
+    sdfg.nodes.forEach((s, sid) => {
+        if (s.attributes.is_collapsed)
+            return;
+
+        let state = g.node(sid);
+        let topleft = state.topleft({x: 0, y: 0});
+        s.nodes.forEach((n, nid) => {
+            let node = state.data.graph.node(nid);
+            node.x += topleft.x + STATE_MARGIN;
+            node.y += topleft.y + STATE_MARGIN;
+        });
+        s.edges.forEach((e, eid) => {
+            let edge = state.data.graph.edge(e.src, e.dst, eid);
+            edge.x += topleft.x + STATE_MARGIN;
+            edge.y += topleft.y + STATE_MARGIN;
+            edge.data.points.forEach((p) => {
+                p.x += topleft.x + STATE_MARGIN;
+                p.y += topleft.y + STATE_MARGIN;
+            });
+        });
     });
 
     return g;
@@ -530,6 +554,10 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         let bb = calculateEdgeBoundingBox(gedge);
         edge.attributes.layout.width = bb.width;
         edge.attributes.layout.height = bb.height;
+        edge.width = bb.width;
+        edge.height = bb.height;
+        edge.x = bb.x;
+        edge.y = bb.y;
         edge.attributes.layout.x = bb.x;
         edge.attributes.layout.y = bb.y;
         edge.attributes.layout.points = gedge.points;
@@ -647,36 +675,14 @@ class SDFGRenderer {
 
         this.on_pre_draw();
 
-        // Render state machine
-        g.nodes().forEach( v => { g.node(v).draw(ctx, false, this.mousepos); });
-        g.edges().forEach( e => { g.edge(e).draw(ctx, false, this.mousepos); });
-
-        // TODO: Render each visible state's contents
-        g.nodes().forEach( v => {
-            let ng = g.node(v).data.graph;
-            let layout = g.node(v).data.state.attributes.layout;
-            //if (isBBoverlapped(curx, cury, curw, curh, layout))
-            {
-                ng.nodes().forEach(v => {
-                    ng.node(v).draw(ctx, false, this.mousepos);
-                });
-                ng.edges().forEach(e => {
-                    ng.edge(e).draw(ctx, false, this.mousepos);
-                });
-            }
-        });
+        elements.draw_sdfg(ctx, g, {x: curx, y: cury, w: curw, h: curh}, this.mousepos);
 
         this.on_post_draw();
     }
 
     on_pre_draw() { }
 
-    on_post_draw() {
-        let ctx = this.ctx;
-        ctx.save();
-        ctx.fillText('aaa', 0, 0);
-        ctx.restore();
-    }
+    on_post_draw() { }
 
     // Returns a dictionary of SDFG elements in a given rectangle. Used for
     // selection, rendering, localized transformations, etc.
@@ -693,13 +699,13 @@ class SDFGRenderer {
             sdfg.nodes.forEach(function (state, state_id) {
                 if (isWithinBB(x, y, state.attributes.layout)) {
                     // Selected states
-                    elements.states.push({sdfg: sdfg_name, state: state_id});
+                    elements.states.push({sdfg: sdfg_name, id: state_id});
 
                     state.nodes.forEach(function (node, node_id) {
                         if (isWithinBB(x, y, node.attributes.layout)) {
                             // Selected nodes
                             elements.nodes.push({
-                                sdfg: sdfg_name, state: state_id, node: node_id
+                                sdfg: sdfg_name, state: state_id, id: node_id
                             });
 
                             // NOTE: Connectors are sized LINEHEIGHT x LINEHEIGHT, spaced evenly with LINEHEIGHT
@@ -743,7 +749,7 @@ class SDFGRenderer {
                     // Selected edges
                     state.edges.forEach((edge, edge_id) => {
                         if (isWithinBBEdge(x, y, edge.attributes.layout)) {
-                            elements.edges.push({sdfg: sdfg_name, state: state_id, edge: edge_id});
+                            elements.edges.push({sdfg: sdfg_name, state: state_id, id: edge_id});
                         }
                     });
                 }
@@ -752,7 +758,7 @@ class SDFGRenderer {
             // Selected inter-state edges
             sdfg.edges.forEach((edge, isedge_id) => {
                 if (isWithinBBEdge(x, y, edge.attributes.layout)) {
-                    elements.isedges.push({sdfg: sdfg_name, edge: isedge_id});
+                    elements.isedges.push({sdfg: sdfg_name, id: isedge_id});
                 }
             });
         }
@@ -928,7 +934,7 @@ class SDFGRenderer {
                 elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
 
                 // Re-layout SDFG
-                this.relayout_sdfg();
+                this.relayout();
                 this.draw_async();
             }
             return;
@@ -1043,7 +1049,7 @@ class SDFGRenderer {
                     data: () => ({props: proplist})
                 };
 
-                this.renderProperties(propobj);
+                this.diode.renderProperties(propobj);
             };
             if (clicked_interstate_edges.length > 0) {
                 let edges = sdfg.edges;
