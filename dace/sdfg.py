@@ -3297,7 +3297,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if e.data.other_subset is not None:
                     undefs = (e.data.other_subset.free_symbols -
                               defined_symbols - undefined_syms)
-                    if len(undefs) != len(e.data.other_subset.free_symbols):
+                    if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet '
                             'other_subset' % undefs, sdfg, state_id, eid)
