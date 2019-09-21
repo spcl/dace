@@ -589,7 +589,12 @@ class SDFG(OrderedDiGraph):
 
         # Call recursively on parents
         if self.parent is not None:
-            symbols.update(self.parent.symbols_defined_at(self))
+            # Find parent Nested SDFG node
+            parent_node = next(
+                n for n in self.parent.nodes()
+                if isinstance(n, nd.NestedSDFG) and n.sdfg == self)
+            symbols.update(
+                self._parent_sdfg.symbols_defined_at(parent_node, self.parent))
 
         symbols.update(self.constants)
 
@@ -2983,6 +2988,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 "State does not point to the correct "
                 "parent", sdfg, state_id)
 
+        # Used in memlet validation
+        undefined_syms = set(sdfg.undefined_symbols(True).keys())
+
         # Unreachable
         ########################################
         if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(self) == 0
@@ -3276,6 +3284,23 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         raise InvalidSDFGEdgeError(
                             "Memlet other_subset out-of-bounds", sdfg,
                             state_id, eid)
+
+                # Test subset and other_subset for undefined symbols
+                defined_symbols = set(
+                    sdfg.symbols_defined_at(e.dst, self).keys())
+                undefs = (e.data.subset.free_symbols - defined_symbols -
+                          undefined_syms)
+                if len(undefs) > 0:
+                    raise InvalidSDFGEdgeError(
+                        'Undefined symbols %s found in memlet subset' % undefs,
+                        sdfg, state_id, eid)
+                if e.data.other_subset is not None:
+                    undefs = (e.data.other_subset.free_symbols -
+                              defined_symbols - undefined_syms)
+                    if len(undefs) != len(e.data.other_subset.free_symbols):
+                        raise InvalidSDFGEdgeError(
+                            'Undefined symbols %s found in memlet '
+                            'other_subset' % undefs, sdfg, state_id, eid)
             #######################################
 
             # Memlet path scope lifetime checks
@@ -3597,8 +3622,12 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None and isinstance(sdfg.parent, SDFG):
-        defined |= sdfg.parent.symbols_defined_at(sdfg).keys()
+    if sdfg.parent is not None:
+        # Find parent Nested SDFG node
+        parent_node = next(n for n in sdfg.parent.nodes()
+                           if isinstance(n, nd.NestedSDFG) and n.sdfg == sdfg)
+        defined |= sdfg._parent_sdfg.symbols_defined_at(
+            parent_node, sdfg.parent).keys()
     # Don't include iteration variables
     # (TODO: this is too lenient; take scope into account)
     defined |= iteration_variables.keys()
