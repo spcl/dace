@@ -177,7 +177,7 @@ def make_sdfg(specialize):
     state = sdfg.add_state("compute")
 
     # Compute module
-    nested_sdfg = make_compute_nested_sdfg(sdfg)
+    nested_sdfg = make_compute_nested_sdfg(state)
     tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_pipe_in"},
                                     {"hist_pipe_out"})
     A_pipes_out = state.add_stream(

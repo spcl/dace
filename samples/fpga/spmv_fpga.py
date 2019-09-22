@@ -262,7 +262,7 @@ def make_main_state(sdfg):
         storage=dace.types.StorageType.FPGA_Registers,
         transient=True)
 
-    nested_sdfg = make_nested_sdfg(sdfg)
+    nested_sdfg = make_nested_sdfg(state)
     nested_sdfg_tasklet = state.add_nested_sdfg(
         nested_sdfg, sdfg,
         {"row_begin", "row_end", "A_val_read", "A_col_read", "x_read"},

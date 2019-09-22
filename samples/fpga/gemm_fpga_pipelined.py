@@ -92,7 +92,7 @@ def make_sdfg(specialized):
     ###########################################################################
     # Nested SDFG
 
-    nested_sdfg = dace.SDFG("zero_or_wcr", parent=sdfg)
+    nested_sdfg = dace.SDFG("zero_or_wcr", parent=state)
 
     if_state = nested_sdfg.add_state("if_state")
     then_state = nested_sdfg.add_state("then_state")

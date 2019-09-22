@@ -577,7 +577,7 @@ def make_compute_sdfg():
     ###########################################################################
     # Nested SDFG
 
-    nested_sdfg = dace.SDFG("gemm_nested", parent=sdfg)
+    nested_sdfg = dace.SDFG("gemm_nested", parent=state)
 
     if_state_c = nested_sdfg.add_state("if_state_c")
     then_state_c = nested_sdfg.add_state("then_state_c")
