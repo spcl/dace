@@ -598,7 +598,7 @@ DACE_EXPORTED void __dace_exit(%s)
 
         if sdfg.parent is not None:
             # Nested SDFG
-            symbols_available = sdfg.parent.symbols_defined_at(sdfg)
+            symbols_available = sdfg.parent_sdfg.symbols_defined_at(sdfg)
         else:
             symbols_available = sdfg.constants
 

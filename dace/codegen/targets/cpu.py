@@ -578,7 +578,8 @@ class CPUCodeGen(TargetCodeGenerator):
             for instr in self._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_copy_begin(sdfg, state_dfg, src_node, dst_node,
-                                        edge, stream, None, copy_shape, src_strides, dst_strides)
+                                        edge, stream, None, copy_shape,
+                                        src_strides, dst_strides)
 
             nc = True
             if memlet.wcr is not None:
@@ -1270,11 +1271,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-tasklet
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, outer_stream_begin, inner_stream,
-                                function_stream)
+            instr.on_node_begin(sdfg, state_dfg, node, outer_stream_begin,
+                                inner_stream, function_stream)
 
-        inner_stream.write("\n    ///////////////////\n", sdfg, state_id,
-                              node)
+        inner_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
 
         unparse_tasklet(
             sdfg,
@@ -1287,8 +1287,7 @@ class CPUCodeGen(TargetCodeGenerator):
             self._ldepth,
         )
 
-        inner_stream.write("    ///////////////////\n\n", sdfg, state_id,
-                              node)
+        inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
 
         # Process outgoing memlets
         self.process_out_memlets(
@@ -1304,14 +1303,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-tasklet
         if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, outer_stream_end, inner_stream,
-                              function_stream)
+            instr.on_node_end(sdfg, state_dfg, node, outer_stream_end,
+                              inner_stream, function_stream)
 
-        callsite_stream.write(outer_stream_begin.getvalue(), sdfg, state_id, node)
+        callsite_stream.write(outer_stream_begin.getvalue(), sdfg, state_id,
+                              node)
         callsite_stream.write("{\n", sdfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), sdfg, state_id, node)
         callsite_stream.write("}\n", sdfg, state_id, node)
-        callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
+        callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id,
+                              node)
 
         self._dispatcher.defined_vars.exit_scope(node)
 
@@ -1333,8 +1334,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
-        node.sdfg._parent = sdfg
         state_dfg = sdfg.nodes()[state_id]
+        node.sdfg.parent = state_dfg
+        node.sdfg._parent_sdfg = sdfg
 
         # Take care of nested SDFG I/O
         for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
