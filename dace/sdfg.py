@@ -540,6 +540,8 @@ class SDFG(OrderedDiGraph):
         """ Returns all symbols available to a given node, including only
             scope-defined variables that encompass the node, assuming that all
             required inputs to the SDFG have been resolved. """
+        if node is None:
+            return collections.OrderedDict()
 
         # From e.g., Data or SDFG to the corresponding node
         resolved = self.resolve_node(node)
