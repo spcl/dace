@@ -431,7 +431,13 @@ class SDFG(OrderedDiGraph):
 
     @property
     def parent(self):
+        """ Returns the parent SDFG state of this SDFG, if exists. """
         return self._parent
+
+    @property
+    def parent_sdfg(self):
+        """ Returns the parent SDFG of this SDFG, if exists. """
+        return self._parent_sdfg
 
     @parent.setter
     def parent(self, value):
@@ -594,7 +600,7 @@ class SDFG(OrderedDiGraph):
             # Find parent Nested SDFG node
             parent_node = next(
                 n for n in self.parent.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg == self)
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == self.name)
             symbols.update(
                 self._parent_sdfg.symbols_defined_at(parent_node, self.parent))
 
@@ -3626,8 +3632,9 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(subset_symbols)
     if sdfg.parent is not None:
         # Find parent Nested SDFG node
-        parent_node = next(n for n in sdfg.parent.nodes()
-                           if isinstance(n, nd.NestedSDFG) and n.sdfg == sdfg)
+        parent_node = next(
+            n for n in sdfg.parent.nodes()
+            if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
         defined |= sdfg._parent_sdfg.symbols_defined_at(
             parent_node, sdfg.parent).keys()
     # Don't include iteration variables
@@ -3751,7 +3758,7 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
                 parent = sdfg.parent
             state, node = next(
                 (s, n) for s in parent.nodes() for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg == sdfg)
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
         else:
             parent = sdfg.parent
         sdfg = parent
