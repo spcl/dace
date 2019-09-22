@@ -89,7 +89,7 @@ def make_post_state(sdfg):
 
 def make_nested_sdfg(parent):
 
-    sdfg = dace.SDFG("spmv_inner", parent=parent)
+    sdfg = dace.SDFG("spmv_inner")
 
     set_zero_state = sdfg.add_state("set_zero")
     set_zero_b = set_zero_state.add_scalar(

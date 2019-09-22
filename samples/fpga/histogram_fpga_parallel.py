@@ -151,7 +151,7 @@ def make_write_buffer_state(sdfg):
 
 def make_compute_nested_sdfg(parent):
 
-    sdfg = SDFG("histogram_compute", parent=parent)
+    sdfg = SDFG("histogram_compute")
 
     init_state = make_init_buffer_state(sdfg)
     compute_state = make_compute_state(sdfg)

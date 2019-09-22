@@ -136,7 +136,7 @@ def make_write_buffer_state(sdfg):
 
 def make_nested_sdfg(parent):
 
-    sdfg = dace.SDFG("compute", parent=parent)
+    sdfg = dace.SDFG("compute")
 
     init_state = make_init_buffer_state(sdfg)
     compute_state = make_compute_state(sdfg)

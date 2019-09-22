@@ -70,7 +70,7 @@ def make_compute_state(sdfg):
 
 def make_nested_sdfg(parent):
 
-    sdfg = dace.SDFG("filter_nested", parent=parent)
+    sdfg = dace.SDFG("filter_nested")
 
     sdfg.add_scalar(
         "outsize_buffer",

@@ -157,7 +157,7 @@ def make_outer_compute_state(sdfg):
 
     state = sdfg.add_state("gemv_transposed")
 
-    nested_sdfg = dace.SDFG("gemv_transposed", parent=state)
+    nested_sdfg = dace.SDFG("gemv_transposed")
     load_state = make_load_state(nested_sdfg)
     compute_state = make_compute_state(nested_sdfg)
     store_state = make_store_state(nested_sdfg)
