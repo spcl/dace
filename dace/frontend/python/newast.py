@@ -155,7 +155,7 @@ def _scalarbinop(sdfg: SDFG, state: SDFGState,
     
     name, _ = sdfg.add_temp_transient(arr.shape, arr.dtype, arr.storage)
     state.add_mapped_tasklet(
-        "_SA%s_" % 'Mult',
+        "_SA%s_" % opname,
         {
             '__i%d' % i: '0:%s' % s for i, s in enumerate(arr.shape)},
         {
@@ -202,7 +202,22 @@ def _makebinop(op, opcode):
         isscal2 = _is_scalar(sdfg, op2)
         if isscal1:
             if isscal2:
-                raise NotImplementedError
+                # TODO: Issues with types
+                arr1 = sdfg.arrays[op1]
+                arr2 = sdfg.arrays[op2]
+                op3, arr3 = sdfg.add_temp_transient([1], arr2.dtype, arr2.storage)
+                tasklet = state.add_tasklet(
+                    '_SS%s_' % op,
+                    {'s1', 's2'}, {'s3'},
+                    's3 = s1 %s s2' % opcode
+                )
+                n1 = state.add_read(op1)
+                n2 = state.add_read(op2)
+                n3 = state.add_write(op3)
+                state.add_edge(n1, None, tasklet, 's1', dace.Memlet.from_array(op1, arr1))
+                state.add_edge(n2, None, tasklet, 's2', dace.Memlet.from_array(op2, arr2))
+                state.add_edge(tasklet, 's3', n3, None, dace.Memlet.from_array(op3, arr3))
+                return op3
             else:
                 return _scalarbinop(sdfg, state, op1, op2, opcode, op)
         else:
@@ -210,6 +225,25 @@ def _makebinop(op, opcode):
                 return _scalarbinop(sdfg, state, op2, op1, opcode, op, True)
             else:
                 return _binop(sdfg, state, op1, op2, opcode, op)
+    @oprepo.replaces_operator('Array', op, otherclass='int')
+    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+        print("Array %s int detected!" % op)
+        raise NotImplementedError
+    @oprepo.replaces_operator('Array', op, otherclass='float')
+    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+        print("Array %s float detected!" % op)
+        raise NotImplementedError
+    @oprepo.replaces_operator('Array', op, otherclass='complex')
+    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+        # TODO: Fix the name
+        name = '__dace_complex_{}'.format(op2)
+        # TODO: Somehow communicate this to the top-level SDFG? Nesting issues?
+        if name not in sdfg.arrays:
+            sdfg.add_transient(name, [1], dace.complex128)
+            init_state = sdfg.nodes()[0]
+            # TODO: Initialize new transient
+        func = oprepo.Replacements.getop('Array', op)
+        return func(sdfg, state, op1, name)
 
 
 # Define all standard Python augmented assignment operators
@@ -2390,6 +2424,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # No return values from SDFGs
             return []
+        
+        # TODO: If the function is a callback, implement it as a tasklet
 
         # Otherwise, try to find a default implementation for the SDFG
         func = oprepo.Replacements.get(funcname, default_impl)
@@ -2707,15 +2743,16 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add slicing state
             self._add_state('slice_%s_%d' % (array, node.lineno))
-            expr.subset.squeeze()
+            other_subset = copy.deepcopy(expr.subset)
+            other_subset.squeeze()
             tmp, tmparr = self.sdfg.add_temp_transient(
-                expr.subset.size(), arrobj.dtype, arrobj.storage)
+                other_subset.size(), arrobj.dtype, arrobj.storage)
             rnode = self.last_state.add_read(array)
             wnode = self.last_state.add_write(tmp)
             self.last_state.add_nedge(
                 rnode, wnode,
                 Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                    expr.wcr_identity))
+                    expr.wcr_identity, other_subset))
             return tmp
 
     ##################################

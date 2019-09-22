@@ -5,8 +5,12 @@ import numpy as np
 N, BS = (dace.symbol(name) for name in ['N', 'BS'])
 
 
-def Her(A, B):
-    np.copyto(B, np.transpose(np.conjugate(A)))
+def Her(A):
+    return np.transpose(np.conjugate(A))
+
+
+def trace(A):
+    return np.trace(A)
 
 
 @dace.program
@@ -31,8 +35,9 @@ def rgf_dense(HD: dace.complex128[N, BS, BS],
               GL: dace.complex128[N, BS, BS],
               GG: dace.complex128[N, BS, BS],
               dTGL: dace.complex128[N],
-              Her: dace.callback(None, dace.complex128[BS, BS],
-                                 dace.complex128[BS, BS])):
+              Her: dace.callback(dace.complex128[BS, BS],
+                                 dace.complex128[BS, BS]),
+              trace: dace.callback(dace.complex128, dace.complex128[BS, BS])):
 
     gR = np.ndarray((N, BS, BS), np.complex128)
     gL = np.ndarray((N, BS, BS), np.complex128)
@@ -45,15 +50,15 @@ def rgf_dense(HD: dace.complex128[N, BS, BS],
     her_M1 = np.ndarray((BS, BS), np.complex128)
     her_M2 = np.ndarray((BS, BS), np.complex128)
 
-    # sigLl = fl * 1j * gammaleft
-    # sigLr = fr * 1j * gammaright
-    sigLl = fl * gammaleft
-    sigLr = fr * gammaright
+    sigLl = fl * 1j * gammaleft
+    sigLr = fr * 1j * gammaright
+    # sigLl = fl * gammaleft
+    # sigLr = fr * gammaright
 
-    # sigGr = 1j * (fr - 1) * gammaright
-    # sigGl = 1j * (fl - 1) * gammaleft
-    sigGr = fr * gammaright
-    sigGl = fl * gammaleft
+    sigGr = 1j * (fr - 1) * gammaright
+    sigGl = 1j * (fl - 1) * gammaleft
+    # sigGr = fr * gammaright
+    # sigGl = fl * gammaleft
 
     for n in range(N):
         if HE[n] is not None:
@@ -70,48 +75,69 @@ def rgf_dense(HD: dace.complex128[N, BS, BS],
     # gR[-1] = np.linalg.inv(HD[-1] - sigRr)
     # gL[-1] = gR[-1] @ (sigmaLSD[-1] + sigLr) @ Her(gR[-1])
     # gG[-1] = gR[-1] @ (sigmaGSD[-1] + sigGr) @ Her(gR[-1])
-    gR[-1] = HD[-1] - sigRr
-    Her(gR[-1], her_gR)
-    gL[-1] = gR[-1] @ (sigmaLSD[-1] + sigLr) @ her_gR
-    gG[-1] = gR[-1] @ (sigmaGSD[-1] + sigGr) @ her_gR
+    gR[N-1] = HD[N-1] - sigRr
+    # Her(gR[-1], her_gR)
+    gL[N-1] = gR[N-1] @ (sigmaLSD[N-1] + sigLr) @ her_gR
+    gG[N-1] = gR[N-1] @ (sigmaGSD[N-1] + sigGr) @ her_gR
 
     for n in range(N - 2, -1, -1):
         sig = HF[n] @ gR[n + 1] @ HE[n + 1]
         M = HF[n] @ gR[n + 1] @ sigmaLSE[n + 1]
-        gR[n] = np.linalg.inv(HD[n] - sig)
-        gL[n] = gR[n] @ (HF[n] @ gL[n + 1] @ HE[n + 1] + sigmaLSD[n] - (M - Her(M))) @ Her(gR[n])
-        M = HF[n] @ gR[n + 1] @ sigmaGSE[n + 1]
-        gG[n] = gR[n] @ (HF[n] @ gG[n + 1] @ HE[n + 1] + sigmaGSD[n] - (M - Her(M))) @ Her(gR[n])
+        # gR[n] = np.linalg.inv(HD[n] - sig)
+        # gL[n] = gR[n] @ (HF[n] @ gL[n + 1] @ HE[n + 1] + sigmaLSD[n] - (M - Her(M))) @ Her(gR[n])
+        # M = HF[n] @ gR[n + 1] @ sigmaGSE[n + 1]
+        # gG[n] = gR[n] @ (HF[n] @ gG[n + 1] @ HE[n + 1] + sigmaGSD[n] - (M - Her(M))) @ Her(gR[n])
+        gR[n] = HD[n] - sig
+        gL[n] = gR[n] @ (HF[n] @ gL[n + 1] @ HE[n + 1] + sigmaLSD[n] - (M - her_M1)) @ her_gR
+        M[:] = HF[n] @ gR[n + 1] @ sigmaGSE[n + 1]
+        gG[n] = gR[n] @ (HF[n] @ gG[n + 1] @ HE[n + 1] + sigmaGSD[n] - (M - her_M1)) @ her_gR
 
     # Solve now the full retarded green function
-    M = HF[0] @ gR[1] @ sigmaLSE[1]
+    M[:] = HF[0] @ gR[1] @ sigmaLSE[1]
 
-    GR[0] = np.linalg.inv(HD[0] - HF[0] @ gR[1] @ HE[1] - sigRl)
-    GL[0] = GR[0] @ (sigLl + HF[0] @ gL[1] @ HE[1] + sigmaLSD[0] - (M - Her(M))) @ Her(GR[0])
+    # GR[0] = np.linalg.inv(HD[0] - HF[0] @ gR[1] @ HE[1] - sigRl)
+    # GL[0] = GR[0] @ (sigLl + HF[0] @ gL[1] @ HE[1] + sigmaLSD[0] - (M - Her(M))) @ Her(GR[0])
+    GR[0] = HD[0] - HF[0] @ gR[1] @ HE[1] - sigRl
+    GL[0] = GR[0] @ (sigLl + HF[0] @ gL[1] @ HE[1] + sigmaLSD[0] - (M - her_M1)) @ her_GR
 
-    M = HF[0] @ gR[1] @ sigmaGSE[1]
-    GG[0] = GR[0] @ (sigGl + HF[0] @ gG[1] @ HE[1] + sigmaGSD[0] - (M - Her(M))) @ Her(GR[0])
-    GLnd[0] = -GL[0] @ HF[0] @ Her(gR[1]) - GR[0] @ HF[0] @ gL[1] + GR[0] @ sigmaLSF[0] @ Her(gR[1])
+    M[:] = HF[0] @ gR[1] @ sigmaGSE[1]
+    # GG[0] = GR[0] @ (sigGl + HF[0] @ gG[1] @ HE[1] + sigmaGSD[0] - (M - Her(M))) @ Her(GR[0])
+    # GLnd[0] = -GL[0] @ HF[0] @ Her(gR[1]) - GR[0] @ HF[0] @ gL[1] + GR[0] @ sigmaLSF[0] @ Her(gR[1])
+    GG[0] = GR[0] @ (sigGl + HF[0] @ gG[1] @ HE[1] + sigmaGSD[0] - (M - her_M1)) @ her_GR
+    GLnd[0] = -GL[0] @ HF[0] @ her_gR - GR[0] @ HF[0] @ gL[1] + GR[0] @ sigmaLSF[0] @ her_gR
 
     for n in range(1, N, 1):
         GR[n] = gR[n] + gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gR[n]
 
+        # M1 = gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gL[n]
+        # M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaLSF[n - 1] @ Her(gR[n])
+        # GL[n] = gL[n] + gR[n] @ HE[n] @ GL[n - 1] @ HF[n - 1] @ Her(gR[n]) + (M1 - Her(M1)) - (M2 - Her(M2))
         M1 = gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gL[n]
-        M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaLSF[n - 1] @ Her(gR[n])
-        GL[n] = gL[n] + gR[n] @ HE[n] @ GL[n - 1] @ HF[n - 1] @ Her(gR[n]) + (M1 - Her(M1)) - (M2 - Her(M2))
+        M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaLSF[n - 1] @ her_gR
+        GL[n] = gL[n] + gR[n] @ HE[n] @ GL[n - 1] @ HF[n - 1] @ her_gR + (M1 - her_M1) - (M2 - her_M2)
 
-        M1 = gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gG[n]
-        M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaGSF[n - 1] @ Her(gR[n])
-        GG[n] = gG[n] + gR[n] @ HE[n] @ GG[n - 1] @ HF[n - 1] @ Her(gR[n]) + (M1 - Her(M1)) - (M2 - Her(M2))
+        # M1 = gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gG[n]
+        # M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaGSF[n - 1] @ Her(gR[n])
+        # GG[n] = gG[n] + gR[n] @ HE[n] @ GG[n - 1] @ HF[n - 1] @ Her(gR[n]) + (M1 - Her(M1)) - (M2 - Her(M2))
+        M1[:] = gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gG[n]
+        M2[:] = gR[n] @ HE[n] @ GR[n - 1] @ sigmaGSF[n - 1] @ her_gR
+        GG[n] = gG[n] + gR[n] @ HE[n] @ GG[n - 1] @ HF[n - 1] @ her_gR + (M1 - her_M1) - (M2 - her_M2)
 
         if n != N - 1:
-            GLnd[n] = -GL[n] @ HF[n] @ Her(gR[n + 1]) - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ Her(gR[n + 1])
+            # GLnd[n] = -GL[n] @ HF[n] @ Her(gR[n + 1]) - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ Her(gR[n + 1])
+            GLnd[n] = -GL[n] @ HF[n] @ her_gR - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ her_gR
 
     for n in range(1, N - 1):
-        dTGL[n] = np.trace(GLnd[n - 1] @ HE[n])
+        # dTGL[n] = np.trace(GLnd[n - 1] @ HE[n])
+        trace_tmp = GLnd[n - 1] @ HE[n]
+        dTGL[n] = trace(trace_tmp)
 
-    dTGL[0] = -np.trace(sigGl @ GL[0] - GG[0] @ sigLl)
-    dTGL[-1] = np.trace(sigGr @ GL[-1] - GG[-1] @ sigLr)
+    # dTGL[0] = -np.trace(sigGl @ GL[0] - GG[0] @ sigLl)
+    # dTGL[-1] = np.trace(sigGr @ GL[-1] - GG[-1] @ sigLr)
+    trace_tmp0 = -sigGl @ GL[0] + GG[0] @ sigLl 
+    dTGL[0] = trace(trace_tmp0)
+    trace_tmpm1 = sigGr @ GL[N-1] + GG[N-1] @ sigLr
+    dTGL[N-1] = trace(trace_tmpm1)
 
 
 if __name__ == '__main__':
