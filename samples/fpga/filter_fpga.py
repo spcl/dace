@@ -51,7 +51,7 @@ def make_compute_state(sdfg):
     outsize = state.add_write("outsize_device")
     B = state.add_write("B_device")
 
-    for_loop_sdfg = make_nested_sdfg(sdfg)
+    for_loop_sdfg = make_nested_sdfg(state)
     nested_sdfg = state.add_nested_sdfg(for_loop_sdfg, sdfg,
                                         {"A_nested", "ratio_nested"},
                                         {"B_nested", "outsize_nested"})
@@ -70,7 +70,7 @@ def make_compute_state(sdfg):
 
 def make_nested_sdfg(parent):
 
-    sdfg = dace.SDFG("filter_nested", parent=parent)
+    sdfg = dace.SDFG("filter_nested")
 
     sdfg.add_scalar(
         "outsize_buffer",
