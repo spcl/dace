@@ -572,7 +572,7 @@ class SDFG(OrderedDiGraph):
         # All scalar inputs, data symbols and interstate symbols are assumed to
         # have been resolved at this point
         symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters(True))
+            (name, data) for name, data in self.scalar_parameters(True).items())
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(assigned)
@@ -635,7 +635,7 @@ class SDFG(OrderedDiGraph):
             to the SDFG, loop iteration variables, array sizes and variables
             used in interstate edges. """
         symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters())
+            (name, data) for name, data in self.scalar_parameters().items())
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(used)
@@ -3616,7 +3616,7 @@ def data_symbols(dfg):
 def undefined_symbols(sdfg, obj, include_scalar_data):
     """ Returns all symbols used in this object that are undefined, and thus
         must be given as input parameters. """
-    scalar_arguments = sdfg.scalar_parameters(False)
+    scalar_arguments = sdfg.scalar_parameters(False).items()
     if include_scalar_data:
         symbols = collections.OrderedDict(
             (name, data) for name, data in scalar_arguments)
