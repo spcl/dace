@@ -590,6 +590,11 @@ class SDFG(OrderedDiGraph):
                     symbols[param] = dt.Scalar(symbolic.symbol(param).dtype)
                 for sym in scope.range.free_symbols:
                     symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
+            elif isinstance(scope, dace.graph.nodes.ConsumeEntry):
+                symbols[scope.consume.pe_index] = dt.Scalar(
+                    symbolic.symbol(scope.consume.pe_index).dtype)
+                for sym in scope.consume.num_pes.free_symbols:
+                    symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
             else:
                 raise TypeError("Unsupported entry node type: {}".format(
                     type(scope).__name__))
