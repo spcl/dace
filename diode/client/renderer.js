@@ -498,14 +498,14 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         // Add connectors
         let i = 0;
         for (let cname of node.attributes.in_connectors) {
-            let conn = new elements.Connector({name: cname, type: 'in'}, i, sdfg, node.id);
-            obj.connectors.push(conn);
+            let conn = new elements.Connector({name: cname}, i, sdfg, node.id);
+            obj.in_connectors.push(conn);
             i += 1;
         }
         i = 0;
         for (let cname of node.attributes.out_connectors) {
-            let conn = new elements.Connector({name: cname, type: 'out'}, i, sdfg, node.id);
-            obj.connectors.push(conn);
+            let conn = new elements.Connector({name: cname}, i, sdfg, node.id);
+            obj.out_connectors.push(conn);
             i += 1;
         }
 
@@ -549,22 +549,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     dagre.layout(g);
 
 
-    sdfg_state.edges.forEach(function (edge, id) {
-        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
-        if (!edge) return;
-        let gedge = g.edge(edge.src, edge.dst, id);
-        let bb = calculateEdgeBoundingBox(gedge);
-        edge.attributes.layout.width = bb.width;
-        edge.attributes.layout.height = bb.height;
-        edge.width = bb.width;
-        edge.height = bb.height;
-        edge.x = bb.x;
-        edge.y = bb.y;
-        edge.attributes.layout.x = bb.x;
-        edge.attributes.layout.y = bb.y;
-        edge.attributes.layout.points = gedge.points;
-    });
-
     // Layout connectors and nested SDFGs
     sdfg_state.nodes.forEach(function (node, id) {       
         let gnode = g.node(id);
@@ -585,20 +569,56 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         let iconn_x = gnode.x - iconn_length / 2.0 + LINEHEIGHT/2.0;
         let oconn_x = gnode.x - oconn_length / 2.0 + LINEHEIGHT/2.0;
        
-        for (let c of gnode.connectors) {
+        for (let c of gnode.in_connectors) {
             c.width = LINEHEIGHT;
             c.height = LINEHEIGHT;
-            if (c.data.type === 'in') {
-                c.x = iconn_x;
-                iconn_x += LINEHEIGHT + SPACING;
-                c.y = topleft.y;
-            } else {
-                c.x = oconn_x;
-                oconn_x += LINEHEIGHT + SPACING;
-                c.y = topleft.y + gnode.height;
+            c.x = iconn_x;
+            iconn_x += LINEHEIGHT + SPACING;
+            c.y = topleft.y;
+        }
+        for (let c of gnode.out_connectors) {
+            c.width = LINEHEIGHT;
+            c.height = LINEHEIGHT;
+            c.x = oconn_x;
+            oconn_x += LINEHEIGHT + SPACING;
+            c.y = topleft.y + gnode.height;
+        }
+    });
+
+    sdfg_state.edges.forEach(function (edge, id) {
+        edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
+        if (!edge) return;
+        let gedge = g.edge(edge.src, edge.dst, id);
+        let bb = calculateEdgeBoundingBox(gedge);
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.width = bb.width;
+        edge.height = bb.height;
+        edge.x = bb.x;
+        edge.y = bb.y;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.points = gedge.points;
+
+        // Reposition first and last points according to connectors
+        if (edge.src_connector) {
+            let src_node = g.node(edge.src);
+            let cindex = src_node.data.node.attributes.out_connectors.indexOf(edge.src_connector);
+            if (cindex >= 0) {
+                gedge.points[0].x = src_node.out_connectors[cindex].x;
+                gedge.points[0].y += LINEHEIGHT / 2.0;
+            }
+        }
+        if (edge.dst_connector) {
+            let dst_node = g.node(edge.dst);
+            let cindex = dst_node.data.node.attributes.in_connectors.indexOf(edge.dst_connector);
+            if (cindex >= 0) {
+                gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
+                gedge.points[gedge.points.length - 1].y -= LINEHEIGHT / 2.0;
             }
         }
     });
+
 
     return g;
 }

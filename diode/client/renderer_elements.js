@@ -5,7 +5,8 @@ export class SDFGElement {
         this.id = elem_id;
         this.parent_id = parent_id;
         this.sdfg = sdfg;
-        this.connectors = [];
+        this.in_connectors = [];
+        this.out_connectors = [];
         this.set_layout();
     }
 
@@ -92,7 +93,7 @@ export class Node extends SDFGElement {
 
 export class Edge extends SDFGElement {
     draw(ctx, highlighted, mousepos) {
-        let edge = this.data;
+        let edge = this;
 
         ctx.beginPath();
         ctx.moveTo(edge.points[0].x, edge.points[0].y);
@@ -224,6 +225,12 @@ export class MapExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([1, 0
 export class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
 export class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
 
+export class EmptyTasklet extends Node {
+    draw(ctx, highlighted, mousepos) {
+        // Do nothing
+    }
+}
+
 export class Tasklet extends Node {
     draw(ctx, highlighted, mousepos) {
         let topleft = this.topleft();
@@ -299,7 +306,8 @@ function draw_sdfg(ctx, sdfg_dagre, visible_rect, mousepos) {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
                 n.draw(ctx, false, mousepos);
-                n.connectors.forEach(c => { c.draw(ctx, false, mousepos); });
+                n.in_connectors.forEach(c => { c.draw(ctx, false, mousepos); });
+                n.out_connectors.forEach(c => { c.draw(ctx, false, mousepos); });
             });
             ng.edges().forEach(e => {
                 ng.edge(e).draw(ctx, false, mousepos);
@@ -333,11 +341,14 @@ function offset_state(state, state_graph, offset) {
         let node = state_graph.data.graph.node(nid);
         node.x += offset.x;
         node.y += offset.y;
-        node.connectors.forEach(c => {
+        node.in_connectors.forEach(c => {
             c.x += offset.x;
             c.y += offset.y;
         });
-
+        node.out_connectors.forEach(c => {
+            c.x += offset.x;
+            c.y += offset.y;
+        });
 
         if (node.data.node.type === 'NestedSDFG')
             offset_sdfg(node.data.node.attributes.sdfg, node.data.graph, offset);
