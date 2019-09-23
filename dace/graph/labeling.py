@@ -155,7 +155,8 @@ class AffineSMemlet(SeparableMemletPattern):
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
 
-        params = variable_context[-1]  # Why only last element?
+        params = variable_context[-1]
+        defined_vars = variable_context[-2]
         # Create wildcards for multiplication and addition
         a = sympy.Wild('a', exclude=params)
         b = sympy.Wild('b', exclude=params)
@@ -199,6 +200,8 @@ class AffineSMemlet(SeparableMemletPattern):
                 param = None
                 pind = -1
                 for indp, p in enumerate(params):
+                    if p not in subexpr.free_symbols:
+                        continue
                     matches = subexpr.match(a * p + b)
                     if param is None and matches is None:
                         continue
@@ -240,6 +243,12 @@ class AffineSMemlet(SeparableMemletPattern):
             if node_rs != 1:
                 # Map ranges where the last index is not known
                 # exactly are not supported by this pattern.
+                return False
+            if (any(s not in defined_vars for s in node_rb.free_symbols)
+                    or any(s not in defined_vars
+                           for s in node_re.free_symbols)):
+                # Cannot propagate variables only defined in this scope (e.g.,
+                # dynamic map ranges)
                 return False
 
         if self.param is None:  # and self.constant_min is None:
@@ -440,8 +449,23 @@ class GenericSMemlet(SeparableMemletPattern):
 
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
+        dims = []
+        for dim in dim_exprs:
+            if isinstance(dim, tuple):
+                dims.extend(dim)
+            else:
+                dims.append(dim)
 
         self.params = variable_context[-1]
+        defined_vars = variable_context[-2]
+
+        used_symbols = set([s for dim in dims for s in dim.free_symbols])
+        if (used_symbols & set(self.params)
+                and any(s not in defined_vars
+                        for s in node_range.free_symbols)):
+            # Cannot propagate symbols that are undefined in the outer range
+            # (e.g., dynamic map ranges).
+            return False
 
         # Always matches
         return True
@@ -697,6 +721,7 @@ def _propagate_node(sdfg,
     # Special case: starting from reduction, no need for external nodes to compute edges
     if (not isinstance(node, nodes.CodeNode)
             and not isinstance(node, nodes.AccessNode) and node in array_data):
+
         # Otherwise (if primitive), use current node information and accumulated data
         # on arrays to set the memlets per edge
         for _, _, target, _, memlet in g.out_edges(node):
@@ -706,6 +731,12 @@ def _propagate_node(sdfg,
 
             if not isinstance(memlet, Memlet):
                 raise AttributeError('Edge does not contain a memlet')
+
+            defined_vars = [
+                symbolic.pystr_to_symbolic(s)
+                for s in (sdfg.symbols_defined_at(target, g).keys()
+                          | sdfg.undefined_symbols(True).keys())
+            ]
 
             aggdata = None
             if node in array_data:
@@ -745,6 +776,11 @@ def _propagate_node(sdfg,
             memlet.num_accesses = (
                 sum(m.num_accesses for m in aggdata) * functools.reduce(
                     lambda a, b: a * b, node.map.range.size(), 1))
+            if any(m.num_accesses == -1 for m in aggdata):
+                memlet.num_accesses = -1
+            elif any(s not in defined_vars
+                     for s in memlet.num_accesses.free_symbols):
+                memlet.num_accesses = -1
 
             # Set WCR, if necessary
             if wcr is not None:
@@ -791,17 +827,26 @@ def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed):
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
                            'in SDFG.' % memlet.data)
 
+        defined_vars = [
+            symbolic.pystr_to_symbolic(s)
+            for s in (sdfg.symbols_defined_at(v, g).keys()
+                      | sdfg.undefined_symbols(True).keys())
+        ]
+        variable_context = [
+            defined_vars,
+            [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
+        ]
+
         for pattern in patterns:
-            if pattern.match(
-                    expr,
-                [[symbolic.pystr_to_symbolic(p) for p in mapnode.params]],
-                    mapnode.range, aggdata):  # Only one level of context
+            if pattern.match(expr, variable_context, mapnode.range,
+                             aggdata):  # Only one level of context
                 return pattern.propagate(sdfg.arrays[memlet.data], expr,
                                          mapnode.range)
 
         # No patterns found. Emit a warning and propagate the entire array
-        print('WARNING: Cannot find appropriate memlet pattern to propagate %s'
-              % str(expr))
+        print(
+            'WARNING: Cannot find appropriate memlet pattern to propagate %s '
+            'through %s' % (str(expr), str(mapnode.range)))
 
         return subsets.Range.from_array(sdfg.arrays[memlet.data])
     elif isinstance(u, nodes.ConsumeEntry) or isinstance(u, nodes.ConsumeExit):

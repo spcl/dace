@@ -255,7 +255,10 @@ class Memlet(object):
 
         num_elements = self.subset.num_elements()
         if self.num_accesses != num_elements:
-            result += '(%s) ' % str(self.num_accesses)
+            if self.num_accesses == -1:
+                result += '(dyn) '
+            else:
+                result += '(%s) ' % str(self.num_accesses)
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:

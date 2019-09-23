@@ -431,7 +431,13 @@ class SDFG(OrderedDiGraph):
 
     @property
     def parent(self):
+        """ Returns the parent SDFG state of this SDFG, if exists. """
         return self._parent
+
+    @property
+    def parent_sdfg(self):
+        """ Returns the parent SDFG of this SDFG, if exists. """
+        return self._parent_sdfg
 
     @parent.setter
     def parent(self, value):
@@ -540,6 +546,8 @@ class SDFG(OrderedDiGraph):
         """ Returns all symbols available to a given node, including only
             scope-defined variables that encompass the node, assuming that all
             required inputs to the SDFG have been resolved. """
+        if node is None:
+            return collections.OrderedDict()
 
         # From e.g., Data or SDFG to the corresponding node
         resolved = self.resolve_node(node)
@@ -589,7 +597,12 @@ class SDFG(OrderedDiGraph):
 
         # Call recursively on parents
         if self.parent is not None:
-            symbols.update(self.parent.symbols_defined_at(self))
+            # Find parent Nested SDFG node
+            parent_node = next(
+                n for n in self.parent.nodes()
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == self.name)
+            symbols.update(
+                self._parent_sdfg.symbols_defined_at(parent_node, self.parent))
 
         symbols.update(self.constants)
 
@@ -2984,6 +2997,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 "State does not point to the correct "
                 "parent", sdfg, state_id)
 
+        # Used in memlet validation
+        undefined_syms = set(sdfg.undefined_symbols(True).keys())
+
         # Unreachable
         ########################################
         if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(self) == 0
@@ -3277,6 +3293,23 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         raise InvalidSDFGEdgeError(
                             "Memlet other_subset out-of-bounds", sdfg,
                             state_id, eid)
+
+                # Test subset and other_subset for undefined symbols
+                defined_symbols = set(
+                    sdfg.symbols_defined_at(e.dst, self).keys())
+                undefs = (e.data.subset.free_symbols - defined_symbols -
+                          undefined_syms)
+                if len(undefs) > 0:
+                    raise InvalidSDFGEdgeError(
+                        'Undefined symbols %s found in memlet subset' % undefs,
+                        sdfg, state_id, eid)
+                if e.data.other_subset is not None:
+                    undefs = (e.data.other_subset.free_symbols -
+                              defined_symbols - undefined_syms)
+                    if len(undefs) > 0:
+                        raise InvalidSDFGEdgeError(
+                            'Undefined symbols %s found in memlet '
+                            'other_subset' % undefs, sdfg, state_id, eid)
             #######################################
 
             # Memlet path scope lifetime checks
@@ -3598,8 +3631,13 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None and isinstance(sdfg.parent, SDFG):
-        defined |= sdfg.parent.symbols_defined_at(sdfg).keys()
+    if sdfg.parent is not None:
+        # Find parent Nested SDFG node
+        parent_node = next(
+            n for n in sdfg.parent.nodes()
+            if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+        defined |= sdfg._parent_sdfg.symbols_defined_at(
+            parent_node, sdfg.parent).keys()
     # Don't include iteration variables
     # (TODO: this is too lenient; take scope into account)
     defined |= iteration_variables.keys()
@@ -3721,7 +3759,7 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
                 parent = sdfg.parent
             state, node = next(
                 (s, n) for s in parent.nodes() for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg == sdfg)
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
         else:
             parent = sdfg.parent
         sdfg = parent
