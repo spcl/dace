@@ -480,12 +480,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     'sdfg-id': split[0].slice(1), // Cut off the leading 's'. #TODO: Fix the misnomer sdfg-id => state-id
                     'node-id': split[1]
                 };
-                this._message_handler(modmsg);
+                //this._message_handler(modmsg);
             }
         }
         else {
             // Default behavior is passing through (must be an object, not JSON-string)
-            this._message_handler(msg);
+            //this._message_handler(msg);
         }
     }
 
