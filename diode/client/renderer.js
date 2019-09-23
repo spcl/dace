@@ -445,21 +445,9 @@ function relayout_sdfg(ctx, sdfg) {
             return;
 
         let state = g.node(sid);
-        let topleft = state.topleft({x: 0, y: 0});
-        s.nodes.forEach((n, nid) => {
-            let node = state.data.graph.node(nid);
-            node.x += topleft.x + STATE_MARGIN;
-            node.y += topleft.y + STATE_MARGIN;
-        });
-        s.edges.forEach((e, eid) => {
-            let edge = state.data.graph.edge(e.src, e.dst, eid);
-            edge.x += topleft.x + STATE_MARGIN;
-            edge.y += topleft.y + STATE_MARGIN;
-            edge.data.points.forEach((p) => {
-                p.x += topleft.x + STATE_MARGIN;
-                p.y += topleft.y + STATE_MARGIN;
-            });
-        });
+        let topleft = state.topleft();
+        elements.offset_state(s, state, {x: topleft.x + STATE_MARGIN,
+                                         y: topleft.y + STATE_MARGIN});
     });
 
     return g;
@@ -485,7 +473,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     function layout_node(node) {
         let nested_g = null;
         let nodesize = calculateNodeSize(sdfg_state, node, ctx);
-        node.attributes.layout = {}
+        node.attributes.layout = {};
         node.attributes.layout.width = nodesize.width;
         node.attributes.layout.height = nodesize.height;
         node.attributes.layout.label = node.label;
@@ -506,6 +494,20 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Dynamically create node type
         let obj = new elements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
+
+        // Add connectors
+        let i = 0;
+        for (let cname of node.attributes.in_connectors) {
+            let conn = new elements.Connector({name: cname, type: 'in'}, i, sdfg, node.id);
+            obj.connectors.push(conn);
+            i += 1;
+        }
+        i = 0;
+        for (let cname of node.attributes.out_connectors) {
+            let conn = new elements.Connector({name: cname, type: 'out'}, i, sdfg, node.id);
+            obj.connectors.push(conn);
+            i += 1;
+        }
 
         g.setNode(node.id, obj);
         drawn_nodes.add(node.id.toString());
@@ -561,6 +563,41 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         edge.attributes.layout.x = bb.x;
         edge.attributes.layout.y = bb.y;
         edge.attributes.layout.points = gedge.points;
+    });
+
+    // Layout connectors and nested SDFGs
+    sdfg_state.nodes.forEach(function (node, id) {       
+        let gnode = g.node(id);
+        let topleft = gnode.topleft();
+        
+        // Offset nested SDFG
+        if (node.type === "NestedSDFG") {
+
+            elements.offset_sdfg(node.attributes.sdfg, gnode.data.graph, {
+                x: topleft.x + LINEHEIGHT, 
+                y: topleft.y + LINEHEIGHT
+            });
+        }
+        // Connector management 
+        let SPACING = LINEHEIGHT;  
+        let iconn_length = (LINEHEIGHT + SPACING) * node.attributes.in_connectors.length - SPACING;
+        let oconn_length = (LINEHEIGHT + SPACING) * node.attributes.out_connectors.length - SPACING;
+        let iconn_x = gnode.x - iconn_length / 2.0 + LINEHEIGHT/2.0;
+        let oconn_x = gnode.x - oconn_length / 2.0 + LINEHEIGHT/2.0;
+       
+        for (let c of gnode.connectors) {
+            c.width = LINEHEIGHT;
+            c.height = LINEHEIGHT;
+            if (c.data.type === 'in') {
+                c.x = iconn_x;
+                iconn_x += LINEHEIGHT + SPACING;
+                c.y = topleft.y;
+            } else {
+                c.x = oconn_x;
+                oconn_x += LINEHEIGHT + SPACING;
+                c.y = topleft.y + gnode.height;
+            }
+        }
     });
 
     return g;
@@ -694,7 +731,7 @@ class SDFGRenderer {
         let elements = {states: [], nodes: [], connectors: [],
                         edges: [], isedges: []};
 
-        function traverse_recursive(sdfg, elements) {
+        function traverse_recursive(sdfg, elements, x, y) {
             let sdfg_name = sdfg.attributes.name;
             sdfg.nodes.forEach(function (state, state_id) {
                 if (isWithinBB(x, y, state.attributes.layout)) {
@@ -742,7 +779,7 @@ class SDFGRenderer {
 
                             // If nested SDFG, traverse recursively
                             if (node.type === "NestedSDFG")
-                                traverse_recursive(node.sdfg, elements);
+                                traverse_recursive(node.sdfg, elements, x - node.x, y - node.y);
                         }
                     });
 
@@ -764,7 +801,7 @@ class SDFGRenderer {
         }
 
         // Traverse all SDFGs recursively
-        traverse_recursive(this.sdfg, elements);
+        traverse_recursive(this.sdfg, elements, x, y);
 
         return elements;
     }

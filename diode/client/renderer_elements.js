@@ -5,6 +5,7 @@ export class SDFGElement {
         this.id = elem_id;
         this.parent_id = parent_id;
         this.sdfg = sdfg;
+        this.connectors = [];
         this.set_layout();
     }
 
@@ -130,8 +131,19 @@ export class Edge extends SDFGElement {
 
 export class Connector extends SDFGElement {
     draw(ctx, highlighted, mousepos) {
-
+        let topleft = this.topleft();
+        ctx.beginPath();
+        drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
+        ctx.closePath();
+        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.stroke();
+        ctx.fillStyle = "#f0fdff";
+        ctx.fill();
+        ctx.fillStyle = "black";
+        ctx.strokeStyle = "black";
     }
+
+    set_layout() { }
 
     tooltip() {
         return this.label();
@@ -140,20 +152,71 @@ export class Connector extends SDFGElement {
 
 export class AccessNode extends Node {
     draw(ctx, highlighted, mousepos) {
-        super.draw(ctx, highlighted, mousepos);
+        let topleft = this.topleft();
+        ctx.beginPath();
+        drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
+        ctx.closePath();
+        ctx.strokeStyle = this.strokeStyle(highlighted);
+
+        let nodedesc = this.sdfg.attributes._arrays[this.data.node.attributes.data];
+        // Streams have dashed edges
+        if (nodedesc.type === "Stream") {
+            ctx.setLineDash([5, 3]);
+        } else {
+            ctx.setLineDash([1, 0]);
+        }
+
+        if (nodedesc.attributes.transient === false) {
+            ctx.lineWidth = 3.0;
+        } else {
+            ctx.lineWidth = 1.0;
+        }
+
+
+        ctx.stroke();
+        ctx.lineWidth = 1.0;
+        ctx.setLineDash([1, 0]);
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
+        var textmetrics = ctx.measureText(this.label());
+        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 4.0);
     }
 }
 
-export class EntryNode extends Node {
+export class ScopeNode extends Node {
     draw(ctx, highlighted, mousepos) {
-        super.draw(ctx, highlighted, mousepos);
+        if (this.data.node.attributes.is_collapsed) {
+            drawHexagon(ctx, this.x, this.y, this.width, this.height);
+        } else {
+            let topleft = this.topleft();
+            drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
+        }
+        ctx.strokeStyle = this.strokeStyle(highlighted);
+
+        // Consume scopes have dashed edges
+        if (this.data.node.type.startsWith("Consume"))
+            ctx.setLineDash([5, 3]);
+        else
+            ctx.setLineDash([1, 0]);
+
+
+        ctx.stroke();
+        ctx.setLineDash([1, 0]);
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
+        var textmetrics = ctx.measureText(this.label());
+        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
     }
 }
 
-export class ExitNode extends Node {
-    draw(ctx, highlighted, mousepos) {
-        super.draw(ctx, highlighted, mousepos);
-    }
+export class EntryNode extends ScopeNode {
+    scopeend() { return false; }
+}
+
+export class ExitNode extends ScopeNode {
+    scopeend() { return true; }
 }
 
 export class MapEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } }
@@ -163,14 +226,45 @@ export class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([
 
 export class Tasklet extends Node {
     draw(ctx, highlighted, mousepos) {
-        super.draw(ctx, highlighted, mousepos);
+        let topleft = this.topleft();
+        let octseg = this.height / 3.0;
+        ctx.beginPath();
+        ctx.moveTo(topleft.x, topleft.y + octseg);
+        ctx.lineTo(topleft.x + octseg, topleft.y);
+        ctx.lineTo(topleft.x + this.width - octseg, topleft.y);
+        ctx.lineTo(topleft.x + this.width, topleft.y + octseg);
+        ctx.lineTo(topleft.x + this.width, topleft.y + 2 * octseg);
+        ctx.lineTo(topleft.x + this.width - octseg, topleft.y + this.height);
+        ctx.lineTo(topleft.x + octseg, topleft.y + this.height);
+        ctx.lineTo(topleft.x, topleft.y + 2 * octseg);
+        ctx.lineTo(topleft.x, topleft.y + 1 * octseg);
+        ctx.closePath();
+        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
+        let textmetrics = ctx.measureText(this.label());
+        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
     }
 }
 
 export class Reduce extends Node {
     draw(ctx, highlighted, mousepos) {
-        super.draw(ctx, highlighted, mousepos);
-    }
+        let topleft = this.topleft();
+        ctx.beginPath();
+        ctx.moveTo(topleft.x, topleft.y);
+        ctx.lineTo(topleft.x + this.width / 2, topleft.y + this.height);
+        ctx.lineTo(topleft.x + this.width, topleft.y);
+        ctx.lineTo(topleft.x, topleft.y);
+        ctx.closePath();
+        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.stroke();
+        ctx.fillStyle = "white";
+        ctx.fill();
+        ctx.fillStyle = "black";
+        var textmetrics = ctx.measureText(this.label());
+        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y - this.height / 4.0 + LINEHEIGHT / 2.0);    }
 }
 
 export class NestedSDFG extends Node {
@@ -178,14 +272,10 @@ export class NestedSDFG extends Node {
         // Draw square around nested SDFG
         super.draw(ctx, highlighted, mousepos);
 
-        let topleft = this.topleft();
-
-        // Translate and draw the nested graph
-        ctx.save();
-        ctx.translate(topleft.x + LINEHEIGHT, topleft.y + LINEHEIGHT);
+        // Draw nested graph
         draw_sdfg(ctx, this.data.graph, null, mousepos);
-        ctx.restore();
     }
+
     label() { return ""; }
 }
 
@@ -207,7 +297,9 @@ function draw_sdfg(ctx, sdfg_dagre, visible_rect, mousepos) {
         if (!node.data.state.attributes.is_collapsed/* && isBBoverlapped(curx, cury, curw, curh, layout)*/)
         {
             ng.nodes().forEach(v => {
-                ng.node(v).draw(ctx, false, mousepos);
+                let n = ng.node(v);
+                n.draw(ctx, false, mousepos);
+                n.connectors.forEach(c => { c.draw(ctx, false, mousepos); });
             });
             ng.edges().forEach(e => {
                 ng.edge(e).draw(ctx, false, mousepos);
@@ -215,6 +307,54 @@ function draw_sdfg(ctx, sdfg_dagre, visible_rect, mousepos) {
         }
     });
 }
+
+// Translate an SDFG by a given offset
+function offset_sdfg(sdfg, sdfg_graph, offset) {
+    sdfg.nodes.forEach((state, id) => {
+        let g = sdfg_graph.node(id);
+        g.x += offset.x;
+        g.y += offset.y;
+        offset_state(state, g, offset);
+    });
+    sdfg.edges.forEach((e, id) => {
+        let edge = sdfg_graph.edge(e.src, e.dst, eid);
+        edge.x += offset.x;
+        edge.y += offset.y;
+        edge.data.points.forEach((p) => {
+            p.x += offset.x;
+            p.y += offset.y;
+        });
+    });
+}
+
+// Translate nodes, edges, and connectors in a given SDFG state by an offset
+function offset_state(state, state_graph, offset) {
+    state.nodes.forEach((n, nid) => {
+        let node = state_graph.data.graph.node(nid);
+        node.x += offset.x;
+        node.y += offset.y;
+        node.connectors.forEach(c => {
+            c.x += offset.x;
+            c.y += offset.y;
+        });
+
+
+        if (node.data.node.type === 'NestedSDFG')
+            offset_sdfg(node.data.node.attributes.sdfg, node.data.graph, offset);
+    });
+    state.edges.forEach((e, eid) => {
+        let edge = state_graph.data.graph.edge(e.src, e.dst, eid);
+        edge.x += offset.x;
+        edge.y += offset.y;
+        edge.data.points.forEach((p) => {
+            p.x += offset.x;
+            p.y += offset.y;
+        });
+    });
+}
+
+
+///////////////////////////////////////////////////////
 
 function drawHexagon(ctx, x, y, w, h, offset) {
     let topleft = {x: x - w / 2.0, y: y - h / 2.0};
@@ -252,7 +392,6 @@ function drawArrow(ctx, p1, p2, size, offset) {
     // Rotate the context to point along the path
     let dx = p2.x - p1.x;
     let dy = p2.y - p1.y;
-    let len = Math.sqrt(dx * dx + dy * dy);
     ctx.translate(p2.x, p2.y);
     ctx.rotate(Math.atan2(dy, dx));
 
@@ -266,5 +405,22 @@ function drawArrow(ctx, p1, p2, size, offset) {
     ctx.restore();
 }
 
+function drawTrapezoid(ctx, topleft, node, inverted=false) {
+    ctx.beginPath();
+    if (inverted) {
+        ctx.moveTo(topleft.x, topleft.y);
+        ctx.lineTo(topleft.x + node.width, topleft.y);
+        ctx.lineTo(topleft.x + node.width - node.height, topleft.y + node.height);
+        ctx.lineTo(topleft.x + node.height, topleft.y + node.height);
+        ctx.lineTo(topleft.x, topleft.y);
+    } else {
+        ctx.moveTo(topleft.x, topleft.y + node.height);
+        ctx.lineTo(topleft.x + node.width, topleft.y + node.height);
+        ctx.lineTo(topleft.x + node.width - node.height, topleft.y);
+        ctx.lineTo(topleft.x + node.height, topleft.y);
+        ctx.lineTo(topleft.x, topleft.y + node.height);
+    }
+    ctx.closePath();
+}
 
-export {draw_sdfg};
+export {draw_sdfg, offset_sdfg, offset_state};
