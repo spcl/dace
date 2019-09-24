@@ -164,11 +164,9 @@ class SDFGOptimizer(object):
             self.applied_patterns.add(type(pattern_match))
 
             if SAVE_DOTS:
-                with open(
+                self.sdfg.draw_to_file(
                         'after_%d_%s_b4lprop.dot' %
-                    (pattern_counter + 1, type(pattern_match).__name__),
-                        'w') as dot_file:
-                    dot_file.write(self.sdfg.draw())
+                    (pattern_counter + 1, type(pattern_match).__name__))
 
             if not pattern_match.annotates_memlets():
                 labeling.propagate_labels_sdfg(self.sdfg)
@@ -176,15 +174,13 @@ class SDFGOptimizer(object):
             if True:
                 pattern_counter += 1
                 if SAVE_DOTS:
-                    with open(
+                    self.sdfg.draw_to_file(
                             'after_%d_%s.dot' % (pattern_counter,
-                                                 type(pattern_match).__name__),
-                            'w') as dot_file:
-                        dot_file.write(self.sdfg.draw())
+                                                 type(pattern_match).__name__))
                     if VISUALIZE:
                         time.sleep(0.7)
                         os.system(
-                            'xdot after_%d_%s.dot&' %
+                            'xdot _dotgraphs/after_%d_%s.dot&' %
                             (pattern_counter, type(pattern_match).__name__))
 
         return self.sdfg
