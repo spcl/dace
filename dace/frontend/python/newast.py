@@ -225,25 +225,6 @@ def _makebinop(op, opcode):
                 return _scalarbinop(sdfg, state, op2, op1, opcode, op, True)
             else:
                 return _binop(sdfg, state, op1, op2, opcode, op)
-    @oprepo.replaces_operator('Array', op, otherclass='int')
-    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-        print("Array %s int detected!" % op)
-        raise NotImplementedError
-    @oprepo.replaces_operator('Array', op, otherclass='float')
-    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-        print("Array %s float detected!" % op)
-        raise NotImplementedError
-    @oprepo.replaces_operator('Array', op, otherclass='complex')
-    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-        # TODO: Fix the name
-        name = '__dace_complex_{}'.format(op2)
-        # TODO: Somehow communicate this to the top-level SDFG? Nesting issues?
-        if name not in sdfg.arrays:
-            sdfg.add_transient(name, [1], dace.complex128)
-            init_state = sdfg.nodes()[0]
-            # TODO: Initialize new transient
-        func = oprepo.Replacements.getop('Array', op)
-        return func(sdfg, state, op1, name)
 
 
 # Define all standard Python augmented assignment operators
@@ -1225,6 +1206,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Define constants
         self.sdfg.add_constants(constants)
+        # Define numbers
+        self.numbers = dict()
 
         # Keep track of variables and scopes
         self.scope_vars = {k: k for k in arrays.keys()}  # type: Dict[str, str]
@@ -2549,9 +2532,36 @@ class ProgramVisitor(ExtNodeVisitor):
         # A string constant returns itself
         return node.s
 
-    def visit_Num(self, node: ast.Str):
-        # A constant returns itself
-        return node.n
+    def visit_Num(self, node: ast.Num):
+        name = None
+        if node.n not in self.numbers:
+            dtype = None
+            if isinstance(node.n, int):
+                dtype = dace.int64
+            elif isinstance(node.n, float):
+                dtype = dace.float64
+            elif isinstance(node.n, complex):
+                dtype = dace.complex128
+            else:
+                raise NotImplementedError
+            name, _ = self.sdfg.add_temp_transient([1], dtype)
+            self.numbers[node.n] = name
+            init_state = None
+            if not self.sdfg.nodes():
+                init_state = self.sdfg.add_state('init')
+                self.last_state = init_state
+            else:
+                init_state = self.sdfg.nodes()[0]
+            tasklet = init_state.add_tasklet(
+                'init_{}'.format(name), {}, {'out'}, 'out = {}'.format(node.n)
+            )
+            access = init_state.add_write(name)
+            init_state.add_edge(
+                tasklet, 'out', access, None, dace.Memlet.simple(name, '0')
+            )
+        else:
+            name = self.numbers[node.n]
+        return name
 
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global

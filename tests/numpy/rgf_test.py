@@ -127,17 +127,17 @@ def rgf_dense(HD: dace.complex128[N, BS, BS],
             # GLnd[n] = -GL[n] @ HF[n] @ Her(gR[n + 1]) - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ Her(gR[n + 1])
             GLnd[n] = -GL[n] @ HF[n] @ her_gR - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ her_gR
 
-    for n in range(1, N - 1):
-        # dTGL[n] = np.trace(GLnd[n - 1] @ HE[n])
-        trace_tmp = GLnd[n - 1] @ HE[n]
-        dTGL[n] = trace(trace_tmp)
+    # for n in range(1, N - 1):
+    #     # dTGL[n] = np.trace(GLnd[n - 1] @ HE[n])
+    #     trace_tmp = GLnd[n - 1] @ HE[n]
+    #     dTGL[n] = trace(trace_tmp)
 
-    # dTGL[0] = -np.trace(sigGl @ GL[0] - GG[0] @ sigLl)
-    # dTGL[-1] = np.trace(sigGr @ GL[-1] - GG[-1] @ sigLr)
-    trace_tmp0 = -sigGl @ GL[0] + GG[0] @ sigLl 
-    dTGL[0] = trace(trace_tmp0)
-    trace_tmpm1 = sigGr @ GL[N-1] + GG[N-1] @ sigLr
-    dTGL[N-1] = trace(trace_tmpm1)
+    # # dTGL[0] = -np.trace(sigGl @ GL[0] - GG[0] @ sigLl)
+    # # dTGL[-1] = np.trace(sigGr @ GL[-1] - GG[-1] @ sigLr)
+    # trace_tmp0 = -sigGl @ GL[0] + GG[0] @ sigLl 
+    # dTGL[0] = trace(trace_tmp0)
+    # trace_tmpm1 = sigGr @ GL[N-1] + GG[N-1] @ sigLr
+    # dTGL[N-1] = trace(trace_tmpm1)
 
 
 if __name__ == '__main__':
