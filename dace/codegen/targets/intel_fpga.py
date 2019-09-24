@@ -159,7 +159,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                                  False)
             else:
                 vec_type = data.dtype.ctype
-            return "__global volatile {} {}[]".format(vec_type, var_name)
+            return "__global volatile  {} {}[]".format(vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
         else:
@@ -685,7 +685,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 else:
                     raise dace.codegen.codegen.CodegenError(
                         "Unsupported number of accesses {} for scalar {}".
-                        format(memlet.num_accesses, connector))
+                            format(memlet.num_accesses, connector))
             elif isinstance(data_desc, dace.data.Array):
                 if memlet.num_accesses == 1:
                     result += write_expr
@@ -811,7 +811,7 @@ class OpenCLCodeTransform(cpu.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        super().__init__(*args, **kwargs, constants=sdfg.constants)  ## Tiziano:  Added 'constants' argument for constructor
+        super().__init__(*args, **kwargs, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
         target = rname(node)

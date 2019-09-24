@@ -95,8 +95,9 @@ class FPGATransformState(pattern_matching.Transformation):
 
         fpga_data = {}
 
-        if input_nodes:
 
+        if input_nodes:
+            #create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
 
             for node in input_nodes:
@@ -187,9 +188,33 @@ class FPGATransformState(pattern_matching.Transformation):
             nxutil.change_edge_src(sdfg, state, post_state)
             sdfg.add_edge(state, post_state, edges.InterstateEdge())
 
-        for src, _, dst, _, mem in state.edges():
+
+        # Johannes-CR: start. In the case I first apply vectorization and then transform, I have to take the vect. info from the nested SDFG
+
+        #propagate vector info from a nested sdfg
+        for src, src_conn, dst, dst_conn, mem in state.edges():
+            #need to go inside the nested SDFG and grab the vector length
+            if isinstance(dst, dace.graph.nodes.NestedSDFG):
+                #this edge is going to the nested SDFG
+                for inner_state in dst.sdfg.states():
+                    for n in inner_state.nodes():
+                        if isinstance(n, dace.graph.nodes.AccessNode) and n.data == dst_conn:
+                            #assuming all memlets have the same vector length
+                            veclen_= inner_state.all_edges(n)[0].data.veclen
+            if isinstance(src, dace.graph.nodes.NestedSDFG):
+                #this edge is coming from the nested SDFG
+                for inner_state in src.sdfg.states():
+                    for n in inner_state.nodes():
+                        if isinstance(n, dace.graph.nodes.AccessNode) and n.data == src_conn:
+                            #assuming all memlets have the same vector length
+                            veclen_ = inner_state.all_edges(n)[0].data.veclen
+
+
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
+                mem.veclen = veclen_
+
+        # Johannes-CR: end
 
         fpga_update(sdfg, state, 0)
 
