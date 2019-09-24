@@ -623,6 +623,12 @@ def _propagate_labels(g, sdfg):
     #          of ambiguity, the function raises an exception.
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
+
+    # First, propagate nested SDFGs in a bottom-up fashion
+    for node in g.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            propagate_labels_sdfg(node.sdfg)
+
     scope_dict = g.scope_dict()
 
     def stop_at(parent, child):
