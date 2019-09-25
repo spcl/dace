@@ -4,6 +4,7 @@ import { SDFG_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 import * as Roofline from "./renderer_dir/Roofline/main.js"
 import { SDFGRenderer } from "./renderer.js"
+import {find_exit_for_entry} from "./sdfg_utils.js";
 
 class DIODE_Settings {
     constructor(denormalized = {}) {
@@ -505,7 +506,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         return null;
     }
 
-    render_free_variables() {
+    render_free_variables(force_open) {
         let sdfg_dat = this.getSDFGDataFromState();
         if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
         this.diode.replaceOrCreate(['render-free-vars'], {
@@ -525,7 +526,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             };
 
             this.diode.addContentItem(config);
-            setTimeout(() => this.render_free_variables(), 1);
+            setTimeout(() => this.render_free_variables(force_open), 1);
         });
     }
 
@@ -569,16 +570,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
-    }
-
-    find_exit_for_entry(nodes, entry_node) {
-        for(let n of nodes) {
-            if(n.type.endsWith("Exit") && parseInt(n.scope_entry) == entry_node.id) {
-                return n;
-            }
-        }
-        console.warn("Did not find corresponding exit");
-        return null;
     }
 
     getSDFGPropertiesFromState() {
@@ -718,7 +709,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Special case: Entry nodes may contain properties of exit nodes
         if(name.startsWith("exit_")) {
-            let exit_node = this.find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
+            let exit_node = find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
             nref = this.getSDFGElementReference(exit_node.id, node.state_id);
             name = name.substr("exit_".length);
         }
@@ -777,7 +768,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.renderer_panes.push(sdfv);
 
         // Display data descriptors by default (in parallel to the creation of the renderer)
-        this.render_free_variables();
+        this.render_free_variables(true);
     }
 
 

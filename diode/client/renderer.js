@@ -1,5 +1,6 @@
 import {ContextMenu} from "./diode.js";
 import * as elements from "./renderer_elements.js";
+import {find_exit_for_entry} from "./sdfg_utils.js";
 
 class CanvasManager {
     // Manages translation and scaling of canvas rendering
@@ -315,14 +316,13 @@ function calculateNodeSize(sdfg_state, node, ctx) {
     let outconnsize = 2 * LINEHEIGHT * node.attributes.out_connectors.length - LINEHEIGHT;
     let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
     let maxheight = 2*LINEHEIGHT;
-    if (node.attributes.in_connectors.length + node.attributes.out_connectors.length > 0) {
-        maxheight += 4*LINEHEIGHT;
-    }
+    maxheight += 4*LINEHEIGHT;
 
     let size = { width: maxwidth, height: maxheight }
 
     // add something to the size based on the shape of the node
     if (node.type === "AccessNode") {
+        size.height -= 4*LINEHEIGHT;
         size.width += size.height;
     }
     else if (node.type.endsWith("Entry")) {
@@ -342,13 +342,14 @@ function calculateNodeSize(sdfg_state, node, ctx) {
         size.height = 0.0;
     }
     else if (node.type === "Reduce") {
+        size.height -= 4*LINEHEIGHT;
         size.width *= 2;
         size.height = size.width / 3.0;
     }
     else {
     }
 
-    return size
+    return size;
 }
 
 function check_and_redirect_edge(edge, drawn_nodes, sdfg_state) {
@@ -427,6 +428,10 @@ function relayout_sdfg(ctx, sdfg) {
     sdfg.edges.forEach(function (edge) {
         let gedge = g.edge(edge.src, edge.dst);
         let bb = calculateEdgeBoundingBox(gedge);
+        gedge.x = bb.x;
+        gedge.y = bb.y;
+        gedge.width = bb.width;
+        gedge.height = bb.height;
         edge.attributes = {};
         edge.attributes.data = {};
         edge.attributes.data.label = gedge.label;
@@ -480,9 +485,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         node.attributes.layout.type = node.type;
         node.attributes.layout.in_connectors = node.attributes.in_connectors;
         node.attributes.layout.out_connectors = node.attributes.out_connectors;
-        node.attributes.layout.properties = node.attributes;
-        node.attributes.layout.sdfg = sdfg;
-        node.attributes.layout.state = sdfg_state;
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
@@ -552,6 +554,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     // Layout connectors and nested SDFGs
     sdfg_state.nodes.forEach(function (node, id) {       
         let gnode = g.node(id);
+        if (!gnode) return;
         let topleft = gnode.topleft();
         
         // Offset nested SDFG
@@ -596,6 +599,10 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         edge.height = bb.height;
         edge.x = bb.x;
         edge.y = bb.y;
+        gedge.width = bb.width;
+        gedge.height = bb.height;
+        gedge.x = bb.x;
+        gedge.y = bb.y;
         edge.attributes.layout.x = bb.x;
         edge.attributes.layout.y = bb.y;
         edge.attributes.layout.points = gedge.points;
@@ -637,11 +644,13 @@ class SDFGRenderer {
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
+        this.tooltip = null;
 
         // Mouse-related fields
         this.mousepos = null; // Last position of the mouse pointer
         this.drag_start = null; // Null if the mouse/touch is not activated
         this.drag_second_start = null; // Null if two touch points are not activated
+        this.contextmenu = null;
 
         this.init_elements();
     }
@@ -732,14 +741,33 @@ class SDFGRenderer {
 
         this.on_pre_draw();
 
-        elements.draw_sdfg(ctx, g, {x: curx, y: cury, w: curw, h: curh}, this.mousepos);
+        elements.draw_sdfg(this, ctx, g, {x: curx, y: cury, w: curw, h: curh}, this.mousepos);
 
         this.on_post_draw();
     }
 
     on_pre_draw() { }
 
-    on_post_draw() { }
+    on_post_draw() {
+        if (this.mousepos) {
+            this.ctx.beginPath();
+            this.ctx.arc(this.mousepos.x, this.mousepos.y, 5, 0, 360);
+            this.ctx.closePath();
+            this.ctx.stroke();
+        }
+        if (this.tooltip) {
+            let pos = this.mousepos;
+            let label = this.tooltip;
+            let ctx = this.ctx;
+            let x = pos.x + 10;
+            let textmetrics = ctx.measureText(label);
+            ctx.fillStyle = "black";
+            ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
+            ctx.fillStyle = "white";
+            ctx.fillText(label, x + 0.2 * textmetrics.width, pos.y - 0.1 * LINEHEIGHT);
+            ctx.fillStyle = "black";
+        }
+    }
 
     // Returns a dictionary of SDFG elements in a given rectangle. Used for
     // selection, rendering, localized transformations, etc.
@@ -748,86 +776,133 @@ class SDFGRenderer {
     // {'states': [{sdfg: sdfg_name, state: 1}, ...], nodes: [sdfg: sdfg_name, state: 1, node: 5],
     //              edges: [], isedges: [], connectors: []}
     elements_in_rect(x, y, w, h) {
-        let elements = {states: [], nodes: [], connectors: [],
-                        edges: [], isedges: []};
+        let elements = {
+            states: [], nodes: [], connectors: [],
+            edges: [], isedges: []
+        };
+        this.do_for_intersected_elements(x, y, w, h, (type, e, obj) => elements[type].push(e));
+        return elements;
+    }
 
-        function traverse_recursive(sdfg, elements, x, y) {
-            let sdfg_name = sdfg.attributes.name;
-            sdfg.nodes.forEach(function (state, state_id) {
-                if (isWithinBB(x, y, state.attributes.layout)) {
-                    // Selected states
-                    elements.states.push({sdfg: sdfg_name, id: state_id});
+    do_for_intersected_elements(x, y, w, h, func) {
+        // Traverse nested SDFGs recursively
+        function traverse_recursive(g, sdfg_name) {
+            g.nodes().forEach(state_id => {
+                let state = g.node(state_id);
+                if (!state) return;
+                
+                if (state.intersect(x, y, w, h)) {
+                    // States
+                    func('states', {sdfg: sdfg_name, id: state_id}, state);
 
-                    state.nodes.forEach(function (node, node_id) {
-                        if (isWithinBB(x, y, node.attributes.layout)) {
+                    let ng = state.data.graph;
+                    ng.nodes().forEach(node_id => {
+                        let node = ng.node(node_id);
+                        if (node.intersect(x, y, w, h)) {
                             // Selected nodes
-                            elements.nodes.push({
-                                sdfg: sdfg_name, state: state_id, id: node_id
-                            });
-
-                            // NOTE: Connectors are sized LINEHEIGHT x LINEHEIGHT, spaced evenly with LINEHEIGHT
-                            let starty = node.attributes.layout.y - node.attributes.layout.height / 2.0;
-                            let endy = node.attributes.layout.y + node.attributes.layout.height / 2.0;
-
-                            let i;
-                            // Input connectors
-                            if (y >= starty - LINEHEIGHT/2.0 && y <= starty + LINEHEIGHT/2.0) {
-                                let conn_length = 2 * LINEHEIGHT * node.attributes.in_connectors.length - LINEHEIGHT;
-                                let conn_startx = node.attributes.layout.x - conn_length / 2.0;
-                                for (i = 0; i < node.attributes.in_connectors.length; i++) {
-                                    if (x >= conn_startx + i * 2 * LINEHEIGHT &&
-                                        x <= conn_startx + i * 2 * LINEHEIGHT + LINEHEIGHT) {
-                                        elements.connectors.push({sdfg: sdfg_name, state: state_id,
-                                                                  node: node_id, connector: i, conntype: "in"});
-                                    }
-                                }
-                            }
-
-                            // Output connectors
-                            if (y >= endy - LINEHEIGHT/2.0 && y <= endy + LINEHEIGHT/2.0) {
-                                let conn_length = 2 * LINEHEIGHT * node.attributes.out_connectors.length - LINEHEIGHT;
-                                let conn_startx = node.attributes.layout.x - conn_length / 2.0;
-                                for (i = 0; i < node.attributes.out_connectors.length; i++) {
-                                    if (x >= conn_startx + i * 2 * LINEHEIGHT &&
-                                        x <= conn_startx + i * 2 * LINEHEIGHT + LINEHEIGHT) {
-                                        elements.connectors.push({sdfg: sdfg_name, state: state_id,
-                                                                  node: node_id, connector: i, conntype: "out"});
-                                    }
-                                }
-                            }
-                            // END of connectors
+                            func('nodes', {sdfg: sdfg_name, state: state_id, id: node_id}, node);
 
                             // If nested SDFG, traverse recursively
-                            if (node.type === "NestedSDFG")
-                                traverse_recursive(node.sdfg, elements, x - node.x, y - node.y);
+                            if (node.data.node.type === "NestedSDFG")
+                                traverse_recursive(node.data.node.graph, node.data.node.sdfg.attributes.name);
                         }
+                        // Connectors
+                        node.in_connectors.forEach((c, i) => {
+                            if (c.intersect(x, y, w, h))
+                                func('connectors', {sdfg: sdfg_name, state: state_id, node: node_id,
+                                                    connector: i, conntype: "in"}, c);
+                        });
+                        node.out_connectors.forEach((c, i) => {
+                            if (c.intersect(x, y, w, h))
+                                func('connectors', {sdfg: sdfg_name, state: state_id, node: node_id,
+                                                    connector: i, conntype: "out"}, c);
+                        });
                     });
 
                     // Selected edges
-                    state.edges.forEach((edge, edge_id) => {
-                        if (isWithinBBEdge(x, y, edge.attributes.layout)) {
-                            elements.edges.push({sdfg: sdfg_name, state: state_id, id: edge_id});
+                    ng.edges().forEach(edge_id => {
+                        let edge = ng.edge(edge_id);
+                        if (edge.intersect(x, y, w, h)) {
+                            func('edges', {sdfg: sdfg_name, state: state_id, id: edge.id}, edge);
                         }
                     });
                 }
             });
 
             // Selected inter-state edges
-            sdfg.edges.forEach((edge, isedge_id) => {
-                if (isWithinBBEdge(x, y, edge.attributes.layout)) {
-                    elements.isedges.push({sdfg: sdfg_name, id: isedge_id});
+            g.edges().forEach(isedge_id => {
+                let isedge = g.edge(isedge_id);
+                if (isedge.intersect(x, y, w, h)) {
+                    func('isedges', {sdfg: sdfg_name, id: isedge.id}, isedge);
                 }
             });
         }
 
-        // Traverse all SDFGs recursively
-        traverse_recursive(this.sdfg, elements, x, y);
+        // Start with top-level SDFG
+        traverse_recursive(this.graph, this.sdfg.attributes.name);
+    }
 
-        return elements;
+    for_all_elements(x, y, w, h, func) {
+        // Traverse nested SDFGs recursively
+        function traverse_recursive(g, sdfg_name) {
+            g.nodes().forEach(state_id => {
+                let state = g.node(state_id);
+                if (!state) return;
+
+                // States
+                func('states', {sdfg: sdfg_name, id: state_id}, state, state.intersect(x, y, w, h));
+
+                let ng = state.data.graph;
+                ng.nodes().forEach(node_id => {
+                    let node = ng.node(node_id);
+                    // Selected nodes
+                    func('nodes', {sdfg: sdfg_name, state: state_id, id: node_id}, node, node.intersect(x, y, w, h));
+
+                    // If nested SDFG, traverse recursively
+                    if (node.data.node.type === "NestedSDFG")
+                        traverse_recursive(node.data.node.graph, node.data.node.sdfg.attributes.name);
+
+                    // Connectors
+                    node.in_connectors.forEach((c, i) => {
+                        func('connectors', {sdfg: sdfg_name, state: state_id, node: node_id,
+                                            connector: i, conntype: "in"}, c, c.intersect(x, y, w, h));
+                    });
+                    node.out_connectors.forEach((c, i) => {
+                        func('connectors', {sdfg: sdfg_name, state: state_id, node: node_id,
+                                            connector: i, conntype: "out"}, c, c.intersect(x, y, w, h));
+                    });
+                });
+
+                // Selected edges
+                ng.edges().forEach(edge_id => {
+                    let edge = ng.edge(edge_id);
+                    func('edges', {sdfg: sdfg_name, state: state_id, id: edge.id}, edge, edge.intersect(x, y, w, h));
+                });
+            });
+
+            // Selected inter-state edges
+            g.edges().forEach(isedge_id => {
+                let isedge = g.edge(isedge_id);
+                func('isedges', {sdfg: sdfg_name, id: isedge.id}, isedge, isedge.intersect(x, y, w, h));
+            });
+        }
+
+        // Start with top-level SDFG
+        traverse_recursive(this.graph, this.sdfg.attributes.name);
     }
 
     on_mouse_event(event, comp_x_func, comp_y_func, evtype="click") {
         let dirty = false; // Whether to redraw at the end
+
+        // Clear context menu
+        if (evtype === 'click' || evtype === 'doubleclick' || evtype === 'mousedown' || evtype === 'contextmenu' ||
+                evtype === 'wheel') {
+            if (this.contextmenu) {
+                this.contextmenu.destroy();
+                this.contextmenu = null;
+            }
+        }
+
 
         if (evtype === "touchstart" || evtype === "mousedown") {
             let ev = (evtype === "touchstart") ? event.touches[0] : event;
@@ -901,17 +976,36 @@ class SDFGRenderer {
             this.draw_async();
             return;
         }
-
         // End of mouse-move/touch-based events
 
 
         // Find elements under cursor
-        let elements = this.elements_in_rect(comp_x_func(event), comp_y_func(event), 0, 0);
+        let elements = this.elements_in_rect(this.mousepos.x, this.mousepos.y, 0, 0);
         let clicked_states = elements.states;
         let clicked_nodes = elements.nodes;
-        let clicked_edges = elements.edges
+        let clicked_edges = elements.edges;
         let clicked_interstate_edges = elements.isedges;
         let clicked_connectors = elements.connectors;
+        let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
+            clicked_interstate_edges.length + clicked_connectors.length;
+
+        // Change mouse cursor accordingly
+        if (total_elements > 0)
+            document.body.style.cursor = 'pointer';
+        else
+            document.body.style.cursor = 'auto';
+
+        this.tooltip = null;
+        this.last_hovered_elements = elements;
+
+        // Hovered elements get colored green (if they are not already colored)
+        this.for_all_elements(this.mousepos.x, this.mousepos.y, 0, 0, (type, e, obj, intersected) => {
+            if (intersected && obj.stroke_color === null)
+                obj.stroke_color = 'green';
+            else if(!intersected && obj.stroke_color === 'green')
+                obj.stroke_color = null;
+        });
+
 
         let state_id = null;
         let node_id = null;
@@ -927,14 +1021,21 @@ class SDFGRenderer {
         let state_only = false;
 
         // Check if anything was clicked at all
-        if (clicked_states.length == 0 && clicked_interstate_edges.length == 0 &&
-            (evtype === 'click' || evtype === 'contextmenu')) {
+        if (total_elements == 0 && evtype === 'click') {
             // Nothing was selected
-            //let sstate = this.sdfg;
-            //sstate.clearHighlights();
-            this.diode.render_free_variables();
+            this.diode.render_free_variables(false);
             return;
         }
+        if (total_elements == 0 && evtype === evtype === 'contextmenu') {
+            let cmenu = new ContextMenu();
+            cmenu.addOption("SDFG Properties", x => {
+                this.diode.render_free_variables(true);
+            });
+            cmenu.show(event.x, event.y);
+            this.contextmenu = cmenu;
+            return;
+        }
+
         if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
             // A state was selected
             if (clicked_states.length > 0)
@@ -952,26 +1053,7 @@ class SDFGRenderer {
             node_id = clicked_edges[0].id;
 
         if (evtype === "mousemove") {
-            let sdfg = this.sdfg;
-
-            // Position for tooltip
-            let pos = {x: comp_x_func(event), y: comp_y_func(event)};
-
-            sdfg.mousepos = pos;
-
-            if (state_only) {
-                sdfg.hovered = {'state': [state_id, pos]};
-            } else if (clicked_nodes.length > 0)
-                sdfg.hovered = {'node': [state_id, node_id, pos]};
-            else if (clicked_edges.length > 0) {
-                let edge_id = clicked_edges[0].true_id;
-                sdfg.hovered = {'edge': [state_id, edge_id, pos]};
-            } else if (clicked_interstate_edges.length > 0) {
-                let isedge_id = clicked_interstate_edges[0].true_id;
-                sdfg.hovered = {'interstate_edge': [isedge_id, pos]};
-            } else {
-                sdfg.hovered = {};
-            }
+            // Draw only if clicked_* have changed
             this.draw_async();
             return;
         }
@@ -1006,9 +1088,7 @@ class SDFGRenderer {
             cmenu.addOption("Show transformations", x => {
                 console.log("'Show transformations' was clicked");
 
-                this.diode.project().request(['highlight-transformations-' + sdfg_name], x => {
-
-                }, {
+                this.diode.project().request(['highlight-transformations-' + sdfg_name], x => {}, {
                     params: {
                         state_id: state_id,
                         node_id: node_id
@@ -1051,7 +1131,18 @@ class SDFGRenderer {
                 x.preventDefault();
                 x.stopPropagation();
             });
+            cmenu.addOption("Show Source Code", x => {
+                console.log("go to source code");
+            });
+            cmenu.addOption("Show Generated Code", x => {
+                console.log("go to generated code");
+            });
+            cmenu.addOption("Properties", x => {
+                console.log("Force-open property pane");
+            });
+
             cmenu.show(spos.x, spos.y);
+            this.contextmenu = cmenu;
 
             return;
         }
@@ -1067,14 +1158,7 @@ class SDFGRenderer {
 
             console.log("sdfg", sdfg);
 
-            let states = sdfg.nodes;
-            let state = null;
-            for (let x of states) {
-                if (x.id == state_id) {
-                    state = x;
-                    break;
-                }
-            }
+            let state = sdfg.nodes[state_id];
             let render_props = n => {
                 let attr = n.attributes;
 
@@ -1096,9 +1180,8 @@ class SDFGRenderer {
                     proplist.push(pdata);
                 }
                 let nid = parseInt(n.id);
-                if (isNaN(nid) || node_id == null) {
-                    nid = node_id
-                }
+                if (!n || isNaN(nid))
+                    nid = null;
                 let propobj = {
                     node_id: nid,
                     state_id: state_id,
@@ -1108,66 +1191,55 @@ class SDFGRenderer {
 
                 this.diode.renderProperties(propobj);
             };
-            if (clicked_interstate_edges.length > 0) {
-                let edges = sdfg.edges;
-                for (let e of edges) {
-                    if (e.src == node_id.src && e.dst == node_id.dst) {
-                        render_props(e.attributes.data);
-                        break;
-                    }
-                }
-                return;
-            }
+            clicked_interstate_edges.forEach(edge => {
+                render_props(sdfg.edges[edge.id].attributes.data);
+            });
             if (state_only) {
                 render_props(state);
                 return;
             }
 
-            let nodes = state.nodes;
-            for (let ni = 0; ni < nodes.length; ++ni) {
-                let n = nodes[ni];
-                if (n.id != node_id)
-                    continue;
-
+            clicked_nodes.forEach(node => {
+                let n = state.nodes[node.id];
                 // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
                 if (n.type.endsWith("Entry")) {
                     // Find the matching exit node
-                    let exit_node = this.find_exit_for_entry(nodes, n);
+                    let exit_node = find_exit_for_entry(state.nodes, n);
                     // Highlight both entry and exit nodes
-                    sstate.addHighlight({'state-id': state_id, 'node-id': exit_node.id});
-                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
+                    clicked_nodes.push({sdfg: sdfg_name, state: state.id, node: exit_node.id});
+
+                    let tmp = this.diode.merge_properties(n, 'entry_', exit_node, 'exit_');
                     render_props(tmp);
 
-                    break;
+                    return;
                 } else if (n.type.endsWith("Exit")) {
                     // Find the matching entry node and continue with that
                     let entry_id = parseInt(n.scope_entry);
-                    let entry_node = nodes[entry_id];
+                    let entry_node = state.nodes[entry_id];
                     // Highlight both entry and exit nodes
-                    sstate.addHighlight({'state-id': state_id, 'node-id': entry_id});
-                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
+                    clicked_nodes.push({sdfg: sdfg_name, state: state_id, node: entry_id});
+
+                    let tmp = this.diode.merge_properties(entry_node, 'entry_', n, 'exit_');
                     render_props(tmp);
-                    break;
+                    return;
+
                 } else if (n.type === "AccessNode") {
                     // Find matching data descriptor and show that as well
                     let ndesc = sdfg.attributes._arrays[n.attributes.data];
-                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
+                    let tmp = this.diode.merge_properties(n, '', ndesc, 'datadesc_');
                     render_props(tmp);
-                    break;
+                    return;
                 }
 
                 render_props(n);
-                break;
-            }
+            });
 
-            let edges = state.edges;
-            for (let e of edges) {
-                if (e.src == node_id.src && e.dst == node_id.dst) {
-                    render_props(e.attributes.data);
-                    break;
-                }
-            }
+            clicked_edges.forEach(edge => {
+                render_props(state.edges[edge.id].attributes.data);
+            });
         }, 0);
+
+        this.last_clicked_elements = elements;
 
         if (dirty)
             this.draw_async();

@@ -2070,15 +2070,24 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def toJSON(self, parent=None):
         import json
         ret = {
-            'type': type(self).__name__,
-            'label': self.name,
-            'id': parent.node_id(self) if parent != None else None,
-            'collapsed': self.is_collapsed,
-            'scope_dict': self.scope_dict(
-                node_to_children=True, return_ids=True),
+            'type':
+            type(self).__name__,
+            'label':
+            self.name,
+            'id':
+            parent.node_id(self) if parent != None else None,
+            'collapsed':
+            self.is_collapsed,
+            'scope_dict':
+            self.scope_dict(node_to_children=True, return_ids=True),
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
-            'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
-            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'edges': [
+                json.loads(e.toJSON(self)) for e in sorted(
+                    self.edges(),
+                    key=lambda e: (e.src_conn or '', e.dst_conn or ''))
+            ],
+            'attributes':
+            json.loads(Property.all_properties_to_json(self)),
         }
 
         return json.dumps(ret)

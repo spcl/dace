@@ -7,6 +7,7 @@ export class SDFGElement {
         this.sdfg = sdfg;
         this.in_connectors = [];
         this.out_connectors = [];
+        this.stroke_color = null;
         this.set_layout();
     }
 
@@ -16,7 +17,7 @@ export class SDFGElement {
         this.height = this.data.layout.height;
     }
 
-    draw(ctx, highlighted, mousepos) {}
+    draw(renderer, ctx, mousepos) {}
 
     label() {
         return this.data.label;
@@ -35,19 +36,30 @@ export class SDFGElement {
         return {x: this.x - this.width / 2, y: this.y - this.height / 2};
     }
 
-    strokeStyle(highlighted) {
-        if(highlighted === 'select') {
-            return "red";
-        } else if(highlighted === 'hover') {
-            return "green";
-        } else {
-            return "black";
+    strokeStyle() {
+        if (this.stroke_color)
+            return this.stroke_color;
+        return "black";
+    }
+
+    // General bounding-box intersection function. Returns true iff point or rectangle intersect element.
+    intersect(x, y, w = 0, h = 0) {
+        if (w == 0 || h == 0) {  // Point-element intersection
+            return (x >= this.x - this.width / 2.0) &&
+                   (x <= this.x + this.width / 2.0) &&
+                   (y >= this.y - this.height / 2.0) &&
+                   (y <= this.y + this.height / 2.0);
+        } else {                 // Box-element intersection
+            return (x <= this.x + this.width / 2.0) &&
+                    (x + w >= this.x - this.width / 2.0) &&
+                    (y <= this.y + this.height / 2.0) &&
+                    (y + h >= this.y - this.height / 2.0);
         }
     }
 }
 
 export class State extends SDFGElement {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
 
         ctx.fillStyle = "#deebf7";
@@ -57,8 +69,8 @@ export class State extends SDFGElement {
         ctx.fillText(this.label(), topleft.x, topleft.y + LINEHEIGHT);
 
         // If this state is selected or hovered
-        if (highlighted) {
-            ctx.strokeStyle = this.strokeStyle(highlighted);
+        if (this.stroke_color) {
+            ctx.strokeStyle = this.strokeStyle();
             ctx.stroke();
             ctx.strokeStyle = "black";
         }
@@ -70,11 +82,11 @@ export class State extends SDFGElement {
 }
 
 export class Node extends SDFGElement {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.fillStyle = "white";
         ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
-        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.strokeStyle = this.strokeStyle();
         ctx.strokeRect(topleft.x, topleft.y, this.width, this.height);
         ctx.fillStyle = "black";
         let textw = ctx.measureText(this.label()).width;
@@ -92,7 +104,7 @@ export class Node extends SDFGElement {
 }
 
 export class Edge extends SDFGElement {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let edge = this;
 
         ctx.beginPath();
@@ -107,8 +119,13 @@ export class Edge extends SDFGElement {
         ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y,
                              edge.points[i+1].x, edge.points[i+1].y);
 
-        ctx.strokeStyle = this.strokeStyle(highlighted);
-        ctx.fillStyle = this.strokeStyle(highlighted);
+        let style = this.strokeStyle();
+        if (style !== 'black')
+            renderer.tooltip = this.tooltip();
+        if (this.parent_id == null && style === 'black') {  // Interstate edge
+            style = 'blue';
+        }
+        ctx.fillStyle = ctx.strokeStyle = style;
 
         ctx.stroke();
 
@@ -128,23 +145,43 @@ export class Edge extends SDFGElement {
         this.width = this.data.width;
         this.height = this.data.height;
     }
+
+    intersect(x, y, w = 0, h = 0) {
+        // First, check bounding box
+        if(!super.intersect(x, y, w, h))
+            return false;
+
+        // Then (if point), check distance from line
+        if (w == 0 || h == 0) {
+            for (let i = 0; i < this.points.length - 1; i++) {
+                let dist = ptLineDistance({x: x, y: y}, this.points[i], this.points[i + 1]);
+                if (dist > 5.0)
+                    return false;
+            }
+        }
+        return true;
+    }
 }
 
 export class Connector extends SDFGElement {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.beginPath();
         drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
         ctx.closePath();
-        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "#f0fdff";
         ctx.fill();
         ctx.fillStyle = "black";
         ctx.strokeStyle = "black";
+        if (this.strokeStyle() !== 'black')
+            renderer.tooltip = this.tooltip();
     }
 
     set_layout() { }
+
+    label() { return this.data.name; }
 
     tooltip() {
         return this.label();
@@ -152,12 +189,12 @@ export class Connector extends SDFGElement {
 }
 
 export class AccessNode extends Node {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.beginPath();
         drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
         ctx.closePath();
-        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.strokeStyle = this.strokeStyle();
 
         let nodedesc = this.sdfg.attributes._arrays[this.data.node.attributes.data];
         // Streams have dashed edges
@@ -186,14 +223,14 @@ export class AccessNode extends Node {
 }
 
 export class ScopeNode extends Node {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         if (this.data.node.attributes.is_collapsed) {
             drawHexagon(ctx, this.x, this.y, this.width, this.height);
         } else {
             let topleft = this.topleft();
             drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
         }
-        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.strokeStyle = this.strokeStyle();
 
         // Consume scopes have dashed edges
         if (this.data.node.type.startsWith("Consume"))
@@ -226,13 +263,13 @@ export class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash
 export class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
 
 export class EmptyTasklet extends Node {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         // Do nothing
     }
 }
 
 export class Tasklet extends Node {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         let octseg = this.height / 3.0;
         ctx.beginPath();
@@ -246,7 +283,7 @@ export class Tasklet extends Node {
         ctx.lineTo(topleft.x, topleft.y + 2 * octseg);
         ctx.lineTo(topleft.x, topleft.y + 1 * octseg);
         ctx.closePath();
-        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "white";
         ctx.fill();
@@ -257,7 +294,7 @@ export class Tasklet extends Node {
 }
 
 export class Reduce extends Node {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.beginPath();
         ctx.moveTo(topleft.x, topleft.y);
@@ -265,7 +302,7 @@ export class Reduce extends Node {
         ctx.lineTo(topleft.x + this.width, topleft.y);
         ctx.lineTo(topleft.x, topleft.y);
         ctx.closePath();
-        ctx.strokeStyle = this.strokeStyle(highlighted);
+        ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "white";
         ctx.fill();
@@ -275,9 +312,9 @@ export class Reduce extends Node {
 }
 
 export class NestedSDFG extends Node {
-    draw(ctx, highlighted, mousepos) {
+    draw(renderer, ctx, mousepos) {
         // Draw square around nested SDFG
-        super.draw(ctx, highlighted, mousepos);
+        super.draw(ctx, mousepos);
 
         // Draw nested graph
         draw_sdfg(ctx, this.data.graph, null, mousepos);
@@ -289,11 +326,11 @@ export class NestedSDFG extends Node {
 //////////////////////////////////////////////////////
 
 // Draw an entire SDFG
-function draw_sdfg(ctx, sdfg_dagre, visible_rect, mousepos) {
+function draw_sdfg(renderer, ctx, sdfg_dagre, visible_rect, mousepos) {
     // Render state machine
     let g = sdfg_dagre;
-    g.nodes().forEach( v => { g.node(v).draw(ctx, false, mousepos); });
-    g.edges().forEach( e => { g.edge(e).draw(ctx, false, mousepos); });
+    g.nodes().forEach( v => { g.node(v).draw(renderer, ctx, mousepos); });
+    g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
 
     // TODO: Render each visible state's contents
     g.nodes().forEach( v => {
@@ -305,12 +342,12 @@ function draw_sdfg(ctx, sdfg_dagre, visible_rect, mousepos) {
         {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
-                n.draw(ctx, false, mousepos);
-                n.in_connectors.forEach(c => { c.draw(ctx, false, mousepos); });
-                n.out_connectors.forEach(c => { c.draw(ctx, false, mousepos); });
+                n.draw(renderer, ctx, mousepos);
+                n.in_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
+                n.out_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
             });
             ng.edges().forEach(e => {
-                ng.edge(e).draw(ctx, false, mousepos);
+                ng.edge(e).draw(renderer, ctx, mousepos);
             });
         }
     });
@@ -339,6 +376,8 @@ function offset_sdfg(sdfg, sdfg_graph, offset) {
 function offset_state(state, state_graph, offset) {
     state.nodes.forEach((n, nid) => {
         let node = state_graph.data.graph.node(nid);
+        if (!node) return;
+
         node.x += offset.x;
         node.y += offset.y;
         node.in_connectors.forEach(c => {
@@ -355,6 +394,7 @@ function offset_state(state, state_graph, offset) {
     });
     state.edges.forEach((e, eid) => {
         let edge = state_graph.data.graph.edge(e.src, e.dst, eid);
+        if (!edge) return;
         edge.x += offset.x;
         edge.y += offset.y;
         edge.data.points.forEach((p) => {
@@ -432,6 +472,15 @@ function drawTrapezoid(ctx, topleft, node, inverted=false) {
         ctx.lineTo(topleft.x, topleft.y + node.height);
     }
     ctx.closePath();
+}
+
+// Returns the distance from point p to line defined by two points (line1, line2)
+function ptLineDistance(p, line1, line2) {
+    let dx = (line2.x - line1.x);
+    let dy = (line2.y - line1.y);
+    let res = dy * p.x - dx * p.y + line2.x * line1.y - line2.y * line1.x;
+
+    return Math.abs(res) / Math.sqrt(dy*dy + dx*dx);
 }
 
 export {draw_sdfg, offset_sdfg, offset_state};
