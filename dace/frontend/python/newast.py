@@ -24,9 +24,15 @@ import numpy as np
 AssignmentInfo = Tuple[SDFG, SDFGState, Tuple[str]]
 
 
+class ProgramVisitor: pass
+
+
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('numpy.ndarray')
-def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
+def _define_local(sdfg: SDFG,
+                  state: SDFGState,
+                  shape,
+                  dtype):
     name, _ = sdfg.add_temp_transient(shape, dtype)
     return name
 
@@ -56,7 +62,11 @@ def _define_streamarray(sdfg: SDFG,
     return name
 
 
-def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
+def _assignop(sdfg: SDFG,
+              state: SDFGState,
+              op1: str,
+              opcode: str,
+              opname: str):
     """ Implements a general element-wise assignment operator. """
     arr1 = sdfg.arrays[op1]
 
@@ -86,7 +96,11 @@ def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
+def _unop(sdfg: SDFG,
+          state: SDFGState,
+          op1: str,
+          opcode: str,
+          opname: str):
     """ Implements a general element-wise unary operator. """
     arr1 = sdfg.arrays[op1]
 
@@ -108,8 +122,13 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
-           opname: str):
+def _binop(sdfg: SDFG,
+           state: SDFGState,
+           op1: str,
+           op2: str,
+           opcode: str,
+           opname: str,
+           restype: dtypes.typeclass):
     """ Implements a general element-wise binary operator. """
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
@@ -117,7 +136,7 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
             or any(s1 != s2 for s1, s2 in zip(arr1.shape, arr2.shape))):
         raise SyntaxError('Array sizes must match')
 
-    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
+    name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
@@ -138,9 +157,13 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
     return name
 
 
-def _scalarbinop(sdfg: SDFG, state: SDFGState,
-                 scalop: str, arrop: str,
-                 opcode: str, opname: str,
+def _scalarbinop(sdfg: SDFG,
+                 state: SDFGState,
+                 scalop: str,
+                 arrop: str,
+                 opcode: str,
+                 opname: str,
+                 restype: dtypes.typeclass,
                  reverse=False):
     """ Implements a general Scalar-Array binary operator. """
     scalar = sdfg.arrays[scalop]
@@ -153,7 +176,7 @@ def _scalarbinop(sdfg: SDFG, state: SDFGState,
             % (scalar.dtype.to_string(), arr.dtype.to_string()))
     # End of argument type checking
     
-    name, _ = sdfg.add_temp_transient(arr.shape, arr.dtype, arr.storage)
+    name, _ = sdfg.add_temp_transient(arr.shape, restype, arr.storage)
     state.add_mapped_tasklet(
         "_SA%s_" % opname,
         {
@@ -178,13 +201,21 @@ def _scalarbinop(sdfg: SDFG, state: SDFGState,
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2: None):
         return _assignop(sdfg, state, op1, opcode, op)
 
 
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2=None):
         return _unop(sdfg, state, op1, opcode, op)
 
 
@@ -195,17 +226,40 @@ def _is_scalar(sdfg, op):
     return False
 
 
+def _inverse_dict_lookup(dict, value):
+    for k, v in dict.items():
+        if v == value:
+            return k
+    return None
+
+
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2: str):
+
+        arr1 = sdfg.arrays[op1]
+        type1 = arr1.dtype.type
         isscal1 = _is_scalar(sdfg, op1)
+        isnum1 = isscal1 and (op1 in visitor.numbers.values())
+        if isnum1:
+            type1 = _inverse_dict_lookup(visitor.numbers, op1)
+        arr2 = sdfg.arrays[op2]
+        type2 = arr2.dtype.type
         isscal2 = _is_scalar(sdfg, op2)
+        isnum2 = isscal2 and (op2 in visitor.numbers.values())
+        if isnum2:
+            type2 = _inverse_dict_lookup(visitor.numbers, op2)
+        restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+
         if isscal1:
             if isscal2:
-                # TODO: Issues with types
                 arr1 = sdfg.arrays[op1]
                 arr2 = sdfg.arrays[op2]
-                op3, arr3 = sdfg.add_temp_transient([1], arr2.dtype, arr2.storage)
+                op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
                 tasklet = state.add_tasklet(
                     '_SS%s_' % op,
                     {'s1', 's2'}, {'s3'},
@@ -219,12 +273,12 @@ def _makebinop(op, opcode):
                 state.add_edge(tasklet, 's3', n3, None, dace.Memlet.from_array(op3, arr3))
                 return op3
             else:
-                return _scalarbinop(sdfg, state, op1, op2, opcode, op)
+                return _scalarbinop(sdfg, state, op1, op2, opcode, op, restype)
         else:
             if isscal2:
-                return _scalarbinop(sdfg, state, op2, op1, opcode, op, True)
+                return _scalarbinop(sdfg, state, op2, op1, opcode, op, restype, True)
             else:
-                return _binop(sdfg, state, op1, op2, opcode, op)
+                return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
 
 # Define all standard Python augmented assignment operators
@@ -259,7 +313,8 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 
 @oprepo.replaces_operator('Scalar', 'Mult', otherclass='Array')
-def _scalarrmult(sdfg: SDFG,
+def _scalarrmult(visitor,#: ProgramVisitor,
+                 sdfg: SDFG,
                  state: SDFGState,
                  scalop: str,
                  arrop: str,
@@ -305,12 +360,12 @@ def _scalarrmult(sdfg: SDFG,
 
 
 @oprepo.replaces_operator('Array', 'Mult', otherclass='Scalar')
-def _arrscalmult(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+def _arrscalmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     return _scalarrmult(sdfg, state, op2, op1, reverse=True)
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
-def _matmult(sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
@@ -2653,7 +2708,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 (opname, default_impl, op1type, op2type))
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
-        result = func(self.sdfg, self.last_state, operand1, operand2)
+        result = func(self, self.sdfg, self.last_state, operand1, operand2)
         if not isinstance(result, (tuple, list)):
             return [result]
         return result
