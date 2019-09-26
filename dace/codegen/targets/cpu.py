@@ -1133,7 +1133,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         function_stream, callsite_stream)
 
                 # Also define variables in the C++ unparser scope
-                self._locals.define(edge.dst_conn, -1, self._ldepth + 1)
+                self._locals.define(edge.dst_conn, -1, self._ldepth + 1,
+                                    sdfg.arrays[memlet.data].dtype.ctype)
                 arrays.add(edge.dst_conn)
 
         callsite_stream.write('\n', sdfg, state_id, node)
@@ -1163,7 +1164,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         function_stream, callsite_stream)
 
                 # Also define variables in the C++ unparser scope
-                self._locals.define(edge.src_conn, -1, self._ldepth + 1)
+                self._locals.define(edge.src_conn, -1, self._ldepth + 1,
+                                    sdfg.arrays[memlet.data].dtype.ctype)
                 arrays.add(edge.src_conn)
 
         callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
@@ -1485,15 +1487,18 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 arg_type = sdfg.arrays[edge.data.data]
                 if (isinstance(arg_type, dace.data.Scalar)
                         or isinstance(arg_type, dace.dtypes.typeclass)):
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar)
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Scalar)
                 elif isinstance(arg_type, dace.data.Array):
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Pointer)
+                    self._dispatcher.defined_vars.add(local_name,
+                                                      DefinedType.Pointer)
                 elif isinstance(arg_type, dace.data.Stream):
                     if arg_type.is_stream_array():
-                        self._dispatcher.defined_vars.add(local_name,
-                                                        DefinedType.StreamArray)
+                        self._dispatcher.defined_vars.add(
+                            local_name, DefinedType.StreamArray)
                     else:
-                        self._dispatcher.defined_vars.add(local_name, DefinedType.Stream)
+                        self._dispatcher.defined_vars.add(
+                            local_name, DefinedType.Stream)
                 else:
                     raise TypeError("Unrecognized argument type: {}".format(
                         type(arg_type).__name__))
