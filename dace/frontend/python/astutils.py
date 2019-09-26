@@ -272,13 +272,13 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                          symbolic.symbol_name_or_value(s)) - 1,
                      symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
 
-    missing_slices = len(arrdesc.shape) - len(astrange)
-    if missing_slices < 0:
-        raise Exception('Mismatching shape {} - range {} dimensions'.format(
-            arrdesc.shape, astrange)
-        )
-    for i in range(missing_slices):
-        astrange.append((None, None, None))
+        missing_slices = len(arrdesc.shape) - len(astrange)
+        if missing_slices < 0:
+            raise Exception('Mismatching shape {} - range {} dimensions'.format(
+                arrdesc.shape, astrange)
+            )
+        for i in range(missing_slices):
+            astrange.append((None, None, None))
 
     result = [None] * len(astrange)
     for i, r in enumerate(astrange):
