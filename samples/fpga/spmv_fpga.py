@@ -89,7 +89,7 @@ def make_post_state(sdfg):
 
 def make_nested_sdfg(parent):
 
-    sdfg = dace.SDFG("spmv_inner", parent=parent)
+    sdfg = dace.SDFG("spmv_inner")
 
     set_zero_state = sdfg.add_state("set_zero")
     set_zero_b = set_zero_state.add_scalar(
@@ -262,7 +262,7 @@ def make_main_state(sdfg):
         storage=dace.dtypes.StorageType.FPGA_Registers,
         transient=True)
 
-    nested_sdfg = make_nested_sdfg(sdfg)
+    nested_sdfg = make_nested_sdfg(state)
     nested_sdfg_tasklet = state.add_nested_sdfg(
         nested_sdfg, sdfg,
         {"row_begin", "row_end", "A_val_read", "A_col_read", "x_read"},

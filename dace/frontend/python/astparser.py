@@ -37,6 +37,40 @@ class MemletRemover(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+class StructTransformer(ast.NodeTransformer):
+    """ A Python AST transformer that replaces `Call`s to create structs with
+        the custom StructInitializer AST node. """
+
+    def __init__(self, gvars):
+        super().__init__()
+        self._structs = {
+            k: v
+            for k, v in gvars.items() if isinstance(v, dtypes.struct)
+        }
+
+    def visit_Call(self, node: ast.Call):
+        # Struct initializer
+        name = rname(node.func)
+        if name not in self._structs:
+            return self.generic_visit(node)
+
+        # Parse name and fields
+        struct = self._structs[name]
+        name = struct.name
+        fields = {rname(arg.arg): arg.value for arg in node.keywords}
+        if tuple(fields.keys()) != tuple(struct.fields.keys()):
+            raise SyntaxError('Mismatch in fields in struct definition')
+
+        # Create custom node
+        #new_node = astutils.StructInitializer(name, fields)
+        #return ast.copy_location(new_node, node)
+
+        node.func = ast.copy_location(
+            ast.Name(id='__DAPPSTRUCT_' + name, ctx=ast.Load()), node.func)
+
+        return node
+
+
 class ModuleInliner(ExtNodeTransformer):
     """ A Python AST transformer that renames modules from their imported alias
         to their actual name. """

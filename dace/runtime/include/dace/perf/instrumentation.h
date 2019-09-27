@@ -54,7 +54,7 @@
 #endif
 
 #ifndef DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD
-// Define a threshhold for flushing (= don't flush at every supersection, but only if the buffer is filled to a certain percentage.)
+// Define a threshold for flushing (= don't flush at every supersection, but only if the buffer is filled to a certain percentage.)
 #define DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD 0.5f
 #endif
 

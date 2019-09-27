@@ -24,10 +24,7 @@ from dace import symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets.cpu import CPUCodeGen
 from dace.codegen.targets.target import make_absolute
-
-from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfMetaInfoStatic
 
 
 # Specialized exception classes
@@ -199,12 +196,18 @@ class CompiledSDFG(object):
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
             if not isinstance(atype, dt.Array) and not isinstance(
-                    arg, atype.dtype.type):
+                    atype.dtype, dace.callback) and not isinstance(
+                        arg, atype.dtype.type):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
+        # Call a wrapper function to make NumPy arrays from pointers.
+        for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
+            if isinstance(argtype.dtype, dace.callback):
+                arglist[index] = argtype.dtype.get_trampoline(arg)
+
         # Retain only the element datatype for upcoming checks and casts
-        argtypes = [t.dtype.type for t in argtypes]
+        argtypes = [t.dtype.as_ctypes() for t in argtypes]
 
         sdfg = self._sdfg
 
@@ -215,7 +218,7 @@ class CompiledSDFG(object):
             try:
                 symval = symbolic.symbol(symname)
                 symparams[symname] = symval.get()
-                symtypes[symname] = symval.dtype.type
+                symtypes[symname] = symval.dtype.as_ctypes()
             except UnboundLocalError:
                 try:
                     symparams[symname] = kwargs[symname]
@@ -249,10 +252,9 @@ class CompiledSDFG(object):
                         or isinstance(arg, np.ndarray)) else (arg, atype)
             for arg, atype in callparams)
 
-        newargs = tuple(dtypes._FFI_CTYPES[atype](arg) if (
-            atype in dtypes._FFI_CTYPES
-            and not isinstance(arg, ctypes.c_void_p)) else arg
-                        for arg, atype in newargs)
+        newargs = tuple(
+            atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, atype in newargs)
 
         self._lastargs = newargs
         return self._lastargs
@@ -291,8 +293,10 @@ def unique_flags(flags):
     return set(re.findall(pattern, flags))
 
 
-def generate_program_folder(sdfg, code_objects: List[CodeObject],
-                            out_path: str):
+def generate_program_folder(sdfg,
+                            code_objects: List[CodeObject],
+                            out_path: str,
+                            config=None):
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
@@ -330,11 +334,6 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject],
         with open(code_path, "w") as code_file:
             clean_code = re.sub(r'[ \t]*////__DACE:[^\n]*', '',
                                 code_object.code)
-
-            if PerfSettings.perf_enable_vectorization_analysis():
-                # Generate line number information from the code
-                # TODO: Make per code stream
-                code_object.perf_meta_info.resolve(clean_code)
             code_file.write(clean_code)
 
         filelist.append("{},{}".format(target_name, basename))
@@ -344,7 +343,10 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject],
         filelist_file.write("\n".join(filelist))
 
     # Copy snapshot of configuration script
-    Config.save(os.path.join(out_path, "dace.conf"))
+    if config != None:
+        config.save(os.path.join(out_path, "dace.conf"))
+    else:
+        Config.save(os.path.join(out_path, "dace.conf"))
 
     # Save the SDFG itself
     sdfg.save(os.path.join(out_path, "program.sdfg"))

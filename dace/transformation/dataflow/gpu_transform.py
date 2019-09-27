@@ -7,6 +7,7 @@ from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
+from dace.config import Config
 
 
 @make_properties
@@ -16,6 +17,9 @@ class GPUTransformMap(pattern_matching.Transformation):
         Converts a single map to a GPU-scheduled map and creates GPU arrays
         outside it, generating CPU<->GPU memory copies automatically.
     """
+
+    _maps_transformed = 0
+    _arrays_removed = 0
 
     fullcopy = Property(
         desc="Copy whole arrays rather than used subset",
@@ -108,6 +112,8 @@ class GPUTransformMap(pattern_matching.Transformation):
 
         # Change schedule
         node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
+        if Config.get_bool("debugprint"):
+            GPUTransformMap._maps_transformed += 1
 
         gpu_storage_types = [
             dtypes.StorageType.GPU_Global,
@@ -124,14 +130,36 @@ class GPUTransformMap(pattern_matching.Transformation):
             all_out_edges.extend(list(graph.out_edges(enode)))
         in_arrays_to_clone = set()
         out_arrays_to_clone = set()
+        out_streamarrays = {}
         for e in graph.in_edges(cnode):
             data_node = sd.find_input_arraynode(graph, e)
+            if isinstance(data_node.desc(sdfg), data.Scalar):
+                continue
             if data_node.desc(sdfg).storage not in gpu_storage_types:
                 in_arrays_to_clone.add(data_node)
         for e in all_out_edges:
             data_node = sd.find_output_arraynode(graph, e)
+            if isinstance(data_node.desc(sdfg), data.Scalar):
+                continue
             if data_node.desc(sdfg).storage not in gpu_storage_types:
+                # Stream directly connected to an array
+                if sd.is_array_stream_view(sdfg, graph, data_node):
+                    datadesc = data_node.desc(sdfg)
+                    if datadesc.transient is False:
+                        raise TypeError('Non-transient stream-array view are '
+                                        'unsupported')
+                    # Add parent node to clone
+                    out_arrays_to_clone.add(graph.out_edges(data_node)[0].dst)
+                    out_streamarrays[graph.out_edges(data_node)[0]
+                                     .dst] = data_node
+
+                    # Do not clone stream
+                    continue
+
                 out_arrays_to_clone.add(data_node)
+        if Config.get_bool("debugprint"):
+            GPUTransformMap._arrays_removed += len(in_arrays_to_clone) + len(
+                out_arrays_to_clone)
 
         # Second, create a GPU clone of each array
         cloned_arrays = {}
@@ -142,17 +170,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if array_node.data in cloned_arrays:
                 cloned_array = cloned_arrays[array_node.data]
             else:
-                cloned_array = sdfg.add_array(
-                    'gpu_' + array_node.data,
-                    array.shape,
-                    array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=dtypes.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
-                    strides=array.strides,
-                    offset=array.offset)
+                cloned_array = array.clone()
+                cloned_array.storage = dtypes.StorageType.GPU_Global
+                cloned_array.transient = True
+                sdfg.add_datadesc('gpu_' + array_node.data, cloned_array)
                 cloned_arrays[array_node.data] = 'gpu_' + array_node.data
             cloned_node = type(array_node)('gpu_' + array_node.data)
 
@@ -162,17 +183,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if array_node.data in cloned_arrays:
                 cloned_array = cloned_arrays[array_node.data]
             else:
-                cloned_array = sdfg.add_array(
-                    'gpu_' + array_node.data,
-                    array.shape,
-                    array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=dtypes.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
-                    strides=array.strides,
-                    offset=array.offset)
+                cloned_array = array.clone()
+                cloned_array.storage = dtypes.StorageType.GPU_Global
+                cloned_array.transient = True
+                sdfg.add_datadesc('gpu_' + array_node.data, cloned_array)
                 cloned_arrays[array_node.data] = 'gpu_' + array_node.data
             cloned_node = type(array_node)('gpu_' + array_node.data)
 
@@ -211,6 +225,23 @@ class GPUTransformMap(pattern_matching.Transformation):
                     edge.data.other_subset = edge.data.subset
                     graph.add_edge(node, None, edge.dst, None, edge.data)
 
+        # Reconnect stream-arrays
+        for array_node, streamnode in out_streamarrays.items():
+            # Set stream storage to GPU
+            streamnode.desc(sdfg).storage = dtypes.StorageType.GPU_Global
+
+            cloned_node = out_cloned_arraynodes[array_node.data]
+
+            e = graph.out_edges(streamnode)[0]
+            graph.remove_edge(e)
+            newmemlet = copy.copy(e.data)
+            newmemlet.data = cloned_node.data
+            # stream -> cloned array
+            graph.add_edge(e.src, e.src_conn, cloned_node, e.dst_conn,
+                           newmemlet)
+            # cloned array -> array
+            graph.add_nedge(cloned_node, array_node, e.data)
+
         # Fourth, replace memlet arrays as necessary
         if self.expr_index == 0:
             scope_subgraph = graph.scope_subgraph(cnode)
@@ -221,6 +252,13 @@ class GPUTransformMap(pattern_matching.Transformation):
 
     def modifies_graph(self):
         return True
+
+    @staticmethod
+    def print_debuginfo():
+        print("Automatically cloned {} arrays for the GPU.".format(
+            GPUTransformMap._arrays_removed))
+        print("Automatically changed {} maps for the GPU.".format(
+            GPUTransformMap._maps_transformed))
 
 
 pattern_matching.Transformation.register_pattern(GPUTransformMap)

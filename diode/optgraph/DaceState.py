@@ -86,7 +86,7 @@ func({args})
         fh.close()
 
         # Create SDFG unless we already have one
-        if self.sdfg is None:
+        if self.sdfg is None and self.dace_code != "":
             saved_argv = sys.argv
             sys.argv = [self.dace_filename]
             gen_module = {}

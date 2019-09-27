@@ -274,9 +274,9 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
-            raise Exception('Mismatching shape {} - range {} dimensions'.format(
-                arrdesc.shape, astrange)
-            )
+            raise Exception(
+                'Mismatching shape {} - range {} dimensions'.format(
+                    arrdesc.shape, astrange))
         for i in range(missing_slices):
             astrange.append((None, None, None))
 
@@ -314,6 +314,8 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 def negate_expr(node):
     """ Negates an AST expression by adding a `Not` AST node in front of it. 
     """
+    if isinstance(node, dict):
+        node = node['code_or_block']
     if hasattr(node, "__len__"):
         if len(node) > 1:
             raise ValueError("negate_expr only expects "

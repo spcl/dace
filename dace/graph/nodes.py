@@ -7,13 +7,13 @@ import itertools
 from typing import Set
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
-                             ParamsProperty, RangeProperty, DebugInfoProperty,
-                             SetProperty, make_properties, indirect_properties,
-                             DataProperty, SymbolicProperty)
+from dace.properties import (
+    Property, CodeProperty, LambdaProperty, ParamsProperty, RangeProperty,
+    DebugInfoProperty, SetProperty, make_properties, indirect_properties,
+    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
-import pickle
+import json
 
 # -----------------------------------------------------------------------------
 
@@ -40,18 +40,28 @@ class Node(object):
     def validate(self, sdfg, state):
         pass
 
-    def toJSON(self, indent=0):
+    def toJSON(self, parent, options={"no_meta": False}):
         labelstr = str(self)
         typestr = str(type(self).__name__)
-        inconn = "[" + ",".join(
-            ['"' + str(x) + '"' for x in self.in_connectors]) + "]"
-        outconn = "[" + ",".join(
-            ['"' + str(x) + '"' for x in self.out_connectors]) + "]"
-        json = " " * indent + "{ \"label\": \"" + labelstr
-        json += "\", \"type\": \"" + typestr + "\", \"in_connectors\": " + inconn
-        json += ", \"out_connectors\" :" + outconn
-        json += "}\n"
-        return json
+
+        scope_entry_node = parent.entry_node(self)
+        if scope_entry_node != None:
+            ens = parent.exit_nodes(parent.entry_node(self))
+            scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
+            scope_entry_node = str(parent.node_id(scope_entry_node))
+        else:
+            scope_entry_node = None
+            scope_exit_nodes = []
+
+        retdict = {
+            "type": typestr,
+            "label": labelstr,
+            "attributes": json.loads(Property.all_properties_to_json(self)),
+            "id": parent.node_id(self),
+            "scope_entry": scope_entry_node,
+            "scope_exits": scope_exit_nodes
+        }
+        return json.dumps(retdict)
 
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
@@ -172,6 +182,12 @@ class AccessNode(Node):
             raise TypeError('Data for AccessNode must be a string')
         self.data = data
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = AccessNode("Nodata")
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     def __deepcopy__(self, memo):
         node = object.__new__(AccessNode)
         node._access = self._access
@@ -230,7 +246,6 @@ class Tasklet(CodeNode):
     """
 
     label = Property(dtype=str, desc="Name of the tasklet")
-    language = Property(enum=dtypes.Language, default=dtypes.Language.Python)
     code = CodeProperty(desc="Tasklet code")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -242,6 +257,11 @@ class Tasklet(CodeNode):
     location = Property(
         dtype=str, desc="Tasklet execution location descriptor")
     debuginfo = DebugInfoProperty()
+
+    instrument = Property(
+        enum=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -258,13 +278,25 @@ class Tasklet(CodeNode):
 
         # Properties
         self.label = label
-        self.language = language
-        self.code = code
+        # Set the language directly
+        #self.language = language
+        self.code = {'code_or_block': code, 'language': language}
+
         self.location = location
-        self.code_global = code_global
-        self.code_init = code_init
-        self.code_exit = code_exit
+        self.code_global = {'code_or_block': code_global, 'language': language}
+        self.code_init = {'code_or_block': code_init, 'language': language}
+        self.code_exit = {'code_or_block': code_exit, 'language': language}
         self.debuginfo = debuginfo
+
+    @property
+    def language(self):
+        return self._code['language']
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = Tasklet("dummylabel")
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     @property
     def name(self):
@@ -303,6 +335,12 @@ class EmptyTasklet(Tasklet):
     def validate(self, sdfg, state):
         pass
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = EmptyTasklet("dummylabel")
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
 
 # ------------------------------------------------------------------------------
 
@@ -320,7 +358,7 @@ class NestedSDFG(CodeNode):
 
     label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = Property(dtype=graph.OrderedDiGraph, desc="The SDFG")
+    sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
@@ -332,6 +370,11 @@ class NestedSDFG(CodeNode):
         dtype=bool,
         desc="Show this node/scope/state as collapsed",
         default=False)
+
+    instrument = Property(
+        enum=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -349,6 +392,18 @@ class NestedSDFG(CodeNode):
         self.schedule = schedule
         self.location = location
         self.debuginfo = debuginfo
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+
+        # We have to load the SDFG first.
+        sdfg = SDFGReferenceProperty.from_json(
+            json.dumps(json_obj['attributes']['sdfg']), context)
+        ret = NestedSDFG("nolabel", sdfg, set(), set())
+
+        Property.set_properties_from_json(ret, json_obj, context)
+
+        return ret
 
     def draw_node(self, sdfg, graph):
         return dot.draw_node(sdfg, graph, self, shape="doubleoctagon")
@@ -408,7 +463,13 @@ class MapEntry(EntryNode):
         if map is None:
             raise ValueError("Map for MapEntry can not be None.")
         self._map = map
-        self._map_depth = 0
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        m = Map("", [], [])
+        ret = MapEntry(map=m)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     @property
     def map(self):
@@ -438,6 +499,13 @@ class MapExit(ExitNode):
             raise ValueError("Map for MapExit can not be None.")
         self._map = map
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        m = Map("", [], [])
+        ret = MapExit(map=m)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     @property
     def map(self):
         return self._map
@@ -463,7 +531,6 @@ class Map(object):
         should be scheduled (execution order). Code generators can use the
         schedule property to generate appropriate code, e.g., GPU kernels.
     """
-    from dace.codegen.instrumentation.perfsettings import PerfSettings
 
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
@@ -478,21 +545,16 @@ class Map(object):
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
-    fence_instrumentation = Property(
-        dtype=bool, desc="Disable instrumentation in all subnodes")
-    papi_counters = Property(
-        dtype=list,
-        desc="List of PAPI counter preset identifiers.",
-        default=PerfSettings.perf_default_papi_counters())
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
         desc="Show this node/scope/state as collapsed",
         default=False)
 
-    # We cannot have multiple consecutive papi start/stops inside the same thread. The following variable is used to recognize the map that started the counters.
-    _has_papi_counters = False
-    _can_be_supersection_start = True  # We must have supersections synchronized.
+    instrument = Property(
+        enum=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -554,6 +616,13 @@ class ConsumeEntry(EntryNode):
         self.add_in_connector('IN_stream')
         self.add_out_connector('OUT_stream')
 
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        c = Consume("", ['i', 1], None)
+        ret = ConsumeEntry(consume=c)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
     @property
     def map(self):
         return self._consume.as_map()
@@ -587,6 +656,13 @@ class ConsumeExit(ExitNode):
         if consume is None:
             raise ValueError("Consume for ConsumeExit can not be None.")
         self._consume = consume
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        c = Consume("", ['i', 1], None)
+        ret = ConsumeExit(consume=c)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     @property
     def map(self):
@@ -622,7 +698,6 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements")
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    language = Property(enum=dtypes.Language, default=dtypes.Language.Python)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Consume schedule",
@@ -637,6 +712,11 @@ class Consume(object):
         dtype=bool,
         desc="Show this node/scope/state as collapsed",
         default=False)
+
+    instrument = Property(
+        enum=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -693,10 +773,9 @@ class Reduce(Node):
     """ An SDFG node that reduces an N-dimensional array to an 
         (N-k)-dimensional array, with a list of axes to reduce and
         a reduction binary function. """
-    from dace.codegen.instrumentation.perfsettings import PerfSettings
 
     # Properties
-    axes = Property(dtype=tuple, allow_none=True)
+    axes = ListProperty(dtype=list, allow_none=True)
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
@@ -704,12 +783,12 @@ class Reduce(Node):
         desc="Reduction execution policy",
         enum=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x])
-
-    papi_counters = Property(
-        dtype=list,
-        desc="List of PAPI counter preset identifiers.",
-        default=PerfSettings.perf_default_papi_counters())
     debuginfo = DebugInfoProperty()
+
+    instrument = Property(
+        enum=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  wcr,
@@ -726,6 +805,12 @@ class Reduce(Node):
 
     def draw_node(self, sdfg, state):
         return dot.draw_node(sdfg, state, self, shape="invtriangle")
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        ret = Reduce("(lambda a, b: (a + b))", None)
+        Property.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
     def __str__(self):
         # Autodetect reduction type

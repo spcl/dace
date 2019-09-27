@@ -163,8 +163,13 @@ out.sdfg
 
 perfdata.db
 
-/.idea/
-
+.idea/
 _dotgraphs/
 
-.idea/
+/dace/codegen/cmake-build-debug/
+
+/tests/diode/*.py.*
+
+client_configs/
+
+perfdata-dir/

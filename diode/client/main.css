@@ -1,0 +1,646 @@
+div#diode_gl_container {
+    width: 100%;
+    height:calc(100% - 30px);
+    position: absolute;
+    left: 0%;
+    top: 30px;
+    margin: 0;
+    padding: 0;
+}
+
+body > div#contents {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+}
+
+
+.syntax_error_highlight {
+    position: absolute;
+    z-index: 100;
+    background-color: rgba(255, 0, 0, 0.5);
+}
+
+.code_highlight {
+    position: absolute;
+    z-index: 99;
+    background-color: rgba(60, 255, 0, 0.5);
+}
+
+div.editor { 
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+}
+
+div.settings_container {
+    height: inherit;
+    transition: height 1s;
+}
+
+div.settings_container.level_0 {
+    margin-left: 10px;
+}
+
+div.settings_container.level_1 {
+    margin-left: 10px;
+}
+
+div.settings_container.level_2 {
+    margin-left: 10px;
+}
+
+div.settings_container.collapsed_container {
+    /*display: none;*/
+    height: 0px;
+}
+
+div.settings_container.collapsed_container * {
+    display: none;
+}
+
+div#diode_settings_container h2 {
+    margin-bottom: 5px;
+    margin-top: 10px;
+}
+div#diode_settings_container h3 {
+    margin-bottom: 0px;
+    margin-top: 5px;
+}
+div#diode_settings_container h4 {
+    margin-bottom: 0px;
+    margin-top: 5px;
+}
+
+#loading_indicator {
+    position: fixed;
+    z-index: 10000;
+    top: 0;
+    width: 100px;
+    height: 5px;
+    animation-duration: 5s;
+    animation-name: loading_mover;
+    animation-iteration-count: infinite;
+    background: darkblue;
+    box-shadow: 0px 0px 10px cyan;
+
+    display: none;
+}
+
+@keyframes loading_mover {
+    from {
+        left: 0;
+    }
+
+    to {
+        left: 100%;
+    }
+}
+
+.sdfgpropdiv {
+    padding: 10px;
+    display: inline-block;
+    overflow: auto;
+    box-sizing: border-box;
+}
+
+.settings_key_value {
+    display: flex;
+    justify-content: space-between;
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+}
+
+
+input[type="text"] {
+    padding: 5px;
+    border: 2px solid gray;
+    border-radius: 5px;
+}
+
+input[type="list"] {
+    padding: 5px;
+    border: 2px solid gray;
+    border-radius: 5px;
+}
+
+button {
+    padding: 5px;
+    border: 2px solid gray;
+    border-radius: 5px;
+}
+
+input[type="number"] {
+    padding: 5px;
+    border: 2px solid gray;
+    border-radius: 5px;
+}
+
+select {
+    padding: 5px;
+}
+
+.settings_key_value input[type="text"] {
+    width: 49%;
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+}
+
+.diode_property_table input[type="text"] {
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+}
+
+.settings_key_value input[type="number"] {
+    width: 49%;
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+}
+
+.diode_property_table input[type="number"] {
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+}
+
+.diode_property_table input {
+    box-sizing: border-box;
+    width: 100%;
+}
+.diode_property_table div {
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.diode_property_table textarea {
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.settings_key_value select {
+    width: 49%;
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+}
+
+.settings_key_value select:focus {
+    width: 49%;
+    color: initial;
+    background: initial;
+    background-color: initial;
+}
+
+.diode_property_table select {
+    color: inherit;
+    background: inherit;
+    background-color: inherit;
+    width: 100%;
+}
+
+.diode_property_table select:focus {
+    color: initial;
+    background: initial;
+    background-color: initial;
+    width: 100%;
+}
+
+.settings_key_value span.title {
+    width: 49%;
+    line-height: 2rem;
+}
+
+
+.diode_property_table span.title {
+    line-height: 2rem;
+}
+
+.togglable {
+    cursor: pointer;
+}
+
+/* Slider (instead of the default checkbox */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 4em;
+    height: 1.2em;
+    margin-right: 0.5em;
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+  
+.switch input { 
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 1em;
+    width: 1em;
+    left: 0.1em;
+    bottom: 0.1em;
+    background-color: white;
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: #2196F3;
+}
+
+
+input:checked + .slider:before {
+    transform: translateX(2.8em);
+}
+
+/* Rounded sliders */
+.slider.round {
+    border-radius: 1em;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+/* End of slider */
+
+
+/* TreeView */
+
+ul.tree_view {
+    list-style-type: none;
+    /*margin: 0;
+    padding: 0;*/
+}
+
+
+ul.tree_view li {
+    cursor: pointer;
+    user-select: none;
+}
+
+ul.tree_view.collapsed_sublist ul {
+    display: none;
+}
+
+ul.tree_view > li::before {
+    content: "\25E2";
+    color: black;
+    display: inline-block;
+}
+ul.tree_view.collapsed_sublist > li::before {
+    transform: rotate(-45deg);
+}
+ul.tree_view .selected {
+    background: lightseagreen;
+}
+
+/* End of TreeView */
+
+
+.free_symbol_table {
+    width: 100%;
+    
+}
+
+
+/* ContextMenu */
+.context_menu {
+    position: absolute;
+    background: white;
+    border: 2px solid grey;
+    display: flex;
+    flex-direction: column;
+    z-index: 100000;
+}
+
+.context_menu .context_menu_option {
+    cursor: pointer;
+    background: transparent;
+
+}
+
+.context_menu .context_menu_option:hover {
+    background: grey;
+}
+
+/* Transformation history */
+.transformation_history_base {
+    width: 100%;
+    max-width: 250px;
+    box-sizing: border-box;
+    border: 1px solid darkslategray;
+}
+.transformation_history_list {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid darkslategray;
+}
+.transformation_history_list:empty::after {
+    content: "No revertible transformation found."
+}
+.transformation_history_list_element {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid darkslategray;
+}
+
+.transformation_history_list_element.revert-hovered, .transformation_history_list_element.revert-hovered ~ * {
+    filter: blur(2px);
+    background-color: rgba(255, 0, 0, 0.5);
+
+}
+.transformation_history_list_element_control {
+    
+}
+.transformation_history_list_element_title {
+    padding-left: 10px;
+}
+
+.revert-button {
+    cursor: pointer;
+}
+.revert-button:hover {
+    color: red;
+}
+
+/* Available Transformation */
+.at_container {
+    padding-left: 10px;
+    padding-right: 10px;
+    box-sizing: border-box;
+    font-size: 1.25rem;
+
+    user-select: none;
+}
+
+.at_element {
+    max-width: 500px;
+}
+
+.at_element div:first-child {
+    cursor: pointer;
+}
+
+.at_group_header span::before {
+    content: "\25E2";
+    color: black;
+    display: inline-block;
+    margin-right: 5px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+}
+.at_group_header.at_collapse span::before {
+    transform: rotate(-45deg)
+}
+
+.at_group_header ~ .at_element {
+    padding-left: 30px;
+    max-width: 470px;
+}
+
+.at_group_header.at_collapse ~ .at_element {
+    display: none;
+}
+
+/* Stale data button styling */
+.stale_data_button {
+    position: absolute;
+    background: red;
+    color: white;
+    top: 10px;
+    left: calc(50% - 250px);
+    width: 500px;
+    z-index: 1000000000;
+    cursor: pointer;
+}
+
+/* DIODE uploader */
+.upload_flexbox {
+    display: flex;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    padding: 10px !important;
+}
+
+.diode_uploader {
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+    border: 2px dashed black;
+    border-radius: 25px;
+    height: 100%;
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.uploader_text {
+    font-size: 3rem;
+    line-height: 3rem;
+    color: gray;
+}
+
+.flex_row {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: stretch;
+    flex-wrap: wrap;
+}
+
+.flex_column {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: stretch;
+    flex-wrap: wrap;
+}
+
+#startpage_container {
+    justify-content: center;
+}
+
+#startpage_recent {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+
+    box-sizing: border-box;
+    padding: 25px;
+
+    max-width: 400px;
+}
+
+
+#additional_resources {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+
+    box-sizing: border-box;
+    padding: 25px;
+
+    max-width: 400px;
+}
+
+.startpage_title {
+    font-size: 2rem;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.startpage_list_element {
+    color: inherit;
+    box-sizing: border-box;
+    border: 2px solid rgba(128, 128, 128, 0.1);
+    transition: border 0.5s;
+    cursor: pointer;
+}
+
+.startpage_list_element:hover {
+    border: 2px solid black;
+}
+
+/* Property table (to make it look like VS property pages */
+table.diode_property_table {
+    border-collapse: collapse;
+}
+
+table.diode_property_table_super {
+    border-collapse: collapse;
+}
+
+table.diode_property_table_super > tbody > tr:nth-child(odd) {
+    background-color: lightblue;
+}
+
+
+.diode_property_table_super .diode_property_table {
+    width: 100%;
+    height: 100%;
+}
+
+table.diode_property_table, table.diode_property_table td, table.diode_property_table th {
+    border: 1px solid gray;
+}
+
+table.diode_property_table_super, table.diode_property_table_super td, table.diode_property_table_super th {
+    border: 1px solid gray;
+}
+
+tr.diode_property_header {
+    background-color: lightblue;
+    font-weight: bold;
+}
+
+tr.diode_property_header span::before {
+    content: "\25E2";
+    color: black;
+    display: inline-block;
+    margin-right: 5px;
+    margin-left: 5px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+}
+
+tr.diode_property_header.collapsed span::before {
+    transform: rotate(-45deg)
+}
+
+
+/* // No striping for the properties
+table.diode_property_table tr:nth-child(even) {
+    background-color: lightgray;
+}
+*/
+
+/* Code ref styling */
+.code_ref {
+    font-family: "Courier New", Courier, monospace;
+    cursor: pointer;
+}
+
+.gmat-settings::after {
+    content: "settings"
+}
+.gmat-settings-cloud::after {
+    content: "settings_system_daydream"
+}
+
+.gmat-settings-application::after {
+    content: "settings_applications"
+}
+.gmat-build::after {
+    content: "build"
+}
+.gmat-play::after {
+    content: "play_circle_filled"
+}
+.gmat-clear::after {
+    content: "clear"
+}
+.gmat-gavel::after {
+    content: "gavel"
+}
+.gmat-folder::after {
+    content: "folder"
+}
+.gmat-file::after {
+    content: "insert_drive_file"
+}
+.gmat-apps::after {
+    content: "apps"
+}
+.gmat-reopen::after {
+    content: "flip_to_front"
+}
+.gmat-view_list::after {
+    content: "view_list"
+}
+.gmat-extension::after {
+    content: "extension"
+}
+.gmat-save::after {
+    content: "save"
+}
+.gmat-open::after {
+    content: "folder_open"
+}
+.gmat-new_folder::after {
+    content: "create_new_folder"
+}
+.gmat-undo::after {
+    content: "undo"
+}
+
+.gmat-playlist_play::after {
+    content: "playlist_play"
+}

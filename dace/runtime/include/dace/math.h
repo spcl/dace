@@ -8,6 +8,9 @@
 #include <numeric>
 #include <cfloat>
 
+#ifdef __CUDACC__
+    #include <thrust/complex.h>
+#endif
 
 // dace::math: A namespace that contains typeless math functions
 
@@ -188,6 +191,28 @@ namespace dace
         {
             return std::exp(a);
         }
+
+        #ifdef __CUDACC__
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI thrust::complex<T> exp(const thrust::complex<T>& a)
+        {
+            return thrust::exp(a);
+        }
+        #endif
+
+        template<typename T>
+        DACE_CONSTEXPR std::complex<T> conj(const std::complex<T>& a)
+        {
+            return std::conj(a);
+        }
+
+        #ifdef __CUDACC__
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a)
+        {
+            return thrust::conj(a);
+        }
+        #endif
     }
     
 }

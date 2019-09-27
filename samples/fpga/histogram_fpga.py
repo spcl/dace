@@ -136,7 +136,7 @@ def make_write_buffer_state(sdfg):
 
 def make_nested_sdfg(parent):
 
-    sdfg = dace.SDFG("compute", parent=parent)
+    sdfg = dace.SDFG("compute")
 
     init_state = make_init_buffer_state(sdfg)
     compute_state = make_compute_state(sdfg)
@@ -159,7 +159,7 @@ def make_sdfg(specialize):
     copy_to_fpga_state = make_copy_to_fpga_state(sdfg)
 
     state = sdfg.add_state("compute")
-    nested_sdfg = make_nested_sdfg(sdfg)
+    nested_sdfg = make_nested_sdfg(state)
     tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_in"}, {"hist_out"})
     a_device = state.add_array(
         "A_device", (H, W),

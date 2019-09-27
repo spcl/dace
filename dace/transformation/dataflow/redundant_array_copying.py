@@ -7,6 +7,7 @@ from dace.graph import nodes, nxutil
 from dace.sdfg import SDFGState
 from dace.transformation import pattern_matching as pm
 from dace.properties import ShapeProperty
+from dace.config import Config
 
 
 class RedundantArrayCopying(pm.Transformation):
@@ -14,16 +15,19 @@ class RedundantArrayCopying(pm.Transformation):
         in pattern A -> B -> A.
     """
 
-    _in_array = nodes.AccessNode('_')
-    _med_array = nodes.AccessNode('_')
-    _out_array = nodes.AccessNode('_')
+    _arrays_removed = 0
+    _in_array = nodes.AccessNode("_")
+    _med_array = nodes.AccessNode("_")
+    _out_array = nodes.AccessNode("_")
 
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArrayCopying._in_array,
-                                   RedundantArrayCopying._med_array,
-                                   RedundantArrayCopying._out_array),
+            nxutil.node_path_graph(
+                RedundantArrayCopying._in_array,
+                RedundantArrayCopying._med_array,
+                RedundantArrayCopying._out_array,
+            )
         ]
 
     @staticmethod
@@ -57,10 +61,10 @@ class RedundantArrayCopying(pm.Transformation):
         #     return False
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
-        if (len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape)
-                or any(i != o for i, o in zip(
+        if len(in_array.desc(sdfg).shape) != len(
+                out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
                     in_array.desc(sdfg).shape,
-                    out_array.desc(sdfg).shape))):
+                    out_array.desc(sdfg).shape)):
             return False
 
         return True
@@ -69,7 +73,7 @@ class RedundantArrayCopying(pm.Transformation):
     def match_to_str(graph, candidate):
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
 
-        return 'Remove ' + str(med_array)
+        return "Remove " + str(med_array)
 
     def apply(self, sdfg):
         def gnode(nname):
@@ -106,9 +110,17 @@ class RedundantArrayCopying(pm.Transformation):
             for e in graph.edges_between(in_array, med_array):
                 graph.remove_edge(e)
             graph.remove_node(med_array)
+            if Config.get_bool("debugprint"):
+                RedundantArrayCopying._arrays_removed += 1
 
     def modifies_graph(self):
         return True
+
+    @staticmethod
+    def print_debuginfo():
+        print(
+            "Automatically removed {} redundant arrays using RedundantArrayCopying transform.".
+            format(RedundantArrayCopying._arrays_removed))
 
 
 pm.Transformation.register_pattern(RedundantArrayCopying)
@@ -118,15 +130,15 @@ class RedundantArrayCopying2(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes 
         multiples of array B in pattern A -> B.
     """
-
-    _in_array = nodes.AccessNode('_')
-    _out_array = nodes.AccessNode('_')
+    _arrays_removed = 0
+    _in_array = nodes.AccessNode("_")
+    _out_array = nodes.AccessNode("_")
 
     @staticmethod
     def expressions():
         return [
             nxutil.node_path_graph(RedundantArrayCopying2._in_array,
-                                   RedundantArrayCopying2._out_array),
+                                   RedundantArrayCopying2._out_array)
         ]
 
     @staticmethod
@@ -147,7 +159,7 @@ class RedundantArrayCopying2(pm.Transformation):
     def match_to_str(graph, candidate):
         out_array = graph.nodes()[candidate[RedundantArrayCopying2._out_array]]
 
-        return 'Remove ' + str(out_array)
+        return "Remove " + str(out_array)
 
     def apply(self, sdfg):
         def gnode(nname):
@@ -167,9 +179,17 @@ class RedundantArrayCopying2(pm.Transformation):
                     graph.remove_edge(e2)
                 graph.remove_edge(e1)
                 graph.remove_node(dst)
+                if Config.get_bool("debugprint"):
+                    RedundantArrayCopying2._arrays_removed += 1
 
     def modifies_graph(self):
         return True
+
+    @staticmethod
+    def print_debuginfo():
+        print(
+            "Automatically removed {} redundant arrays using RedundantArrayCopying2 transform.".
+            format(RedundantArrayCopying2._arrays_removed))
 
 
 pm.Transformation.register_pattern(RedundantArrayCopying2)
@@ -180,14 +200,15 @@ class RedundantArrayCopying3(pm.Transformation):
         of array B in pattern MapEntry -> B.
     """
 
+    _arrays_removed = 0
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _out_array = nodes.AccessNode('_')
+    _out_array = nodes.AccessNode("_")
 
     @staticmethod
     def expressions():
         return [
             nxutil.node_path_graph(RedundantArrayCopying3._map_entry,
-                                   RedundantArrayCopying3._out_array),
+                                   RedundantArrayCopying3._out_array)
         ]
 
     @staticmethod
@@ -208,7 +229,7 @@ class RedundantArrayCopying3(pm.Transformation):
     def match_to_str(graph, candidate):
         out_array = graph.nodes()[candidate[RedundantArrayCopying3._out_array]]
 
-        return 'Remove ' + str(out_array)
+        return "Remove " + str(out_array)
 
     def apply(self, sdfg):
         def gnode(nname):
@@ -228,9 +249,17 @@ class RedundantArrayCopying3(pm.Transformation):
                     graph.remove_edge(e2)
                 graph.remove_edge(e1)
                 graph.remove_node(dst)
+                if Config.get_bool("debugprint"):
+                    RedundantArrayCopying3._arrays_removed += 1
 
     def modifies_graph(self):
         return True
+
+    @staticmethod
+    def print_debuginfo():
+        print(
+            "Automatically removed {} redundant arrays using RedundantArrayCopying3 transform.".
+            format(RedundantArrayCopying3._arrays_removed))
 
 
 pm.Transformation.register_pattern(RedundantArrayCopying3)

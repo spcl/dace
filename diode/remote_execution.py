@@ -1,7 +1,6 @@
 import os
 import sys
 import stat
-import dace
 import tempfile
 import traceback
 import subprocess
@@ -9,7 +8,7 @@ import dace.dtypes
 from string import Template
 from dace.codegen.compiler import generate_program_folder
 from dace.config import Config
-from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfUtils, PerfMetaInfo, PerfMetaInfoStatic, PerfPAPIInfoStatic
+from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
 
 
 class Executor:
@@ -19,10 +18,27 @@ class Executor:
         self.counter = 0
         self.perfplot = perfplot
         self.headless = headless
+        self.exit_on_error = self.headless
         self.rendered_graphs = sdfg_renderer
 
         self.running_async = async_host != None
         self.async_host = async_host
+
+        self._config = None
+
+        self.output_generator = None
+
+    def setExitOnError(self, do_exit):
+        self.exit_on_error = do_exit
+
+    def setConfig(self, config):
+        self._config = config
+
+    def config_get(self, *key_hierarchy):
+        if self._config == None:
+            return Config.get(*key_hierarchy)
+        else:
+            return self._config.get(*key_hierarchy)
 
     def run(self, dace_state, fail_on_nonzero=False):
         dace_progname = dace_state.get_sdfg().name
@@ -36,20 +52,23 @@ class Executor:
                 break
 
         # Check counter validity
-        PerfUtils.check_performance_counters(self)
+        PAPIUtils.check_performance_counters(self)
 
-        remote_workdir = Config.get("execution", "general", "workdir")
+        remote_workdir = self.config_get("execution", "general", "workdir")
         remote_dace_dir = remote_workdir + "/.dacecache/%s/" % dace_progname
         self.show_output("Executing DaCe program " + dace_progname + " on " + \
-                Config.get("execution", "general", "host") + "\n")
+                self.config_get("execution", "general", "host") + "\n")
 
         try:
             if self.running_async:
                 # Add information about what is being run
                 self.async_host.notify("Generating remote workspace")
             tmpfolder = tempfile.mkdtemp()
-            generate_program_folder(dace_state.get_sdfg(), code_objects,
-                                    tmpfolder)
+            generate_program_folder(
+                dace_state.get_sdfg(),
+                code_objects,
+                tmpfolder,
+                config=self._config)
             self.create_remote_directory(remote_dace_dir)
             self.copy_folder_to_remote(tmpfolder, remote_dace_dir)
 
@@ -65,7 +84,7 @@ class Executor:
 
             # copy the input file and the .so file (with the right name)
             # to remote_dace_dir
-            so_name = "lib" + dace_progname + "." + Config.get(
+            so_name = "lib" + dace_progname + "." + self.config_get(
                 'compiler', 'library_extension')
             self.copy_file_from_remote(remote_dace_dir + "/build/" + so_name,
                                        tmpfolder + "/" + so_name)
@@ -94,25 +113,36 @@ class Executor:
                 # Add information about what is being run
                 self.async_host.notify("All files copied to remote")
 
+            papi = PAPIUtils.is_papi_used(sdfg)
+
+
             # We got the file there, now we can run with different
             # configurations.
-            for iteration in range(0, PerfSettings.perf_multirun_num()):
-                optdict, omp_thread_num = PerfUtils.get_run_options(
-                    self, iteration)
+            if papi:
+                multirun_num = PAPISettings.perf_multirun_num(config=self._config)
+                for iteration in range(multirun_num):
+                    optdict, omp_thread_num = PAPIUtils.get_run_options(
+                        self, iteration)
 
+                    self.remote_exec_dace(
+                        remote_workdir,
+                        remote_dace_file,
+                        use_mpi,
+                        fail_on_nonzero,
+                        omp_num_threads=omp_thread_num,
+                        additional_options_dict=optdict)
+
+                    if self.running_async:
+                        # Add information about what is being run
+                        self.async_host.notify("Done option threads=" +
+                                               str(omp_thread_num))
+            else:
                 self.remote_exec_dace(
                     remote_workdir,
                     remote_dace_file,
                     use_mpi,
-                    fail_on_nonzero,
-                    omp_num_threads=omp_thread_num,
-                    additional_options_dict=optdict)
-
-                if self.running_async:
-                    # Add information about what is being run
-                    self.async_host.notify("Done option threads=" +
-                                           str(omp_thread_num))
-
+                    fail_on_nonzero)
+                
             self.show_output("Execution Terminated\n")
 
             try:
@@ -121,12 +151,13 @@ class Executor:
             except:
                 pass
 
-            # Copy back the vectorization results
-            PerfUtils.retrieve_vectorization_report(self, code_objects,
-                                                    remote_dace_dir)
+            if papi:
+                # Copy back the vectorization results
+                PAPIUtils.retrieve_vectorization_report(self, code_objects,
+                                                        remote_dace_dir)
 
-            # Copy back the instrumentation results
-            PerfUtils.retrieve_instrumentation_results(self, remote_workdir)
+                # Copy back the instrumentation results
+                PAPIUtils.retrieve_instrumentation_results(self, remote_workdir)
 
             if self.running_async:
                 # Add information about what is being run
@@ -150,16 +181,21 @@ class Executor:
                 except FileNotFoundError:
                     print("WARNING: results.log could not be read")
 
-            self.async_host.run_sync(deferred)
+            if not self.headless or self.perfplot == None:
+                if self.running_async and not self.headless:
+                    self.async_host.run_sync(deferred)
+                else:
+                    deferred()
 
             if self.running_async:
                 # Add information about what is being run
                 self.async_host.notify("Done cleaning")
 
-            # Also, update the performance data.
-            self.rendered_graphs.set_memspeed_target()
-            self.rendered_graphs.render_performance_data(
-                Config.get("instrumentation", "papi_mode"))
+            # Update the performance data.
+            if self.rendered_graphs != None:
+                self.rendered_graphs.set_memspeed_target()
+                self.rendered_graphs.render_performance_data(
+                    self.config_get("instrumentation", "papi_mode"))
         except Exception as e:
             print("\n\n\n")
             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
@@ -179,31 +215,47 @@ class Executor:
     def update_performance_plot(self, resfile, name):
         # Each result.log will give us many runs of one size and optimization.
         # We ignore everything in the result log except the timing
-        times = self.perfplot.parse_result_log(resfile)
-        self.perfplot.add_run(name, times)
-        self.perfplot.render()
+
+        # If no perfplot is set, write it to the output as text with a prefix
+        if self.perfplot == None:
+            import re
+            with open(resfile) as f:
+                data = f.read()
+            p = re.compile('\s(\d+\.\d+)$', re.MULTILINE)
+            times = p.findall(data)
+            self.show_output("\n~#~#" + str(times))
+        else:
+            times = self.perfplot.parse_result_log(resfile)
+            self.perfplot.add_run(name, times)
+            self.perfplot.render()
         t = sorted([float(s) for s in times])
         print(t)
         return t[int(len(t) / 2)]
 
     def show_output(self, outstr):
         """ Displays output of any ongoing compilation or computation. """
+
+        if self.output_generator != None:
+            # Pipe the output
+            self.output_generator(outstr)
+            return
+
         if isinstance(outstr, str):
             print(outstr, end="", flush=True)
             return
         sys.stdout.buffer.write(outstr)
 
     def remote_delete_file(self, delfile):
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(self.config_get("execution", "general", "execcmd"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=self.config_get("execution", "general", "host"),
             command="rm " + delfile)
         self.exec_cmd_and_show_output(cmd)
 
     def remote_delete_dir(self, deldir):
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(self.config_get("execution", "general", "execcmd"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=self.config_get("execution", "general", "host"),
             command="rm -r " + deldir)
         self.exec_cmd_and_show_output(cmd)
 
@@ -220,11 +272,11 @@ class Executor:
         additional_options_dict = additional_options_dict or {}
         run = "${command} "
         if use_mpi == True:
-            run = Config.get("execution", "mpi", "mpiexec")
-            nprocs = Config.get("execution", "mpi", "num_procs")
+            run = self.config_get("execution", "mpi", "mpiexec")
+            nprocs = self.config_get("execution", "mpi", "num_procs")
         else:
             nprocs = 1
-        repetitions = Config.get("execution", "general", "repetitions")
+        repetitions = self.config_get("execution", "general", "repetitions")
 
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
@@ -273,15 +325,15 @@ class Executor:
         st = os.stat(startsh_file)
         os.chmod(startsh_file, st.st_mode | stat.S_IEXEC)
 
-        workdir = Config.get("execution", "general", "workdir")
+        workdir = self.config_get("execution", "general", "workdir")
 
         self.copy_file_to_remote(
             startsh_file,
-            Config.get("execution", "general", "workdir") + "/start.sh")
+            self.config_get("execution", "general", "workdir") + "/start.sh")
 
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(self.config_get("execution", "general", "execcmd"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=self.config_get("execution", "general", "host"),
             command=workdir + "/start.sh")
         self.exec_cmd_and_show_output(cmd, fail_on_nonzero)
 
@@ -290,9 +342,9 @@ class Executor:
     def remote_compile(self, rem_path, dace_progname):
         compile_cmd = "python3 -m dace.codegen.compiler " + str(
             rem_path) + " " + dace_progname
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(self.config_get("execution", "general", "execcmd"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=self.config_get("execution", "general", "host"),
             command=compile_cmd)
         self.exec_cmd_and_show_output(cmd)
 
@@ -302,15 +354,16 @@ class Executor:
             @note: We use `mkdir -p` for now, which is not portable.
         """
         mkdircmd = "mkdir -p " + path
-        s = Template(Config.get("execution", "general", "execcmd"))
+        s = Template(self.config_get("execution", "general", "execcmd"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"), command=mkdircmd)
+            host=self.config_get("execution", "general", "host"),
+            command=mkdircmd)
         self.exec_cmd_and_show_output(cmd)
 
     def copy_file_to_remote(self, src, dst):
-        s = Template(Config.get("execution", "general", "copycmd_l2r"))
+        s = Template(self.config_get("execution", "general", "copycmd_l2r"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=self.config_get("execution", "general", "host"),
             srcfile=src,
             dstfile=dst)
         self.exec_cmd_and_show_output(cmd)
@@ -327,9 +380,9 @@ class Executor:
             return
 
     def copy_file_from_remote(self, src, dst):
-        s = Template(Config.get("execution", "general", "copycmd_r2l"))
+        s = Template(self.config_get("execution", "general", "copycmd_r2l"))
         cmd = s.substitute(
-            host=Config.get("execution", "general", "host"),
+            host=self.config_get("execution", "general", "host"),
             srcfile=src,
             dstfile=dst)
         self.exec_cmd_and_show_output(cmd)
@@ -350,7 +403,7 @@ class Executor:
         if p.returncode != 0 and fail_on_nonzero:
             print("The command " + cmd + " failed (retcode " +\
                     str(p.returncode) + ")!\n")
-            if self.headless:
+            if self.headless and self.exit_on_error:
                 os._exit(p.returncode)
             else:
                 raise ValueError("The command " + cmd + " failed (retcode " + \
@@ -366,6 +419,7 @@ class AsyncExecutor:
     def __init__(self, perfplot, headless, sdfg_renderer, diode):
 
         self.executor = Executor(perfplot, headless, sdfg_renderer, self)
+        self.executor.setExitOnError(False)
         self.to_thread_message_queue = queue.Queue(128)
         self.from_thread_message_queue = queue.Queue(128)
         self.diode = diode
@@ -389,6 +443,9 @@ class AsyncExecutor:
         GObject.idle_add(deferred)
 
     def notify(self, message):
+
+        if self.diode == None:
+            return
 
         import time
 

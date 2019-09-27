@@ -48,7 +48,10 @@ ORDER BY
     rs.runID, es.threadID
 '''
 
-    def __init__(self, cache_across_runs=False, use_merged_values=False):
+    def __init__(self,
+                 cache_across_runs=False,
+                 use_merged_values=False,
+                 perfdata_path="perfdata.db"):
         """ If cache_across_runs is set to true, a larger preselection (only based on the runid) is made first, THEN the supersections are filtered. """
         self.verbose = False
         self.source_table = "Values"
@@ -61,6 +64,7 @@ ORDER BY
             self.cache_for_runid = None
         else:
             self.cache_db = None
+        self.perfdata_path = perfdata_path
 
     def __del__(self):
         # We want to make sure that the temporary db is closed (if it was used)
@@ -102,8 +106,11 @@ ORDER BY
                 source="`source`.", source_table=self.source_table) % ("",
                                                                        runsel)
             if not self.cache_db_created or self.cache_for_nodeid != section_id or self.cache_for_runid != RunID:
-                self.cache_db.execute(
-                    "ATTACH DATABASE 'perfdata.db' as 'source';")
+
+                db_path = self.perfdata_path
+
+                self.cache_db.execute("ATTACH DATABASE '" + db_path +
+                                      "' as 'source';")
                 self.cache_db.execute("DROP TABLE IF EXISTS `cache_table`;")
                 self.cache_db.execute(
                     "CREATE TABLE `cache_table` AS " + cache_q + ";",
@@ -1008,9 +1015,10 @@ WHERE
 class CriticalPathAnalysis:
     """ Implements the CriticalPathAnalysis in SQL """
 
-    def __init__(self, use_merged_values=False):
+    def __init__(self, use_merged_values=False, perfdata_path='perfdata.db'):
         self.use_merged_values = use_merged_values
         self.verbose = False
+        self.perfdata_path = perfdata_path
 
     def print(self, x):
         if self.verbose:
@@ -1080,7 +1088,9 @@ ORDER BY
         repcount = mf.getRepetitionCount(c)
 
         ta = ThreadAnalysis(
-            cache_across_runs=True, use_merged_values=self.use_merged_values)
+            cache_across_runs=True,
+            use_merged_values=self.use_merged_values,
+            perfdata_path=self.perfdata_path)
 
         pair_list = []
         critical_paths = {}
@@ -1204,16 +1214,16 @@ class MergeRuns:
         Intended to be used before every other analysis. """
 
     def __init__(self):
-        from dace.codegen.instrumentation.perfsettings import PerfSettings
+        from dace.codegen.instrumentation.papi import PAPISettings
         self.verbose = False
-        self.compensate = PerfSettings.perf_compensate_overhead()
+        self.compensate = PAPISettings.perf_compensate_overhead()
 
     def print(self, x):
         if self.verbose:
             return print(x)
 
     def mergev2(self, db_path):
-        from dace.codegen.instrumentation.perfsettings import PerfSettings
+        from dace.codegen.instrumentation.papi import PAPISettings
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
 
@@ -1251,7 +1261,7 @@ class MergeRuns:
              oldEntryID INTEGER,
              FOREIGN KEY(entryID) REFERENCES Entries(EntryID));
         """)
-        PerfSettings.merging_print("Copying values")
+        PAPISettings.merging_print("Copying values")
         c.execute("""
         INSERT INTO `MergedValues`
         SELECT
@@ -1260,14 +1270,14 @@ class MergeRuns:
             `Values` AS vs
         ;
         """)
-        PerfSettings.merging_print("Creating index")
+        PAPISettings.merging_print("Creating index")
         # Create an Index on the old entry ID for faster loopups
         c.execute(
             "CREATE INDEX IF NOT EXISTS `oldEntryID_index` ON `MergedValues`(oldEntryID);"
         )
 
         update_list = []
-        PerfSettings.merging_print("Running query")
+        PAPISettings.merging_print("Running query")
 
         # Order properly first, then merge by rowids.
         query = """
@@ -1290,11 +1300,11 @@ ORDER BY
     ss.SuperSectionID, sec.nodeID, es.iteration, es.threadID, es.`order`
         """
 
-        PerfSettings.merging_print("Loading default table")
+        PAPISettings.merging_print("Loading default table")
         # Get a default table up.
         c.execute("CREATE TEMPORARY TABLE `default_sel` AS " +
                   query.format(mode="default"))
-        PerfSettings.merging_print("Creating index")
+        PAPISettings.merging_print("Creating index")
         c.execute(
             "CREATE INDEX `ds_ind` ON `default_sel`(SuperSectionID, entryID, threadID, iteration);"
         )
@@ -1306,7 +1316,7 @@ ORDER BY
             modestr, = x
             if modestr == "default":
                 continue
-            PerfSettings.merging_print("Generating table for " + modestr)
+            PAPISettings.merging_print("Generating table for " + modestr)
             table_str = "{s}_sel".format(s=modestr)
             c.execute("CREATE TEMPORARY TABLE `{tablename}` AS ".format(
                 tablename=table_str) + query.format(mode=modestr))
@@ -1314,7 +1324,7 @@ ORDER BY
                 "CREATE INDEX `{t}_ind` ON `default_sel`(SuperSectionID, entryID, threadID, iteration);".
                 format(t=table_str))
             # Cool, now we just match by rowid
-            PerfSettings.merging_print("Creating temporary table...")
+            PAPISettings.merging_print("Creating temporary table...")
             esel_query = """
 SELECT
     DISTINCT ds.entryID as entryid, ms.entryID as oldentryid
@@ -1323,7 +1333,7 @@ FROM `default_sel` AS ds INNER JOIN `{t}` AS ms ON ds.rowid = ms.rowid
 """
             c.execute("CREATE TEMPORARY TABLE `sel` AS " +
                       esel_query.format(t=table_str))
-            PerfSettings.merging_print("Creating index on selection")
+            PAPISettings.merging_print("Creating index on selection")
             c.execute(
                 "CREATE INDEX `sel_index` ON `sel`(entryID, oldentryID);")
 
@@ -1340,12 +1350,12 @@ SET
             c.execute("SELECT entryID, oldEntryID FROM `sel`;")
             update_list.extend(c.fetchall())
 
-            PerfSettings.merging_print("Dropping table")
+            PAPISettings.merging_print("Dropping table")
             c.execute("DROP TABLE `sel`;")
             c.execute("DROP TABLE `{t}`;".format(t=table_str))
             c.execute("DROP INDEX `{t}_ind`;".format(t=table_str))
 
-        PerfSettings.merging_print("Updating %d values" % len(update_list))
+        PAPISettings.merging_print("Updating %d values" % len(update_list))
         c.executemany(
             """
 UPDATE
@@ -1361,17 +1371,17 @@ WHERE
         if self.compensate:
             self.compensate_func(c)
 
-        PerfSettings.merging_print("Committing...")
+        PAPISettings.merging_print("Committing...")
 
         conn.commit()
 
-        PerfSettings.merging_print("Cleaning")
+        PAPISettings.merging_print("Cleaning")
         conn.execute("VACUUM;")
         conn.execute("PRAGMA optimize;")
         conn.commit()
         conn.close()
 
-        PerfSettings.merging_print("Done")
+        PAPISettings.merging_print("Done")
 
     def check_1(self, c: sqlite3.Cursor):
         pass
@@ -1794,7 +1804,10 @@ GROUP BY
 
 """
 
-    def __init__(self, shared_input_db=None, critical_path_analysis=None):
+    def __init__(self,
+                 shared_input_db=None,
+                 critical_path_analysis=None,
+                 perfdata_path="perfdata.db"):
         """ Initializes this analysis class.
             When a shared input database is specified, joins are not executed,
             but instead taken from the input database from table `temp_merge_sel`. 
@@ -1805,6 +1818,7 @@ GROUP BY
         self.shared_input_db = shared_input_db
         self.critical_path_analysis = critical_path_analysis
         self.verbose = False
+        self.perfdata_path = perfdata_path
 
     def print(self, x):
         if self.verbose:
@@ -1816,7 +1830,7 @@ GROUP BY
         self.print("Running vectorization analysis")
 
         if self.critical_path_analysis == None:
-            cpa = CriticalPathAnalysis()
+            cpa = CriticalPathAnalysis(perfdata_path=self.perfdata_path)
             cpa_data = cpa.query_values(
                 c, section_id, 0
             )  # stateid=0 is fine here because section_id is the unified id.
@@ -2213,7 +2227,7 @@ class Conserver:
                     repetitions,
                     clear_existing=False):
 
-        from dace.codegen.instrumentation.perfsettings import PerfSettings
+        from dace.codegen.instrumentation.papi import PAPISettings
         conn = sqlite3.connect(db_path)
 
         c = conn.cursor()
@@ -2292,12 +2306,16 @@ VALUES
             return json.loads(extract)
 
         thread_analysis = ThreadAnalysis(
-            cache_across_runs=True, use_merged_values=True)
-        critical_path_analysis = CriticalPathAnalysis()
+            cache_across_runs=True,
+            use_merged_values=True,
+            perfdata_path=db_path)
+        critical_path_analysis = CriticalPathAnalysis(perfdata_path=db_path)
         memory_analysis = MemoryAnalysis(
             shared_input_db=cache_conn, from_merged=True)
         vectorization_analysis = VectorizationAnalysis(
-            shared_input_db=cache_conn, critical_path_analysis=get_cpa)
+            shared_input_db=cache_conn,
+            critical_path_analysis=get_cpa,
+            perfdata_path=db_path)
         memory_op_analysis = MemoryOpAnalysis(shared_input_db=cache_conn)
         cache_op_analysis = CacheOpAnalysis(shared_input_db=cache_conn)
 
@@ -2310,7 +2328,7 @@ VALUES
             ("CacheOpAnalysis", cache_op_analysis, lambda unified_id, ssid, sid: [unified_id, ssid])
         ]
 
-        PerfSettings.canning_print("unified_ids: " + str(unified_ids))
+        PAPISettings.canning_print("unified_ids: " + str(unified_ids))
 
         # Generate all analyses for this
         for x in unified_ids:
@@ -2319,7 +2337,7 @@ VALUES
             unified_id = int(unified_id)
 
             cache_conn.execute("DROP TABLE IF EXISTS `filtered_to_nodeid`;")
-            cache_conn.execute("ATTACH DATABASE " + "'perfdata.db'" +
+            cache_conn.execute("ATTACH DATABASE " + "'" + db_path + "'" +
                                " AS 'base';")
             cache_conn.execute(
                 "CREATE TABLE `filtered_to_nodeid` AS " +
@@ -2330,7 +2348,7 @@ VALUES
             )
 
             cache_conn.execute("DROP TABLE IF EXISTS `cache_mem_query`;")
-            cache_conn.execute("ATTACH DATABASE " + "'perfdata.db'" +
+            cache_conn.execute("ATTACH DATABASE " + "'" + db_path + "'" +
                                " AS 'base';")
             cache_conn.execute(
                 "CREATE TABLE `cache_mem_query` AS " +
@@ -2371,7 +2389,7 @@ ORDER BY
                 supersection_id = int(supersection_id)
                 section_id = int(section_id)
 
-                PerfSettings.canning_print(
+                PAPISettings.canning_print(
                     "Now treating (%d, %d, %d, %d)" %
                     (forProgramID, unified_id, supersection_id, section_id))
 
@@ -2400,13 +2418,13 @@ ORDER BY
                     args = argfunc(unified_id, supersection_id, section_id)
                     if (prev_analysis_key[analysis_i] == args):
                         # If the analysis is invariant to the current key change, do not generate redundant information
-                        PerfSettings.canning_print("\tSkipping analysis " +
+                        PAPISettings.canning_print("\tSkipping analysis " +
                                                    name)
                         continue
                     else:
                         prev_analysis_key[analysis_i] = args
 
-                    PerfSettings.canning_print("Running analysis " + name)
+                    PAPISettings.canning_print("Running analysis " + name)
                     analysis_result = instance.query_values(c, *args)
                     json_data = json.dumps(analysis_result)
 

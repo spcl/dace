@@ -10,7 +10,6 @@ from dace.graph import nodes
 from dace import dtypes, config
 
 from dace.frontend.python import ndarray
-from dace.codegen.instrumentation.perfsettings import PerfSettings, PerfUtils
 from dace.codegen import cppunparse
 
 import networkx as nx
@@ -66,15 +65,15 @@ class DaCeCodeGenerator(object):
         """
         #########################################################
         # Custom types
-        dtypes = set()
+        datatypes = set()
         # Types of this SDFG
-        for sdfg, arrname, arr in sdfg.arrays_recursive():
+        for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
-                dtypes.add(arr.dtype)
+                datatypes.add(arr.dtype)
 
         # Emit unique definitions
         global_stream.write('\n')
-        for typ in dtypes:
+        for typ in datatypes:
             if hasattr(typ, 'emit_definition'):
                 global_stream.write(typ.emit_definition(), sdfg)
         global_stream.write('\n')
@@ -82,6 +81,8 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Write constants
         self.generate_constants(sdfg, global_stream)
+
+        global_stream.write(sdfg.global_code, sdfg)
 
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
@@ -99,47 +100,15 @@ class DaCeCodeGenerator(object):
             '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' +
             '#include <dace/dace.h>\n', sdfg)
 
-        # Added for instrumentation includes
-        if PerfSettings.perf_enable_instrumentation(
-        ) or PerfSettings.perf_enable_timing():
-            global_stream.write(
-                '/* DaCe instrumentation include */\n' +
-                '#include <dace/perf/instrumentation.h>\n', sdfg)
-
         self.generate_fileheader(sdfg, callsite_stream)
 
         callsite_stream.write(
             'void __program_%s_internal(%s)\n{\n' % (fname, params), sdfg)
 
-        # Define the performance store (autocleanup on destruction)
-        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation():
-            callsite_stream.write(
-                'dace_perf::PAPI::init();\n' + 'dace_perf::%s __perf_store;\n'
-                % PerfUtils.perf_counter_store_string(
-                    PerfSettings.perf_default_papi_counters()), sdfg)
-
-        if sdfg.parent == None and PerfSettings.perf_enable_timing():
-            callsite_stream.write("dace_perf::Timer __perf_timer;\n", sdfg)
-
-        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation():
-            if PerfSettings.perf_enable_overhead_collection():
-                # Get the measured overhead and take the minimum to compensate later.
-                callsite_stream.write("__perf_store.getMeasuredOverhead();\n",
-                                      sdfg)
-
-            if PerfSettings.perf_max_scope_depth() == -1:
-                callsite_stream.write((
-                    "dace_perf::%s __perf_global;\n" +
-                    "__perf_store.markSuperSectionStart(-1);\n" +
-                    "__perf_store.markSectionStart(-1, 0, 0, 0);\n" +
-                    "auto& __perf_global_vs = __perf_store.getNewValueSet(__perf_global, -1, 0, 0);\n"
-                    + "__perf_global.enterCritical();\n") %
-                                      PerfUtils.perf_counter_string(None),
-                                      sdfg)
-            else:
-                # We need to have a dummy SuperSection to count repetitions
-                callsite_stream.write(
-                    PerfUtils.perf_supersection_start_string(-1), sdfg)
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
 
     def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
@@ -153,15 +122,10 @@ class DaCeCodeGenerator(object):
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
 
-        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation(
-        ) and PerfSettings.perf_max_scope_depth() == -1:
-            callsite_stream.write(
-                "__perf_global.leaveCritical(__perf_global_vs);\n", sdfg)
-
-        if sdfg.parent == None and PerfSettings.perf_enable_instrumentation(
-        ) and PerfSettings.perf_enable_timing():
-            callsite_stream.write(
-                "__perf_store.set_time(__perf_timer.collect());\n", sdfg)
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
         # Write frame code - footer
         callsite_stream.write('}\n', sdfg)
@@ -199,6 +163,8 @@ DACE_EXPORTED int __dace_init(%s)
                     'result |= __dace_init_%s(%s);' % (target.target_name,
                                                        paramnames), sdfg)
 
+        callsite_stream.write(sdfg.init_code, sdfg)
+
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
         callsite_stream.write(
@@ -211,6 +177,8 @@ DACE_EXPORTED void __dace_exit(%s)
 """ % params, sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
+
+        callsite_stream.write(sdfg.exit_code, sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -243,6 +211,12 @@ DACE_EXPORTED void __dace_exit(%s)
             self._dispatcher.dispatch_initialize(
                 sdfg, state, sid, node, global_stream, callsite_stream)
 
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_state_begin(sdfg, state, callsite_stream,
+                                     global_stream)
+
         #####################
         # Create dataflow graph for state's children.
 
@@ -261,23 +235,8 @@ DACE_EXPORTED void __dace_exit(%s)
                 callsite_stream,
                 skip_entry_node=False)
         else:
-            #############################################################
-            # Instrumentation: Pre-state
-            # We cannot have supersections starting in parallel
-            parent_id = PerfUtils.unified_id(-1, sid)
-            # #TODO: Check if this is safe when SDFGs are nested...
-            if PerfSettings.perf_enable_instrumentation(
-            ) and PerfSettings.perf_max_scope_depth() != -1:
-                callsite_stream.write(
-                    "__perf_store.markSuperSectionStart(%d);\n" %
-                    PerfUtils.unified_id(-1, sid))
-            #############################################################
-
             callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
-                c.set_parallel_parent(
-                    parent_id
-                )  # Keep in mind not to add supersection start markers!
                 callsite_stream.write("#pragma omp section\n{")
                 self._dispatcher.dispatch_subgraph(
                     sdfg,
@@ -296,14 +255,20 @@ DACE_EXPORTED void __dace_exit(%s)
             # Emit internal transient array deallocation
             deallocated = set()
             for node in state.data_nodes():
-                if (node.data not in data_to_allocate or
-                        node.data in deallocated or
-                        (node.data in sdfg.arrays and
-                        sdfg.arrays[node.data].transient == False)):
+                if (node.data not in data_to_allocate
+                        or node.data in deallocated
+                        or (node.data in sdfg.arrays
+                            and sdfg.arrays[node.data].transient == False)):
                     continue
                 deallocated.add(node.data)
                 self._dispatcher.dispatch_deallocate(
                     sdfg, state, sid, node, global_stream, callsite_stream)
+
+            # Invoke all instrumentation providers
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_state_end(sdfg, state, callsite_stream,
+                                       global_stream)
 
     @staticmethod
     def _generate_assignments(assignments):
@@ -636,7 +601,7 @@ DACE_EXPORTED void __dace_exit(%s)
 
         if sdfg.parent is not None:
             # Nested SDFG
-            symbols_available = sdfg._parent_sdfg.symbols_defined_at(sdfg)
+            symbols_available = sdfg.parent_sdfg.symbols_defined_at(sdfg)
         else:
             symbols_available = sdfg.constants
 
@@ -906,7 +871,8 @@ DACE_EXPORTED void __dace_exit(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, sdfg, None, node, global_stream, callsite_stream)
+                        sdfg, state, None, node, global_stream,
+                        callsite_stream)
                     deallocated.add(node.data)
 
         ###########################
