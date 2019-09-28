@@ -768,7 +768,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language specific
             write_expr = self.make_write(dst_def_type, ctype, dst_node.label,
                                          memlet.veclen, dst_expr, dst_index,
-                                         read_expr)
+                                         read_expr, memlet.wcr)
 
             callsite_stream.write(write_expr)
 
