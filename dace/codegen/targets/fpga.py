@@ -1188,7 +1188,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 callsite_stream.write(
                     self.make_write(def_type, dst_data.dtype.ctype,
                                     output_memlet.data, output_memlet.veclen,
-                                    dst_expr, "", out_var), sdfg, state_id,
+                                    dst_expr, "", out_var, output_memlet.wcr), sdfg, state_id,
                     node)
 
     def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
