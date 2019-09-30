@@ -1317,7 +1317,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Entry point to the program
         self.program = None
         self.sdfg = SDFG(name)
-        self.last_state = None  # self.sdfg.add_state('init', is_start_state=True)
+        self.last_state = self.sdfg.add_state('init', is_start_state=True)
         if not self.nested:
             self.sdfg.arrays.update(arrays)
         self.inputs = {}
@@ -2575,12 +2575,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 'WARNING: Function "%s" is not registered with an %s implementation, falling back to SDFG'
                 % (funcname, default_impl))
 
-        result = func(
-            self.sdfg, self.last_state,
-            *(self._parse_function_arg(arg) for arg in node.args), **{
-                arg.arg: self._parse_function_arg(arg.value)
-                for arg in node.keywords
-            })
+        args = [self._parse_function_arg(arg) for arg in node.args]
+        keywords = {
+            arg.arg: self._parse_function_arg(arg.value)
+            for arg in node.keywords
+        }
+
+        self._add_state('call_%d' % node.lineno)
+
+        result = func(self.sdfg, self.last_state, *args, **keywords)
+
         if not isinstance(result, (tuple, list)):
             return [result]
         return result
@@ -2624,7 +2628,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Calling reduction or other SDFGs / functions
         elif isinstance(node.value, ast.Call):
             # Handles reduction and calling other SDFGs / DaCe programs
-            self._add_state('call_%d' % node.lineno)
+            # self._add_state('call_%d' % node.lineno)
             self.visit_Call(node.value)
             return
 
