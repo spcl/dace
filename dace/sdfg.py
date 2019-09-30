@@ -3125,8 +3125,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Connector tests
             ########################################
-            # Check for duplicate connector names
-            if len(node.in_connectors & node.out_connectors) > 0:
+            # Check for duplicate connector names (unless it's a nested SDFG)
+            if (len(node.in_connectors & node.out_connectors) > 0
+                    and not isinstance(node, nd.NestedSDFG)):
                 dups = node.in_connectors & node.out_connectors
                 raise InvalidSDFGNodeError(
                     "Duplicate connectors: " + str(dups), sdfg, state_id, nid)
