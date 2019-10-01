@@ -200,7 +200,7 @@ class DefinedMemlets:
                 return scope[name]
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name, connector_type):
+    def add(self, name, connector_type, ancestor: int=0):
         if not isinstance(name, str):
             raise TypeError(
                 'Variable name type cannot be %s' % type(name).__name__)
@@ -213,7 +213,7 @@ class DefinedMemlets:
                     print("WARNING: " + err_str)
                 else:
                     raise dace.codegen.codegen.CodegenError(err_str)
-        self._scopes[-1][1][name] = connector_type
+        self._scopes[-1 - ancestor][1][name] = connector_type
 
 
 #############################################################################
