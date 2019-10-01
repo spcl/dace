@@ -319,8 +319,10 @@ class SDFG(OrderedDiGraph):
             replace_dict(edge.data.assignments, name, new_name)
             for k, v in edge.data.assignments.items():
                 edge.data.assignments[k] = v.replace(name, new_name)
-            for k, v in edge.data.conditions.items():
-                edge.data.conditions[k] = v.replace(name, new_name)
+            condition = CodeProperty.to_string(edge.data.condition)
+            edge.data.condition = condition.replace(name, new_name)
+            # for k, v in edge.data.condition.items():
+            #     edge.data.condition[k] = v.replace(name, new_name)
 
         # Replace in states
         for state in self.nodes():
