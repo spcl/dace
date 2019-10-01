@@ -19,6 +19,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
 import numpy as np
+import sympy
 
 # A type that defines assignment information
 AssignmentInfo = Tuple[SDFG, SDFGState, Tuple[str]]
@@ -916,6 +917,10 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
         for i, access in enumerate(arr_accesses):
             if isinstance(access, (list, tuple)):
                 access = access[0]
+            if isinstance(access, sympy.Tuple):
+                access = list(access)
+            if not isinstance(access, (list, tuple)):
+                access = [access]
             conn = None
             if PVisitor.nested:
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
@@ -925,7 +930,7 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
                 conn = 'index_%s_%d' % (arr_name, i)
             arr = sdfg.arrays[arrname]
             # Memlet to load the indirection index
-            indexMemlet = Memlet(arrname, 1, subsets.Indices(list(access)), 1)
+            indexMemlet = Memlet(arrname, 1, subsets.Indices(access), 1)
             input_index_memlets.append(indexMemlet)
             read_node = graph.add_read(arrname)
             if PVisitor.nested:
@@ -947,7 +952,9 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     # Create transient variable to trigger the indirect load
     if memlet.num_accesses == 1:
         storage = sdfg.add_scalar(
-            '__' + local_name + '_value', array.dtype, transient=True)
+            '__' + local_name + '_value',
+            array.dtype,
+            transient=True)
     else:
         storage = sdfg.add_array(
             '__' + local_name + '_value',
