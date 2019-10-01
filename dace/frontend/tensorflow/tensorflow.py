@@ -12,6 +12,7 @@ import math
 import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState
+from dace.graph import labeling
 from dace.graph.nodes import Tasklet, NestedSDFG
 from dace.frontend.tensorflow.winograd import winograd_convolution
 
@@ -434,7 +435,7 @@ class TFSession:
         else:
             # Initialize a new SDFG
             self.graph = SDFG(name)
-            self.graph.propagate = False
+            self.graph.propagate = True
             self.state = SDFGState("s0", self.graph)
             self.graph.add_node(self.state)
             self.visitedNodes.clear()
@@ -952,7 +953,7 @@ class TFSession:
             inputNode = state.add_array(
                 name=label + "_Inp", shape=shape, dtype=dace.typeclass(dtype))
 
-            # create and add mapp
+            # create and add map
             mapDict = dict(zip(inputParams, inputDims))
             inMemletDict = dict(
                 j0=Memlet.simple(inputNode, ",".join(inputParams)))
