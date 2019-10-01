@@ -44,8 +44,10 @@ class Vectorization(pattern_matching.Transformation):
             # Cases that do not matter for vectorization
             if isinstance(sdfg.arrays[memlet.data], data.Stream):
                 continue
+
+            # Vectorization can not be applied in WCR
             if memlet.wcr is not None:
-                continue
+                return False
 
             try:
                 subset = memlet.subset
