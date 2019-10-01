@@ -213,6 +213,9 @@ class SDFG(OrderedDiGraph):
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
+        # Counter to resolve name conflicts
+        self._num = 0
+
     def toJSON(self):
         import json
         tmp = super(SDFG, self).toJSON()
@@ -423,6 +426,7 @@ class SDFG(OrderedDiGraph):
         del self._arrays[name]
 
     def update_sdfg_list(self, sdfg_list):
+        # TODO: Refactor
         sub_sdfg_list = self._sdfg_list
         for sdfg in sdfg_list:
             if sdfg not in sub_sdfg_list:
@@ -430,6 +434,8 @@ class SDFG(OrderedDiGraph):
         if self._parent_sdfg is not None:
             self._parent_sdfg.update_sdfg_list(sub_sdfg_list)
             self._sdfg_list = self._parent_sdfg.sdfg_list
+            for sdfg in sub_sdfg_list:
+                sdfg._sdfg_list = self._sdfg_list
         else:
             self._sdfg_list = sub_sdfg_list
 
@@ -451,10 +457,18 @@ class SDFG(OrderedDiGraph):
     def name(self):
         """ The name of this SDFG. """
         fullname = self._name
-        parent = self._parent
-        while parent:
-            fullname = "{}_{}".format(parent.name, fullname)
-            parent = parent.parent
+        numbers = []
+        for sdfg in self._sdfg_list:
+            if sdfg is not self and sdfg._name == self._name:
+                numbers.append(sdfg._num)
+        while self._num in numbers:
+            self._num += 1
+        if self._num > 0:
+            fullname = '{}_{}'.format(self._name, self._num)
+        # parent = self._parent
+        # while parent:
+        #     fullname = "{}_{}".format(parent.name, fullname)
+        #     parent = parent.parent
         return fullname
 
     @property
