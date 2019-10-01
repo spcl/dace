@@ -2696,33 +2696,34 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.s
 
     def visit_Num(self, node: ast.Num):
-        name = None
-        if node.n not in self.numbers:
-            dtype = None
-            if isinstance(node.n, int):
-                dtype = dace.int64
-            elif isinstance(node.n, float):
-                dtype = dace.float64
-            elif isinstance(node.n, complex):
-                dtype = dace.complex128
-            else:
-                raise NotImplementedError
-            name, _ = self.sdfg.add_temp_transient([1], dtype, toplevel=True)
-            self.numbers[node.n] = name
-            init_state = None
-            if not self.sdfg.nodes():
-                init_state = self.sdfg.add_state('init')
-                self.last_state = init_state
-            else:
-                init_state = self.sdfg.nodes()[0]
-            tasklet = init_state.add_tasklet(
-                'init_{}'.format(name), {}, {'out'}, 'out = {}'.format(node.n))
-            access = init_state.add_write(name)
-            init_state.add_edge(tasklet, 'out', access, None,
-                                dace.Memlet.simple(name, '0'))
-        else:
-            name = self.numbers[node.n]
-        return name
+        return node.n
+        # name = None
+        # if node.n not in self.numbers:
+        #     dtype = None
+        #     if isinstance(node.n, int):
+        #         dtype = dace.int64
+        #     elif isinstance(node.n, float):
+        #         dtype = dace.float64
+        #     elif isinstance(node.n, complex):
+        #         dtype = dace.complex128
+        #     else:
+        #         raise NotImplementedError
+        #     name, _ = self.sdfg.add_temp_transient([1], dtype, toplevel=True)
+        #     self.numbers[node.n] = name
+        #     init_state = None
+        #     if not self.sdfg.nodes():
+        #         init_state = self.sdfg.add_state('init')
+        #         self.last_state = init_state
+        #     else:
+        #         init_state = self.sdfg.nodes()[0]
+        #     tasklet = init_state.add_tasklet(
+        #         'init_{}'.format(name), {}, {'out'}, 'out = {}'.format(node.n))
+        #     access = init_state.add_write(name)
+        #     init_state.add_edge(tasklet, 'out', access, None,
+        #                         dace.Memlet.simple(name, '0'))
+        # else:
+        #     name = self.numbers[node.n]
+        # return name
 
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global
@@ -2780,6 +2781,35 @@ class ProgramVisitor(ExtNodeVisitor):
         # elif dtypes.isconstant(operand):
         #     return operand, data.Scalar.__name__
         # return operand, type(operand).__name__
+    
+    def _convert_num_to_array(self, node: ast.Num):
+        name = None
+        if node.n not in self.numbers:
+            dtype = None
+            if isinstance(node.n, int):
+                dtype = dace.int64
+            elif isinstance(node.n, float):
+                dtype = dace.float64
+            elif isinstance(node.n, complex):
+                dtype = dace.complex128
+            else:
+                raise NotImplementedError
+            name, _ = self.sdfg.add_temp_transient([1], dtype, toplevel=True)
+            self.numbers[node.n] = name
+            init_state = None
+            if not self.sdfg.nodes():
+                init_state = self.sdfg.add_state('init')
+                self.last_state = init_state
+            else:
+                init_state = self.sdfg.nodes()[0]
+            tasklet = init_state.add_tasklet(
+                'init_{}'.format(name), {}, {'out'}, 'out = {}'.format(node.n))
+            access = init_state.add_write(name)
+            init_state.add_edge(tasklet, 'out', access, None,
+                                dace.Memlet.simple(name, '0'))
+        else:
+            name = self.numbers[node.n]
+        return name
 
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
@@ -2796,6 +2826,14 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = self._gettype(op2)
         else:
             operand2, op2type = None, None
+
+        if isinstance(node, ast.BinOp):
+            if op1type == 'Array' and isinstance(op2, ast.Num):
+                operand2 = self._convert_num_to_array(op2)
+                op2type = 'Array'
+            elif op2type == 'Array' and isinstance(op1, ast.Num):
+                operand1 = self._convert_num_to_array(op1)
+                op1type = 'Array'
 
         func = oprepo.Replacements.getop(
             op1type, opname, implementation=default_impl, otherclass=op2type)
