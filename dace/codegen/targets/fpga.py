@@ -908,7 +908,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # flattened) loop
             if isinstance(node, PipelineEntry):
                 for i in range(len(node.map.range)):
-                    result.write("int {} = {};\n".format(
+                    result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
 
             if node.map.unroll:
@@ -928,7 +928,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     var = node.map.params[i]
                     begin, end, skip = r
                     result.write(
-                        "for (int {} = {}; {} < {}; {} += {}) {{\n".format(
+                        "for (long {} = {}; {} < {}; {} += {}) {{\n".format(
                             var, cpu.sym2cpp(begin), var, cpu.sym2cpp(end + 1),
                             var, cpu.sym2cpp(skip)), sdfg, state_id, node)
             else:
@@ -1082,7 +1082,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_pre(callsite_stream, None, sdfg, state_id,
                                          node)
             callsite_stream.write(
-                'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
+                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                 format(
                     var=iterators_inner[i],
                     begin=input_subset[axis][0],
@@ -1111,7 +1111,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_pre(callsite_stream, None, sdfg, state_id,
                                          node)
             callsite_stream.write(
-                'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
+                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                 format(
                     var=iterators_outer[i],
                     begin=output_subset[i][0],
