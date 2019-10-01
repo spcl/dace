@@ -1253,6 +1253,35 @@ class CPUCodeGen(TargetCodeGenerator):
             elif (isinstance(edge.dst, nodes.CodeNode)
                   and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
+                
+                # Generate register definitions for inter-tasklet memlets
+                local_name = edge.data.data
+                # Allocate variable type
+                code = "dace::vec<%s, %s> %s;" % (
+                    sdfg.arrays[edge.data.data].dtype.ctype,
+                    sym2cpp(edge.data.veclen),
+                    local_name,
+                )
+                outer_stream_begin.write(code, sdfg, state_id, [edge.src, edge.dst])
+                arg_type = sdfg.arrays[edge.data.data]
+                if (isinstance(arg_type, dace.data.Scalar)
+                        or isinstance(arg_type, dace.dtypes.typeclass)):
+                    self._dispatcher.defined_vars.add(
+                        local_name, DefinedType.Scalar, ancestor=1)
+                elif isinstance(arg_type, dace.data.Array):
+                    self._dispatcher.defined_vars.add(
+                        local_name, DefinedType.Pointer, ancestor=1)
+                elif isinstance(arg_type, dace.data.Stream):
+                    if arg_type.is_stream_array():
+                        self._dispatcher.defined_vars.add(
+                            local_name, DefinedType.StreamArray, ancestor=1)
+                    else:
+                        self._dispatcher.defined_vars.add(
+                            local_name, DefinedType.Stream, ancestor=1)
+                else:
+                    raise TypeError("Unrecognized argument type: {}".format(
+                        type(arg_type).__name__))
+
                 inner_stream.write(
                     "dace::vec<%s, %s> %s;" % (
                         sdfg.arrays[memlet.data].dtype.ctype,
@@ -1538,40 +1567,40 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
                                                  None, result)
 
-        # Generate register definitions for inter-tasklet memlets
-        scope_dict = dfg.scope_dict()
-        for edge in dfg.edges():
-            # Only interested in edges within current scope
-            if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
-                continue
-            if isinstance(edge.src, nodes.CodeNode) and isinstance(
-                    edge.dst, nodes.CodeNode):
-                local_name = edge.data.data
-                # Allocate variable type
-                code = "dace::vec<%s, %s> %s;" % (
-                    sdfg.arrays[edge.data.data].dtype.ctype,
-                    sym2cpp(edge.data.veclen),
-                    local_name,
-                )
-                result.write(code, sdfg, state_id, [edge.src, edge.dst])
-                arg_type = sdfg.arrays[edge.data.data]
-                if (isinstance(arg_type, dace.data.Scalar)
-                        or isinstance(arg_type, dace.dtypes.typeclass)):
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Scalar)
-                elif isinstance(arg_type, dace.data.Array):
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Pointer)
-                elif isinstance(arg_type, dace.data.Stream):
-                    if arg_type.is_stream_array():
-                        self._dispatcher.defined_vars.add(
-                            local_name, DefinedType.StreamArray)
-                    else:
-                        self._dispatcher.defined_vars.add(
-                            local_name, DefinedType.Stream)
-                else:
-                    raise TypeError("Unrecognized argument type: {}".format(
-                        type(arg_type).__name__))
+        # # Generate register definitions for inter-tasklet memlets
+        # scope_dict = dfg.scope_dict()
+        # for edge in dfg.edges():
+        #     # Only interested in edges within current scope
+        #     if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
+        #         continue
+        #     if isinstance(edge.src, nodes.CodeNode) and isinstance(
+        #             edge.dst, nodes.CodeNode):
+        #         local_name = edge.data.data
+        #         # Allocate variable type
+        #         code = "dace::vec<%s, %s> %s;" % (
+        #             sdfg.arrays[edge.data.data].dtype.ctype,
+        #             sym2cpp(edge.data.veclen),
+        #             local_name,
+        #         )
+        #         result.write(code, sdfg, state_id, [edge.src, edge.dst])
+        #         arg_type = sdfg.arrays[edge.data.data]
+        #         if (isinstance(arg_type, dace.data.Scalar)
+        #                 or isinstance(arg_type, dace.dtypes.typeclass)):
+        #             self._dispatcher.defined_vars.add(local_name,
+        #                                               DefinedType.Scalar)
+        #         elif isinstance(arg_type, dace.data.Array):
+        #             self._dispatcher.defined_vars.add(local_name,
+        #                                               DefinedType.Pointer)
+        #         elif isinstance(arg_type, dace.data.Stream):
+        #             if arg_type.is_stream_array():
+        #                 self._dispatcher.defined_vars.add(
+        #                     local_name, DefinedType.StreamArray)
+        #             else:
+        #                 self._dispatcher.defined_vars.add(
+        #                     local_name, DefinedType.Stream)
+        #         else:
+        #             raise TypeError("Unrecognized argument type: {}".format(
+        #                 type(arg_type).__name__))
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
