@@ -1553,8 +1553,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 # internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(
                 #     state, node)
                 # dummy = True
-                name = "{}_{}_{}_body".format(self.sdfg.label, state.label,
-                                              state.node_id(entry))
+                name = "{}_body".format(entry.label)
+                # name = "{}_{}_{}_body".format(self.sdfg.label, state.label,
+                #                               state.node_id(entry))
                 body, inputs, outputs = self._parse_subprogram(
                     name, node, True)
                 internal_node = state.add_nested_sdfg(body, self.sdfg,
