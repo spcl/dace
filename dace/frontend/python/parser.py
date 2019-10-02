@@ -113,9 +113,6 @@ def parse_from_function(function, *compilation_args, strict=None):
     #    labeling.propagate_labels_sdfg(sdfg)
     ########################
 
-    # Drawing the SDFG before strict transformations
-    sdfg.draw_to_file(recursive=True)
-
     # Apply strict transformations automatically
     if (strict == True
             or (strict is None
