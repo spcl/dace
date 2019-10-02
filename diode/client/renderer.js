@@ -781,7 +781,10 @@ class SDFGRenderer {
             states: [], nodes: [], connectors: [],
             edges: [], isedges: []
         };
-        this.do_for_intersected_elements(x, y, w, h, (type, e, obj) => elements[type].push(e));
+        this.do_for_intersected_elements(x, y, w, h, (type, e, obj) => {
+            e.obj = obj;
+            elements[type].push(e);
+        });
         return elements;
     }
 
@@ -808,7 +811,7 @@ class SDFGRenderer {
 
                             // If nested SDFG, traverse recursively
                             if (node.data.node.type === "NestedSDFG")
-                                traverse_recursive(node.data.node.graph, node.data.node.sdfg.attributes.name);
+                                traverse_recursive(node.data.graph, node.data.node.attributes.sdfg.attributes.name);
                         }
                         // Connectors
                         node.in_connectors.forEach((c, i) => {
@@ -867,7 +870,7 @@ class SDFGRenderer {
 
                     // If nested SDFG, traverse recursively
                     if (node.data.node.type === "NestedSDFG")
-                        traverse_recursive(node.data.node.graph, node.data.node.sdfg.attributes.name);
+                        traverse_recursive(node.data.graph, node.data.node.attributes.sdfg.attributes.name);
 
                     // Connectors
                     node.in_connectors.forEach((c, i) => {
@@ -1021,12 +1024,30 @@ class SDFGRenderer {
         let state_id = null;
         let node_id = null;
         if (clicked_states.length > 1) {
-            alert("Cannot determine clicked state!");
-            return;
+            // Use the state with the smallest surface
+            let surf = clicked_states[0].width * clicked_states[0].height;
+            let state = clicked_states[0];
+            for (let i = 1; i < clicked_states.length; i++) {
+                let s = clicked_states[i].width * clicked_states[i].height;
+                if (s < surf) {
+                    surf = s;
+                    state = clicked_states[i];
+                }
+            }
+            clicked_states = [state];
         }
         if (clicked_nodes.length > 1) {
-            console.warn("Multiple nodes cannot be selected");
-            //#TODO: Arbitrate this - for now, we select the element with the lowest id
+            // Use the node with the smallest surface
+            let surf = clicked_nodes[0].width * clicked_nodes[0].height;
+            let node = clicked_nodes[0];
+            for (let i = 1; i < clicked_nodes.length; i++) {
+                let s = clicked_nodes[i].width * clicked_nodes[i].height;
+                if (s < surf) {
+                    surf = s;
+                    node = clicked_nodes[i];
+                }
+            }
+            clicked_nodes = [node];
         }
 
         let state_only = false;
@@ -1081,6 +1102,7 @@ class SDFGRenderer {
             }
             // Toggle collapsed state
             if ('is_collapsed' in elem.attributes) {
+                // TODO: If exit node, collapse entry
                 elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
 
                 // Re-layout SDFG
@@ -1203,7 +1225,7 @@ class SDFGRenderer {
                 this.diode.renderProperties(propobj);
             };
             clicked_interstate_edges.forEach(edge => {
-                render_props(sdfg.edges[edge.id].attributes.data);
+                render_props(edge.obj.data);
             });
             if (state_only) {
                 render_props(state);

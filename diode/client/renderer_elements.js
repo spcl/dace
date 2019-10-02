@@ -328,10 +328,10 @@ export class Reduce extends Node {
 export class NestedSDFG extends Node {
     draw(renderer, ctx, mousepos) {
         // Draw square around nested SDFG
-        super.draw(ctx, mousepos);
+        super.draw(renderer, ctx, mousepos);
 
         // Draw nested graph
-        draw_sdfg(ctx, this.data.graph, null, mousepos);
+        draw_sdfg(renderer, ctx, this.data.graph, null, mousepos);
     }
 
     label() { return ""; }
