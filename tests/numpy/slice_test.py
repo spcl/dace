@@ -22,7 +22,7 @@ if __name__ == '__main__':
     N.set(5)
 
     slicetest(A, B, C)
-    diff = np.linalg.norm(C - (A[1:N] * B[:, 0:N - 1]))
+    diff = np.linalg.norm(C - (A[1:N.get()] * B[:, 0:N.get() - 1]))
     print('Difference:', diff)
     if diff > 1e-5:
         exit(1)
