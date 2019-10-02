@@ -1399,12 +1399,12 @@ subgraph cluster_state_{state} {{
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
 
+        # Fill in scope entry/exit connectors
+        sdfg.fill_scope_connectors()
+
         # Propagate memlets in the graph
         if self._propagate:
             propagate_labels_sdfg(sdfg)
-
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
 
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
@@ -1649,23 +1649,25 @@ subgraph cluster_state_{state} {{
         """
 
         # Import loop "fix"
-        from dace.codegen import codegen, compiler
+        from dace.codegen import codegen
 
         ################################
         # DaCe Code Generation Process #
         sdfg = copy.deepcopy(self)
 
+        # Fill in scope entry/exit connectors
+        sdfg.fill_scope_connectors()
+
         # Propagate memlets in the graph
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
-
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
 
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
                 "optimizer", "autospecialize")) or specialize == True:
             sdfg.specialize()
+
+        sdfg.draw_to_file()
 
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
@@ -2172,11 +2174,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 exit_node = next(
                     v for v in scopenodes if isinstance(v, nd.ExitNode))
             scope = Scope(node, exit_node)
-            scope.defined_vars = [
+            scope.defined_vars = set(
                 symbolic.pystr_to_symbolic(s)
                 for s in (self.parent.symbols_defined_at(node, self).keys()
-                          | sdfg_symbols)
-            ]
+                          | sdfg_symbols))
             result[node] = scope
 
         # Scope parents and children
@@ -3372,15 +3373,16 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
                 # Test subset and other_subset for undefined symbols
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
-                    defined_symbols = set(map(str, scope_tree[scope[e.dst]].defined_vars))
+                    defined_symbols = set(
+                        map(str, scope_tree[scope[e.dst]].defined_vars))
                     undefs = (e.data.subset.free_symbols - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
-                            'Undefined symbols %s found in memlet subset' % undefs,
-                            sdfg, state_id, eid)
+                            'Undefined symbols %s found in memlet subset' %
+                            undefs, sdfg, state_id, eid)
                     if e.data.other_subset is not None:
-                        undefs = (e.data.other_subset.free_symbols -
-                                  defined_symbols)
+                        undefs = (
+                            e.data.other_subset.free_symbols - defined_symbols)
                         if len(undefs) > 0:
                             raise InvalidSDFGEdgeError(
                                 'Undefined symbols %s found in memlet '
