@@ -435,7 +435,7 @@ class TFSession:
         else:
             # Initialize a new SDFG
             self.graph = SDFG(name)
-            self.graph.propagate = True
+            self.graph.propagate = False
             self.state = SDFGState("s0", self.graph)
             self.graph.add_node(self.state)
             self.visitedNodes.clear()
@@ -574,7 +574,7 @@ class TFSession:
             validate=False,
             strict=True,
             name=None,
-            winograd=True,
+            winograd=False,
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
