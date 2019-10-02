@@ -846,9 +846,16 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
 
 class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
+    """
+    Removes Dace Keywords and Enforce OpenCL compliance
+    """
+
     def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
+        self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
+                        'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
+                        'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double']
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
@@ -918,3 +925,17 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
             return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)
+
+    def visit_Call(self, node):
+        # enforce compliance to OpenCL
+
+        #type casting
+        if isinstance(node.func,ast.Name) and node.func.id in self._ctypes:
+            #import pdb
+            #pdb.set_trace()
+            node.func.id = "({})".format(node.func.id)
+        #     return ast.copy_location(
+        #         ast.Name(id="({})".format(node.func.id)),
+        #         node)
+
+        return self.generic_visit(node)
