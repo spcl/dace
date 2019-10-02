@@ -1,3 +1,5 @@
+""" Exhaustive test for TF convolutions """
+
 try:
     import tensorflow as tf
 except ImportError:
@@ -39,9 +41,9 @@ except:
     raise AssertionError("Convolution test failed")
 ##### Conv backprop grad ######
 inp_shape = [10, 10, 10, 10]
-filters = [[2, 2, 10, 3]]
-strides = [[1, 3, 3, 1]]
-paddings = ["VALID"]
+filters = [[i, i, 10, 3] for i in [1, 2, 3, 4, 7]]
+strides = [[1, i, i, 1] for i in [1, 3, 4, 7, 8]]
+paddings = ["SAME", "VALID"]
 for p in paddings:
     for f in filters:
         for s in strides:
@@ -83,9 +85,9 @@ for p in paddings:
 
 ##### Conv filter backprop ##################
 inp_shape = [10, 10, 10, 10]
-filters = [[4, 4, 10, 3]]
-strides = [[1, 1, 1, 1]]
-paddings = ["SAME"]
+filters = [[i, i, 10, 3] for i in [1, 2, 3, 4, 7]]
+strides = [[1, i, i, 1] for i in [1, 3, 4, 7, 8]]
+paddings = ["SAME", "VALID"]
 for p in paddings:
     for f in filters:
         for s in strides:
