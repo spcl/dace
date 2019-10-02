@@ -407,10 +407,7 @@ function relayout_sdfg(ctx, sdfg) {
     });
 
     sdfg.edges.forEach((edge, id) => {
-        let label = edge.attributes.data.label;
-        let textmetrics = ctx.measureText(label);
-        g.setEdge(edge.src, edge.dst, new elements.Edge({ name: label, label: label, height: LINEHEIGHT,
-                                                                width: textmetrics.width}, id, sdfg));
+        g.setEdge(edge.src, edge.dst, new elements.Edge(edge.attributes.data, id, sdfg));
     });
 
     dagre.layout(g);
@@ -428,6 +425,10 @@ function relayout_sdfg(ctx, sdfg) {
     sdfg.edges.forEach(function (edge) {
         let gedge = g.edge(edge.src, edge.dst);
         let bb = calculateEdgeBoundingBox(gedge);
+        // Convert from top-left to center
+        bb.x += bb.width / 2.0;
+        bb.y += bb.height / 2.0;
+
         gedge.x = bb.x;
         gedge.y = bb.y;
         gedge.width = bb.width;
@@ -592,20 +593,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
         if (!edge) return;
         let gedge = g.edge(edge.src, edge.dst, id);
-        let bb = calculateEdgeBoundingBox(gedge);
-        edge.attributes.layout.width = bb.width;
-        edge.attributes.layout.height = bb.height;
-        edge.width = bb.width;
-        edge.height = bb.height;
-        edge.x = bb.x;
-        edge.y = bb.y;
-        gedge.width = bb.width;
-        gedge.height = bb.height;
-        gedge.x = bb.x;
-        gedge.y = bb.y;
-        edge.attributes.layout.x = bb.x;
-        edge.attributes.layout.y = bb.y;
-        edge.attributes.layout.points = gedge.points;
 
         // Reposition first and last points according to connectors
         if (edge.src_connector) {
@@ -624,6 +611,26 @@ function relayout_state(ctx, sdfg_state, sdfg) {
                 gedge.points[gedge.points.length - 1].y -= LINEHEIGHT / 2.0;
             }
         }
+
+        let bb = calculateEdgeBoundingBox(gedge);
+        // Convert from top-left to center
+        bb.x += bb.width / 2.0;
+        bb.y += bb.height / 2.0;
+
+        edge.attributes.layout.width = bb.width;
+        edge.attributes.layout.height = bb.height;
+        edge.width = bb.width;
+        edge.height = bb.height;
+        edge.x = bb.x;
+        edge.y = bb.y;
+        gedge.width = bb.width;
+        gedge.height = bb.height;
+        gedge.x = bb.x;
+        gedge.y = bb.y;
+        edge.attributes.layout.x = bb.x;
+        edge.attributes.layout.y = bb.y;
+        edge.attributes.layout.points = gedge.points;
+
     });
 
 
@@ -1030,7 +1037,7 @@ class SDFGRenderer {
             this.diode.render_free_variables(false);
             return;
         }
-        if (total_elements == 0 && evtype === evtype === 'contextmenu') {
+        if (total_elements == 0 && evtype === 'contextmenu') {
             let cmenu = new ContextMenu();
             cmenu.addOption("SDFG Properties", x => {
                 this.diode.render_free_variables(true);

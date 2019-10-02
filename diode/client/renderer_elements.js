@@ -168,9 +168,10 @@ export class Edge extends SDFGElement {
         if (w == 0 || h == 0) {
             for (let i = 0; i < this.points.length - 1; i++) {
                 let dist = ptLineDistance({x: x, y: y}, this.points[i], this.points[i + 1]);
-                if (dist > 5.0)
-                    return false;
+                if (dist <= 5.0)
+                    return true;
             }
+            return false;
         }
         return true;
     }

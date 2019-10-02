@@ -5886,6 +5886,8 @@ export class ContextMenu {
     }
 
     destroy() {
+        if (!this._cmenu_elem)
+            return;
         // Clear everything
 
         // Remove the context menu
@@ -5895,6 +5897,8 @@ export class ContextMenu {
         for(let x of this._click_close_handlers) {
             window.removeEventListener(...x);
         }
+
+        this._cmenu_elem = null;
     }
 
     show(x, y) {
