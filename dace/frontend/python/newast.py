@@ -1172,7 +1172,7 @@ class TaskletTransformer(ExtNodeTransformer):
                                 self.sdfg_inputs[vname] = (dace.Memlet(
                                     parent_name, rng.num_elements(), rng, 1),
                                                            set())
-                            self.defined[vname] = self.sdfg.arrays[vname]
+                            # self.defined[vname] = self.sdfg.arrays[vname]
                             if isinstance(target, ast.Subscript):
                                 node.value.right = ast.Name(id=vname)
                             elif isinstance(target, ast.Call):
@@ -1242,7 +1242,7 @@ class TaskletTransformer(ExtNodeTransformer):
                             self.sdfg_outputs[vname] = (dace.Memlet(
                                 parent_name, rng.num_elements(), rng, 1),
                                                         set())
-                            self.defined[vname] = self.sdfg.arrays[vname]
+                            # self.defined[vname] = self.sdfg.arrays[vname]
                             new_output = True
                             if isinstance(target, ast.Subscript):
                                 if isinstance(target.value, ast.Call):
@@ -1424,6 +1424,11 @@ class ProgramVisitor(ExtNodeVisitor):
             k: self.sdfg.arrays[v]
             for k, v in self.scope_vars.items() if v in self.sdfg.arrays
         })
+        result.update({
+            k: self.sdfg.arrays[v]
+            for k, v in self.variables.items() if v in self.sdfg.arrays
+        })
+        # TODO: Is there a case of a variable-symbol?
         result.update({
             k: self.sdfg.symbols[v]
             for k, v in self.variables.items() if v in self.sdfg.symbols
@@ -1818,8 +1823,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     self.accesses[(name, scope_memlet.subset, 'r')] = vname
                     orig_shape = orng.size()
                     shape = [d for d in orig_shape if d != 1]
+                    strides = [i for j, i in enumerate(arr.strides)
+                               if j not in outer_indices]
                     strides = [
-                        s for d, s in zip(orig_shape, arr.strides) if d != 1
+                        s for d, s in zip(orig_shape, strides) if d != 1
                     ]
                     if not shape:
                         shape = [1]
@@ -1891,8 +1898,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     self.accesses[(name, scope_memlet.subset, 'w')] = vname
                     orig_shape = orng.size()
                     shape = [d for d in orig_shape if d != 1]
+                    strides = [i for j, i in enumerate(arr.strides)
+                               if j not in outer_indices]
                     strides = [
-                        s for d, s in zip(orig_shape, arr.strides) if d != 1
+                        s for d, s in zip(orig_shape, strides) if d != 1
                     ]
                     if not shape:
                         shape = [1]
@@ -2616,8 +2625,12 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('globalmemlet_%d' % node.lineno)
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
-            src_name = self.variables[src_expr.name]
-            dst_name = self.variables[dst_expr.name]
+            src_name = src_expr.name
+            if src_name not in self.sdfg.arrays:
+                src_name = self.variables[src_expr.name]
+            dst_name = dst_expr.name
+            if dst_name not in self.sdfg.arrays:
+                dst_name = self.variables[dst_expr.name]
 
             rnode = state.add_read(src_name)
             wnode = state.add_write(dst_name)
