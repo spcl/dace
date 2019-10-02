@@ -3072,7 +3072,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 "parent", sdfg, state_id)
 
         # Used in memlet validation
-        undefined_syms = set(sdfg.undefined_symbols(True).keys())
+        if dace.Config.get_bool('experimental', 'validate_undefs'):
+            scope_tree = self.scope_tree()
 
         # Unreachable
         ########################################
@@ -3370,21 +3371,20 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                             state_id, eid)
 
                 # Test subset and other_subset for undefined symbols
-                defined_symbols = set(
-                    sdfg.symbols_defined_at(e.dst, self).keys())
-                undefs = (e.data.subset.free_symbols - defined_symbols -
-                          undefined_syms)
-                if len(undefs) > 0:
-                    raise InvalidSDFGEdgeError(
-                        'Undefined symbols %s found in memlet subset' % undefs,
-                        sdfg, state_id, eid)
-                if e.data.other_subset is not None:
-                    undefs = (e.data.other_subset.free_symbols -
-                              defined_symbols - undefined_syms)
+                if dace.Config.get_bool('experimental', 'validate_undefs'):
+                    defined_symbols = set(map(str, scope_tree[scope[e.dst]].defined_vars))
+                    undefs = (e.data.subset.free_symbols - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
-                            'Undefined symbols %s found in memlet '
-                            'other_subset' % undefs, sdfg, state_id, eid)
+                            'Undefined symbols %s found in memlet subset' % undefs,
+                            sdfg, state_id, eid)
+                    if e.data.other_subset is not None:
+                        undefs = (e.data.other_subset.free_symbols -
+                                  defined_symbols)
+                        if len(undefs) > 0:
+                            raise InvalidSDFGEdgeError(
+                                'Undefined symbols %s found in memlet '
+                                'other_subset' % undefs, sdfg, state_id, eid)
             #######################################
 
             # Memlet path scope lifetime checks
