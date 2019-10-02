@@ -749,12 +749,6 @@ class SDFGRenderer {
     on_pre_draw() { }
 
     on_post_draw() {
-        if (this.mousepos) {
-            this.ctx.beginPath();
-            this.ctx.arc(this.mousepos.x, this.mousepos.y, 5, 0, 360);
-            this.ctx.closePath();
-            this.ctx.stroke();
-        }
         if (this.tooltip) {
             let pos = this.mousepos;
             let label = this.tooltip;
@@ -762,9 +756,9 @@ class SDFGRenderer {
             let x = pos.x + 10;
             let textmetrics = ctx.measureText(label);
             ctx.fillStyle = "black";
-            ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width * 1.4, LINEHEIGHT * 1.2);
+            ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width + LINEHEIGHT, LINEHEIGHT * 1.2);
             ctx.fillStyle = "white";
-            ctx.fillText(label, x + 0.2 * textmetrics.width, pos.y - 0.1 * LINEHEIGHT);
+            ctx.fillText(label, x + LINEHEIGHT / 2, pos.y - 0.1 * LINEHEIGHT);
             ctx.fillStyle = "black";
         }
     }
@@ -794,6 +788,9 @@ class SDFGRenderer {
                 if (state.intersect(x, y, w, h)) {
                     // States
                     func('states', {sdfg: sdfg_name, id: state_id}, state);
+
+                    if (state.data.state.attributes.is_collapsed)
+                        return;
 
                     let ng = state.data.graph;
                     ng.nodes().forEach(node_id => {
@@ -851,6 +848,9 @@ class SDFGRenderer {
 
                 // States
                 func('states', {sdfg: sdfg_name, id: state_id}, state, state.intersect(x, y, w, h));
+
+                if (state.data.state.attributes.is_collapsed)
+                    return;
 
                 let ng = state.data.graph;
                 ng.nodes().forEach(node_id => {
@@ -971,7 +971,11 @@ class SDFGRenderer {
             }
 
         } else if (evtype === 'wheel') {
-            this.canvas_manager.scale(-event.deltaY / 1000.0, comp_x_func(event), comp_y_func(event));
+            // Get physical x,y coordinates (rather than canvas coordinates)
+            let br = this.canvas.getBoundingClientRect();
+            let x = event.clientX - br.x;
+            let y = event.clientY - br.y;
+            this.canvas_manager.scale(-event.deltaY / 1000.0, x, y);
             dirty = true;
             this.draw_async();
             return;

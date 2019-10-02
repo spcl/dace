@@ -71,9 +71,22 @@ export class State extends SDFGElement {
         // If this state is selected or hovered
         if (this.stroke_color) {
             ctx.strokeStyle = this.strokeStyle();
-            ctx.stroke();
-            ctx.strokeStyle = "black";
+            ctx.strokeRect(topleft.x, topleft.y, this.width, this.height);
         }
+
+        // If collapsed, draw a "+" sign in the middle
+        if (this.data.state.attributes.is_collapsed) {
+            ctx.beginPath();
+            ctx.moveTo(this.x, this.y - LINEHEIGHT);
+            ctx.lineTo(this.x, this.y + LINEHEIGHT);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(this.x - LINEHEIGHT, this.y);
+            ctx.lineTo(this.x + LINEHEIGHT, this.y);
+            ctx.stroke();
+        }
+
+        ctx.strokeStyle = "black";
     }
 
     label() {
