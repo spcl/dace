@@ -101,7 +101,6 @@ class FPGATransformState(pattern_matching.Transformation):
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
 
             for node in input_nodes:
-
                 if (not isinstance(node, dace.graph.nodes.AccessNode)
                         or not isinstance(node.desc(sdfg), dace.data.Array)):
                     # Only transfer array nodes
@@ -189,8 +188,6 @@ class FPGATransformState(pattern_matching.Transformation):
             sdfg.add_edge(state, post_state, edges.InterstateEdge())
 
 
-        # Johannes-CR: start. In the case I first apply vectorization and then transform, I have to take the vect. info from the nested SDFG
-
         #propagate vector info from a nested sdfg
         for src, src_conn, dst, dst_conn, mem in state.edges():
             #need to go inside the nested SDFG and grab the vector length
@@ -213,8 +210,6 @@ class FPGATransformState(pattern_matching.Transformation):
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
                 mem.veclen = veclen_
-
-        # Johannes-CR: end
 
         fpga_update(sdfg, state, 0)
 

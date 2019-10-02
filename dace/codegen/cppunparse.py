@@ -1061,9 +1061,9 @@ class CPPUnparser:
         raise SyntaxError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True):
+def cppunparse(node, expr_semicolon=True, locals=None):
     strio = StringIO()
-    CPPUnparser(node, 0, CPPLocals(), strio, expr_semicolon=expr_semicolon)
+    CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon)
     return strio.getvalue().strip()
 
 

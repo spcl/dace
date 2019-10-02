@@ -684,11 +684,11 @@ class FPGACodeGen(TargetCodeGenerator):
             if num_loops > 0:
                 if not register_to_register:
                     # Language-specific
-                    self.generate_pipeline_loops_pre(callsite_stream, sdfg,
+                    self.generate_pipeline_loop_pre(callsite_stream, sdfg,
                                                      state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
-                    self.generate_flatten_loops_pre(callsite_stream, sdfg,
+                    self.generate_flatten_loop_pre(callsite_stream, sdfg,
                                                     state_id, dst_node)
                 for node in [src_node, dst_node]:
                     if (isinstance(node.desc(sdfg), dace.data.Array)
@@ -706,7 +706,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if copy_dim != 1:
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_pre(callsite_stream, None, sdfg,
+                        self.generate_unroll_loop_pre(callsite_stream, None, sdfg,
                                                  state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
@@ -714,18 +714,18 @@ class FPGACodeGen(TargetCodeGenerator):
                         state_id, dst_node)
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_post(callsite_stream, None, sdfg,
+                        self.generate_unroll_loop_post(callsite_stream, None, sdfg,
                                                   state_id, dst_node)
 
             # Pragmas
             if num_loops > 0:
                 if not register_to_register:
                     # Language-specific
-                    self.generate_pipeline_loops_post(callsite_stream, sdfg,
+                    self.generate_pipeline_loop_post(callsite_stream, sdfg,
                                                       state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
-                    self.generate_flatten_loops_post(callsite_stream, sdfg,
+                    self.generate_flatten_loop_post(callsite_stream, sdfg,
                                                      state_id, dst_node)
 
             # Construct indices (if the length of the stride array is zero,
@@ -912,14 +912,14 @@ class FPGACodeGen(TargetCodeGenerator):
                         node.map.params[i], node.map.range[i][0]))
 
             if node.map.unroll:
-                self.generate_unroll_pre(result, None, sdfg, state_id, node)
+                self.generate_unroll_loop_pre(result, None, sdfg, state_id, node)
             else:
                 is_innermost = not any(
                     [isinstance(x, dace.graph.nodes.EntryNode) for x in scope])
                 if is_innermost:
-                    self.generate_pipeline_loops_pre(result, sdfg, state_id,
+                    self.generate_pipeline_loop_pre(result, sdfg, state_id,
                                                      node)
-                    self.generate_flatten_loops_pre(result, sdfg, state_id,
+                    self.generate_flatten_loop_pre(result, sdfg, state_id,
                                                     node)
 
             # Generate nested loops
@@ -949,14 +949,14 @@ class FPGACodeGen(TargetCodeGenerator):
                                  if pipeline.drain_size != 0 else "")))
 
             if node.map.unroll:
-                self.generate_unroll_post(result, None, sdfg, state_id, node)
+                self.generate_unroll_loop_post(result, None, sdfg, state_id, node)
             else:
                 is_innermost = not any(
                     [isinstance(x, dace.graph.nodes.EntryNode) for x in scope])
                 if is_innermost:
-                    self.generate_pipeline_loops_post(result, sdfg, state_id,
+                    self.generate_pipeline_loop_post(result, sdfg, state_id,
                                                       node)
-                    self.generate_flatten_loops_post(result, sdfg, state_id,
+                    self.generate_flatten_loop_post(result, sdfg, state_id,
                                                      node)
 
         # Emit internal transient array allocation
@@ -1074,12 +1074,12 @@ class FPGACodeGen(TargetCodeGenerator):
         iterators_inner = ["__i{}".format(axis) for axis in axes]
         for i, axis in enumerate(axes):
             if axis == pipeline_dim:
-                self.generate_pipeline_pre(callsite_stream, sdfg, state_id,
+                self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
                                            node)
-                self.generate_flatten_pre(callsite_stream, sdfg, state_id,
+                self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
                                           node)
             if unroll_dim[axis]:
-                self.generate_unroll_pre(callsite_stream, None, sdfg, state_id,
+                self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
                                          node)
             callsite_stream.write(
                 'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
@@ -1089,12 +1089,12 @@ class FPGACodeGen(TargetCodeGenerator):
                     end=input_subset[axis][1] + 1,
                     skip=input_subset[axis][2]), sdfg, state_id, node)
             if axis == pipeline_dim:
-                self.generate_pipeline_post(callsite_stream, sdfg, state_id,
+                self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id,
                                             node)
-                self.generate_flatten_post(callsite_stream, sdfg, state_id,
+                self.generate_flatten_loop_post(callsite_stream, sdfg, state_id,
                                            node)
             if unroll_dim[axis]:
-                self.generate_unroll_post(callsite_stream, None, sdfg,
+                self.generate_unroll_loop_post(callsite_stream, None, sdfg,
                                           state_id, node)
             end_braces += 1
 
@@ -1103,12 +1103,12 @@ class FPGACodeGen(TargetCodeGenerator):
         iterators_outer = ["__o{}".format(axis) for axis in range(output_dims)]
         for i, axis in enumerate(output_axes):
             if axis == pipeline_dim:
-                self.generate_pipeline_pre(callsite_stream, sdfg, state_id,
+                self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
                                            node)
-                self.generate_flatten_pre(callsite_stream, sdfg, state_id,
+                self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
                                           node)
             if unroll_dim[axis]:
-                self.generate_unroll_pre(callsite_stream, None, sdfg, state_id,
+                self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
                                          node)
             callsite_stream.write(
                 'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
@@ -1118,12 +1118,12 @@ class FPGACodeGen(TargetCodeGenerator):
                     end=output_subset[i][1] + 1,
                     skip=output_subset[i][2]), sdfg, state_id, node)
             if axis == pipeline_dim:
-                self.generate_pipeline_post(callsite_stream, sdfg, state_id,
+                self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id,
                                             node)
-                self.generate_flatten_post(callsite_stream, sdfg, state_id,
+                self.generate_flatten_loop_post(callsite_stream, sdfg, state_id,
                                            node)
             if unroll_dim[axis]:
-                self.generate_unroll_post(callsite_stream, None, sdfg,
+                self.generate_unroll_loop_post(callsite_stream, None, sdfg,
                                           state_id, node)
             end_braces += 1
 

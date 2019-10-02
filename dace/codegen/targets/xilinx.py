@@ -174,11 +174,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             return data.signature(with_types=True, name=var_name)
 
     @staticmethod
-    def generate_unroll_pre(kernel_stream, factor, sdfg, state_id, node):
+    def generate_unroll_loop_pre(kernel_stream, factor, sdfg, state_id, node):
         pass
 
     @staticmethod
-    def generate_unroll_post(kernel_stream, factor, sdfg, state_id, node):
+    def generate_unroll_loop_post(kernel_stream, factor, sdfg, state_id, node):
         if factor is None:
             kernel_stream.write("#pragma HLS UNROLL", sdfg, state_id, node)
         else:
@@ -186,19 +186,19 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                                 sdfg_state_id, node)
 
     @staticmethod
-    def generate_pipeline_loops_pre(kernel_stream, sdfg, state_id, node):
+    def generate_pipeline_loop_pre(kernel_stream, sdfg, state_id, node):
         pass
 
     @staticmethod
-    def generate_pipeline_loops_post(kernel_stream, sdfg, state_id, node):
+    def generate_pipeline_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS PIPELINE II=1", sdfg, state_id, node)
 
     @staticmethod
-    def generate_flatten_loops_pre(kernel_stream, sdfg, state_id, node):
+    def generate_flatten_loop_pre(kernel_stream, sdfg, state_id, node):
         pass
 
     @staticmethod
-    def generate_flatten_loops_post(kernel_stream, sdfg, state_id, node):
+    def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
     @staticmethod

@@ -1515,7 +1515,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     result.write("#pragma unroll", sdfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                    "for (int %s = %s; %s < %s; %s += %s) {\n" %
                     (var, sym2cpp(begin), var, sym2cpp(end + 1), var,
                      sym2cpp(skip)),
                     sdfg,
