@@ -8,7 +8,7 @@ N = dace.symbol('N')
 def slicetest(A: dace.float64[N, N - 1], B: dace.float64[N - 1, N],
               C: dace.float64[N - 1, N - 1]):
     tmp = A[1:N] * B[:, 0:N - 1]
-    for i, j in dace.map[0:5, 0:5]:
+    for i, j in dace.map[0:4, 0:4]:
         with dace.tasklet:
             t << tmp[i, j]
             c >> C[i, j]
