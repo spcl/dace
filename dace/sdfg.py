@@ -8,6 +8,7 @@ import os
 import pickle, json
 from pydoc import locate
 from typing import Any, Dict, Set, Tuple, List, Union
+import warnings
 import numpy as np
 import sympy as sp
 
@@ -46,6 +47,18 @@ def getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     caller = getframeinfo(stack()[2][0])
     return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
                             caller.filename)
+
+
+class Scope(object):
+    """ A class defining a scope, its parent and children scopes, variables, and
+        scope entry/exit nodes. """
+
+    def __init__(self, entrynode, exitnode):
+        self.parent = None
+        self.children = []
+        self.defined_vars = []
+        self.entry = entrynode
+        self.exit = exitnode
 
 
 class InvalidSDFGError(Exception):
@@ -1512,12 +1525,12 @@ subgraph cluster_state_{state} {{
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
 
+        # Fill in scope entry/exit connectors
+        sdfg.fill_scope_connectors()
+
         # Propagate memlets in the graph
         if self._propagate:
             propagate_labels_sdfg(sdfg)
-
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
 
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
@@ -1779,23 +1792,25 @@ subgraph cluster_state_{state} {{
         """
 
         # Import loop "fix"
-        from dace.codegen import codegen, compiler
+        from dace.codegen import codegen
 
         ################################
         # DaCe Code Generation Process #
         sdfg = copy.deepcopy(self)
 
+        # Fill in scope entry/exit connectors
+        sdfg.fill_scope_connectors()
+
         # Propagate memlets in the graph
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
-
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
 
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
                 "optimizer", "autospecialize")) or specialize == True:
             sdfg.specialize()
+
+        sdfg.draw_to_file()
 
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
@@ -2123,6 +2138,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def _clear_scopedict_cache(self):
         self._scope_dict_toparent_cached = None
         self._scope_dict_tochildren_cached = None
+        self._scope_tree_cached = None
+        self._scope_leaves_cached = None
 
     @property
     def label(self):
@@ -2287,6 +2304,54 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 n.consume = ret.entry_node(n).consume
 
         return ret
+
+    def scope_tree(self):
+        if (hasattr(self, '_scope_tree_cached')
+                and self._scope_tree_cached is not None):
+            return copy.copy(self._scope_tree_cached)
+
+        sdp = self.scope_dict(node_to_children=False)
+        sdc = self.scope_dict(node_to_children=True)
+
+        result = {}
+
+        sdfg_symbols = self.parent.undefined_symbols(True).keys()
+
+        # Get scopes
+        for node, scopenodes in sdc.items():
+            if node is None:
+                exit_node = None
+            else:
+                exit_node = next(
+                    v for v in scopenodes if isinstance(v, nd.ExitNode))
+            scope = Scope(node, exit_node)
+            scope.defined_vars = set(
+                symbolic.pystr_to_symbolic(s)
+                for s in (self.parent.symbols_defined_at(node, self).keys()
+                          | sdfg_symbols))
+            result[node] = scope
+
+        # Scope parents and children
+        for node, scope in result.items():
+            if node is not None:
+                scope.parent = result[sdp[node]]
+            scope.children = [
+                result[n] for n in sdc[node] if isinstance(n, nd.EntryNode)
+            ]
+
+        self._scope_tree_cached = result
+
+        return copy.copy(self._scope_tree_cached)
+
+    def scope_leaves(self):
+        if (hasattr(self, '_scope_leaves_cached')
+                and self._scope_leaves_cached is not None):
+            return copy.copy(self._scope_leaves_cached)
+        st = self.scope_tree()
+        self._scope_leaves_cached = [
+            scope for scope in st.values() if len(scope.children) == 0
+        ]
+        return copy.copy(self._scope_leaves_cached)
 
     def scope_dict(self, node_to_children=False, return_ids=False):
         """ Returns a dictionary that segments an SDFG state into
@@ -2942,8 +3007,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_array" API is deprecated, please '
-              'use "SDFG.add_array" and "SDFGState.add_access"')
+        warnings.warn(
+            'The "SDFGState.add_array" API is deprecated, please '
+            'use "SDFG.add_array" and "SDFGState.add_access"',
+            DeprecationWarning)
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -2976,8 +3043,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_stream" API is deprecated, please '
-              'use "SDFG.add_stream" and "SDFGState.add_access"')
+        warnings.warn(
+            'The "SDFGState.add_stream" API is deprecated, please '
+            'use "SDFG.add_stream" and "SDFGState.add_access"',
+            DeprecationWarning)
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -3006,8 +3075,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_scalar" API is deprecated, please '
-              'use "SDFG.add_scalar" and "SDFGState.add_access"')
+        warnings.warn(
+            'The "SDFGState.add_scalar" API is deprecated, please '
+            'use "SDFG.add_scalar" and "SDFGState.add_access"',
+            DeprecationWarning)
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -3153,7 +3224,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 "parent", sdfg, state_id)
 
         # Used in memlet validation
-        undefined_syms = set(sdfg.undefined_symbols(True).keys())
+        if dace.Config.get_bool('experimental', 'validate_undefs'):
+            scope_tree = self.scope_tree()
 
         # Unreachable
         ########################################
@@ -3241,7 +3313,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         if input_found:
                             break
                     if not input_found and node.setzero == False:
-                        print(
+                        warnings.warn(
                             'WARNING: Use of uninitialized transient "%s" in state %s'
                             % (node.data, self.label))
 
@@ -3271,7 +3343,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Connector tests
             ########################################
-            # Check for duplicate connector names
+            # Check for duplicate connector names (unless it's a nested SDFG)
             if (len(node.in_connectors & node.out_connectors) > 0
                     and not isinstance(node, nd.NestedSDFG)):
                 dups = node.in_connectors & node.out_connectors
@@ -3446,21 +3518,21 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                             state_id, eid)
 
                 # Test subset and other_subset for undefined symbols
-                defined_symbols = set(
-                    sdfg.symbols_defined_at(e.dst, self).keys())
-                undefs = (e.data.subset.free_symbols - defined_symbols -
-                          undefined_syms)
-                if len(undefs) > 0:
-                    raise InvalidSDFGEdgeError(
-                        'Undefined symbols %s found in memlet subset' % undefs,
-                        sdfg, state_id, eid)
-                if e.data.other_subset is not None:
-                    undefs = (e.data.other_subset.free_symbols -
-                              defined_symbols - undefined_syms)
+                if dace.Config.get_bool('experimental', 'validate_undefs'):
+                    defined_symbols = set(
+                        map(str, scope_tree[scope[e.dst]].defined_vars))
+                    undefs = (e.data.subset.free_symbols - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
-                            'Undefined symbols %s found in memlet '
-                            'other_subset' % undefs, sdfg, state_id, eid)
+                            'Undefined symbols %s found in memlet subset' %
+                            undefs, sdfg, state_id, eid)
+                    if e.data.other_subset is not None:
+                        undefs = (
+                            e.data.other_subset.free_symbols - defined_symbols)
+                        if len(undefs) > 0:
+                            raise InvalidSDFGEdgeError(
+                                'Undefined symbols %s found in memlet '
+                                'other_subset' % undefs, sdfg, state_id, eid)
             #######################################
 
             # Memlet path scope lifetime checks
@@ -4014,6 +4086,6 @@ def _get_optimizer_class(class_override):
 
     result = locate(clazz)
     if result is None:
-        print('WARNING: Optimizer interface class "%s" not found' % clazz)
+        warnings.warn('Optimizer interface class "%s" not found' % clazz)
 
     return result

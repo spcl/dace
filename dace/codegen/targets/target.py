@@ -200,7 +200,7 @@ class DefinedMemlets:
                 return scope[name]
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name, connector_type, ancestor: int=0):
+    def add(self, name, connector_type, ancestor: int = 0):
         if not isinstance(name, str):
             raise TypeError(
                 'Variable name type cannot be %s' % type(name).__name__)
@@ -618,7 +618,7 @@ def make_absolute(path):
     else:
         # This is not a path, probably just an executable name, such
         # as "g++". Try to find it on the PATH
-        executable = shutil.which(path)
+        executable = shutil.which(path).replace('\\', '/')
         if not executable:
             raise ValueError("Could not find executable \"{}\"".format(path))
         return executable

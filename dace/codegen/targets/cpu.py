@@ -1253,7 +1253,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif (isinstance(edge.dst, nodes.CodeNode)
                   and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
-                
+
                 # Generate register definitions for inter-tasklet memlets
                 local_name = edge.data.data
                 # Allocate variable type
@@ -1262,7 +1262,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     sym2cpp(edge.data.veclen),
                     local_name,
                 )
-                outer_stream_begin.write(code, sdfg, state_id, [edge.src, edge.dst])
+                outer_stream_begin.write(code, sdfg, state_id,
+                                         [edge.src, edge.dst])
                 arg_type = sdfg.arrays[edge.data.data]
                 if (isinstance(arg_type, dace.data.Scalar)
                         or isinstance(arg_type, dace.dtypes.typeclass)):
@@ -1369,12 +1370,16 @@ class CPUCodeGen(TargetCodeGenerator):
         node.sdfg.parent = state_dfg
         node.sdfg._parent_sdfg = sdfg
 
+        # Connectors that are both input and output share the same name
+        inout = set(node.in_connectors & node.out_connectors)
+
         # Take care of nested SDFG I/O
         for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
-            if in_memlet.data is not None:
-                callsite_stream.write(
-                    self.memlet_definition(sdfg, in_memlet, False, vconn),
-                    sdfg, state_id, node)
+            if vconn in inout or in_memlet.data is None:
+                continue
+            callsite_stream.write(
+                self.memlet_definition(sdfg, in_memlet, False, vconn), sdfg,
+                state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
                 callsite_stream.write(

@@ -16,6 +16,7 @@ class RedundantArray(pm.Transformation):
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
 
+    _arrays_removed = 0
     _in_array = nodes.AccessNode("_")
     _out_array = nodes.AccessNode("_")
 
