@@ -729,19 +729,19 @@ def propagate_memlet(dfg_state,
 
     aggdata.append(memlet)
 
+    if arr is None:
+        if memlet.data not in sdfg.arrays:
+            raise KeyError(
+                'Data descriptor (Array, Stream) "%s" not defined '
+                'in SDFG.' % memlet.data)
+        arr = sdfg.arrays[memlet.data]
+
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
 
         # Collect data about edge
         expr = [edge.subset for edge in aggdata]
-
-        if arr is None:
-            if memlet.data not in sdfg.arrays:
-                raise KeyError(
-                    'Data descriptor (Array, Stream) "%s" not defined '
-                    'in SDFG.' % memlet.data)
-            arr = sdfg.arrays[memlet.data]
 
         variable_context = [
             defined_vars,
