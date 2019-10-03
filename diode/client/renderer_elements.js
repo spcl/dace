@@ -140,7 +140,16 @@ export class Edge extends SDFGElement {
         }
         ctx.fillStyle = ctx.strokeStyle = style;
 
+        // CR edges have dashed lines
+        if (this.data.attributes.wcr != null)
+            ctx.setLineDash([2, 2]);
+        else
+            ctx.setLineDash([1, 0]);
+        
+
         ctx.stroke();
+
+        ctx.setLineDash([1, 0]);
 
         if (edge.points.length < 2)
             return;
@@ -411,7 +420,7 @@ function offset_state(state, state_graph, offset) {
         if (!edge) return;
         edge.x += offset.x;
         edge.y += offset.y;
-        edge.data.points.forEach((p) => {
+        edge.points.forEach((p) => {
             p.x += offset.x;
             p.y += offset.y;
         });

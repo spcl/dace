@@ -464,7 +464,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     let g = new dagre.graphlib.Graph({multigraph: true});
 
     // Set an object for the graph label
-    g.setGraph({ranksep: 15});
+    g.setGraph({ranksep: 30});
 
     g.setDefaultEdgeLabel(function (u, v) { return {}; });
 
@@ -540,13 +540,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         console.assert(label != undefined);
         let textmetrics = ctx.measureText(label);
 
-        // Inject layout information analogous to state nodes
-        edge.attributes.layout = {
-            label: label,
-            width: textmetrics.width,
-            height: LINEHEIGHT
-        };
-        g.setEdge(edge.src, edge.dst, new elements.Edge(edge.attributes.layout, id, sdfg, sdfg_state.id), id);
+        g.setEdge(edge.src, edge.dst, new elements.Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
     });
 
     dagre.layout(g);
@@ -617,8 +611,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         bb.x += bb.width / 2.0;
         bb.y += bb.height / 2.0;
 
-        edge.attributes.layout.width = bb.width;
-        edge.attributes.layout.height = bb.height;
         edge.width = bb.width;
         edge.height = bb.height;
         edge.x = bb.x;
@@ -627,10 +619,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         gedge.height = bb.height;
         gedge.x = bb.x;
         gedge.y = bb.y;
-        edge.attributes.layout.x = bb.x;
-        edge.attributes.layout.y = bb.y;
-        edge.attributes.layout.points = gedge.points;
-
     });
 
 
