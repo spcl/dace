@@ -29,6 +29,7 @@ To install: `pip install dace`
 Runtime dependencies:
  * A C++14-capable compiler (e.g., gcc 5.3+)
  * Python 3.5 or newer
+ * CMake 3.15 or newer
 
 To run DIODE, either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions.
 
