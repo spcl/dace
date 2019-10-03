@@ -3868,7 +3868,13 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     defined |= {
         n.data
         for n, scope in obj.all_nodes_recursive() if
-        isinstance(n, dace.graph.nodes.AccessNode) and n.desc(scope).transient
+        (
+            isinstance(n, dace.graph.nodes.AccessNode)
+            and (
+                scope.parent is None and n.desc(scope).transient
+                or scope.parent
+            )
+        )
     }
     symbols = collections.OrderedDict(
         (key, value) for key, value in symbols.items() if key not in defined)
