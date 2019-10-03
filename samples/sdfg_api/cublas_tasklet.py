@@ -4,9 +4,10 @@ import numpy as np
 import os
 
 # First, add libraries to link (CUBLAS) to configuration
-cudaroot = os.environ['CUDA_ROOT']  # or any other environment variable
-dp.Config.append(
-    'compiler', 'cpu', 'libs', value='%s/lib64/libcublas.so' % cudaroot)
+if os.name == 'nt':
+    dp.Config.append('compiler', 'cpu', 'libs', value='cublas.lib')
+else:
+    dp.Config.append('compiler', 'cpu', 'libs', value='libcublas.so')
 ######################################################################
 
 # Create symbols
@@ -40,6 +41,9 @@ tasklet = state.add_tasklet(
     outputs={'c'},
     # Custom code (on invocation)
     code='''
+    // Set the current stream to match DaCe (for correct synchronization)
+    cublasSetStream(handle, __dace_current_stream);
+    
     double alpha = 1.0, beta = 0.0;
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
                 M, N, K, &alpha, 
@@ -97,17 +101,24 @@ if __name__ == '__main__':
     A = np.ndarray([M.get(), K.get()], dtype=np.float64, order='F')
     B = np.ndarray([K.get(), N.get()], dtype=np.float64, order='F')
     C = np.ndarray([M.get(), N.get()], dtype=np.float64, order='F')
+    C_ref = np.ndarray([M.get(), N.get()], dtype=np.float64, order='F')
 
     A[:] = np.random.rand(M.get(), K.get())
     B[:] = np.random.rand(K.get(), N.get())
     C[:] = np.random.rand(M.get(), N.get())
 
-    C_ref = A @ B
+    C_ref[:] = A @ B
 
     # We can safely call numpy with arrays allocated on the CPU, since they
     # will be copied.
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
-    diff = np.linalg.norm(C - C_ref)
+    diff = np.linalg.norm(C - C_ref) / (M.get() * N.get())
     print('Difference:', diff)
+
+    if diff > 1e-5:
+        print(A, '\n * \n', B)
+        print('C output   :', C)
+        print('C reference:', C_ref)
+
     exit(0 if diff <= 1e-5 else 1)

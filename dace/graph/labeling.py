@@ -10,7 +10,7 @@ import unittest
 import math
 
 from dace import data, subsets, symbolic, types
-from dace.memlet import Memlet
+from dace.memlet import EmptyMemlet, Memlet
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedMultiDiGraph
 from dace.transformation import pattern_matching
@@ -623,41 +623,60 @@ def _propagate_labels(g, sdfg):
     #          of ambiguity, the function raises an exception.
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
-    scope_dict = g.scope_dict()
 
-    def stop_at(parent, child):
-        # Transients should only propagate in the direction of the
-        # non-transient data
-        if isinstance(parent,
-                      nodes.AccessNode) and parent.desc(sdfg).transient:
-            for _, _, _, _, memlet in g.edges_between(parent, child):
-                if parent.data != memlet.data:
-                    return True
-            return False
-        if isinstance(child, nodes.AccessNode):
-            return False
-        return True
+    # First, propagate nested SDFGs in a bottom-up fashion
+    for node in g.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            propagate_labels_sdfg(node.sdfg)
 
-    array_data = {}  # type: dict(node -> dict(data -> list(Subset)))
-    tasklet_nodes = [
-        node for node in g.nodes() if (isinstance(node, nodes.CodeNode) or (
-            isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient))
-    ]
-    # Step 1: Direction - To output
-    for start_node in tasklet_nodes:
-        for node in nxutil.dfs_topological_sort(
-                g, start_node, condition=stop_at):
-            _propagate_node(sdfg, g, node, array_data, patterns, scope_dict,
-                            True)
-    # Step 1: Direction - To input
-    array_data = {}
-    g.reverse()
-    for node in nxutil.dfs_topological_sort(
-            g, tasklet_nodes, condition=stop_at):
-        _propagate_node(sdfg, g, node, array_data, patterns, scope_dict)
+    scopes_to_process = g.scope_leaves()
+    next_scopes = set()
 
-    # To support networkx 1.11
-    g.reverse()
+    # Process scopes from the leaves upwards, propagating edges at the
+    # entry and exit nodes
+    while len(scopes_to_process) > 0:
+        for scope in scopes_to_process:
+            if scope.entry is None:
+                continue
+
+            # Propagate out of entry
+            _propagate_node(g, scope.entry)
+
+            # Propagate out of exit
+            _propagate_node(g, scope.exit)
+
+            # Add parent to next frontier
+            next_scopes.add(scope.parent)
+        scopes_to_process = next_scopes
+        next_scopes = set()
+
+
+def _propagate_node(dfg_state, node):
+    if isinstance(node, nodes.EntryNode):
+        internal_edges = [
+            e for e in dfg_state.out_edges(node)
+            if e.src_conn and e.src_conn.startswith('OUT_')
+        ]
+        external_edges = [
+            e for e in dfg_state.in_edges(node)
+            if e.dst_conn and e.dst_conn.startswith('IN_')
+        ]
+    else:
+        internal_edges = [
+            e for e in dfg_state.in_edges(node)
+            if e.dst_conn and e.dst_conn.startswith('IN_')
+        ]
+        external_edges = [
+            e for e in dfg_state.out_edges(node)
+            if e.src_conn and e.src_conn.startswith('OUT_')
+        ]
+
+    for edge in external_edges:
+        internal_edge = next(
+            e for e in internal_edges if e.data.data == edge.data.data)
+        new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
+                                      True)
+        edge._data = new_memlet
 
 
 # External API
@@ -674,11 +693,21 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
                                   scope into account.
     """
     if isinstance(scope_node, nodes.EntryNode):
+        entry_node = scope_node
         neighboring_edges = dfg_state.out_edges(scope_node)
     elif isinstance(scope_node, nodes.ExitNode):
+        entry_node = dfg_state.scope_dict()[scope_node]
         neighboring_edges = dfg_state.in_edges(scope_node)
     else:
         raise TypeError('Trying to propagate through a non-scope node')
+    if isinstance(memlet, EmptyMemlet):
+        return EmptyMemlet()
+
+    sdfg = dfg_state.parent
+    defined_vars = [
+        symbolic.pystr_to_symbolic(s)
+        for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
+    ]
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets
@@ -692,9 +721,42 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
 
     aggdata.append(memlet)
 
-    new_subset = _propagate_edge(dfg_state.parent, None,
-                                 scope_node, None, memlet, aggdata,
-                                 MemletPattern.patterns(), None)
+    # Propagate subset
+    if isinstance(entry_node, nodes.MapEntry):
+        mapnode = entry_node.map
+
+        # Collect data about edge
+        expr = [edge.subset for edge in aggdata]
+
+        if memlet.data not in sdfg.arrays:
+            raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
+                           'in SDFG.' % memlet.data)
+
+        variable_context = [
+            defined_vars,
+            [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
+        ]
+
+        for pattern in MemletPattern.patterns():
+            if pattern.match(expr, variable_context, mapnode.range,
+                             aggdata):  # Only one level of context
+                new_subset = pattern.propagate(sdfg.arrays[memlet.data], expr,
+                                               mapnode.range)
+                break
+        else:
+            # No patterns found. Emit a warning and propagate the entire array
+            print(
+                'WARNING: Cannot find appropriate memlet pattern to propagate %s '
+                'through %s' % (str(expr), str(mapnode.range)))
+
+            new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
+    elif isinstance(entry_node, nodes.ConsumeEntry):
+        # Nothing to analyze/propagate in consume
+        new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
+    else:
+        raise NotImplementedError(
+            'Unimplemented primitive: %s' % type(scope_node))
+    ### End of subset propagation
 
     new_memlet = copy.copy(memlet)
     new_memlet.subset = new_subset
@@ -705,154 +767,10 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
     new_memlet.num_accesses = (
         sum(m.num_accesses for m in aggdata) * functools.reduce(
             lambda a, b: a * b, scope_node.map.range.size(), 1))
+    if any(m.num_accesses == -1 for m in aggdata):
+        memlet.num_accesses = -1
+    elif symbolic.issymbolic(memlet.num_accesses) and any(
+            s not in defined_vars for s in memlet.num_accesses.free_symbols):
+        memlet.num_accesses = -1
 
     return new_memlet
-
-
-def _propagate_node(sdfg,
-                    g,
-                    node,
-                    array_data,
-                    patterns,
-                    scope_dict,
-                    write=False):
-    # Step 2: Propagate edges
-    # If this is a tasklet, we only propagate to adjacent nodes and not modify edges
-    # Special case: starting from reduction, no need for external nodes to compute edges
-    if (not isinstance(node, nodes.CodeNode)
-            and not isinstance(node, nodes.AccessNode) and node in array_data):
-
-        # Otherwise (if primitive), use current node information and accumulated data
-        # on arrays to set the memlets per edge
-        for _, _, target, _, memlet in g.out_edges(node):
-            # Option (a)
-            if (isinstance(target, nodes.CodeNode)):
-                continue
-
-            if not isinstance(memlet, Memlet):
-                raise AttributeError('Edge does not contain a memlet')
-
-            defined_vars = [
-                symbolic.pystr_to_symbolic(s)
-                for s in (sdfg.symbols_defined_at(target, g).keys()
-                          | sdfg.undefined_symbols(True).keys())
-            ]
-
-            aggdata = None
-            if node in array_data:
-                if memlet.data in array_data[node]:
-                    aggdata = array_data[node][memlet.data]
-
-            wcr = None
-            if aggdata is not None:
-                for m in aggdata:
-                    if m.wcr is not None:
-                        wcr = (m.wcr, m.wcr_identity)
-                        break
-
-            # Compute candidate edge
-            candidate = _propagate_edge(sdfg, g, node, target, memlet, aggdata,
-                                        patterns, not write)
-            if candidate is None:
-                continue
-
-            # Option (b)
-            if isinstance(target, nodes.AccessNode):
-                # Check for data mismatch
-                if target.data != memlet.data:  #and not target.desc.transient:
-                    raise LookupError(
-                        'Mismatch between edge data %s and data node %s' %
-                        (memlet.data, target.data))
-
-            # Options (c), (d)
-            else:
-                pass
-
-            # Set new edge value
-            memlet.subset = candidate
-
-            # Number of accesses in the propagated memlet is the sum of the internal
-            # number of accesses times the size of the map range set
-            memlet.num_accesses = (
-                sum(m.num_accesses for m in aggdata) * functools.reduce(
-                    lambda a, b: a * b, node.map.range.size(), 1))
-            if any(m.num_accesses == -1 for m in aggdata):
-                memlet.num_accesses = -1
-            elif any(s not in defined_vars
-                     for s in memlet.num_accesses.free_symbols):
-                memlet.num_accesses = -1
-
-            # Set WCR, if necessary
-            if wcr is not None:
-                memlet.wcr, memlet.wcr_identity = wcr
-
-    # Step 3: Accumulate edge information in adjacent node, grouped by array
-    for _, _, target, _, memlet in g.out_edges(node):
-        if (isinstance(target, nodes.CodeNode)):
-            continue
-
-        if not isinstance(memlet, Memlet):
-            raise AttributeError('Edge does not contain a memlet')
-
-        # Transients propagate only towards the data they are writing to
-        if isinstance(node, nodes.AccessNode) and node.data == memlet.data:
-            continue
-
-        # No data
-        if memlet.subset is None:
-            continue
-        #if isinstance(memlet, subsets.SequentialDependency):
-        #    continue
-
-        # Accumulate data information on target node
-        if target not in array_data:
-            array_data[target] = {}
-        if memlet.data not in array_data[target]:
-            array_data[target][memlet.data] = []
-        array_data[target][memlet.data].append(memlet)
-
-
-def _propagate_edge(sdfg, g, u, v, memlet, aggdata, patterns, reversed):
-    if ((isinstance(u, nodes.EntryNode) or isinstance(u, nodes.ExitNode))):
-        mapnode = u.map
-
-        if aggdata is None:
-            return None
-
-        # Collect data about edge
-        data = memlet.data
-        expr = [edge.subset for edge in aggdata]
-
-        if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
-                           'in SDFG.' % memlet.data)
-
-        defined_vars = [
-            symbolic.pystr_to_symbolic(s)
-            for s in (sdfg.symbols_defined_at(v, g).keys()
-                      | sdfg.undefined_symbols(True).keys())
-        ]
-        variable_context = [
-            defined_vars,
-            [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
-        ]
-
-        for pattern in patterns:
-            if pattern.match(expr, variable_context, mapnode.range,
-                             aggdata):  # Only one level of context
-                return pattern.propagate(sdfg.arrays[memlet.data], expr,
-                                         mapnode.range)
-
-        # No patterns found. Emit a warning and propagate the entire array
-        print(
-            'WARNING: Cannot find appropriate memlet pattern to propagate %s '
-            'through %s' % (str(expr), str(mapnode.range)))
-
-        return subsets.Range.from_array(sdfg.arrays[memlet.data])
-    elif isinstance(u, nodes.ConsumeEntry) or isinstance(u, nodes.ConsumeExit):
-
-        # Nothing to analyze/propagate in consume
-        return subsets.Range.from_array(sdfg.arrays[memlet.data])
-
-    else:
-        raise NotImplementedError('Unimplemented primitive: %s' % type(u))

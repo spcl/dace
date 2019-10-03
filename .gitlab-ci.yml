@@ -14,7 +14,7 @@ setup_dace:
     - echo "Clearing binary cache"
     - rm -rf .dacecache tests/.dacecache
     - echo "Installing additional dependencies"
-    - pip3 install --upgrade --user tensorflow-gpu
+    - pip3 install --upgrade --user tensorflow-gpu==1.14.0
     - echo "Installing DaCe"
     - pip3 install --ignore-installed --upgrade --user .
 

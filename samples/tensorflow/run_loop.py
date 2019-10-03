@@ -29,9 +29,9 @@ def build_resnet(images, labels):
     # Graph building
     myresnet = resnet50.ResNet50(
         "channels_last", classes=num_classes)  # trainable=False)
-    logits = myresnet(input_placeholder)
+    logits = myresnet(images)
     softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=label_placeholder, logits=logits)
+        labels=labels, logits=logits)
     loss = tf.reduce_mean(softmax, name="loss")
     gradients = tf.train.GradientDescentOptimizer(
         learning_rate).compute_gradients(loss)
@@ -46,7 +46,7 @@ def build_resnet(images, labels):
 
 # DaCe
 sess = TFSession(seed=SEED)
-y = build_resnet()
+y = build_resnet(input_placeholder, label_placeholder)
 
 # TensorFlow + XLA
 #sess = tf.Session()
@@ -58,17 +58,13 @@ sess.run(init)
 images, labels = random_batch(batch_size)
 
 # Warmup run
-sess.run(y, feed_dict={input_placeholder: images, label_placeholder: labels})
+sess_run = sess.compile(y, gpu=True)  # Change to gpu=True to run on the GPU
 
 start = time.time()
 times = [0.0] * 100
 for i in range(100):
     times[i] = time.time()
-    sess.run(
-        y, feed_dict={
-            input_placeholder: images,
-            label_placeholder: labels
-        })
+    sess_run(feed_dict={input_placeholder: images, label_placeholder: labels})
     times[i] = time.time() - times[i]
 
 tarr = np.array(times)
