@@ -1161,8 +1161,11 @@ class TaskletTransformer(ExtNodeTransformer):
                             strides = [
                                 parent_array.strides[d] for d in non_sqz
                             ]
-                            self.sdfg.add_array(
-                                vname, shape, dtype, strides=strides)
+                            if isinstance(parent_array, data.Stream):
+                                self.sdfg.add_stream(vname, dtype)
+                            else:
+                                self.sdfg.add_array(
+                                    vname, shape, dtype, strides=strides)
                             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                             if _subset_has_indirection(rng):
                                 self.sdfg_inputs[vname] = (
@@ -1236,8 +1239,11 @@ class TaskletTransformer(ExtNodeTransformer):
                             strides = [
                                 parent_array.strides[d] for d in non_sqz
                             ]
-                            self.sdfg.add_array(
-                                vname, shape, dtype, strides=strides)
+                            if isinstance(parent_array, data.Stream):
+                                self.sdfg.add_stream(vname, dtype)
+                            else:
+                                self.sdfg.add_array(
+                                    vname, shape, dtype, strides=strides)
                             self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                             self.sdfg_outputs[vname] = (dace.Memlet(
                                 parent_name, rng.num_elements(), rng, 1),
@@ -1749,9 +1755,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         newvar = '__%s_%s%d' % (name, vid, ctr)
                         repldict[arr] = newvar
                         # Create memlet
-                        map_inputs[newvar] = Memlet.simple(
-                            self.variables[arr],
-                            ','.join([str(a) for a in expr.args]))
+                        args = ','.join([str(a) for a in expr.args])
+                        if arr in self.variables:
+                            arr = self.variables[arr]
+                        if arr not in self.sdfg.arrays:
+                            rng = subsets.Range.from_string(args)
+                            arr, rng = self._add_read_access(arr, rng, node, newvar)
+                            args = str(rng)
+                        map_inputs[newvar] = Memlet.simple(arr, args)
+                            # ','.join([str(a) for a in expr.args]))
                         ctr += 1
                 # Replace functions with new variables
                 for find, replace in repldict.items():
@@ -1831,8 +1843,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not shape:
                         shape = [1]
                         strides = [1]
+                    # TODO: Formulate this better
+                    if not strides:
+                        strides = [arr.strides[-1]]
                     dtype = arr.dtype
-                    self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                    if isinstance(memlet.data, data.Stream):
+                        self.sdfg.add_stream(vname, dtype)
+                    else:
+                        self.sdfg.add_array(vname, shape, dtype, strides=strides)
                     self.inputs[vname] = (scope_memlet, inner_indices)
                     # self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
@@ -1874,7 +1892,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v, set()
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
-                    scope_memlet = propagate_memlet(state, memlet, exit_node,
+                    scope_memlet = propagate_memlet(state, memlet, entry_node,
                                                     True, arr)
                     name = memlet.data
                     irng = memlet.subset
@@ -1906,8 +1924,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not shape:
                         shape = [1]
                         strides = [1]
+                    # TODO: Formulate this better
+                    if not strides:
+                        strides = [arr.strides[-1]]
                     dtype = arr.dtype
-                    self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                    if isinstance(memlet.data, data.Stream):
+                        self.sdfg.add_stream(vname, dtype)
+                    else:
+                        self.sdfg.add_array(vname, shape, dtype, strides=strides)
                     self.outputs[vname] = (scope_memlet, inner_indices)
                     # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                     memlet.data = vname
@@ -2274,8 +2298,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     sqz_rng.squeeze()
                     shape = sqz_rng.size()
                     dtype = parent_array.dtype
-                    self.sdfg.add_array(
-                        vname, shape, dtype, strides=sqz_rng.strides())
+                    if isinstance(parent_array, data.Stream):
+                        self.sdfg.add_stream(vname, dtype)
+                    else:
+                        self.sdfg.add_array(
+                            vname, shape, dtype, strides=sqz_rng.strides())
                     self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
                     self.variables[vname] = parent_name
                     self.outputs[vname] = (dace.Memlet(parent_name,
@@ -2884,7 +2911,7 @@ class ProgramVisitor(ExtNodeVisitor):
             last = self._visit_op(node, last, node.values[i])
         return last
 
-    def _add_read_access(self, name, rng, target):
+    def _add_read_access(self, name, rng, target, newname: str=None):
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
@@ -2892,7 +2919,9 @@ class ProgramVisitor(ExtNodeVisitor):
         elif name in self.variables:
             return (name, rng)
         elif name in self.scope_vars:
-            if target:
+            if newname:
+                vname = newname
+            elif target:
                 vname = "__tmp_{l}_{c}".format(
                     l=target.lineno, c=target.col_offset)
             else:
@@ -2911,7 +2940,12 @@ class ProgramVisitor(ExtNodeVisitor):
             sqz_rng.squeeze()
             shape = sqz_rng.size()
             dtype = parent_array.dtype
-            self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
+            if vname in self.sdfg.arrays:
+                vname += '_'
+            if isinstance(parent_array, data.Stream):
+                self.sdfg.add_stream(vname, dtype)
+            else:
+                self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
             self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(),
                                               rng, 1), set())
@@ -2946,8 +2980,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 sqz_rng.squeeze()
                 shape = sqz_rng.size()
                 dtype = parent_array.dtype
-                self.sdfg.add_array(
-                    vname, shape, dtype, strides=sqz_rng.strides())
+                if isinstance(parent_array, data.Stream):
+                    self.sdfg.add_stream(vname, dtype)
+                else:
+                    self.sdfg.add_array(
+                        vname, shape, dtype, strides=sqz_rng.strides())
                 self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
                 self.inputs[vname] = (dace.Memlet(parent_name,
                                                   rng.num_elements(), rng, 1),
