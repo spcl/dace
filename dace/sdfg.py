@@ -1002,8 +1002,9 @@ subgraph cluster_state_{state} {{
             @return: An SDFG.
         """
         with open(filename, "rb") as fp:
-            if fp.read(1) == b'{':  # JSON file
-                fp.seek(0)
+            firstbyte = fp.read(1)
+            fp.seek(0)
+            if firstbyte == b'{':  # JSON file
                 sdfg_json = json.load(fp)
                 sdfg = SDFG.fromJSON_object(sdfg_json)
             else:  # Pickle
