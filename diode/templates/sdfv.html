@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SDFG Viewer</title>
+    <script src="https://code.jquery.com/jquery-3.3.1.min.js" crossorigin="anonymous"></script>
+    <script src="/renderer.js" type="module"></script>
+    <script type="module">
+        import { SDFGRenderer } from "/renderer.js";
+        var sdfg_json = {{sdfg|safe}};
+        var renderer = new SDFGRenderer(sdfg_json, null, document.getElementById('contents'));
+    </script>
+</head>
+<body>
+<div id="contents"></div>
+</body>
+</html>

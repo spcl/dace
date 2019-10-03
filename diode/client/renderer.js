@@ -1,4 +1,4 @@
-import {ContextMenu} from "./diode.js";
+import {ContextMenu} from "./context_menu.js";
 import * as elements from "./renderer_elements.js";
 import {find_exit_for_entry} from "./sdfg_utils.js";
 
@@ -743,8 +743,8 @@ class SDFGRenderer {
         let g = this.graph;
         let curx = this.canvas_manager.translation.x;
         let cury = this.canvas_manager.translation.y;
-        let curw = this.container.width();
-        let curh = this.container.height();
+        let br = this.container.getBoundingClientRect();
+        let curw = br.width, curh = br.height;
 
         this.on_pre_draw();
 
@@ -1055,16 +1055,19 @@ class SDFGRenderer {
         // Check if anything was clicked at all
         if (total_elements == 0 && evtype === 'click') {
             // Nothing was selected
-            this.diode.render_free_variables(false);
+            if (this.diode)
+                this.diode.render_free_variables(false);
             return;
         }
         if (total_elements == 0 && evtype === 'contextmenu') {
-            let cmenu = new ContextMenu();
-            cmenu.addOption("SDFG Properties", x => {
-                this.diode.render_free_variables(true);
-            });
-            cmenu.show(event.x, event.y);
-            this.contextmenu = cmenu;
+            if (this.diode) {
+                let cmenu = new ContextMenu();
+                cmenu.addOption("SDFG Properties", x => {
+                    this.diode.render_free_variables(true);
+                });
+                cmenu.show(event.x, event.y);
+                this.contextmenu = cmenu;
+            }
             return;
         }
 
@@ -1121,44 +1124,49 @@ class SDFGRenderer {
             cmenu.addOption("Show transformations", x => {
                 console.log("'Show transformations' was clicked");
 
-                this.diode.project().request(['highlight-transformations-' + sdfg_name], x => {}, {
-                    params: {
-                        state_id: state_id,
-                        node_id: node_id
-                    }
-                });
+                if (this.diode) {
+                    this.diode.project().request(['highlight-transformations-' + sdfg_name], x => {
+                    }, {
+                        params: {
+                            state_id: state_id,
+                            node_id: node_id
+                        }
+                    });
+                }
             });
             cmenu.addOption("Apply transformation \u25B6", x => {
                 console.log("'Apply transformation' was clicked");
 
                 // Find available transformations for this node
-                this.diode.project().request(['get-transformations-' + sdfg_name], x => {
-                    console.log("get-transformations response: ", x);
+                if (this.diode) {
+                    this.diode.project().request(['get-transformations-' + sdfg_name], x => {
+                        console.log("get-transformations response: ", x);
 
-                    let tmp = Object.values(x)[0];
+                        let tmp = Object.values(x)[0];
 
-                    // Create a sub-menu at the correct position
+                        // Create a sub-menu at the correct position
 
 
-                    let submenu = new ContextMenu();
+                        let submenu = new ContextMenu();
 
-                    for (let y of tmp) {
-                        submenu.addOption(y.opt_name, x => {
-                            this.project().request(['apply-transformation-' + sdfg_name], x => {
-                                },
-                                {
-                                    params: y.id_name
-                                });
-                        });
-                    }
+                        for (let y of tmp) {
+                            submenu.addOption(y.opt_name, x => {
+                                this.project().request(['apply-transformation-' + sdfg_name], x => {
+                                    },
+                                    {
+                                        params: y.id_name
+                                    });
+                            });
+                        }
 
-                    submenu.show(spos.x + cmenu.width(), spos.y);
-                }, {
-                    params: {
-                        state_id: state_id,
-                        node_id: node_id
-                    }
-                });
+                        submenu.show(spos.x + cmenu.width(), spos.y);
+                    }, {
+                        params: {
+                            state_id: state_id,
+                            node_id: node_id
+                        }
+                    });
+                }
 
                 // Don't close the current context menu from this event
                 x.preventDefault();
@@ -1181,6 +1189,9 @@ class SDFGRenderer {
         }
 
         if (evtype !== "click")
+            return;
+
+        if (!this.diode)
             return;
 
         // Render properties asynchronously
