@@ -9,7 +9,6 @@ import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
 
-dace.Config.append("compiler", "cpu", "args", value=" -faligned-new")
 inp_shape = [10, 10, 10, 10]
 filter_shape = [3, 3, 10, 3]
 strides = [1, 3, 3, 1]
