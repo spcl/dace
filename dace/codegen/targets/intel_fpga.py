@@ -260,9 +260,60 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                                       ("f" if type_str == "float" or type_str == "double" else ""),
                                                       REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, read_expr)
             else:
-                return "{} = {};".format(write_expr, read_expr)
+                return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
+
+    @staticmethod
+    def make_reduction(sdfg, state_id, node, output_memlet, dtype, vector_length_in, vector_length_out, output_type,
+                       reduction_type, callsite_stream, iterators_inner, input_subset, identity, out_var, in_var):
+        """
+        Generates reduction loop body
+        """
+        axes = node.axes
+
+        # Check if this is the first iteration of accumulating into this
+        # location
+
+        is_first_iteration = " && ".join([
+            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
+            for i, axis in enumerate(axes)
+        ])
+
+        if identity is not None:
+            # If this is the first iteration, set the previous value to be
+            # identity, otherwise read the value from the output location
+            prev_var = "{}_prev".format(output_memlet.data)
+            callsite_stream.write(
+                "{} {} = ({}) ? ({}) : ({});".format(
+                    output_type, prev_var, is_first_iteration, identity,
+                    out_var), sdfg, state_id, node)
+            if reduction_type != dace.types.ReductionType.Min and reduction_type != dace.types.ReductionType.Max:
+                callsite_stream.write(
+                    "{} = {} {} {};".format(out_var, prev_var, REDUCTION_TYPE_TO_HLSLIB[reduction_type],
+                                            in_var), sdfg, state_id, node)
+            else:
+                # use max/min opencl builtins
+                callsite_stream.write(
+                    "{} = {}{}({}, {});".format(out_var,
+                                                ("f" if output_type == "float" or output_type == "double" else ""),
+                                                REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var, in_var), sdfg,
+                                                state_id, node)
+
+        else:
+            # If this is the first iteration, assign the value read from the
+            # input directly to the output
+            if reduction_type != dace.types.ReductionType.Min and reduction_type != dace.types.ReductionType.Max:
+                callsite_stream.write(
+                    "{} = ({}) ? ({}) : {} {} {};".format(
+                        out_var, is_first_iteration, in_var,
+                        out_var, REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var), sdfg, state_id, node)
+            else:
+                callsite_stream.write(
+                    "{} = ({}) ? ({}) : {}{}({}, {});".format(
+                        out_var, is_first_iteration, in_var,
+                        ("f" if output_type == "float" or output_type == "double" else ""),
+                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], out_var, in_var), sdfg, state_id, node)
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
@@ -929,10 +980,8 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def visit_Call(self, node):
         # enforce compliance to OpenCL
 
-        #type casting
-        if isinstance(node.func,ast.Name) and node.func.id in self._ctypes:
-            #import pdb
-            #pdb.set_trace()
+        # type casting
+        if isinstance(node.func, ast.Name) and node.func.id in self._ctypes:
             node.func.id = "({})".format(node.func.id)
         #     return ast.copy_location(
         #         ast.Name(id="({})".format(node.func.id)),
