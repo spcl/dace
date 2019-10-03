@@ -1002,7 +1002,13 @@ subgraph cluster_state_{state} {{
             @return: An SDFG.
         """
         with open(filename, "rb") as fp:
-            sdfg = symbolic.SympyAwareUnpickler(fp).load()
+            if fp.read(1) == b'{':  # JSON file
+                fp.seek(0)
+                sdfg_json = json.load(fp)
+                sdfg = SDFG.fromJSON_object(sdfg_json)
+            else:  # Pickle
+                sdfg = symbolic.SympyAwareUnpickler(fp).load()
+
             if not isinstance(sdfg, SDFG):
                 raise TypeError("Loaded file is not an SDFG (loaded "
                                 "type: %s)" % type(sdfg).__name__)
