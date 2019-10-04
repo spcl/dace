@@ -229,6 +229,7 @@ class InlineSDFG(pattern_matching.Transformation):
         torename = {}
         torename.update({k: v[2].data for k, v in inputs.items()})
         torename.update({k: v[2].data for k, v in outputs.items()})
+        entry_connectors = set()
 
         # Add SDFG nodes to top-level SDFG
         state = nsdfg.nodes()[0]
@@ -237,6 +238,16 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode):
                 # External node
                 if node.data in inputs or node.data in outputs:
+                    for _, _, dst, dst_conn, _ in state.out_edges(node):
+                        # Custom entry connector case
+                        if (isinstance(dst, nodes.EntryNode)
+                                and dst_conn[0:3] != 'IN_'):
+                            entry_connectors.add(node.data)
+                            sdfg.arrays[node.data] = nsdfg.arrays[node.data]
+                            sdfg.arrays[node.data].transient = True
+                            graph.add_node(node)
+                            torename.pop(node.data)
+                            break
                     continue
                 # Internal node (e.g., transient)
                 if node.data not in torename:
@@ -255,13 +266,23 @@ class InlineSDFG(pattern_matching.Transformation):
 
             graph.add_node(node)
 
+        # TODO: Confirm that the following is always correct
+        # Add Scalars of the nested SDFG to the parent
+        for name, arr in nsdfg.arrays.items():
+            if isinstance(arr, dt.Scalar) and name not in sdfg.arrays:
+                sdfg.arrays[name] = arr
+
         # Reconnect edges to their original source
         for e in state.edges():
             if isinstance(e.src, nodes.AccessNode) and e.src.data in inputs:
                 cnode, cconn, cmemlet = inputs[e.src.data]
-                # Connect to source node instead
-                newmemlet = self._modify_memlet(e.data, cmemlet)
-                graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
+                if e.src.data in entry_connectors:
+                    graph.add_edge(cnode, cconn, e.src, None, cmemlet)
+                    graph.add_edge(e.src, None, e.dst, e.dst_conn, e.data)
+                else:
+                    # Connect to source node instead
+                    newmemlet = self._modify_memlet(e.data, cmemlet)
+                    graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
             elif isinstance(e.dst, nodes.AccessNode) and e.dst.data in outputs:
                 cnode, cconn, cmemlet = outputs[e.dst.data]
                 # Connect to destination node instead
