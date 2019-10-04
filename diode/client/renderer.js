@@ -220,50 +220,10 @@ class CanvasManager {
     }
 }
 
-function isWithinBB(x, y, layoutinfo) {
-    return (x >= layoutinfo.x - layoutinfo.width / 2.0) &&
-        (x <= layoutinfo.x + layoutinfo.width / 2.0) &&
-        (y >= layoutinfo.y - layoutinfo.height / 2.0) &&
-        (y <= layoutinfo.y + layoutinfo.height / 2.0);
-}
-
-function isBBoverlapped(x, y, w, h, layoutinfo) {
-    return (x <= layoutinfo.x + layoutinfo.width / 2.0) &&
-        (x + w >= layoutinfo.x - layoutinfo.width / 2.0) &&
-        (y <= layoutinfo.y + layoutinfo.height / 2.0) &&
-        (y + h >= layoutinfo.y - layoutinfo.height / 2.0);
-}
-
-function isWithinBBEdge(x, y, layoutinfo) {
-    // Compute distance between point and line for each point in curve
-    for (let i = 0; i < layoutinfo.points.length - 1; i++) {
-        let dist = ptLineDistance({x: x, y: y}, layoutinfo.points[i], layoutinfo.points[i + 1]);
-        if (dist < 5.0)
-            return true;
-    }
-
-    // Bounding box method
-    /*
-    return (x >= layoutinfo.x) &&
-        (x <= layoutinfo.x + layoutinfo.width) &&
-        (y >= layoutinfo.y) &&
-        (y <= layoutinfo.y + layoutinfo.height);
-    */
-}
-
 function getQuadraticAngle(t, sx, sy, cp1x, cp1y, ex, ey) {
     let dx = 2*(1-t)*(cp1x-sx) + 2*t*(ex-cp1x);
     let dy = 2*(1-t)*(cp1y-sy) + 2*t*(ey-cp1y);
     return -Math.atan2(dx, dy) + 0.5*Math.PI;
-}
-
-// Returns the distance from point p to line defined by two points (line1, line2)
-function ptLineDistance(p, line1, line2) {
-    let dx = (line2.x - line1.x);
-    let dy = (line2.y - line1.y);
-    let res = dy * p.x - dx * p.y + line2.x * line1.y - line2.y * line1.x;
-
-    return Math.abs(res) / Math.sqrt(dy*dy + dx*dx);
 }
 
 function calculateBoundingBox(g) {

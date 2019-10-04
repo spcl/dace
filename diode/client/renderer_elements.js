@@ -294,18 +294,7 @@ export class EmptyTasklet extends Node {
 export class Tasklet extends Node {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
-        let octseg = this.height / 3.0;
-        ctx.beginPath();
-        ctx.moveTo(topleft.x, topleft.y + octseg);
-        ctx.lineTo(topleft.x + octseg, topleft.y);
-        ctx.lineTo(topleft.x + this.width - octseg, topleft.y);
-        ctx.lineTo(topleft.x + this.width, topleft.y + octseg);
-        ctx.lineTo(topleft.x + this.width, topleft.y + 2 * octseg);
-        ctx.lineTo(topleft.x + this.width - octseg, topleft.y + this.height);
-        ctx.lineTo(topleft.x + octseg, topleft.y + this.height);
-        ctx.lineTo(topleft.x, topleft.y + 2 * octseg);
-        ctx.lineTo(topleft.x, topleft.y + 1 * octseg);
-        ctx.closePath();
+        drawOctagon(ctx, topleft, this.width, this.height);
         ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "white";
@@ -330,18 +319,58 @@ export class Reduce extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
-        var textmetrics = ctx.measureText(this.label());
-        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y - this.height / 4.0 + LINEHEIGHT / 2.0);    }
+        let textmetrics = ctx.measureText(this.label());
+        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y - this.height / 4.0 + LINEHEIGHT / 2.0);
+    }
 }
 
 export class NestedSDFG extends Node {
     draw(renderer, ctx, mousepos) {
+        if (this.data.node.attributes.is_collapsed) {
+            let topleft = this.topleft();
+            drawOctagon(ctx, topleft, this.width, this.height);
+            ctx.strokeStyle = this.strokeStyle();
+            ctx.stroke();
+            drawOctagon(ctx, {x: topleft.x + 2.5, y: topleft.y + 2.5}, this.width - 5, this.height - 5);
+            ctx.strokeStyle = this.strokeStyle();
+            ctx.stroke();
+            ctx.fillStyle = 'white';
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            let label = this.data.node.attributes.label;
+            let textmetrics = ctx.measureText(label);
+            ctx.fillText(label, this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 4.0);
+            return;
+        }
+
         // Draw square around nested SDFG
         super.draw(renderer, ctx, mousepos);
 
         // Draw nested graph
         draw_sdfg(renderer, ctx, this.data.graph, null, mousepos);
     }
+
+    set_layout() { 
+        if (this.data.node.attributes.is_collapsed) {
+            let labelsize = this.data.node.attributes.label.length * LINEHEIGHT * 0.8;
+            let inconnsize = 2 * LINEHEIGHT * this.data.node.attributes.in_connectors.length - LINEHEIGHT;
+            let outconnsize = 2 * LINEHEIGHT * this.data.node.attributes.out_connectors.length - LINEHEIGHT;
+            let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
+            let maxheight = 2*LINEHEIGHT;
+            maxheight += 4*LINEHEIGHT;
+
+            let size = { width: maxwidth, height: maxheight };
+            size.width += 2.0 * (size.height / 3.0);
+            size.height /= 1.75;
+
+            this.width = size.width;
+            this.height = size.height;
+        } else {
+            this.width = this.data.node.attributes.layout.width;
+            this.height = this.data.node.attributes.layout.height;
+        }
+    }
+
 
     label() { return ""; }
 }
@@ -441,6 +470,21 @@ function drawHexagon(ctx, x, y, w, h, offset) {
     ctx.lineTo(topleft.x + w - hexseg, topleft.y + h);
     ctx.lineTo(topleft.x + hexseg, topleft.y + h);
     ctx.lineTo(topleft.x, y);
+    ctx.closePath();
+}
+
+function drawOctagon(ctx, topleft, width, height) {
+    let octseg = height / 3.0;
+    ctx.beginPath();
+    ctx.moveTo(topleft.x, topleft.y + octseg);
+    ctx.lineTo(topleft.x + octseg, topleft.y);
+    ctx.lineTo(topleft.x + width - octseg, topleft.y);
+    ctx.lineTo(topleft.x + width, topleft.y + octseg);
+    ctx.lineTo(topleft.x + width, topleft.y + 2 * octseg);
+    ctx.lineTo(topleft.x + width - octseg, topleft.y + height);
+    ctx.lineTo(topleft.x + octseg, topleft.y + height);
+    ctx.lineTo(topleft.x, topleft.y + 2 * octseg);
+    ctx.lineTo(topleft.x, topleft.y + 1 * octseg);
     ctx.closePath();
 }
 
