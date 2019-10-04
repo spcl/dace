@@ -483,9 +483,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_subset = (memlet.subset
                                     if memlet.data == dst_node.data else
                                     memlet.other_subset)
-                    stream_subset = (memlet.subset
-                                     if memlet.data == src_node.data else
-                                     memlet.other_subset)
+                    # stream_subset = (memlet.subset
+                    #                  if memlet.data == src_node.data else
+                    #                  memlet.other_subset)
+                    stream_subset = memlet.subset
+                    if memlet.data != src_node.data and memlet.other_subset:
+                        stream_subset = memlet.other_subset
 
                     stream_expr = cpp_offset_expr(src_nodedesc, stream_subset)
                     array_expr = cpp_offset_expr(dst_nodedesc, array_subset)
