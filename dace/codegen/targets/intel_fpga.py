@@ -669,10 +669,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 else:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
-                    # if(memlet.wcr is not None):
-                    #    init = " = 0"
-                    # else:
                     init = ""
+
                     result += "{} {}{};".format(memlet_type, connector, init)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
@@ -983,8 +981,5 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         # type casting
         if isinstance(node.func, ast.Name) and node.func.id in self._ctypes:
             node.func.id = "({})".format(node.func.id)
-        #     return ast.copy_location(
-        #         ast.Name(id="({})".format(node.func.id)),
-        #         node)
 
         return self.generic_visit(node)
