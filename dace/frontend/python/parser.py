@@ -138,6 +138,10 @@ class DaceProgram:
         self.kwargs = kwargs
         self._name = f.__name__
         self.argnames = _get_argnames(f)
+        self.global_vars = {
+            k: v
+            for k, v in f.__globals__.items() if dtypes.isallowed(v)
+        }
         if self.argnames is None:
             self.argnames = []
 
@@ -221,10 +225,8 @@ class DaceProgram:
 
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
-        global_vars = {
-            k: v
-            for k, v in dace_func.__globals__.items() if dtypes.isallowed(v)
-        }
+        global_vars = copy.copy(self.global_vars)
+
         modules = {
             k: v.__name__
             for k, v in dace_func.__globals__.items() if dtypes.ismodule(v)
