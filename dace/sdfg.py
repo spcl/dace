@@ -227,6 +227,7 @@ class SDFG(OrderedDiGraph):
         self._temp_transients = 0
 
         # Counter to resolve name conflicts
+        self._orig_name = name
         self._num = 0
 
     def toJSON(self):
@@ -469,20 +470,19 @@ class SDFG(OrderedDiGraph):
     @property
     def name(self):
         """ The name of this SDFG. """
-        fullname = self._name
+        if self._name != self._orig_name:
+            return self._name
+        newname = self._orig_name
         numbers = []
         for sdfg in self._sdfg_list:
-            if sdfg is not self and sdfg._name == self._name:
+            if sdfg is not self and sdfg._orig_name == self._orig_name:
                 numbers.append(sdfg._num)
         while self._num in numbers:
             self._num += 1
         if self._num > 0:
-            fullname = '{}_{}'.format(self._name, self._num)
-        # parent = self._parent
-        # while parent:
-        #     fullname = "{}_{}".format(parent.name, fullname)
-        #     parent = parent.parent
-        return fullname
+            newname = '{}_{}'.format(self._orig_name, self._num)
+            self._name = newname
+        return newname
 
     @property
     def label(self):
