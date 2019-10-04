@@ -234,7 +234,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-new-sdfg'), (msg) => {
 
-            if(typeof(msg) == 'string') msg = JSON.parse(msg);
+            if(typeof(msg) == 'string') msg = parse_sdfg(msg);
             if(msg.sdfg_name === this.getState()['sdfg_name']) {
                 // Ok
             }
@@ -740,7 +740,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
         }
         let tmp = sdfg_data;
         if((typeof tmp) === 'string') {
-            tmp = JSON.parse(sdfg_data);
+            tmp = parse_sdfg(sdfg_data);
+        } else {
+            tmp = {sdfg: sdfg_data};
         }
 
         {
@@ -5255,7 +5257,7 @@ class DIODE {
     
     multiple_SDFGs_available(sdfgs) {
 
-        let sdfgs_obj = (typeof(sdfgs) == 'string') ? JSON.parse(sdfgs) : sdfgs;
+        let sdfgs_obj = (typeof(sdfgs) == 'string') ? parse_sdfg(sdfgs) : sdfgs;
 
         for(let x of Object.keys(sdfgs_obj.compounds)) {
             // New sdfg
@@ -5469,7 +5471,7 @@ class DIODE {
         REST_request("/dace/api/v" + version_string + "/compile/dace", post_params, (xhr) => {
             if (xhr.readyState === 4 && xhr.status === 200) {
 
-                let peek = JSON.parse(xhr.response);
+                let peek = parse_sdfg(xhr.response);
                 if(peek['error'] != undefined) {
                     // There was at least one error - handle all of them
                     this.handleErrors(calling_context, peek);
@@ -5478,7 +5480,7 @@ class DIODE {
                     // Data is no longer stale
                     this.removeStaleDataButton();
 
-                    let o = JSON.parse(xhr.response);
+                    let o = parse_sdfg(xhr.response);
                     this.multiple_SDFGs_available(xhr.response);
                     if(options.optpath_cb === undefined) {
                         this.OptGraphs_available(o['compounds']);

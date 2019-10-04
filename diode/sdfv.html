@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SDFG Viewer</title>
+    <script src="./client/renderer_dir/dagre.js"></script>
+    <script src="./client/external_lib/jquery.min.js"></script>
+    
+    <script src="./client/renderer_dir/global_vars.js"></script>
+    <script src="./client/renderer_elements.js"></script>
+    <script src="./client/context_menu.js"></script>
+    <script src="./client/sdfg_utils.js"></script>
+    <script src="./client/renderer.js"></script>
+    
+</head>
+<body>
+<div id="filepicker"><form><input type="file"><input type="submit"></form></div>
+<div id="contents"></div>
+<script>
+var fr;
+var renderer = null;
+$(document).ready(function(){
+    $('input[type="file"]').change(function(e){
+        var file = e.target.files[0];
+        fr = new FileReader();
+        fr.onload = file_read_complete;
+        fr.readAsText(file);
+    });
+});
+
+function file_read_complete() {
+    let sdfg = parse_sdfg(fr.result);
+    renderer = new SDFGRenderer(sdfg, null, document.getElementById('contents'));
+}
+</script>
+</body>
+</html>

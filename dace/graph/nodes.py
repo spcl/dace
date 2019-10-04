@@ -395,9 +395,7 @@ class NestedSDFG(CodeNode):
     def fromJSON_object(json_obj, context=None):
 
         # We have to load the SDFG first.
-        sdfg = SDFGReferenceProperty.from_json(
-            json.dumps(json_obj['attributes']['sdfg']), context)
-        ret = NestedSDFG("nolabel", sdfg, set(), set())
+        ret = NestedSDFG("nolabel", SDFG('nosdfg'), set(), set())
 
         Property.set_properties_from_json(ret, json_obj, context)
 
