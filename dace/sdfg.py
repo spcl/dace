@@ -197,7 +197,7 @@ class SDFG(OrderedDiGraph):
             @param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
         super(SDFG, self).__init__()
-        self._name = name
+        self.name = name
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
@@ -3867,14 +3867,9 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     defined |= iteration_variables.keys()
     defined |= {
         n.data
-        for n, scope in obj.all_nodes_recursive() if
-        (
-            isinstance(n, dace.graph.nodes.AccessNode)
-            and (
-                scope.parent is None and n.desc(scope).transient
-                or scope.parent
-            )
-        )
+        for n, scope in obj.all_nodes_recursive()
+        if (isinstance(n, dace.graph.nodes.AccessNode) and (
+            scope.parent is None and n.desc(scope).transient or scope.parent))
     }
     symbols = collections.OrderedDict(
         (key, value) for key, value in symbols.items() if key not in defined)
