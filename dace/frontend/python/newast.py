@@ -1760,7 +1760,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             arr = self.variables[arr]
                         if arr not in self.sdfg.arrays:
                             rng = subsets.Range.from_string(args)
-                            arr, rng = self._add_read_access(arr, rng, node, newvar)
+                            arr, rng = self._add_read_access(arr, rng, node, newvar, data.Scalar)
                             args = str(rng)
                         map_inputs[newvar] = Memlet.simple(arr, args)
                             # ','.join([str(a) for a in expr.args]))
@@ -2911,7 +2911,7 @@ class ProgramVisitor(ExtNodeVisitor):
             last = self._visit_op(node, last, node.values[i])
         return last
 
-    def _add_read_access(self, name, rng, target, newname: str=None):
+    def _add_read_access(self, name, rng, target, newname: str=None, arr_type=None):
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
@@ -2942,10 +2942,20 @@ class ProgramVisitor(ExtNodeVisitor):
             dtype = parent_array.dtype
             if vname in self.sdfg.arrays:
                 vname += '_'
-            if isinstance(parent_array, data.Stream):
+            if arr_type is None:
+                arr_type = type(parent_array)
+            if arr_type == data.Scalar:
+                self.sdfg.add_scalar(vname, dtype)
+            elif arr_type == data.Array:
+                self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
+            elif arr_type == data.Stream:
                 self.sdfg.add_stream(vname, dtype)
             else:
-                self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
+                raise NotImplementedError
+            # if isinstance(parent_array, data.Stream):
+            #     self.sdfg.add_stream(vname, dtype)
+            # else:
+            #     self.sdfg.add_array(vname, shape, dtype, strides=sqz_rng.strides())
             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
             self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(),
                                               rng, 1), set())
