@@ -161,7 +161,6 @@ class SDFG(OrderedDiGraph):
         `dace.graph.nodes` for a full list of available node types); edges in the multigraph represent data movement using memlets, as described in the `Memlet` class documentation.
     """
 
-    name = Property(dtype=str, desc="The name of the sdfg")
     #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(
@@ -237,6 +236,8 @@ class SDFG(OrderedDiGraph):
 
         # Inject the undefined symbols
         tmp['undefined_symbols'] = self.undefined_symbols(True)
+
+        tmp['name'] = self.name
 
         # Re-encode
         return json.dumps(tmp, default=Property.json_dumper)
