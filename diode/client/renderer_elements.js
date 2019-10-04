@@ -1,4 +1,4 @@
-export class SDFGElement {
+class SDFGElement {
     // Parent ID is the state ID, if relevant
     constructor(elem, elem_id, sdfg, parent_id = null) {
         this.data = elem;
@@ -58,7 +58,7 @@ export class SDFGElement {
     }
 }
 
-export class State extends SDFGElement {
+class State extends SDFGElement {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
 
@@ -94,7 +94,7 @@ export class State extends SDFGElement {
     }
 }
 
-export class Node extends SDFGElement {
+class Node extends SDFGElement {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.fillStyle = "white";
@@ -116,7 +116,7 @@ export class Node extends SDFGElement {
     }
 }
 
-export class Edge extends SDFGElement {
+class Edge extends SDFGElement {
     draw(renderer, ctx, mousepos) {
         let edge = this;
 
@@ -186,7 +186,7 @@ export class Edge extends SDFGElement {
     }
 }
 
-export class Connector extends SDFGElement {
+class Connector extends SDFGElement {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.beginPath();
@@ -211,7 +211,7 @@ export class Connector extends SDFGElement {
     }
 }
 
-export class AccessNode extends Node {
+class AccessNode extends Node {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.beginPath();
@@ -245,7 +245,7 @@ export class AccessNode extends Node {
     }
 }
 
-export class ScopeNode extends Node {
+class ScopeNode extends Node {
     draw(renderer, ctx, mousepos) {
         if (this.data.node.attributes.is_collapsed) {
             drawHexagon(ctx, this.x, this.y, this.width, this.height);
@@ -272,26 +272,26 @@ export class ScopeNode extends Node {
     }
 }
 
-export class EntryNode extends ScopeNode {
+class EntryNode extends ScopeNode {
     scopeend() { return false; }
 }
 
-export class ExitNode extends ScopeNode {
+class ExitNode extends ScopeNode {
     scopeend() { return true; }
 }
 
-export class MapEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } }
-export class MapExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([1, 0]); } }
-export class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
-export class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
+class MapEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } }
+class MapExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([1, 0]); } }
+class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
+class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
 
-export class EmptyTasklet extends Node {
+class EmptyTasklet extends Node {
     draw(renderer, ctx, mousepos) {
         // Do nothing
     }
 }
 
-export class Tasklet extends Node {
+class Tasklet extends Node {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         drawOctagon(ctx, topleft, this.width, this.height);
@@ -305,7 +305,7 @@ export class Tasklet extends Node {
     }
 }
 
-export class Reduce extends Node {
+class Reduce extends Node {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
         ctx.beginPath();
@@ -324,7 +324,7 @@ export class Reduce extends Node {
     }
 }
 
-export class NestedSDFG extends Node {
+class NestedSDFG extends Node {
     draw(renderer, ctx, mousepos) {
         if (this.data.node.attributes.is_collapsed) {
             let topleft = this.topleft();
@@ -550,4 +550,7 @@ function ptLineDistance(p, line1, line2) {
     return Math.abs(res) / Math.sqrt(dy*dy + dx*dx);
 }
 
-export {draw_sdfg, offset_sdfg, offset_state};
+var SDFGElements = {SDFGElement: SDFGElement, State: State, Node: Node,Edge: Edge, Connector: Connector, AccessNode: AccessNode,
+                    ScopeNode: ScopeNode, EntryNode: EntryNode, ExitNode: ExitNode, MapEntry: MapEntry, MapExit: MapExit,
+                    ConsumeEntry: ConsumeEntry, ConsumeExit: ConsumeExit, EmptyTasklet: EmptyTasklet, Tasklet: Tasklet, Reduce: Reduce,
+                    NestedSDFG: NestedSDFG};

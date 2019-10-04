@@ -8,4 +8,3 @@ function find_exit_for_entry(nodes, entry_node) {
     return null;
 }
 
-export { find_exit_for_entry }

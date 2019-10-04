@@ -1,5 +1,5 @@
 
-export class ContextMenu {
+class ContextMenu {
     /*
         Implementation for a custom context menu
     */

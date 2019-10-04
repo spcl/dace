@@ -3,8 +3,6 @@ import { Appearance } from "./diode_appearance.js"
 import { SDFG_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 import * as Roofline from "./renderer_dir/Roofline/main.js"
-import { SDFGRenderer } from "./renderer.js"
-import {find_exit_for_entry} from "./sdfg_utils.js";
 
 class DIODE_Settings {
     constructor(denormalized = {}) {

@@ -1,6 +1,3 @@
-import {ContextMenu} from "./context_menu.js";
-import * as elements from "./renderer_elements.js";
-import {find_exit_for_entry} from "./sdfg_utils.js";
 
 class CanvasManager {
     // Manages translation and scaling of canvas rendering
@@ -361,13 +358,13 @@ function relayout_sdfg(ctx, sdfg) {
         }
         stateinfo.width += 2*STATE_MARGIN;
         stateinfo.height += 2*STATE_MARGIN;
-        g.setNode(state.id, new elements.State({state: state,
+        g.setNode(state.id, new State({state: state,
                                                 layout: stateinfo,
                                                 graph: state_g}, state.id, sdfg));
     });
 
     sdfg.edges.forEach((edge, id) => {
-        g.setEdge(edge.src, edge.dst, new elements.Edge(edge.attributes.data, id, sdfg));
+        g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg));
     });
 
     dagre.layout(g);
@@ -412,7 +409,7 @@ function relayout_sdfg(ctx, sdfg) {
 
         let state = g.node(sid);
         let topleft = state.topleft();
-        elements.offset_state(s, state, {x: topleft.x + STATE_MARGIN,
+        offset_state(s, state, {x: topleft.x + STATE_MARGIN,
                                          y: topleft.y + STATE_MARGIN});
     });
 
@@ -456,18 +453,18 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         }
 
         // Dynamically create node type
-        let obj = new elements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
+        let obj = new SDFGElements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
 
         // Add connectors
         let i = 0;
         for (let cname of node.attributes.in_connectors) {
-            let conn = new elements.Connector({name: cname}, i, sdfg, node.id);
+            let conn = new Connector({name: cname}, i, sdfg, node.id);
             obj.in_connectors.push(conn);
             i += 1;
         }
         i = 0;
         for (let cname of node.attributes.out_connectors) {
-            let conn = new elements.Connector({name: cname}, i, sdfg, node.id);
+            let conn = new Connector({name: cname}, i, sdfg, node.id);
             obj.out_connectors.push(conn);
             i += 1;
         }
@@ -500,7 +497,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         console.assert(label != undefined);
         let textmetrics = ctx.measureText(label);
 
-        g.setEdge(edge.src, edge.dst, new elements.Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
+        g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
     });
 
     dagre.layout(g);
@@ -515,7 +512,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         // Offset nested SDFG
         if (node.type === "NestedSDFG") {
 
-            elements.offset_sdfg(node.attributes.sdfg, gnode.data.graph, {
+            offset_sdfg(node.attributes.sdfg, gnode.data.graph, {
                 x: topleft.x + LINEHEIGHT, 
                 y: topleft.y + LINEHEIGHT
             });
@@ -612,33 +609,26 @@ class SDFGRenderer {
 
     // Initializes the DOM
     init_elements() {
-        jQuery.when(
-            jQuery.getScript('renderer_dir/global_vars.js'),
-            jQuery.getScript('renderer_dir/dagre.js'),
-            $.Deferred(function( deferred ){
-                $( deferred.resolve );
-            })
-        ).done(() => {
-            this.canvas = document.createElement('canvas');
-            this.container.append(this.canvas);
-            // TODO: Add buttons
-            this.ctx = this.canvas.getContext("2d");
 
-            // Translation/scaling management
-            this.canvas_manager = new CanvasManager(this.ctx, this);
+        this.canvas = document.createElement('canvas');
+        this.container.append(this.canvas);
+        // TODO: Add buttons
+        this.ctx = this.canvas.getContext("2d");
 
-            // Create the initial SDFG layout
-            this.relayout();
+        // Translation/scaling management
+        this.canvas_manager = new CanvasManager(this.ctx, this);
 
-            // Set mouse event handlers
-            this.set_mouse_handlers();
+        // Create the initial SDFG layout
+        this.relayout();
 
-            // Link the analysis provider from which to pull values (for performance data)
-            this.analysis_provider = ((x, y) => this.diode.analysisProvider(x,y));
+        // Set mouse event handlers
+        this.set_mouse_handlers();
 
-            // Queue first render
-            this.draw_async();
-        });
+        // Link the analysis provider from which to pull values (for performance data)
+        this.analysis_provider = ((x, y) => this.diode.analysisProvider(x,y));
+
+        // Queue first render
+        this.draw_async();
     }
 
     draw_async() {
@@ -696,7 +686,7 @@ class SDFGRenderer {
 
         this.on_pre_draw();
 
-        elements.draw_sdfg(this, ctx, g, {x: curx, y: cury, w: curw, h: curh}, this.mousepos);
+        draw_sdfg(this, ctx, g, {x: curx, y: cury, w: curw, h: curh}, this.mousepos);
 
         this.on_post_draw();
     }
@@ -1238,6 +1228,3 @@ class SDFGRenderer {
     }
 }
 
-
-
-export { SDFGRenderer }
