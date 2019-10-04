@@ -476,8 +476,32 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(dst_nodedesc,
                               (data.Scalar, data.Array)) and isinstance(
                                   src_nodedesc, data.Stream):
-                    return  # Do nothing (handled by ArrayStreamView)
+                    # Stream -> Array - pop bulk
+                    if is_array_stream_view(sdfg, dfg, src_node):
+                        return  # Do nothing (handled by ArrayStreamView)
 
+                    array_subset = (memlet.subset
+                                    if memlet.data == dst_node.data else
+                                    memlet.other_subset)
+                    stream_subset = (memlet.subset
+                                     if memlet.data == src_node.data else
+                                     memlet.other_subset)
+
+                    stream_expr = cpp_offset_expr(src_nodedesc, stream_subset)
+                    array_expr = cpp_offset_expr(dst_nodedesc, array_subset)
+                    assert functools.reduce(lambda a, b: a * b,
+                                            src_nodedesc.shape, 1) == 1
+                    stream.write(
+                        "{s}.pop(&{arr}[{aexpr}], {maxsize});".format(
+                            s=src_node.data,
+                            arr=dst_node.data,
+                            aexpr=array_expr,
+                            maxsize=sym2cpp(array_subset.num_elements())),
+                        sdfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
+                    return
                 # Array -> Stream - push bulk
                 if isinstance(src_nodedesc,
                               (data.Scalar, data.Array)) and isinstance(
@@ -2213,9 +2237,11 @@ def cpp_array_expr(sdfg,
                    with_brackets=True,
                    offset=None,
                    relative_offset=True,
-                   packed_veclen=1):
+                   packed_veclen=1,
+                   use_other_subset=False):
     """ Converts an Indices/Range object to a C++ array access string. """
-    s = memlet.subset if relative_offset else subsets.Indices(offset)
+    subset = memlet.subset if not use_other_subset else memlet.other_subset
+    s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
     offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o,
                                     packed_veclen)

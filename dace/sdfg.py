@@ -4059,7 +4059,8 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
             sink_paths.append(sink_node)
 
     # Special case: stream can be represented as a view of an array
-    if len(source_paths) == 1 or len(sink_paths) == 1:
+    if ((len(source_paths) > 0 and len(sink_paths) == 1)
+            or (len(sink_paths) > 0 and len(source_paths) == 1)):
         # TODO: What about a source path?
         arrnode = sink_paths[0]
         # Only works if the stream itself is not an array of streams

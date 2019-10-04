@@ -62,8 +62,8 @@ if __name__ == "__main__":
     A_row = np.cumsum(A_row, dtype=np.uint32)
 
     # Fill column data
-    for k in range(H.get() - 1):
-        A_col[nnz_per_row*k:nnz_per_row*(k+1)] = \
+    for i in range(H.get() - 1):
+        A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
             np.sort(np.random.choice(W.get(), nnz_per_row, replace=False))
     # Fill column data for last row
     A_col[nnz_per_row * (H.get() - 1):] = np.sort(
