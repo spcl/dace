@@ -237,7 +237,7 @@ class SDFG(OrderedDiGraph):
         # Inject the undefined symbols
         tmp['undefined_symbols'] = self.undefined_symbols(True)
 
-        tmp['name'] = self.name
+        tmp['attributes']['name'] = self.name
 
         # Re-encode
         return json.dumps(tmp, default=Property.json_dumper)
