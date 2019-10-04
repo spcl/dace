@@ -618,10 +618,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 else:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
-                    # if(memlet.wcr is not None):
-                    #    init = " = 0"
-                    # else:
                     init = ""
+
                     result += "{} {}{};".format(memlet_type, connector, init)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
@@ -637,10 +635,12 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                         memlet.num_accesses, connector))
         elif def_type == DefinedType.Pointer:
             if memlet.num_accesses == 1:
-                if is_output:
-                    result += "{} {};".format(memlet_type, connector)
-                else:
-                    result += "{} {} = {}[{}];".format(memlet_type, connector,
+                #if is_output:
+                #    result += "{} {};".format(memlet_type, connector)
+                #else:
+                # Initialize this in every case even if it is output
+                # This is useful for wcr
+                result += "{} {} = {}[{}];".format(memlet_type, connector,
                                                        data_name, offset)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
@@ -931,11 +931,6 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
         #type casting
         if isinstance(node.func,ast.Name) and node.func.id in self._ctypes:
-            #import pdb
-            #pdb.set_trace()
             node.func.id = "({})".format(node.func.id)
-        #     return ast.copy_location(
-        #         ast.Name(id="({})".format(node.func.id)),
-        #         node)
 
         return self.generic_visit(node)
