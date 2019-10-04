@@ -197,7 +197,7 @@ class SDFG(OrderedDiGraph):
             @param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
         super(SDFG, self).__init__()
-        self.name = name
+        self._name = name
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
