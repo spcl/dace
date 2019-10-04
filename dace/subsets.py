@@ -701,6 +701,10 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
+    def unsqueeze(self, axes):
+        for axis in sorted(axes):
+            self.indices.insert(axis, 0)
+
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     """ Perform union by creating a bounding-box of two subsets. """
