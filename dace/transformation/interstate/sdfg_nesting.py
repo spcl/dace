@@ -198,7 +198,8 @@ class InlineSDFG(pattern_matching.Transformation):
         # Special case: If internal memlet is a range of size 1 with (0,0,1),
         #               ignore it when unsqueezing
         if (len(internal_memlet.subset) == 1
-                and internal_memlet.subset[0] == (0, 0, 1)):
+                and (internal_memlet.subset[0] == (0, 0, 1)
+                     or internal_memlet.subset[0] == 0)):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
