@@ -782,6 +782,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
             clicked_interstate_edges.length + clicked_connectors.length;
 
+        // Clear context menu
+        if (evtype === 'click' || evtype === 'doubleclick' || evtype === 'mousedown' || evtype === 'contextmenu' ||
+                evtype === 'wheel') {
+            if (this.contextmenu) {
+                this.contextmenu.destroy();
+                this.contextmenu = null;
+            }
+        }
+
         // Check if anything was clicked at all
         if (total_elements == 0 && evtype === 'click') {
             // Nothing was selected

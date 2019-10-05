@@ -830,16 +830,6 @@ class SDFGRenderer {
     on_mouse_event(event, comp_x_func, comp_y_func, evtype="click") {
         let dirty = false; // Whether to redraw at the end
 
-        // Clear context menu
-        if (evtype === 'click' || evtype === 'doubleclick' || evtype === 'mousedown' || evtype === 'contextmenu' ||
-                evtype === 'wheel') {
-            if (this.contextmenu) {
-                this.contextmenu.destroy();
-                this.contextmenu = null;
-            }
-        }
-
-
         if (evtype === "touchstart" || evtype === "mousedown") {
             let ev = (evtype === "touchstart") ? event.touches[0] : event;
             this.drag_start = ev;
