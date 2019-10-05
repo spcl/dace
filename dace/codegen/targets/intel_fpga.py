@@ -635,12 +635,11 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                         memlet.num_accesses, connector))
         elif def_type == DefinedType.Pointer:
             if memlet.num_accesses == 1:
-                #if is_output:
-                #    result += "{} {};".format(memlet_type, connector)
-                #else:
-                # Initialize this in every case even if it is output
-                # This is useful for wcr
-                result += "{} {} = {}[{}];".format(memlet_type, connector,
+                if is_output:
+                   result += "{} {};".format(memlet_type, connector)
+                else:
+                #Initialize this in every case even if it is output
+                    result += "{} {} = {}[{}];".format(memlet_type, connector,
                                                        data_name, offset)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
@@ -806,7 +805,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             u, uconn, v, vconn, memlet = edge
             if u == node:
                 # this could be a wcr
-                # TODO is_write_conflicted?
                 memlets[uconn] = (memlet, edge.data.wcr_conflict, edge.data.wcr)
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
