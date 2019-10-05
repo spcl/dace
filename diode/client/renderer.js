@@ -583,11 +583,9 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 }
 
 class SDFGRenderer {
-    constructor(sdfg, diode_context, container) {
+    constructor(sdfg, container, on_mouse_event = null) {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
-        this.diode = diode_context;
-        this.analysis_provider = null;
 
         // Rendering-related fields
         this.container = container;
@@ -603,6 +601,7 @@ class SDFGRenderer {
         this.drag_start = null; // Null if the mouse/touch is not activated
         this.drag_second_start = null; // Null if two touch points are not activated
         this.contextmenu = null;
+        this.external_mouse_handler = on_mouse_event;
 
         this.init_elements();
     }
@@ -623,9 +622,6 @@ class SDFGRenderer {
 
         // Set mouse event handlers
         this.set_mouse_handlers();
-
-        // Link the analysis provider from which to pull values (for performance data)
-        this.analysis_provider = ((x, y) => this.diode.analysisProvider(x,y));
 
         // Queue first render
         this.draw_async();
@@ -652,14 +648,6 @@ class SDFGRenderer {
                 this.on_mouse_event(x, comp_x, comp_y, evtype)
             });
         }
-
-        // Prevent double clicking from selecting text (see https://stackoverflow.com/a/43321596/6489142)
-        /*
-        canvas.addEventListener('mousedown', function (event) {
-            if (event.detail > 1)
-                event.preventDefault();
-        }, false);
-        */
     }
 
     // Re-layout graph and nested graphs
@@ -882,15 +870,13 @@ class SDFGRenderer {
 
                 // TODO: Better scaling formula w.r.t. distance between touches
                 this.canvas_manager.scale((currentDistance - initialDistance) / 30000.0,
-                    comp_x_func(event), comp_y_func(event));
+                    centerX, centerY);
 
                 this.drag_start = event.touches[0];
                 this.drag_second_start = event.touches[1];
 
                 // Mark for redraw
                 dirty = true;
-                this.draw_async();
-                return;
             } else if (evtype === 'mousemove' || event.targetTouches.length === 1) { // dragging
                 let ev = (evtype === 'touchmove') ? event.touches[0] : event;
                 if (evtype === 'touchmove') {
@@ -925,8 +911,6 @@ class SDFGRenderer {
             let y = event.clientY - br.y;
             this.canvas_manager.scale(-event.deltaY / 1000.0, x, y);
             dirty = true;
-            this.draw_async();
-            return;
         }
         // End of mouse-move/touch-based events
 
@@ -988,240 +972,40 @@ class SDFGRenderer {
             clicked_nodes = [node];
         }
 
-        let state_only = false;
-
-        // Check if anything was clicked at all
-        if (total_elements == 0 && evtype === 'click') {
-            // Nothing was selected
-            if (this.diode)
-                this.diode.render_free_variables(false);
-            return;
-        }
-        if (total_elements == 0 && evtype === 'contextmenu') {
-            if (this.diode) {
-                let cmenu = new ContextMenu();
-                cmenu.addOption("SDFG Properties", x => {
-                    this.diode.render_free_variables(true);
-                });
-                cmenu.show(event.x, event.y);
-                this.contextmenu = cmenu;
-            }
-            return;
-        }
-
-        if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
-            // A state was selected
-            if (clicked_states.length > 0)
-                state_only = true;
-        }
-
-        if (clicked_states.length > 0)
-            state_id = clicked_states[0].id;
-        if (clicked_interstate_edges.length > 0)
-            node_id = clicked_interstate_edges[0].id;
-
-        if (clicked_nodes.length > 0)
-            node_id = clicked_nodes[0].id;
-        else if (clicked_edges.length > 0)
-            node_id = clicked_edges[0].id;
-
         if (evtype === "mousemove") {
-            // Draw only if clicked_* have changed
-            this.draw_async();
-            return;
+            // TODO: Draw only if elements have changed
+            dirty = true;
         }
 
         if (evtype === "dblclick") {
             let sdfg = this.sdfg;
             let elem;
-            if (state_only) {
+            if (clicked_states.length > 0)
+                state_id = clicked_states[0].id;
+            if (clicked_nodes.length > 0)
+                node_id = clicked_nodes[0].id;
+
+            if (clicked_states.length > 0 && clicked_nodes.length == 0) {
                 elem = sdfg.nodes[state_id];
             } else if (clicked_nodes.length > 0) {
                 elem = sdfg.nodes[state_id].nodes[node_id];
             } else {
-                return false;
+                elem = null;
             }
             // Toggle collapsed state
-            if ('is_collapsed' in elem.attributes) {
+            if (elem && 'is_collapsed' in elem.attributes) {
                 // TODO: If exit node, collapse entry
                 elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
 
                 // Re-layout SDFG
                 this.relayout();
-                this.draw_async();
+                dirty = true;
             }
-            return;
         }
 
-        if (evtype === "contextmenu") {
-            // Context menu was requested
-            let spos = {x: event.x, y: event.y};
-            let sdfg_name = this.sdfg.attributes.name;
-
-            let cmenu = new ContextMenu();
-            cmenu.addOption("Show transformations", x => {
-                console.log("'Show transformations' was clicked");
-
-                if (this.diode) {
-                    this.diode.project().request(['highlight-transformations-' + sdfg_name], x => {
-                    }, {
-                        params: {
-                            state_id: state_id,
-                            node_id: node_id
-                        }
-                    });
-                }
-            });
-            cmenu.addOption("Apply transformation \u25B6", x => {
-                console.log("'Apply transformation' was clicked");
-
-                // Find available transformations for this node
-                if (this.diode) {
-                    this.diode.project().request(['get-transformations-' + sdfg_name], x => {
-                        console.log("get-transformations response: ", x);
-
-                        let tmp = Object.values(x)[0];
-
-                        // Create a sub-menu at the correct position
-
-
-                        let submenu = new ContextMenu();
-
-                        for (let y of tmp) {
-                            submenu.addOption(y.opt_name, x => {
-                                this.project().request(['apply-transformation-' + sdfg_name], x => {
-                                    },
-                                    {
-                                        params: y.id_name
-                                    });
-                            });
-                        }
-
-                        submenu.show(spos.x + cmenu.width(), spos.y);
-                    }, {
-                        params: {
-                            state_id: state_id,
-                            node_id: node_id
-                        }
-                    });
-                }
-
-                // Don't close the current context menu from this event
-                x.preventDefault();
-                x.stopPropagation();
-            });
-            cmenu.addOption("Show Source Code", x => {
-                console.log("go to source code");
-            });
-            cmenu.addOption("Show Generated Code", x => {
-                console.log("go to generated code");
-            });
-            cmenu.addOption("Properties", x => {
-                console.log("Force-open property pane");
-            });
-
-            cmenu.show(spos.x, spos.y);
-            this.contextmenu = cmenu;
-
-            return;
-        }
-
-        if (evtype !== "click")
-            return;
-
-        if (!this.diode)
-            return;
-
-        // Render properties asynchronously
-        setTimeout(() => {
-            // Get and render the properties from now on
-            let sdfg = this.sdfg;
-            let sdfg_name = sdfg.attributes.name;
-
-            console.log("sdfg", sdfg);
-
-            let state = sdfg.nodes[state_id];
-            let render_props = n => {
-                let attr = n.attributes;
-
-                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
-
-                let proplist = [];
-                for (let k of akeys) {
-
-                    let value = attr[k];
-                    let meta = attr["_meta_" + k];
-                    if (meta == undefined) {
-                        continue;
-                    }
-
-                    let pdata = JSON.parse(JSON.stringify(meta));
-                    pdata.value = value;
-                    pdata.name = k;
-
-                    proplist.push(pdata);
-                }
-                let nid = parseInt(n.id);
-                if (!n || isNaN(nid))
-                    nid = null;
-                let propobj = {
-                    node_id: nid,
-                    state_id: state_id,
-                    sdfg_name: sdfg_name,
-                    data: () => ({props: proplist})
-                };
-
-                this.diode.renderProperties(propobj);
-            };
-            clicked_interstate_edges.forEach(edge => {
-                render_props(edge.obj.data);
-            });
-            if (state_only) {
-                render_props(state);
-                return;
-            }
-
-            clicked_nodes.forEach(node => {
-                let n = state.nodes[node.id];
-                // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
-                if (n.type.endsWith("Entry")) {
-                    // Find the matching exit node
-                    let exit_node = find_exit_for_entry(state.nodes, n);
-                    // Highlight both entry and exit nodes
-                    clicked_nodes.push({sdfg: sdfg_name, state: state.id, node: exit_node.id});
-
-                    let tmp = this.diode.merge_properties(n, 'entry_', exit_node, 'exit_');
-                    render_props(tmp);
-
-                    return;
-                } else if (n.type.endsWith("Exit")) {
-                    // Find the matching entry node and continue with that
-                    let entry_id = parseInt(n.scope_entry);
-                    let entry_node = state.nodes[entry_id];
-                    // Highlight both entry and exit nodes
-                    clicked_nodes.push({sdfg: sdfg_name, state: state_id, node: entry_id});
-
-                    let tmp = this.diode.merge_properties(entry_node, 'entry_', n, 'exit_');
-                    render_props(tmp);
-                    return;
-
-                } else if (n.type === "AccessNode") {
-                    // Find matching data descriptor and show that as well
-                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
-                    let tmp = this.diode.merge_properties(n, '', ndesc, 'datadesc_');
-                    render_props(tmp);
-                    return;
-                }
-
-                render_props(n);
-            });
-
-            clicked_edges.forEach(edge => {
-                render_props(state.edges[edge.id].attributes.data);
-            });
-        }, 0);
-
-        this.last_clicked_elements = elements;
+        if (this.external_mouse_handler)
+            dirty |= this.external_mouse_handler(evtype, event, {x: comp_x_func(event), y: comp_y_func(event)}, elements,
+                                                 this.sdfg);
 
         if (dirty)
             this.draw_async();

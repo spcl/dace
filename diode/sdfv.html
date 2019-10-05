@@ -30,7 +30,7 @@ $(document).ready(function(){
 
 function file_read_complete() {
     let sdfg = parse_sdfg(fr.result);
-    renderer = new SDFGRenderer(sdfg, null, document.getElementById('contents'));
+    renderer = new SDFGRenderer(sdfg, document.getElementById('contents'));
 }
 </script>
 </body>

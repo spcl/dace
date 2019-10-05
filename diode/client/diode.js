@@ -764,14 +764,219 @@ class DIODE_Context_SDFG extends DIODE_Context {
             "sdfg_data": tmp
         });
 
-        let sdfv = new SDFGRenderer(tmp.sdfg, this, this.container.getElement()[0]);
+        let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
+                                    (et,e,c,el,s) => this.on_renderer_mouse_event(et, e, c, el, s));
         this.renderer_panes.push(sdfv);
 
         // Display data descriptors by default (in parallel to the creation of the renderer)
         this.render_free_variables(true);
     }
 
+    on_renderer_mouse_event(evtype, event, canvas_coords, elements, sdfg) {
+        let state_only = false;
+        let clicked_states = elements.states;
+        let clicked_nodes = elements.nodes;
+        let clicked_edges = elements.edges;
+        let clicked_interstate_edges = elements.isedges;
+        let clicked_connectors = elements.connectors;
+        let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
+            clicked_interstate_edges.length + clicked_connectors.length;
 
+        // Check if anything was clicked at all
+        if (total_elements == 0 && evtype === 'click') {
+            // Nothing was selected
+            this.render_free_variables(false);
+            return false;
+        }
+        if (total_elements == 0 && evtype === 'contextmenu') {
+            let cmenu = new ContextMenu();
+            cmenu.addOption("SDFG Properties", x => {
+                this.render_free_variables(true);
+            });
+            cmenu.show(event.x, event.y);
+            this.contextmenu = cmenu;
+            return false;
+        }
+
+        if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
+            // A state was selected
+            if (clicked_states.length > 0)
+                state_only = true;
+        }
+
+        let state_id = null, node_id = null;
+        if (clicked_states.length > 0)
+            state_id = clicked_states[0].id;
+        if (clicked_interstate_edges.length > 0)
+            node_id = clicked_interstate_edges[0].id;
+
+        if (clicked_nodes.length > 0)
+            node_id = clicked_nodes[0].id;
+        else if (clicked_edges.length > 0)
+            node_id = clicked_edges[0].id;
+
+
+        if (evtype === "contextmenu") {
+            // Context menu was requested
+            let spos = {x: event.x, y: event.y};
+            let sdfg_name = sdfg.attributes.name;
+
+            let cmenu = new ContextMenu();
+            cmenu.addOption("Show transformations", x => {
+                console.log("'Show transformations' was clicked");
+
+                this.project().request(['highlight-transformations-' + sdfg_name], x => {
+                }, {
+                    params: {
+                        state_id: state_id,
+                        node_id: node_id
+                    }
+                });
+            });
+            cmenu.addOption("Apply transformation \u25B6", x => {
+                console.log("'Apply transformation' was clicked");
+
+                // Find available transformations for this node
+                this.project().request(['get-transformations-' + sdfg_name], x => {
+                    console.log("get-transformations response: ", x);
+
+                    let tmp = Object.values(x)[0];
+
+                    // Create a sub-menu at the correct position
+
+
+                    let submenu = new ContextMenu();
+
+                    for (let y of tmp) {
+                        submenu.addOption(y.opt_name, x => {
+                            this.project().request(['apply-transformation-' + sdfg_name], x => {
+                                },
+                                {
+                                    params: y.id_name
+                                });
+                        });
+                    }
+
+                    submenu.show(spos.x + cmenu.width(), spos.y);
+                }, {
+                    params: {
+                        state_id: state_id,
+                        node_id: node_id
+                    }
+                });
+
+
+                // Don't close the current context menu from this event
+                x.preventDefault();
+                x.stopPropagation();
+            });
+            cmenu.addOption("Show Source Code", x => {
+                console.log("go to source code");
+            });
+            cmenu.addOption("Show Generated Code", x => {
+                console.log("go to generated code");
+            });
+            cmenu.addOption("Properties", x => {
+                console.log("Force-open property pane");
+            });
+
+            cmenu.show(spos.x, spos.y);
+            this.contextmenu = cmenu;
+
+            return false;
+        }
+
+        if (evtype !== "click")
+            return false;
+
+        // Render properties asynchronously
+        setTimeout(() => {
+            // Get and render the properties from now on
+            let sdfg_name = sdfg.attributes.name;
+
+            console.log("sdfg", sdfg);
+
+            let state = sdfg.nodes[state_id];
+            let render_props = n => {
+                let attr = n.attributes;
+
+                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
+
+                let proplist = [];
+                for (let k of akeys) {
+
+                    let value = attr[k];
+                    let meta = attr["_meta_" + k];
+                    if (meta == undefined) {
+                        continue;
+                    }
+
+                    let pdata = JSON.parse(JSON.stringify(meta));
+                    pdata.value = value;
+                    pdata.name = k;
+
+                    proplist.push(pdata);
+                }
+                let nid = parseInt(n.id);
+                if (!n || isNaN(nid))
+                    nid = null;
+                let propobj = {
+                    node_id: nid,
+                    state_id: state_id,
+                    sdfg_name: sdfg_name,
+                    data: () => ({props: proplist})
+                };
+
+                this.renderProperties(propobj);
+            };
+            clicked_interstate_edges.forEach(edge => {
+                render_props(edge.obj.data);
+            });
+            if (state_only) {
+                render_props(state);
+                return;
+            }
+
+            clicked_nodes.forEach(node => {
+                let n = state.nodes[node.id];
+                // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
+                if (n.type.endsWith("Entry")) {
+                    // Find the matching exit node
+                    let exit_node = find_exit_for_entry(state.nodes, n);
+                    // Highlight both entry and exit nodes
+                    clicked_nodes.push({sdfg: sdfg_name, state: state.id, node: exit_node.id});
+
+                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
+                    render_props(tmp);
+
+                    return;
+                } else if (n.type.endsWith("Exit")) {
+                    // Find the matching entry node and continue with that
+                    let entry_id = parseInt(n.scope_entry);
+                    let entry_node = state.nodes[entry_id];
+                    // Highlight both entry and exit nodes
+                    clicked_nodes.push({sdfg: sdfg_name, state: state_id, node: entry_id});
+
+                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
+                    render_props(tmp);
+                    return;
+
+                } else if (n.type === "AccessNode") {
+                    // Find matching data descriptor and show that as well
+                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
+                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
+                    render_props(tmp);
+                    return;
+                }
+
+                render_props(n);
+            });
+
+            clicked_edges.forEach(edge => {
+                render_props(state.edges[edge.id].attributes.data);
+            });
+        }, 0);
+    }
 }
 
 
