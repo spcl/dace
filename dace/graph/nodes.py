@@ -393,6 +393,7 @@ class NestedSDFG(CodeNode):
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
+        from dace import SDFG  # Avoid import loop
 
         # We have to load the SDFG first.
         ret = NestedSDFG("nolabel", SDFG('nosdfg'), set(), set())

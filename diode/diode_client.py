@@ -1,36 +1,72 @@
 #!/usr/bin/python3
 # DIODE client using a command line interface
 
-
 # Usage example: cat ../samples/simple/gemm.py | ./diode_client.py --code --compile
 import argparse, requests, json, sys
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-c", "--connect", default="localhost", metavar="IP",
-                    help="Connect to Server IP. Default is localhost.")
+parser.add_argument(
+    "-c",
+    "--connect",
+    default="localhost",
+    metavar="IP",
+    help="Connect to Server IP. Default is localhost.")
 
-parser.add_argument("-p", "--port", default="5000",
-                    help="Set server port. Default is 5000")
+parser.add_argument(
+    "-p", "--port", default="5000", help="Set server port. Default is 5000")
 
-parser.add_argument("-compile", "--compile", action="store_true",
-                    help="Compiles the SDFG and returns resulting structures.")
+parser.add_argument(
+    "-compile",
+    "--compile",
+    action="store_true",
+    help="Compiles the SDFG and returns resulting structures.")
 
-parser.add_argument("-tf", "--transform", default="",
-                    help="Sets the name of the transform to apply. If the transformation name is ambiguous, the first transformation with that name is chosen.")
+parser.add_argument(
+    "-tf",
+    "--transform",
+    default="",
+    help=
+    "Sets the name of the transform to apply. If the transformation name is ambiguous, the first transformation with that name is chosen."
+)
 
-parser.add_argument("-r", "--run", action="store_true",
-                    help = "Executes the SDFG on the target machine specified in Config and prints the execution output (blocking)")
+parser.add_argument(
+    "-r",
+    "--run",
+    action="store_true",
+    help=
+    "Executes the SDFG on the target machine specified in Config and prints the execution output (blocking)"
+)
 
-parser.add_argument("-code", "--code", action="store_true",
-                    help="Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)")
+parser.add_argument(
+    "-code",
+    "--code",
+    action="store_true",
+    help=
+    "Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
+)
 
-parser.add_argument("-u", "--user", default="default",
-                    help="Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)")
+parser.add_argument(
+    "-u",
+    "--user",
+    default="default",
+    help=
+    "Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
+)
 
-parser.add_argument("-e", "--extract", nargs="+", choices=["txform", "sdfg", "structure", "struct_noprop", "outcode", "txform_detail", "runnercode"])
+parser.add_argument(
+    "-e",
+    "--extract",
+    nargs="+",
+    choices=[
+        "txform", "sdfg", "structure", "struct_noprop", "outcode",
+        "txform_detail", "runnercode"
+    ])
 
-parser.add_argument("-ver", "--version", default="1.0",
-                    help="Sets the REST API Version to use.")
+parser.add_argument(
+    "-ver",
+    "--version",
+    default="1.0",
+    help="Sets the REST API Version to use.")
 args = parser.parse_args()
 
 if args.compile or args.run:
@@ -45,7 +81,9 @@ if args.compile or args.run:
         try:
             data['sdfg'] = json.loads(stdin_input)['sdfg']
         except:
-            sys.stderr.write("Failed to parse serialized SDFG input, is it in a correct json format?")
+            sys.stderr.write(
+                "Failed to parse serialized SDFG input, is it in a correct json format?"
+            )
             sys.stdout.write("Invalid data: " + str(stdin_input))
             sys.exit(-3)
 
@@ -54,29 +92,33 @@ if args.compile or args.run:
             data['code'] = json.loads(stdin_input)['runnercode'][0]
         except:
             pass
-    
+
     data['client_id'] = args.user
-    
+
     #data = json.dumps(data)
     cmdstr = "run/" if args.run else "compile/dace"
 
     if args.transform:
         if args.code:
-            sys.stderr.write("Cannot combine --code and --transform. Compile using '--code --extract sdfg txform_detail' first, then pipe the output into a command with --transform")
+            sys.stderr.write(
+                "Cannot combine --code and --transform. Compile using '--code --extract sdfg txform_detail' first, then pipe the output into a command with --transform"
+            )
             sys.exit(-4)
 
         try:
             transforms = json.loads(stdin_input)['advanced_transform']
         except:
-            sys.stderr.write("Commands executed with --transform need an input file generated previously that includes --extract txform_detail. (Not passing --extract is not valid)")
+            sys.stderr.write(
+                "Commands executed with --transform need an input file generated previously that includes --extract txform_detail. (Not passing --extract is not valid)"
+            )
             sys.exit(-4)
-        
+
         # Apply default transform (no property change)
         txf_found = False
         txform_sdfg = ""
         for k, v in transforms.items():
             # Compound level (key = target sdfg name, value = Object of transforms)
-            
+
             try:
                 txform = v[args.transform]
                 txf_found = True
@@ -86,20 +128,19 @@ if args.compile or args.run:
                 # Key not found
                 continue
         if not txf_found:
-            sys.stderr.write("Could not find a transformation named " + args.transform)
+            sys.stderr.write("Could not find a transformation named " +
+                             args.transform)
             sys.exit(-5)
         # Else we have a transform to apply
 
         # Build the format for the transformation manually
         data['optpath'] = {
-            txform_sdfg: [ {
-                    'name': args.transform,
-                    'params': {
-                        'props': txform
-                    }
+            txform_sdfg: [{
+                'name': args.transform,
+                'params': {
+                    'props': txform
                 }
-            ]
-            
+            }]
         }
 
     nofail = False
@@ -120,7 +161,6 @@ if args.compile or args.run:
         # Cannot continue
         sys.exit(-2)
 
-
     if args.run:
         first_out = response.text
         output_ok = False
@@ -128,7 +168,9 @@ if args.compile or args.run:
         for i in range(0, 5):
             import time
             time.sleep(1)
-            response = requests.post(url + "/dace/api/v" + args.version + "/run/status/", json={'client_id': args.user})
+            response = requests.post(
+                url + "/dace/api/v" + args.version + "/run/status/",
+                json={'client_id': args.user})
             try:
                 tmp = json.loads(response.text)
             except:
@@ -142,7 +184,7 @@ if args.compile or args.run:
         sys.exit(0)
 
     resp_json = response.json()
-    
+
     def dict_scanner(d, nometa=False):
         if not isinstance(d, dict):
             return None
@@ -166,7 +208,8 @@ if args.compile or args.run:
                     encountered[c['opt_name']] = 0
                 else:
                     encountered[c['opt_name']] += 1
-                name_str = "" if encountered[c['opt_name']] == 0 else ("$" + str(encountered[c['opt_name']]))
+                name_str = "" if encountered[c['opt_name']] == 0 else (
+                    "$" + str(encountered[c['opt_name']]))
                 #sys.stdout.write(c['opt_name'] + name_str + '\n')
                 cb(x, c['opt_name'] + name_str, c)
                 if c != l[-1]: sys.stdout.write(',')
@@ -182,7 +225,7 @@ if args.compile or args.run:
         else:
             sys.stdout.write("{")
         for elem in extract_list:
-            
+
             if "sdfg" == elem:
                 # Output SDFG
                 comps = resp_json['compounds']
@@ -196,7 +239,8 @@ if args.compile or args.run:
                 # Output available transformations
                 sys.stdout.write('"simple_transform":')
                 sys.stdout.write("{")
-                get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
+                get_transformations(resp_json,
+                                    lambda a, b, c: sys.stdout.write(b + '\n'))
                 sys.stdout.write("}")
                 if "txform" != args.extract[-1]: sys.stdout.write(',')
             if "txform_detail" == elem:
@@ -222,20 +266,33 @@ if args.compile or args.run:
                     sys.stdout.write('"outcode": ')
                     as_json = True
                 if as_json:
-                    sys.stdout.write(json.dumps({k: v['generated_code'] for k, v in resp_json['compounds'].items()}))
-                    
+                    sys.stdout.write(
+                        json.dumps({
+                            k: v['generated_code']
+                            for k, v in resp_json['compounds'].items()
+                        }))
+
                 else:
-                    for x in resp_json['compounds'].keys():
-                        sys.stdout.write("//" + x + ":\n")
-                        l = resp_json['compounds'][x]['generated_code']
-                        for c in l:
-                            sys.stdout.write("// #### Next ####\n")
-                            sys.stdout.write(c)
+                    try:
+                        for x in resp_json['compounds'].keys():
+                            sys.stdout.write("//" + x + ":\n")
+                            l = resp_json['compounds'][x]['generated_code']
+                            for c in l:
+                                sys.stdout.write("// #### Next ####\n")
+                                sys.stdout.write(c)
+                    except:
+                        if 'error' in resp_json:
+                            print('ERROR:', resp_json['error'])
+                            if 'traceback' in resp_json:
+                                print(resp_json['traceback'])
+                        else:
+                            print('Received erroneous JSON:', resp_json)
+                        raise
                 if len(args.extract) > 1:
                     if "outcode" != extract_list[-1]:
                         sys.stdout.write(',')
             if "runnercode" == elem:
-            
+
                 sys.stdout.write('"runnercode": ')
                 # Pass the input code through
 
@@ -247,7 +304,9 @@ if args.compile or args.run:
                 except:
                     pass
                 if not args.code and runnercode == "":
-                    sys.stderr.write("Error: Cannot extract runnercode as it was not in input.")
+                    sys.stderr.write(
+                        "Error: Cannot extract runnercode as it was not in input."
+                    )
                     sys.exit(-4)
                 elif args.code:
                     # Take stdin_input
@@ -258,12 +317,10 @@ if args.compile or args.run:
                 if "runnercode" != extract_list[-1]:
                     sys.stdout.write(',')
 
-
         if len(args.extract) == 1 and "outcode" in args.extract:
             pass
         else:
             sys.stdout.write("}")
-    
+
     else:
         sys.stdout.write(response.text)
-
