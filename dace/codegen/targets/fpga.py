@@ -1237,6 +1237,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise RuntimeError(
                     "Expected at least one tasklet or data node")
             module_name = "_".join(labels)
+
+            # TO BE CHECKED: remove from scalar parameters variable that is already in subgraph_parameters
+            for p in subgraph_parameters[subgraph]:
+                scalar_parameters.pop(p[1],None)
+
             self.generate_module(sdfg, state, module_name, subgraph,
                                  subgraph_parameters[subgraph],
                                  scalar_parameters, symbol_parameters,
@@ -1266,6 +1271,8 @@ class FPGACodeGen(TargetCodeGenerator):
             if not isinstance(arg, dace.data.Stream):
                 kernel_args_call_host.append(
                     arg.signature(False, name=argname))
+            # TO BE CHECKED: remove scalars that are already in kernel args
+            scalar_parameters.pop(argname,None)
 
         # Treat scalars as symbols, assuming they can be input only
         symbol_sigs = [

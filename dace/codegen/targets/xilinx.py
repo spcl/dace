@@ -264,6 +264,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 data, dataname, self._memory_widths[dataname], is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
+            # TO BE CHECKED: remove scalars that are already in kernel args
+            scalar_parameters.pop(dataname,None)
         kernel_args += [
             arg.signature(with_types=True, name=argname)
             for argname, arg in itertools.chain(scalar_parameters.items(),
@@ -308,6 +310,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_args = [
             p.signature(False, name=name) for is_output, name, p in parameters
         ]
+
+        #TO BE CHECKED: remove scalar parameters that are already present in kernel_args
+        for p in kernel_args:
+            scalar_parameters.pop(p[0], None)
+
         kernel_args += scalar_parameters.keys()
         kernel_args += symbol_parameters.keys()
 
@@ -598,10 +605,15 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     continue
                 seen.add(name)
                 kernel_args.append(arg.signature(with_types=True, name=name))
+            # remove scalars that are already in kernel args
+            scalar_parameters.pop(name, None)
+
+
         kernel_args += [
             v.signature(with_types=True, name=k) for k, v in itertools.chain(
                 scalar_parameters.items(), symbol_parameters.items())
         ]
+
 
         host_code_stream.write(
             """\
