@@ -600,10 +600,14 @@ class SDFGRenderer {
         this.mousepos = null; // Last position of the mouse pointer
         this.drag_start = null; // Null if the mouse/touch is not activated
         this.drag_second_start = null; // Null if two touch points are not activated
-        this.contextmenu = null;
         this.external_mouse_handler = on_mouse_event;
 
         this.init_elements();
+    }
+
+    destroy() {
+        this.canvas_manager.destroy();
+        this.container.removeChild(this.canvas);
     }
 
     // Initializes the DOM
@@ -616,6 +620,10 @@ class SDFGRenderer {
 
         // Translation/scaling management
         this.canvas_manager = new CanvasManager(this.ctx, this);
+
+        // Resize event for container
+        let observer = new MutationObserver((mutations) => { this.onresize(); this.draw_async(); });
+        observer.observe(this.container, { attributes: true });
 
         // Create the initial SDFG layout
         this.relayout();
@@ -650,15 +658,19 @@ class SDFGRenderer {
         }
     }
 
+    onresize() {
+        // Set canvas background and size
+        this.canvas.style.backgroundColor = "#ffffff";
+        this.canvas.style.width = '99%';
+        this.canvas.style.height = '99%';
+        this.canvas.width  = this.canvas.offsetWidth;
+        this.canvas.height = this.canvas.offsetHeight;
+    }
+
     // Re-layout graph and nested graphs
     relayout() {
         this.graph = relayout_sdfg(this.ctx, this.sdfg);
-
-        // Set canvas background and size according to SDFG size
-        this.canvas.style.backgroundColor = "#ffffff";
-        let bb = calculateBoundingBox(this.graph);
-        this.canvas.width = Math.min(Math.max(bb.width + 1000, this.canvas.width), 16384);
-        this.canvas.height = Math.min(Math.max(bb.height + 1000, this.canvas.height), 16384);
+        this.onresize();
 
         return this.graph;
     }
@@ -876,7 +888,7 @@ class SDFGRenderer {
                 }
 
 
-                if (ev.buttons & 1) {
+                if (this.drag_start && ev.buttons & 1) {
                     // Only accept the primary (~left) mouse button as dragging source
                     let movement = [
                         ev.movementX,
@@ -889,9 +901,9 @@ class SDFGRenderer {
                     dirty = true;
                     this.draw_async();
                     return;
+                } else {
+                    this.drag_start = null;
                 }
-
-                this.drag_start = ev;
             }
 
         } else if (evtype === 'wheel') {
@@ -982,9 +994,13 @@ class SDFGRenderer {
             } else {
                 elem = null;
             }
+
+            // If a scope exit node, use entry instead
+            if (elem && elem.type.endsWith("Exit"))
+                elem = sdfg.nodes[state_id].nodes[elem.scope_entry];
+
             // Toggle collapsed state
             if (elem && 'is_collapsed' in elem.attributes) {
-                // TODO: If exit node, collapse entry
                 elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
 
                 // Re-layout SDFG

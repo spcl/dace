@@ -14,8 +14,8 @@
     
 </head>
 <body>
-<div id="filepicker"><form><input type="file"><input type="submit"></form></div>
-<div id="contents"></div>
+<div id="filepicker"><form><input type="file"></form></div>
+<div id="contents" style="resize: both; width: 1024px; height: 768px; border: 1px solid; overflow: auto"></div>
 <script>
 var fr;
 var renderer = null;
@@ -30,6 +30,8 @@ $(document).ready(function(){
 
 function file_read_complete() {
     let sdfg = parse_sdfg(fr.result);
+    if (renderer)
+        renderer.destroy();
     renderer = new SDFGRenderer(sdfg, document.getElementById('contents'));
 }
 </script>
