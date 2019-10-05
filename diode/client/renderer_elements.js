@@ -141,7 +141,7 @@ class Edge extends SDFGElement {
         ctx.fillStyle = ctx.strokeStyle = style;
 
         // CR edges have dashed lines
-        if (this.data.attributes.wcr != null)
+        if (this.parent_id != null && this.data.attributes.wcr != null)
             ctx.setLineDash([2, 2]);
         else
             ctx.setLineDash([1, 0]);
