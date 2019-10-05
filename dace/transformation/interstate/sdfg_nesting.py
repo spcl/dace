@@ -117,7 +117,7 @@ class NestSDFG(pattern_matching.Transformation):
         for oldarrname, newarrname in transients.items():
             nested_sdfg.arrays.pop(oldarrname)
             nested_sdfg.arrays[newarrname].transient = False
-            outer_sdfg.arrays[oldarrname].transient = False
+            outer_sdfg.arrays[oldarrname].transient = True  # TO BE CHECKED: stop promoting?
         outputs.update(transients)
 
         for state in nested_sdfg.nodes():
