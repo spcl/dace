@@ -929,13 +929,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Render properties asynchronously
         setTimeout(() => {
-            let sdfg = renderer.sdfg;
             // Get and render the properties from now on
-            let sdfg_name = sdfg.attributes.name;
+            console.log("sdfg", foreground_elem.sdfg);
 
-            console.log("sdfg", sdfg);
-
-            let state = sdfg.nodes[state_id];
             let render_props = n => {
                 let attr = n.attributes;
 
@@ -962,29 +958,25 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 let propobj = {
                     node_id: nid,
                     state_id: state_id,
-                    sdfg_name: sdfg_name,
+                    sdfg_name: foreground_elem.sdfg.attributes.name,
+                    sdfg: foreground_elem.sdfg,
                     data: () => ({props: proplist})
                 };
 
                 this.renderProperties(propobj);
             };
-            clicked_interstate_edges.forEach(edge => {
-                render_props(edge.obj.data);
-            });
-            if (state_only) {
-                render_props(state);
-                return;
-            }
 
-            clicked_nodes.forEach(node => {
-                let n = state.nodes[node.id];
+            if (foreground_elem instanceof Edge)
+                render_props(foreground_elem.data);
+            else if (foreground_elem instanceof Node) {
+                let n = foreground_elem.data.node;
+                let state = foreground_elem.sdfg.nodes[foreground_elem.parent_id];
                 // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
                 if (n.type.endsWith("Entry")) {
                     // Find the matching exit node
                     let exit_node = find_exit_for_entry(state.nodes, n);
-                    // Highlight both entry and exit nodes
-                    clicked_nodes.push({sdfg: sdfg_name, state: state.id, node: exit_node.id});
-
+                    // TODO: Highlight both entry and exit nodes
+                    
                     let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
                     render_props(tmp);
 
@@ -993,27 +985,20 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     // Find the matching entry node and continue with that
                     let entry_id = parseInt(n.scope_entry);
                     let entry_node = state.nodes[entry_id];
-                    // Highlight both entry and exit nodes
-                    clicked_nodes.push({sdfg: sdfg_name, state: state_id, node: entry_id});
+                    // TODO: Highlight both entry and exit nodes
 
                     let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
                     render_props(tmp);
-                    return;
-
                 } else if (n.type === "AccessNode") {
                     // Find matching data descriptor and show that as well
-                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
+                    let ndesc = foreground_elem.sdfg.attributes._arrays[n.attributes.data];
                     let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
                     render_props(tmp);
                     return;
-                }
-
-                render_props(n);
-            });
-
-            clicked_edges.forEach(edge => {
-                render_props(state.edges[edge.id].attributes.data);
-            });
+                } else
+                    render_props(n);
+            } else if (foreground_elem instanceof State)
+                render_props(foreground_elem.data.state);
         }, 0);
     }
 }
@@ -4910,7 +4895,7 @@ class DIODE {
             elem = $(elem);
             let cb = d => {
                 // Only show data for the inner SDFG (it's possible to input an arbitrary string, still)
-                let sdfg = d.sdfg_object[node.sdfg_name];
+                let sdfg = node.sdfg;
                 let arrays = sdfg.attributes._arrays;
                 let array_names = Object.keys(arrays);
 
