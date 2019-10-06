@@ -763,14 +763,17 @@ class SDFGRenderer {
     draw(dt) {
         let ctx = this.ctx;
         let g = this.graph;
-        let curx = this.canvas_manager.translation.x;
-        let cury = this.canvas_manager.translation.y;
-        let br = this.container.getBoundingClientRect();
-        let curw = br.width, curh = br.height;
+        let curx = this.canvas_manager.mapPixelToCoordsX(0);
+        let cury = this.canvas_manager.mapPixelToCoordsY(0);
+        let endx = this.canvas_manager.mapPixelToCoordsX(this.canvas.width);
+        let endy = this.canvas_manager.mapPixelToCoordsY(this.canvas.height);
+        let curw = endx - curx, curh = endy - cury;
+
+        this.visible_rect = {x: curx, y: cury, w: curw, h: curh};
 
         this.on_pre_draw();
 
-        draw_sdfg(this, ctx, g, {x: curx, y: cury, w: curw, h: curh}, this.mousepos);
+        draw_sdfg(this, ctx, g, this.mousepos);
 
         this.on_post_draw();
     }

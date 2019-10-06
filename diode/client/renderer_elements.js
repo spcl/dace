@@ -347,7 +347,7 @@ class NestedSDFG extends Node {
         super.draw(renderer, ctx, mousepos);
 
         // Draw nested graph
-        draw_sdfg(renderer, ctx, this.data.graph, null, mousepos);
+        draw_sdfg(renderer, ctx, this.data.graph, mousepos);
     }
 
     set_layout() { 
@@ -378,17 +378,26 @@ class NestedSDFG extends Node {
 //////////////////////////////////////////////////////
 
 // Draw an entire SDFG
-function draw_sdfg(renderer, ctx, sdfg_dagre, visible_rect, mousepos) {
+function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
     // Render state machine
     let g = sdfg_dagre;
     g.nodes().forEach( v => { g.node(v).draw(renderer, ctx, mousepos); });
     g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
 
-    // TODO: Render each visible state's contents
+    visible_rect = renderer.visible_rect;
+
+    // Render each visible state's contents
     g.nodes().forEach( v => {
         let node = g.node(v);
+
+        // Skip invisible states
+        if (!node.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+            return;
+
         let ng = node.data.graph;
         let layout = node.data.state.attributes.layout;
+
+        
         
         if (!node.data.state.attributes.is_collapsed/* && isBBoverlapped(curx, cury, curw, curh, layout)*/)
         {
