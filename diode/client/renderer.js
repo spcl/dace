@@ -14,6 +14,10 @@ class CanvasManager {
         this.renderer = renderer;
         this.indices = [];
 
+        // Animation-related fields
+        this.animating = false;
+        this.animate_target = null;
+
         this.request_scale = false;
         this.scale_factor = {x: 1, y: 1};
 
@@ -28,6 +32,10 @@ class CanvasManager {
         this.user_transform = this._svg.createSVGMatrix();
 
         this.addCtxTransformTracking();
+    }
+
+    stopAnimation() {
+        this.animating = false;
     }
 
     svgPoint(x, y) {
@@ -130,7 +138,7 @@ class CanvasManager {
     }
 
     scale(diff, x=0, y=0) {
-
+        this.stopAnimation();
         if(this.request_scale || Math.abs(diff) < 0.0001 || this.contention > 0) {
             //console.log("Blocking potential race");
             return;
@@ -157,6 +165,7 @@ class CanvasManager {
 
     // Sets the view to the square around the input rectangle
     set_view(rect) {
+        this.stopAnimation();
         this.user_transform = this._svg.createSVGMatrix();
         let canvas_w = this.canvas.width;
         let canvas_h = this.canvas.height;
@@ -194,6 +203,7 @@ class CanvasManager {
     }
 
     translate(x, y) {
+        this.stopAnimation();
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
@@ -236,26 +246,22 @@ class CanvasManager {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.restore();
 
-        let mx = 0;
-        let my = 0;
         if(this.request_scale && this.contention == 1) {
-
-            mx = this.mapPixelToCoordsX(this.scale_origin.x);
-            my = this.mapPixelToCoordsY(this.scale_origin.y);
-
             // Reset the translation
             this.applyUserTransform();
             this.request_scale = false;
         }
         else
-        {
-            mx = this.mapPixelToCoordsX(this.scale_origin.x);
-            my = this.mapPixelToCoordsY(this.scale_origin.y);
-        }
-        this.applyUserTransform();
+            this.applyUserTransform();
 
         this.renderer.draw(dt);
         this.contention -= 1;
+
+        if (this.animating) {
+            if (!this.animate_target)
+                this.animating = false;
+            this.draw_async();
+        }
     }
 
     draw_async() {
@@ -1071,7 +1077,7 @@ class SDFGRenderer {
 
         if (this.external_mouse_handler)
             dirty |= this.external_mouse_handler(evtype, event, {x: comp_x_func(event), y: comp_y_func(event)}, elements,
-                                                 this.sdfg, foreground_elem);
+                                                 this, foreground_elem);
 
         if (dirty)
             this.draw_async();

@@ -765,14 +765,14 @@ class DIODE_Context_SDFG extends DIODE_Context {
         });
 
         let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
-                                    (et,e,c,el,s) => this.on_renderer_mouse_event(et, e, c, el, s));
+                                    (et,e,c,el,r,fge) => this.on_renderer_mouse_event(et, e, c, el, r, fge));
         this.renderer_panes.push(sdfv);
 
         // Display data descriptors by default (in parallel to the creation of the renderer)
         this.render_free_variables(true);
     }
 
-    on_renderer_mouse_event(evtype, event, canvas_coords, elements, sdfg, foreground_elem) {
+    on_renderer_mouse_event(evtype, event, canvas_coords, elements, renderer, foreground_elem) {
         let state_only = false;
         let clicked_states = elements.states;
         let clicked_nodes = elements.nodes;
@@ -828,9 +828,38 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if (evtype === "contextmenu") {
             // Context menu was requested
             let spos = {x: event.x, y: event.y};
-            let sdfg_name = sdfg.attributes.name;
+            let sdfg_name = renderer.sdfg.attributes.name;
 
             let cmenu = new ContextMenu();
+
+            ///////////////////////////////////////////////////////////
+            // Collapse/Expand
+            let sdfg = (foreground_elem ? foreground_elem.sdfg : null);
+            let sdfg_elem = null;
+            if (foreground_elem instanceof State)
+                sdfg_elem = foreground_elem.data.state;
+            else if (foreground_elem instanceof Node) {
+                sdfg_elem = foreground_elem.data.node;
+
+                // If a scope exit node, use entry instead
+                if (sdfg_elem.type.endsWith("Exit"))
+                    sdfg_elem = sdfg.nodes[foreground_elem.parent_id].nodes[sdfg_elem.scope_entry];
+            } else
+                sdfg_elem = null;
+
+            // Toggle collapsed state
+            if (sdfg_elem && 'is_collapsed' in sdfg_elem.attributes) {
+                cmenu.addOption((sdfg_elem.attributes.is_collapsed) ? 'Expand' : 'Collapse',
+                x => {
+                    sdfg_elem.attributes.is_collapsed = !sdfg_elem.attributes.is_collapsed;
+                    this.renderer_panes[0].relayout();
+                    this.renderer_panes[0].draw_async();
+                });
+            }
+            ///////////////////////////////////////////////////////////
+
+
+
             cmenu.addOption("Show transformations", x => {
                 console.log("'Show transformations' was clicked");
 
@@ -900,6 +929,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Render properties asynchronously
         setTimeout(() => {
+            let sdfg = renderer.sdfg;
             // Get and render the properties from now on
             let sdfg_name = sdfg.attributes.name;
 
