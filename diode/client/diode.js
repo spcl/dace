@@ -1,10 +1,8 @@
 import {REST_request, FormBuilder, setup_drag_n_drop} from "./main.js"
-import * as renderer from "./renderer_dir/renderer_main.js"
 import { Appearance } from "./diode_appearance.js"
-import { SDFG_Parser, SDFG_State_Parser, SDFG_Node_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
+import { SDFG_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 import * as Roofline from "./renderer_dir/Roofline/main.js"
-
 
 class DIODE_Settings {
     constructor(denormalized = {}) {
@@ -190,7 +188,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this._message_handler = x => alert(x);
 
-        this.initialized_sdfgs = [];
+        this.renderer_panes = [];
 
         this._analysis_values = {};
 
@@ -236,7 +234,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-new-sdfg'), (msg) => {
 
-            if(typeof(msg) == 'string') msg = JSON.parse(msg);
+            if(typeof(msg) == 'string') msg = parse_sdfg(msg);
             if(msg.sdfg_name === this.getState()['sdfg_name']) {
                 // Ok
             }
@@ -246,7 +244,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 return;
             }
             setTimeout(() => eh.emit(this.project().eventString('new-sdfg'), 'ok'), 1);
-            this.render_sdfg(msg, true);
+            this.create_renderer_pane(msg, true);
         });
 
         // #TODO: When multiple sdfgs are present, the event name
@@ -306,7 +304,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 forSection: x[5],
                 data: JSON.parse(x[6]),
             }));
-            for(let x of this.initialized_sdfgs) {
+            for(let x of this.renderer_panes) {
                 x.drawAllPerfInfo();
             }
         });
@@ -481,16 +479,32 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     'sdfg-id': split[0].slice(1), // Cut off the leading 's'. #TODO: Fix the misnomer sdfg-id => state-id
                     'node-id': split[1]
                 };
-                this._message_handler(modmsg);
+                //this._message_handler(modmsg);
             }
         }
         else {
             // Default behavior is passing through (must be an object, not JSON-string)
-            this._message_handler(msg);
+            //this._message_handler(msg);
         }
     }
 
-    render_free_variables() {
+    // Returns a goldenlayout component if exists, or null if doesn't
+    has_component(comp_name, parent=null) {
+        // If parent component not provided, use root window
+        if (!parent)
+            parent = this.diode.goldenlayout.root;
+        if ('componentName' in parent && parent.componentName === comp_name)
+            return parent;
+        if ('contentItems' in parent) {
+            for (let ci of parent.contentItems) {
+                let result = this.has_component(comp_name, ci);
+                if (result) return result;
+            }
+        }
+        return null;
+    }
+
+    render_free_variables(force_open) {
         let sdfg_dat = this.getSDFGDataFromState();
         if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
         this.diode.replaceOrCreate(['render-free-vars'], {
@@ -498,6 +512,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
             calling_context: this.created
         },
         () => {
+            if (this.has_component('PropWinComponent'))
+                return;
+
             console.log("Calling recreation function");
             let config = {
                 type: 'component',
@@ -507,7 +524,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             };
 
             this.diode.addContentItem(config);
-            setTimeout(() => this.render_free_variables(), 1);
+            setTimeout(() => this.render_free_variables(force_open), 1);
         });
     }
 
@@ -551,309 +568,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
-    }
-
-    find_exit_for_entry(nodes, entry_node) {
-        for(let n of nodes) {
-            if(n.type.endsWith("Exit") && parseInt(n.scope_entry) == entry_node.id) {
-                return n;
-            }
-        }
-        console.warn("Did not find corresponding exit");
-        return null;
-    }
-
-    sdfg_element_selected(msg) {
-        let omsg = JSON.parse(msg);
-        if (omsg.msg_type.endsWith('click')) {
-            // ok
-        } else if (omsg.msg_type === 'contextmenu') {
-            // ok
-        } else if (omsg.msg_type === 'hover') {
-            // ok
-        } else {
-            console.log("Unexpected message type '" + omsg.msg_type + "'");
-            return;
-        }
-        let clicked_elems = omsg.clicked_elements;
-        let clicked_states = clicked_elems.filter(x => x.type === 'SDFGState');
-        let clicked_nodes = clicked_elems.filter(x => x.type !== 'SDFGState' && !x.type.endsWith("Edge"));
-        let clicked_edges = clicked_elems.filter(x => x.type === "MultiConnectorEdge");
-        let clicked_interstate_edges = clicked_elems.filter(x => x.type === "Edge");
-
-        let state_id = null;
-        let node_id = null;
-        if (clicked_states.length > 1) {
-            alert("Cannot determine clicked state!");
-            return;
-        }
-        if (clicked_nodes.length > 1) {
-            console.warn("Multiple nodes cannot be selected");
-            //#TODO: Arbitrate this - for now, we select the element with the lowest id
-        }
-
-        let state_only = false;
-
-        // Check if anything was clicked at all
-        if (clicked_states.length == 0 && clicked_interstate_edges.length == 0 && omsg.msg_type !== 'hover') {
-            // Nothing was selected
-            let sstate = this.initialized_sdfgs[0];
-            sstate.clearHighlights();
-            this.render_free_variables();
-            return;
-        }
-        if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
-            // A state was selected
-            if (clicked_states.length > 0)
-                state_only = true;
-        }
-
-        if (clicked_states.length > 0)
-            state_id = clicked_states[0].id;
-        if (clicked_interstate_edges.length > 0)
-            node_id = clicked_interstate_edges[0].id;
-
-        if (clicked_nodes.length > 0)
-            node_id = clicked_nodes[0].id;
-        else if (clicked_edges.length > 0)
-            node_id = clicked_edges[0].id;
-
-        if (omsg.msg_type === "hover") {
-            let sdfg = this.initialized_sdfgs[0].sdfg;
-
-            // Position for tooltip
-            let pos = omsg.lpos;
-
-            sdfg.mousepos = pos;
-
-            if (state_only) {
-                sdfg.hovered = {'state': [state_id, pos]};
-            } else if (clicked_nodes.length > 0)
-                sdfg.hovered = {'node': [state_id, node_id, pos]};
-            else if (clicked_edges.length > 0) {
-                let edge_id = clicked_edges[0].true_id;
-                sdfg.hovered = {'edge': [state_id, edge_id, pos]};
-            } else if (clicked_interstate_edges.length > 0) {
-                let isedge_id = clicked_interstate_edges[0].true_id;
-                sdfg.hovered = {'interstate_edge': [isedge_id, pos]};
-            } else {
-                sdfg.hovered = {};
-            }
-            return;
-        }
-
-        if (omsg.msg_type === "dblclick") {
-            let sdfg = this.initialized_sdfgs[0].sdfg;
-            let elem;
-            if (state_only) {
-                elem = sdfg.nodes[state_id];
-            } else if (clicked_nodes.length > 0) {
-                elem = sdfg.nodes[state_id].nodes[node_id];
-            } else {
-                return false;
-            }
-            // Toggle collapsed state
-            if ('is_collapsed' in elem.attributes) {
-                elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
-
-                // Re-layout SDFG
-                this.initialized_sdfgs[0].setSDFG(this.initialized_sdfgs[0].sdfg);
-                this.initialized_sdfgs[0].init_SDFG();
-            }
-            return;
-        }
-
-        if (omsg.msg_type == "contextmenu") {
-            // Context menu was requested
-            let spos = omsg.spos;
-            let lpos = omsg.lpos;
-
-            let cmenu = new ContextMenu();
-            cmenu.addOption("Show transformations", x => {
-                console.log("'Show transformations' was clicked");
-
-                this.project().request(['highlight-transformations-' + this.getState()['sdfg_name']], x => {
-
-                }, {
-                    params: {
-                        state_id: state_id,
-                        node_id: node_id
-                    }
-                });
-            });
-            cmenu.addOption("Apply transformation \u25B6", x => {
-                console.log("'Apply transformation' was clicked");
-
-                // Find available transformations for this node
-                this.project().request(['get-transformations-' + this.getState()['sdfg_name']], x => {
-                    console.log("get-transformations response: ", x);
-
-                    let tmp = Object.values(x)[0];
-
-                    // Create a sub-menu at the correct position
-
-
-                    let submenu = new ContextMenu();
-
-                    for (let y of tmp) {
-                        submenu.addOption(y.opt_name, x => {
-                            this.project().request(['apply-transformation-' + this.getState()['sdfg_name']], x => {
-                                },
-                                {
-                                    params: y.id_name
-                                });
-                        });
-                    }
-
-                    submenu.show(spos.x + cmenu.width(), spos.y);
-                }, {
-                    params: {
-                        state_id: state_id,
-                        node_id: node_id
-                    }
-                });
-
-                // Don't close the current context menu from this event
-                x.preventDefault();
-                x.stopPropagation();
-            });
-            cmenu.show(spos.x, spos.y);
-
-            return;
-        }
-
-        if (omsg.msg_type !== "click")
-            return;
-
-        // Highlight selected items
-        let sstate = this.initialized_sdfgs[0];
-        sstate.clearHighlights();
-        if (state_only) {
-            clicked_states.forEach(n => {
-                sstate.addHighlight({'state-id': state_id});
-            });
-        } else {
-            clicked_nodes.forEach(n => {
-                sstate.addHighlight({'state-id': state_id, 'node-id': n.id});
-            });
-            clicked_edges.forEach(e => {
-                sstate.addHighlight({'state-id': state_id, 'edge-id': e.true_id});
-            });
-            clicked_interstate_edges.forEach(e => {
-                sstate.addHighlight({'state-id': state_id, 'isedge-id': e.true_id});
-            });
-        }
-
-        // Render properties asynchronously
-        setTimeout(() => {
-            // Get and render the properties from now on
-            let sdfg_data = this.getSDFGDataFromState();
-            let sdfg = sdfg_data.sdfg;
-            let sdfg_name = sdfg_data.sdfg_name;
-
-            console.log("sdfg", sdfg);
-
-            let states = sdfg.nodes;
-            let state = null;
-            for (let x of states) {
-                if (x.id == state_id) {
-                    state = x;
-                    break;
-                }
-            }
-            let render_props = n => {
-                let attr = n.attributes;
-
-                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
-
-                let proplist = [];
-                for (let k of akeys) {
-
-                    let value = attr[k];
-                    let meta = attr["_meta_" + k];
-                    if (meta == undefined) {
-                        continue;
-                    }
-
-                    let pdata = JSON.parse(JSON.stringify(meta));
-                    pdata.value = value;
-                    pdata.name = k;
-
-                    proplist.push(pdata);
-                }
-                let nid = parseInt(n.id);
-                if (isNaN(nid) || node_id == null) {
-                    nid = node_id
-                }
-                let propobj = {
-                    node_id: nid,
-                    state_id: state_id,
-                    sdfg_name: sdfg_name,
-                    data: () => ({props: proplist})
-                };
-
-                this.renderProperties(propobj);
-            };
-            if (clicked_interstate_edges.length > 0) {
-                let edges = sdfg.edges;
-                for (let e of edges) {
-                    if (e.src == node_id.src && e.dst == node_id.dst) {
-                        render_props(e.attributes.data);
-                        break;
-                    }
-                }
-                return;
-            }
-            if (state_only) {
-                render_props(state);
-                return;
-            }
-
-            let nodes = state.nodes;
-            for (let ni = 0; ni < nodes.length; ++ni) {
-                let n = nodes[ni];
-                if (n.id != node_id)
-                    continue;
-
-                // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
-                if (n.type.endsWith("Entry")) {
-                    // Find the matching exit node
-                    let exit_node = this.find_exit_for_entry(nodes, n);
-                    // Highlight both entry and exit nodes
-                    sstate.addHighlight({'state-id': state_id, 'node-id': exit_node.id});
-                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
-                    render_props(tmp);
-
-                    break;
-                } else if (n.type.endsWith("Exit")) {
-                    // Find the matching entry node and continue with that
-                    let entry_id = parseInt(n.scope_entry);
-                    let entry_node = nodes[entry_id];
-                    // Highlight both entry and exit nodes
-                    sstate.addHighlight({'state-id': state_id, 'node-id': entry_id});
-                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
-                    render_props(tmp);
-                    break;
-                } else if (n.type === "AccessNode") {
-                    // Find matching data descriptor and show that as well
-                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
-                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
-                    render_props(tmp);
-                    break;
-                }
-
-                render_props(n);
-                break;
-            }
-
-            let edges = state.edges;
-            for (let e of edges) {
-                if (e.src == node_id.src && e.dst == node_id.dst) {
-                    render_props(e.attributes.data);
-                    break;
-                }
-            }
-        }, 0);
     }
 
     getSDFGPropertiesFromState() {
@@ -993,7 +707,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Special case: Entry nodes may contain properties of exit nodes
         if(name.startsWith("exit_")) {
-            let exit_node = this.find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
+            let exit_node = find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
             nref = this.getSDFGElementReference(exit_node.id, node.state_id);
             name = name.substr("exit_".length);
         }
@@ -1020,13 +734,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
 
-    render_sdfg(sdfg_data = undefined, update = false) {
+    create_renderer_pane(sdfg_data = undefined, update = false) {
         if(sdfg_data == undefined) {
             sdfg_data = this.getState()["sdfg_data"];
         }
         let tmp = sdfg_data;
         if((typeof tmp) === 'string') {
-            tmp = JSON.parse(sdfg_data);
+            tmp = parse_sdfg(sdfg_data);
+        } else {
+            tmp = {sdfg: sdfg_data};
         }
 
         {
@@ -1048,76 +764,228 @@ class DIODE_Context_SDFG extends DIODE_Context {
             "sdfg_data": tmp
         });
 
-        let _dbg_state = this.getState();
+        let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
+                                    (et,e,c,el,s) => this.on_renderer_mouse_event(et, e, c, el, s));
+        this.renderer_panes.push(sdfv);
 
-        console.assert(JSON.stringify(_dbg_state.sdfg_data) == JSON.stringify(tmp));
-
-
-        // The HTML5 Renderer originally has been written for a WebSocket interface
-        // Not all functionality will work as expected in this environment!
-
-        let create = () => {
-
-            for(let x of this.initialized_sdfgs) {
-                this.container.getElement()[0].removeChild(x.getCanvas());
-                x.destroy();
-            }
-            this.initialized_sdfgs = [];
-            let sdfg_state = renderer.create_local();
-            let cnvs = document.createElement('canvas');
-            this.container.getElement().append(cnvs);
-            sdfg_state.setCtx(cnvs.getContext("2d"));
-            let sdfg = null;
-            if(tmp.type == "SDFG") {
-                sdfg = tmp;
-            } else {
-                sdfg = tmp.sdfg;
-            }
-
-            // TODO: Remove
-            let transmitter = {
-                send: x => this.sdfg_element_selected(x)
-            };
-
-            sdfg_state.setSDFG(sdfg);
-            sdfg_state.init_SDFG();
-
-            // Link the new message handler
-            this._message_handler = msg => renderer.message_handler(msg, sdfg_state);
-
-            // Link new mouse handlers
-            sdfg_state.setMouseHandlers(transmitter, true);
-
-            // Enable dragging
-            sdfg_state.setDragHandler();
-
-            // Enable scroll-zooming
-            sdfg_state.setZoomHandler();
-
-            // Link the analysis provider from which to pull values
-            sdfg_state.setAnalysisProvider((x, y) => this.analysisProvider(x,y));
-
-            this.initialized_sdfgs.push(sdfg_state);
-        };
-
-        jQuery.when(
-            jQuery.getScript('renderer_dir/global_vars.js'),
-            jQuery.getScript('renderer_dir/dagre.js'),
-            jQuery.getScript('renderer_dir/Chart.bundle.min.js'),
-            $.Deferred(function( deferred ){
-                $( deferred.resolve );
-            })
-        ).done(function() {
-            create();
-        });
-
-        // Prepare to display the access nodes for this sdfg (this is parallel to the creation of the sdfg, ideally)
-        let state = new SDFG_Parser(tmp['type'] == 'SDFG' ? tmp : tmp.sdfg);
-        let access_nodes = state.getStates().map(x => x.getNodes()).map(x => x.filter(y => y.isNodeType("AccessNode"))).filter(x => x.length > 0);
-        console.log("Access nodes", access_nodes);
+        // Display data descriptors by default (in parallel to the creation of the renderer)
+        this.render_free_variables(true);
     }
 
+    on_renderer_mouse_event(evtype, event, canvas_coords, elements, sdfg) {
+        let state_only = false;
+        let clicked_states = elements.states;
+        let clicked_nodes = elements.nodes;
+        let clicked_edges = elements.edges;
+        let clicked_interstate_edges = elements.isedges;
+        let clicked_connectors = elements.connectors;
+        let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
+            clicked_interstate_edges.length + clicked_connectors.length;
 
+        // Clear context menu
+        if (evtype === 'click' || evtype === 'doubleclick' || evtype === 'mousedown' || evtype === 'contextmenu' ||
+                evtype === 'wheel') {
+            if (this.contextmenu) {
+                this.contextmenu.destroy();
+                this.contextmenu = null;
+            }
+        }
+
+        // Check if anything was clicked at all
+        if (total_elements == 0 && evtype === 'click') {
+            // Nothing was selected
+            this.render_free_variables(false);
+            return false;
+        }
+        if (total_elements == 0 && evtype === 'contextmenu') {
+            let cmenu = new ContextMenu();
+            cmenu.addOption("SDFG Properties", x => {
+                this.render_free_variables(true);
+            });
+            cmenu.show(event.x, event.y);
+            this.contextmenu = cmenu;
+            return false;
+        }
+
+        if ((clicked_nodes.length + clicked_edges.length + clicked_interstate_edges.length) === 0) {
+            // A state was selected
+            if (clicked_states.length > 0)
+                state_only = true;
+        }
+
+        let state_id = null, node_id = null;
+        if (clicked_states.length > 0)
+            state_id = clicked_states[0].id;
+        if (clicked_interstate_edges.length > 0)
+            node_id = clicked_interstate_edges[0].id;
+
+        if (clicked_nodes.length > 0)
+            node_id = clicked_nodes[0].id;
+        else if (clicked_edges.length > 0)
+            node_id = clicked_edges[0].id;
+
+
+        if (evtype === "contextmenu") {
+            // Context menu was requested
+            let spos = {x: event.x, y: event.y};
+            let sdfg_name = sdfg.attributes.name;
+
+            let cmenu = new ContextMenu();
+            cmenu.addOption("Show transformations", x => {
+                console.log("'Show transformations' was clicked");
+
+                this.project().request(['highlight-transformations-' + sdfg_name], x => {
+                }, {
+                    params: {
+                        state_id: state_id,
+                        node_id: node_id
+                    }
+                });
+            });
+            cmenu.addOption("Apply transformation \u25B6", x => {
+                console.log("'Apply transformation' was clicked");
+
+                // Find available transformations for this node
+                this.project().request(['get-transformations-' + sdfg_name], x => {
+                    console.log("get-transformations response: ", x);
+
+                    let tmp = Object.values(x)[0];
+
+                    // Create a sub-menu at the correct position
+
+
+                    let submenu = new ContextMenu();
+
+                    for (let y of tmp) {
+                        submenu.addOption(y.opt_name, x => {
+                            this.project().request(['apply-transformation-' + sdfg_name], x => {
+                                },
+                                {
+                                    params: y.id_name
+                                });
+                        });
+                    }
+
+                    submenu.show(spos.x + cmenu.width(), spos.y);
+                }, {
+                    params: {
+                        state_id: state_id,
+                        node_id: node_id
+                    }
+                });
+
+
+                // Don't close the current context menu from this event
+                x.preventDefault();
+                x.stopPropagation();
+            });
+            cmenu.addOption("Show Source Code", x => {
+                console.log("go to source code");
+            });
+            cmenu.addOption("Show Generated Code", x => {
+                console.log("go to generated code");
+            });
+            cmenu.addOption("Properties", x => {
+                console.log("Force-open property pane");
+            });
+
+            cmenu.show(spos.x, spos.y);
+            this.contextmenu = cmenu;
+
+            return false;
+        }
+
+        if (evtype !== "click")
+            return false;
+
+        // Render properties asynchronously
+        setTimeout(() => {
+            // Get and render the properties from now on
+            let sdfg_name = sdfg.attributes.name;
+
+            console.log("sdfg", sdfg);
+
+            let state = sdfg.nodes[state_id];
+            let render_props = n => {
+                let attr = n.attributes;
+
+                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
+
+                let proplist = [];
+                for (let k of akeys) {
+
+                    let value = attr[k];
+                    let meta = attr["_meta_" + k];
+                    if (meta == undefined) {
+                        continue;
+                    }
+
+                    let pdata = JSON.parse(JSON.stringify(meta));
+                    pdata.value = value;
+                    pdata.name = k;
+
+                    proplist.push(pdata);
+                }
+                let nid = parseInt(n.id);
+                if (!n || isNaN(nid))
+                    nid = null;
+                let propobj = {
+                    node_id: nid,
+                    state_id: state_id,
+                    sdfg_name: sdfg_name,
+                    data: () => ({props: proplist})
+                };
+
+                this.renderProperties(propobj);
+            };
+            clicked_interstate_edges.forEach(edge => {
+                render_props(edge.obj.data);
+            });
+            if (state_only) {
+                render_props(state);
+                return;
+            }
+
+            clicked_nodes.forEach(node => {
+                let n = state.nodes[node.id];
+                // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
+                if (n.type.endsWith("Entry")) {
+                    // Find the matching exit node
+                    let exit_node = find_exit_for_entry(state.nodes, n);
+                    // Highlight both entry and exit nodes
+                    clicked_nodes.push({sdfg: sdfg_name, state: state.id, node: exit_node.id});
+
+                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
+                    render_props(tmp);
+
+                    return;
+                } else if (n.type.endsWith("Exit")) {
+                    // Find the matching entry node and continue with that
+                    let entry_id = parseInt(n.scope_entry);
+                    let entry_node = state.nodes[entry_id];
+                    // Highlight both entry and exit nodes
+                    clicked_nodes.push({sdfg: sdfg_name, state: state_id, node: entry_id});
+
+                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
+                    render_props(tmp);
+                    return;
+
+                } else if (n.type === "AccessNode") {
+                    // Find matching data descriptor and show that as well
+                    let ndesc = sdfg.attributes._arrays[n.attributes.data];
+                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
+                    render_props(tmp);
+                    return;
+                }
+
+                render_props(n);
+            });
+
+            clicked_edges.forEach(edge => {
+                render_props(state.edges[edge.id].attributes.data);
+            });
+        }, 0);
+    }
 }
 
 
@@ -5603,7 +5471,7 @@ class DIODE {
     
     multiple_SDFGs_available(sdfgs) {
 
-        let sdfgs_obj = (typeof(sdfgs) == 'string') ? JSON.parse(sdfgs) : sdfgs;
+        let sdfgs_obj = (typeof(sdfgs) == 'string') ? parse_sdfg(sdfgs) : sdfgs;
 
         for(let x of Object.keys(sdfgs_obj.compounds)) {
             // New sdfg
@@ -5817,7 +5685,7 @@ class DIODE {
         REST_request("/dace/api/v" + version_string + "/compile/dace", post_params, (xhr) => {
             if (xhr.readyState === 4 && xhr.status === 200) {
 
-                let peek = JSON.parse(xhr.response);
+                let peek = parse_sdfg(xhr.response);
                 if(peek['error'] != undefined) {
                     // There was at least one error - handle all of them
                     this.handleErrors(calling_context, peek);
@@ -5826,7 +5694,7 @@ class DIODE {
                     // Data is no longer stale
                     this.removeStaleDataButton();
 
-                    let o = JSON.parse(xhr.response);
+                    let o = parse_sdfg(xhr.response);
                     this.multiple_SDFGs_available(xhr.response);
                     if(options.optpath_cb === undefined) {
                         this.OptGraphs_available(o['compounds']);
@@ -6100,6 +5968,7 @@ class DIODE {
         If the addressed element does not respond within a given threshold,
         a new element created.
     */
+    // TODO: Likely to cause race conditions and unnecessary open tabs!! Rewrite
     replaceOrCreate(replace_request, replace_params, recreate_func) {
 
         //#TODO: Find out if it is a bug that one cannot use clearTimeout(recreation_timeout) instead of clearTimeout(tid) when replaceOrCreate-Calls are nested
@@ -6189,93 +6058,6 @@ class DIODE {
     }
 }
 
-
-class ContextMenu {
-    /*
-        Implementation for a custom context menu
-    */
-    constructor(html_content = null) {
-
-        this._html_content = html_content;
-        this._click_close_handlers = [];
-
-        this._ = setTimeout(() => {
-            this._click_close_handlers = [
-                ['click', x => {
-                    this.destroy();
-                }],
-                ['contextmenu', x => {
-                    this.destroy();
-                }]
-                
-            ];
-
-            for(let x of this._click_close_handlers) {
-                window.addEventListener(...x);
-            }
-        }, 30);
-
-        this._options = [];
-    }
-
-    width() {
-        return this._cmenu_elem.offsetWidth;
-    }
-    
-    addOption(name, onselect, onhover=null) {
-        this._options.push({
-            name: name,
-            func: onselect,
-            onhover: onhover
-        });
-    }
-
-    destroy() {
-        // Clear everything
-
-        // Remove the context menu
-
-        document.body.removeChild(this._cmenu_elem);
-
-        for(let x of this._click_close_handlers) {
-            window.removeEventListener(...x);
-        }
-    }
-
-    show(x, y) {
-        /*
-            Shows the context menu originating at point (x,y)
-        */
-
-        let cmenu_div = document.createElement('div');
-        cmenu_div.id = "contextmenu";
-        $(cmenu_div).css('left', x + "px");
-        $(cmenu_div).css('top', y + "px");
-        cmenu_div.classList.add("context_menu");
-        
-
-        if(this._html_content == null) {
-            // Set default context menu
-            
-            for(let x of this._options) {
-
-                let elem = document.createElement('div');
-                elem.addEventListener('click', x.func);
-                elem.classList.add("context_menu_option");
-
-                elem.innerText = x.name;
-                cmenu_div.appendChild(elem);
-            }
-
-        }
-        else {
-            cmenu_div.innerHTML = this._html_content;
-        }
-
-        this._cmenu_elem = cmenu_div;
-        document.body.appendChild(cmenu_div);
-    }
-}
 
 export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODESettings,
     DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations,

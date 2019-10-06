@@ -165,8 +165,8 @@ class SDFGOptimizer(object):
 
             if SAVE_DOTS:
                 self.sdfg.draw_to_file(
-                        'after_%d_%s_b4lprop.dot' %
-                    (pattern_counter + 1, type(pattern_match).__name__))
+                    'after_%d_%s_b4lprop.dot' % (pattern_counter + 1,
+                                                 type(pattern_match).__name__))
 
             if not pattern_match.annotates_memlets():
                 labeling.propagate_labels_sdfg(self.sdfg)
@@ -175,8 +175,8 @@ class SDFGOptimizer(object):
                 pattern_counter += 1
                 if SAVE_DOTS:
                     self.sdfg.draw_to_file(
-                            'after_%d_%s.dot' % (pattern_counter,
-                                                 type(pattern_match).__name__))
+                        'after_%d_%s.dot' % (pattern_counter,
+                                             type(pattern_match).__name__))
                     if VISUALIZE:
                         time.sleep(0.7)
                         os.system(

@@ -81,8 +81,8 @@ func({args})
 
         tempdir = tempfile.mkdtemp()
         self.dace_tmpfile = os.path.join(tempdir, self.dace_filename)
-        fh = open(self.dace_tmpfile, "w")
-        fh.write(self.dace_code)
+        fh = open(self.dace_tmpfile, "wb")
+        fh.write(self.dace_code.encode('utf-8'))
         fh.close()
 
         # Create SDFG unless we already have one

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SDFG Viewer</title>
+    <script src="/external_lib/jquery.min.js"></script>
+    <script src="/renderer_dir/dagre.js"></script>
+
+    <script src="/renderer_dir/global_vars.js"></script>
+    <script src="/renderer_elements.js"></script>
+    <script src="/context_menu.js"></script>
+    <script src="/sdfg_utils.js"></script>
+    <script src="/renderer.js"></script>
+    <script type="module">
+        var sdfg_json = {{sdfg|safe}};
+        var renderer = new SDFGRenderer(sdfg_json, document.getElementById('contents'));
+    </script>
+</head>
+<body>
+<div id="contents" style="resize: both; width: 1024px; height: 768px; border: 1px solid; overflow: auto"></div>
+</body>
+</html>

@@ -596,7 +596,7 @@ function start_DIODE() {
         // Wrap the component in a context 
         let diode_context = new DIODE_Context_SDFG(diode, container, componentState);
                 
-        diode_context.render_sdfg(componentState["sdfg_data"]);
+        diode_context.create_renderer_pane(componentState["sdfg_data"]);
         diode_context.setupEvents(diode.getCurrentProject());
     });
     goldenlayout.registerComponent( 'TransformationHistoryComponent', function( container, componentState ){

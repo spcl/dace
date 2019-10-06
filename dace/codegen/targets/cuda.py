@@ -202,8 +202,8 @@ void __dace_exit_cuda({params}) {{
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),
-           nstreams=self._cuda_streams,
-           nevents=self._cuda_events)
+           nstreams=max(1, self._cuda_streams),
+           nevents=max(1, self._cuda_events))
 
         return [self._codeobject]
 
