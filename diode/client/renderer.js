@@ -130,7 +130,7 @@ class CanvasManager {
     scale(diff, x=0, y=0) {
 
         if(this.request_scale || Math.abs(diff) < 0.0001 || this.contention > 0) {
-            console.log("Blocking potential race");
+            //console.log("Blocking potential race");
             return;
         }
         this.contention++;
@@ -631,9 +631,11 @@ class SDFGRenderer {
         for (let evtype of ['mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchmove', 'touchend',
                             'wheel', 'click', 'dblclick', 'contextmenu']) {
             canvas.addEventListener(evtype, x => {
+                let cancelled = this.on_mouse_event(x, comp_x, comp_y, evtype);
+                if (cancelled)
+                    return;
                 x.stopPropagation();
                 x.preventDefault();
-                this.on_mouse_event(x, comp_x, comp_y, evtype)
             });
         }
     }
@@ -880,9 +882,11 @@ class SDFGRenderer {
                     // Mark for redraw
                     dirty = true;
                     this.draw_async();
-                    return;
+                    return false;
                 } else {
                     this.drag_start = null;
+                    if (ev.buttons & 1)
+                        return true; // Don't stop propagation
                 }
             }
 
@@ -898,7 +902,7 @@ class SDFGRenderer {
 
 
         if (!this.mousepos)
-            return;
+            return true;
 
         // Find elements under cursor
         let elements = this.elements_in_rect(this.mousepos.x, this.mousepos.y, 0, 0);
@@ -998,6 +1002,8 @@ class SDFGRenderer {
 
         if (dirty)
             this.draw_async();
+
+        return false;
     }
 }
 
