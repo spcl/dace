@@ -988,12 +988,18 @@ subgraph cluster_state_{state} {{
                         result.append(node)
         return result
 
-    def save(self, filename: str):
-        """ Save this SDFG to a file (uses Pickle as the default format).
+    def save(self, filename: str, use_pickle=True):
+        """ Save this SDFG to a file.
             @param filename: File name to save to.
+            @param use_pickle: Use Python pickle as the SDFG format (default:
+                               True).
         """
-        with open(filename, "wb") as fp:
-            symbolic.SympyAwarePickler(fp).dump(self)
+        if use_pickle:
+            with open(filename, "wb") as fp:
+                symbolic.SympyAwarePickler(fp).dump(self)
+        else:
+            with open(filename, "w") as fp:
+                fp.write(self.toJSON())
 
     @staticmethod
     def from_file(filename: str):
@@ -1014,23 +1020,6 @@ subgraph cluster_state_{state} {{
                 raise TypeError("Loaded file is not an SDFG (loaded "
                                 "type: %s)" % type(sdfg).__name__)
             return sdfg
-
-    def dumps(self):
-        """ Returns a serialized representation of this SDFG (uses Pickle as the default format)
-        """
-        return pickle.dumps(self)
-
-    @staticmethod
-    def from_bytes(mem: bytes):
-        """ Constructs an SDFG from the serial representation in `bytes`
-            @param mem: bytes object to load SDFG from.
-            @return: An SDFG
-        """
-        sdfg = pickle.loads(mem)
-        if not isinstance(sdfg, SDFG):
-            raise TypeError('Loaded file is not an SDFG (loaded '
-                            'type: %s)' % type(sdfg).__name__)
-        return sdfg
 
     # Dynamic SDFG creation API
     ##############################

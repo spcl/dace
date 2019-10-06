@@ -411,7 +411,8 @@ function offset_sdfg(sdfg, sdfg_graph, offset) {
         let g = sdfg_graph.node(id);
         g.x += offset.x;
         g.y += offset.y;
-        offset_state(state, g, offset);
+        if (!state.attributes.is_collapsed)
+            offset_state(state, g, offset);
     });
     sdfg.edges.forEach((e, id) => {
         let edge = sdfg_graph.edge(e.src, e.dst, eid);

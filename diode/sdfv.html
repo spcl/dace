@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>SDFG Viewer</title>
+    <link rel="stylesheet" type="text/css" href="./client/external_lib/material/material-icons.css">
     <script src="./client/renderer_dir/dagre.js"></script>
     <script src="./client/external_lib/jquery.min.js"></script>
     
@@ -15,12 +16,14 @@
 </head>
 <body>
 <div id="filepicker"><form><input type="file"></form></div>
-<div id="contents" style="resize: both; width: 1024px; height: 768px; border: 1px solid; overflow: auto"></div>
+<div id="contents" style="position: relative; resize: both; width: 1024px; height: 768px; border: 1px solid; overflow: auto"></div>
 <script>
 var fr;
 var renderer = null;
 $(document).ready(function(){
     $('input[type="file"]').change(function(e){
+        if (e.target.files.length < 1)
+            return;
         var file = e.target.files[0];
         fr = new FileReader();
         fr.onload = file_read_complete;

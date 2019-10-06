@@ -772,7 +772,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.render_free_variables(true);
     }
 
-    on_renderer_mouse_event(evtype, event, canvas_coords, elements, sdfg) {
+    on_renderer_mouse_event(evtype, event, canvas_coords, elements, sdfg, foreground_elem) {
         let state_only = false;
         let clicked_states = elements.states;
         let clicked_nodes = elements.nodes;

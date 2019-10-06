@@ -5,9 +5,11 @@ class CanvasManager {
     static counter() {
         return _canvas_manager_counter++;
     }
-    constructor(ctx, renderer) {
+    constructor(ctx, renderer, canvas) {
         this.ctx = ctx;
+        this.canvas = canvas;
         this.anim_id = null;
+        this.prev_time = null;
         this.drawables = [];
         this.renderer = renderer;
         this.indices = [];
@@ -153,6 +155,44 @@ class CanvasManager {
         this.contention--;
     }
 
+    // Sets the view to the square around the input rectangle
+    set_view(rect) {
+        this.user_transform = this._svg.createSVGMatrix();
+        let canvas_w = this.canvas.width;
+        let canvas_h = this.canvas.height;
+        if (canvas_w == 0 || canvas_h == 0)
+            return;
+
+        let scale = 1, tx = 0, ty = 0;
+        if (rect.width > rect.height) {
+            scale = canvas_w / rect.width;
+            tx = rect.x;
+            ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+
+            // Now other dimension does not fit, scale it as well
+            if (rect.height * scale > canvas_h) {
+                scale = canvas_h / rect.height;
+                tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
+                ty = rect.y;
+            }
+        } else {
+            scale = canvas_h / rect.height;
+            tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
+            ty = rect.y;
+        
+            // Now other dimension does not fit, scale it as well
+            if (rect.width * scale > canvas_w) {
+                scale = canvas_w / rect.width;
+                tx = rect.x;
+                ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+            }
+        }
+
+        // Uniform scaling
+        this.user_transform = this.user_transform.scale(scale, scale, 1, 0, 0, 0);
+        this.user_transform = this.user_transform.translate(tx, ty);
+    }
+
     translate(x, y) {
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
@@ -176,9 +216,15 @@ class CanvasManager {
     }
 
 
-    draw() {
+    draw(now = null) {
         if(this._destroying)
             return;
+
+        let dt = now - this.prev_time;
+        if (!now || !this.prev_time)
+            dt = null;
+        if (now)
+            this.prev_time = now;
 
         if(this.contention > 0) return;
         this.contention += 1;
@@ -208,12 +254,12 @@ class CanvasManager {
         }
         this.applyUserTransform();
 
-        this.renderer.draw();
+        this.renderer.draw(dt);
         this.contention -= 1;
     }
 
     draw_async() {
-        this.anim_id = window.requestAnimationFrame(() => this.draw());
+        this.anim_id = window.requestAnimationFrame((now) => this.draw(now));
     }
 }
 
@@ -237,6 +283,24 @@ function calculateBoundingBox(g) {
     });
 
     return bb;
+}
+
+function boundingBox(elements) {
+    let bb = {x1: null, y1: null, x2: null, y2: null};
+
+    elements.forEach(function (v) {
+        let topleft = v.topleft();
+        if (bb.x1 === null || topleft.x < bb.x1) bb.x1 = topleft.x;
+        if (bb.y1 === null || topleft.y < bb.y1) bb.y1 = topleft.y;
+        
+        let x2 = v.x + v.width / 2.0;
+        let y2 = v.y + v.height / 2.0;
+
+        if (bb.x2 === null || x2 > bb.x2) bb.x2 = x2;
+        if (bb.y2 === null || y2 > bb.y2) bb.y2 = y2;
+    });
+
+    return {x: bb.x1, y: bb.y1, width: bb.x2 - bb.x1, height: bb.y2 - bb.y1};
 }
 
 function calculateEdgeBoundingBox(edge) {
@@ -411,7 +475,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Set connectors prior to computing node size
         node.attributes.layout.in_connectors = node.attributes.in_connectors;
-        if ('is_collapsed' in node.attributes && node.attributes.is_collapsed)
+        if ('is_collapsed' in node.attributes && node.attributes.is_collapsed && node.type !== "NestedSDFG")
             node.attributes.layout.out_connectors = find_exit_for_entry(sdfg_state.nodes, node).attributes.out_connectors;
         else
             node.attributes.layout.out_connectors = node.attributes.out_connectors;
@@ -571,6 +635,7 @@ class SDFGRenderer {
         this.container = container;
         this.ctx = null;
         this.canvas = null;
+        this.toolbar = null;
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
@@ -588,6 +653,7 @@ class SDFGRenderer {
     destroy() {
         this.canvas_manager.destroy();
         this.container.removeChild(this.canvas);
+        this.container.removeChild(this.toolbar);
     }
 
     // Initializes the DOM
@@ -595,11 +661,26 @@ class SDFGRenderer {
 
         this.canvas = document.createElement('canvas');
         this.container.append(this.canvas);
-        // TODO: Add buttons
+
+        // Add buttons
+        this.toolbar = document.createElement('div');
+        this.toolbar.style = 'position:absolute; top:10px; left: 10px;';
+
+        // Zoom to fit
+        let d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
+        d.style = 'padding-bottom: 0px;';
+        d.onclick = () => this.zoom_to_view();
+        d.title = 'Zoom to fit SDFG';
+        this.toolbar.appendChild(d);
+
+        this.container.append(this.toolbar);
+        // End of buttons
+
         this.ctx = this.canvas.getContext("2d");
 
         // Translation/scaling management
-        this.canvas_manager = new CanvasManager(this.ctx, this);
+        this.canvas_manager = new CanvasManager(this.ctx, this, this.canvas);
 
         // Resize event for container
         let observer = new MutationObserver((mutations) => { this.onresize(); this.draw_async(); });
@@ -610,6 +691,9 @@ class SDFGRenderer {
 
         // Set mouse event handlers
         this.set_mouse_handlers();
+
+        // Set initial zoom
+        this.zoom_to_view();
 
         // Queue first render
         this.draw_async();
@@ -657,8 +741,20 @@ class SDFGRenderer {
         return this.graph;
     }
 
+    // Change translation and scale such that the chosen elements
+    // (or entire graph if null) is in view
+    zoom_to_view(elements=null) {
+        if (!elements)
+            elements = this.graph.nodes().map(x => this.graph.node(x));
+        
+        let bb = boundingBox(elements);
+        this.canvas_manager.set_view(bb);
+
+        this.draw_async();
+    }
+
     // Render SDFG
-    draw() {
+    draw(dt) {
         let ctx = this.ctx;
         let g = this.graph;
         let curx = this.canvas_manager.translation.x;
@@ -913,7 +1009,20 @@ class SDFGRenderer {
         let clicked_connectors = elements.connectors;
         let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
             clicked_interstate_edges.length + clicked_connectors.length;
+        let foreground_elem = null, fg_surface = -1;
 
+        // Find the top-most element under mouse cursor (the one with the smallest dimensions)
+        for (let category of [clicked_states, clicked_interstate_edges, 
+                              clicked_nodes, clicked_edges]) {
+            for (let i = 0; i < category.length; i++) {
+                let s = category[i].obj.width * category[i].obj.height;
+                if (fg_surface < 0 || s < fg_surface) {
+                        fg_surface = s;
+                        foreground_elem = category[i].obj;
+                }
+            }
+        }
+        
         // Change mouse cursor accordingly
         if (total_elements > 0)
             document.body.style.cursor = 'pointer';
@@ -931,64 +1040,28 @@ class SDFGRenderer {
                 obj.stroke_color = null;
         });
 
-
-        let state_id = null;
-        let node_id = null;
-        if (clicked_states.length > 1) {
-            // Use the state with the smallest surface
-            let surf = clicked_states[0].width * clicked_states[0].height;
-            let state = clicked_states[0];
-            for (let i = 1; i < clicked_states.length; i++) {
-                let s = clicked_states[i].width * clicked_states[i].height;
-                if (s < surf) {
-                    surf = s;
-                    state = clicked_states[i];
-                }
-            }
-            clicked_states = [state];
-        }
-        if (clicked_nodes.length > 1) {
-            // Use the node with the smallest surface
-            let surf = clicked_nodes[0].width * clicked_nodes[0].height;
-            let node = clicked_nodes[0];
-            for (let i = 1; i < clicked_nodes.length; i++) {
-                let s = clicked_nodes[i].width * clicked_nodes[i].height;
-                if (s < surf) {
-                    surf = s;
-                    node = clicked_nodes[i];
-                }
-            }
-            clicked_nodes = [node];
-        }
-
         if (evtype === "mousemove") {
             // TODO: Draw only if elements have changed
             dirty = true;
         }
 
         if (evtype === "dblclick") {
-            let sdfg = this.sdfg;
-            let elem;
-            if (clicked_states.length > 0)
-                state_id = clicked_states[0].id;
-            if (clicked_nodes.length > 0)
-                node_id = clicked_nodes[0].id;
+            let sdfg = (foreground_elem ? foreground_elem.sdfg : null);
+            let sdfg_elem = null;
+            if (foreground_elem instanceof State)
+                sdfg_elem = foreground_elem.data.state;
+            else if (foreground_elem instanceof Node) {
+                sdfg_elem = foreground_elem.data.node;
 
-            if (clicked_states.length > 0 && clicked_nodes.length == 0) {
-                elem = sdfg.nodes[state_id];
-            } else if (clicked_nodes.length > 0) {
-                elem = sdfg.nodes[state_id].nodes[node_id];
-            } else {
-                elem = null;
-            }
-
-            // If a scope exit node, use entry instead
-            if (elem && elem.type.endsWith("Exit"))
-                elem = sdfg.nodes[state_id].nodes[elem.scope_entry];
+                // If a scope exit node, use entry instead
+                if (sdfg_elem.type.endsWith("Exit"))
+                    sdfg_elem = sdfg.nodes[foreground_elem.parent_id].nodes[sdfg_elem.scope_entry];
+            } else
+                sdfg_elem = null;
 
             // Toggle collapsed state
-            if (elem && 'is_collapsed' in elem.attributes) {
-                elem.attributes.is_collapsed = !elem.attributes.is_collapsed;
+            if (sdfg_elem && 'is_collapsed' in sdfg_elem.attributes) {
+                sdfg_elem.attributes.is_collapsed = !sdfg_elem.attributes.is_collapsed;
 
                 // Re-layout SDFG
                 this.relayout();
@@ -998,7 +1071,7 @@ class SDFGRenderer {
 
         if (this.external_mouse_handler)
             dirty |= this.external_mouse_handler(evtype, event, {x: comp_x_func(event), y: comp_y_func(event)}, elements,
-                                                 this.sdfg);
+                                                 this.sdfg, foreground_elem);
 
         if (dirty)
             this.draw_async();
