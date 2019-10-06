@@ -426,9 +426,12 @@ function offset_sdfg(sdfg, sdfg_graph, offset) {
 
 // Translate nodes, edges, and connectors in a given SDFG state by an offset
 function offset_state(state, state_graph, offset) {
+    let drawn_nodes = new Set();
+    
     state.nodes.forEach((n, nid) => {
         let node = state_graph.data.graph.node(nid);
         if (!node) return;
+        drawn_nodes.add(nid.toString());
 
         node.x += offset.x;
         node.y += offset.y;
@@ -445,6 +448,8 @@ function offset_state(state, state_graph, offset) {
             offset_sdfg(node.data.node.attributes.sdfg, node.data.graph, offset);
     });
     state.edges.forEach((e, eid) => {
+        e = check_and_redirect_edge(e, drawn_nodes, state);
+        if (!e) return;
         let edge = state_graph.data.graph.edge(e.src, e.dst, eid);
         if (!edge) return;
         edge.x += offset.x;

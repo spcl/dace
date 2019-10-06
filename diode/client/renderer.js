@@ -269,8 +269,8 @@ function calculateEdgeBoundingBox(edge) {
 
 function calculateNodeSize(sdfg_state, node, ctx) {
     let labelsize = ctx.measureText(node.label).width;
-    let inconnsize = 2 * LINEHEIGHT * node.attributes.in_connectors.length - LINEHEIGHT;
-    let outconnsize = 2 * LINEHEIGHT * node.attributes.out_connectors.length - LINEHEIGHT;
+    let inconnsize = 2 * LINEHEIGHT * node.attributes.layout.in_connectors.length - LINEHEIGHT;
+    let outconnsize = 2 * LINEHEIGHT * node.attributes.layout.out_connectors.length - LINEHEIGHT;
     let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
     let maxheight = 2*LINEHEIGHT;
     maxheight += 4*LINEHEIGHT;
@@ -307,30 +307,6 @@ function calculateNodeSize(sdfg_state, node, ctx) {
     }
 
     return size;
-}
-
-function check_and_redirect_edge(edge, drawn_nodes, sdfg_state) {
-    // If destination is not drawn, no need to draw the edge
-    if (!drawn_nodes.has(edge.dst))
-        return null;
-    // If both source and destination are in the graph, draw edge as-is
-    if (drawn_nodes.has(edge.src))
-        return edge;
-
-    // If immediate scope parent node is in the graph, redirect
-    let scope_src = sdfg_state.nodes[edge.src].scope_entry;
-    if (!drawn_nodes.has(scope_src))
-        return null;
-
-    // Clone edge for redirection, change source to parent
-    let new_edge = Object.assign({}, edge);
-    new_edge.src = scope_src;
-
-    return new_edge;
-}
-
-function equals(a, b) {
-     return JSON.stringify(a) === JSON.stringify(b);
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
@@ -435,14 +411,20 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
     function layout_node(node) {
         let nested_g = null;
-        let nodesize = calculateNodeSize(sdfg_state, node, ctx);
         node.attributes.layout = {};
+
+        // Set connectors prior to computing node size
+        node.attributes.layout.in_connectors = node.attributes.in_connectors;
+        if ('is_collapsed' in node.attributes && node.attributes.is_collapsed)
+            node.attributes.layout.out_connectors = find_exit_for_entry(sdfg_state.nodes, node).attributes.out_connectors;
+        else
+            node.attributes.layout.out_connectors = node.attributes.out_connectors;
+
+        let nodesize = calculateNodeSize(sdfg_state, node, ctx);
         node.attributes.layout.width = nodesize.width;
         node.attributes.layout.height = nodesize.height;
         node.attributes.layout.label = node.label;
         node.attributes.layout.type = node.type;
-        node.attributes.layout.in_connectors = node.attributes.in_connectors;
-        node.attributes.layout.out_connectors = node.attributes.out_connectors;
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
@@ -455,15 +437,17 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         // Dynamically create node type
         let obj = new SDFGElements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
 
-        // Add connectors
+        // Add input connectors
         let i = 0;
-        for (let cname of node.attributes.in_connectors) {
+        for (let cname of node.attributes.layout.in_connectors) {
             let conn = new Connector({name: cname}, i, sdfg, node.id);
             obj.in_connectors.push(conn);
             i += 1;
         }
+
+        // Add output connectors -- if collapsed, uses exit node connectors
         i = 0;
-        for (let cname of node.attributes.out_connectors) {
+        for (let cname of node.attributes.layout.out_connectors) {
             let conn = new Connector({name: cname}, i, sdfg, node.id);
             obj.out_connectors.push(conn);
             i += 1;
@@ -519,8 +503,8 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         }
         // Connector management 
         let SPACING = LINEHEIGHT;  
-        let iconn_length = (LINEHEIGHT + SPACING) * node.attributes.in_connectors.length - SPACING;
-        let oconn_length = (LINEHEIGHT + SPACING) * node.attributes.out_connectors.length - SPACING;
+        let iconn_length = (LINEHEIGHT + SPACING) * node.attributes.layout.in_connectors.length - SPACING;
+        let oconn_length = (LINEHEIGHT + SPACING) * node.attributes.layout.out_connectors.length - SPACING;
         let iconn_x = gnode.x - iconn_length / 2.0 + LINEHEIGHT/2.0;
         let oconn_x = gnode.x - oconn_length / 2.0 + LINEHEIGHT/2.0;
        
@@ -548,7 +532,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         // Reposition first and last points according to connectors
         if (edge.src_connector) {
             let src_node = g.node(edge.src);
-            let cindex = src_node.data.node.attributes.out_connectors.indexOf(edge.src_connector);
+            let cindex = src_node.data.node.attributes.layout.out_connectors.indexOf(edge.src_connector);
             if (cindex >= 0) {
                 gedge.points[0].x = src_node.out_connectors[cindex].x;
                 gedge.points[0].y += LINEHEIGHT / 2.0;
@@ -556,7 +540,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         }
         if (edge.dst_connector) {
             let dst_node = g.node(edge.dst);
-            let cindex = dst_node.data.node.attributes.in_connectors.indexOf(edge.dst_connector);
+            let cindex = dst_node.data.node.attributes.layout.in_connectors.indexOf(edge.dst_connector);
             if (cindex >= 0) {
                 gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
                 gedge.points[gedge.points.length - 1].y -= LINEHEIGHT / 2.0;
@@ -916,6 +900,9 @@ class SDFGRenderer {
         }
         // End of mouse-move/touch-based events
 
+
+        if (!this.mousepos)
+            return;
 
         // Find elements under cursor
         let elements = this.elements_in_rect(this.mousepos.x, this.mousepos.y, 0, 0);
