@@ -366,10 +366,6 @@ function relayout_sdfg(ctx, sdfg) {
         gedge.y = bb.y;
         gedge.width = bb.width;
         gedge.height = bb.height;
-        edge.attributes = {};
-        edge.attributes.data = {};
-        edge.attributes.data.label = gedge.label;
-        edge.attributes.label = gedge.label;
         edge.attributes.layout = {};
         edge.attributes.layout.width = bb.width;
         edge.attributes.layout.height = bb.height;
