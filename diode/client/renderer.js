@@ -680,6 +680,22 @@ class SDFGRenderer {
         d.title = 'Zoom to fit SDFG';
         this.toolbar.appendChild(d);
 
+        // Collapse all
+        d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">unfold_less</i>';
+        d.style = 'padding-bottom: 0px;';
+        d.onclick = () => this.collapse_all();
+        d.title = 'Collapse all elements';
+        this.toolbar.appendChild(d);
+
+        // Expand all
+        d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">unfold_more</i>';
+        d.style = 'padding-bottom: 0px;';
+        d.onclick = () => this.expand_all();
+        d.title = 'Expand all elements';
+        this.toolbar.appendChild(d);
+
         this.container.append(this.toolbar);
         // End of buttons
 
@@ -756,6 +772,24 @@ class SDFGRenderer {
         let bb = boundingBox(elements);
         this.canvas_manager.set_view(bb);
 
+        this.draw_async();
+    }
+
+    collapse_all() {
+        this.for_all_sdfg_elements((otype, odict, obj) => {
+            if ('is_collapsed' in obj.attributes && !obj.type.endsWith('Exit'))
+                obj.attributes.is_collapsed = true;
+        });
+        this.relayout();
+        this.draw_async();
+    }
+
+    expand_all() {
+        this.for_all_sdfg_elements((otype, odict, obj) => {
+            if ('is_collapsed' in obj.attributes && !obj.type.endsWith('Exit'))
+                obj.attributes.is_collapsed = false;
+        });
+        this.relayout();
         this.draw_async();
     }
 
@@ -874,6 +908,38 @@ class SDFGRenderer {
         traverse_recursive(this.graph, this.sdfg.attributes.name);
     }
 
+    for_all_sdfg_elements(func) {
+        // Traverse nested SDFGs recursively
+        function traverse_recursive(sdfg) {
+            sdfg.nodes.forEach((state, state_id) => {
+                // States
+                func('states', {sdfg: sdfg, id: state_id}, state);
+
+                state.nodes.forEach((node, node_id) => {
+                    // Nodes
+                    func('nodes', {sdfg: sdfg, state: state_id, id: node_id}, node);
+
+                    // If nested SDFG, traverse recursively
+                    if (node.type === "NestedSDFG")
+                        traverse_recursive(node.attributes.sdfg);
+                });
+
+                // Edges
+                state.edges.forEach((edge, edge_id) => {
+                    func('edges', {sdfg: sdfg, state: state_id, id: edge_id}, edge);
+                });
+            });
+
+            // Selected inter-state edges
+            sdfg.edges.forEach((isedge, isedge_id) => {
+                func('isedges', {sdfg: sdfg, id: isedge_id}, isedge);
+            });
+        }
+
+        // Start with top-level SDFG
+        traverse_recursive(this.sdfg);
+    }
+
     for_all_elements(x, y, w, h, func) {
         // Traverse nested SDFGs recursively
         function traverse_recursive(g, sdfg_name) {
@@ -888,6 +954,8 @@ class SDFGRenderer {
                     return;
 
                 let ng = state.data.graph;
+                if (!ng)
+                    return;
                 ng.nodes().forEach(node_id => {
                     let node = ng.node(node_id);
                     // Selected nodes

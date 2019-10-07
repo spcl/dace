@@ -19,6 +19,10 @@ class SDFGElement {
 
     draw(renderer, ctx, mousepos) {}
 
+    attributes() {
+        return this.data.attributes;
+    }
+
     label() {
         return this.data.label;
     }
@@ -89,6 +93,10 @@ class State extends SDFGElement {
         ctx.strokeStyle = "black";
     }
 
+    attributes() {
+        return this.data.state.attributes;
+    }
+
     label() {
         return this.data.state.label;
     }
@@ -108,6 +116,10 @@ class Node extends SDFGElement {
 
     label() {
         return this.data.node.label;
+    }
+
+    attributes() {
+        return this.data.node.attributes;
     }
 
     set_layout() {
@@ -200,6 +212,10 @@ class Connector extends SDFGElement {
         ctx.strokeStyle = "black";
         if (this.strokeStyle() !== 'black')
             renderer.tooltip = this.tooltip();
+    }
+
+    attributes() {
+        return {};
     }
 
     set_layout() { }
