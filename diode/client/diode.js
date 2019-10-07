@@ -742,7 +742,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if((typeof tmp) === 'string') {
             tmp = parse_sdfg(sdfg_data);
         } else {
-            tmp = {sdfg: sdfg_data};
+            if ('sdfg' in sdfg_data)
+                tmp = sdfg_data;
+            else
+                tmp = {sdfg: sdfg_data};
         }
 
         {

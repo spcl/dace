@@ -403,11 +403,18 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
         {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
+
+                if (!n.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+                    return;
+
                 n.draw(renderer, ctx, mousepos);
                 n.in_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
                 n.out_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
             });
             ng.edges().forEach(e => {
+                let edge = ng.edge(e);
+                if (!edge.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+                    return;
                 ng.edge(e).draw(renderer, ctx, mousepos);
             });
         }
