@@ -9,7 +9,6 @@ import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
 
-dace.Config.append("compiler", "cpu", "args", value=" -faligned-new")
 num_channels = 3
 size = [8, 224, 224, num_channels]
 
