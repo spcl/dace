@@ -596,7 +596,6 @@ class FPGACodeGen(TargetCodeGenerator):
         device_to_device = (
                 data_to_data and src_storage == dace.types.StorageType.FPGA_Global
                 and dst_storage == dace.types.StorageType.FPGA_Global)
-
         if (host_to_device or device_to_host) and self._in_device_code:
             raise RuntimeError(
                 "Cannot copy between host and device from device")

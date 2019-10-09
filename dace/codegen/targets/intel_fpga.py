@@ -658,6 +658,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                      memlet.veclen)
 
         result = ""
+        # import pdb
+        # pdb.set_trace()
 
         def_type = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
@@ -817,7 +819,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if node.label is None or node.label == "":
             return ''
 
-        state_dfg = sdfg.nodes()[state_id]
+        from dace.sdfg import SDFGState
+        state_dfg: SDFGState = sdfg.nodes()[state_id]
 
         # Not [], "" or None
         if not node.code:
@@ -860,6 +863,24 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
 
+        # Build dictionary with all the previously defined symbols
+        # This is used for forward type inference
+        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()[node]].defined_vars
+        defined_symbols.update(sdfg.constants)
+
+        #Dtypes is a dictionary containing associations name -> type (ctypes)
+        # Add defined variables
+        defined_symbols = {str(x): x.dtype for x in defined_symbols}
+
+        for connector, (memlet,_,_) in memlets.items():
+            if connector is not None:
+                defined_symbols.update({connector: sdfg.arrays[memlet.data].dtype})
+
+
+        # Add connectors
+        # symbols_ctypes.update({connector: sdfg.arrays[memlet.data].dtype
+        #                for connector, (memlet,_,_) in memlets.items()})
+
         for stmt in body:  # for each statement in tasklet body
             if isinstance(stmt, ast.Expr):
                 rk = OpenCLDaceKeywordRemover(
@@ -867,9 +888,12 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             else:
                 rk = OpenCLDaceKeywordRemover(sdfg, self._dispatcher.defined_vars,
                                               memlets, sdfg.constants).visit(stmt)
+                
             if rk is not None:
                 result = StringIO()
-                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
+                # import pdb
+                # pdb.set_trace()
+                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols, do_type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):

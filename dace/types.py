@@ -169,6 +169,8 @@ _FFI_CTYPES = {
     numpy.complex128: ctypes.c_longdouble,
 }
 
+
+
 # Number of bytes per data type
 _BYTES = {
     int: 4,
@@ -190,6 +192,7 @@ _BYTES = {
     numpy.complex64: 8,
     numpy.complex128: 16,
 }
+
 
 
 class typeclass(object):
@@ -230,7 +233,7 @@ class typeclass(object):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return other != None and self.ctype == other.ctype
+        return other is not None and self.ctype == other.ctype
 
     def __ne__(self, other):
         return other != None and self.ctype != other.ctype
@@ -244,10 +247,41 @@ class typeclass(object):
 
         if isinstance(s, list) or isinstance(s, tuple):
             return data.Array(self, tuple(s))
-        return data.Array(self, (s, ))
+        return data.Array(self, (s,))
 
     def __repr__(self):
         return self.ctype
+
+# _CTYPES_RULES: returns the biggest between two types according to C semantic
+# Note: this could not be complete. When defining new association, uses numpy types as
+# arguments for typeclass
+# Half precision numbers are promoted to single precision
+_CTYPES_RULES = {
+    # Signed Integer Results
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.int32))): typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.int32))): typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.int32))): typeclass(numpy.int32),
+
+    # If any of the operand is unsigned int then the result will be in unsigned int
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))): typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))): typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint32))): typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.uint32))): typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.uint32))): typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint32))): typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.uint32))): typeclass(numpy.uint32),
+
+    # If any of the operand is float then the result will be in float
+    frozenset((typeclass(numpy.float16), typeclass(numpy.float16))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.float16), typeclass(numpy.float32))): typeclass(numpy.float32),
+    frozenset((typeclass(numpy.float32), typeclass(numpy.float32))): typeclass(numpy.float32),
+}
 
 
 class pointer(typeclass):
@@ -335,7 +369,7 @@ class struct(typeclass):
                 fields.append((k, _FFI_CTYPES[v.type]))
         fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
-        struct_class = type("NewStructClass", (ctypes.Structure, ),
+        struct_class = type("NewStructClass", (ctypes.Structure,),
                             {"_fields_": fields})
         return struct_class
 
