@@ -2090,6 +2090,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                dace.InterstateEdge(cond_else))
             self.sdfg.add_edge(last_else_state, end_if_state,
                                dace.InterstateEdge())
+            self.last_state = end_if_state
         else:
             self.sdfg.add_edge(laststate, end_if_state,
                                dace.InterstateEdge(cond_else))
