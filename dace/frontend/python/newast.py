@@ -1346,7 +1346,8 @@ class ProgramVisitor(ExtNodeVisitor):
                  variables: Dict[str, str],
                  constants: Dict[str, Any],
                  other_sdfgs: Dict[str, Any],
-                 nested: bool = False):  # Actually Union[SDFG, DaceProgram]
+                 nested: bool = False,
+                 temp_transients: int = 0):  # Actually Union[SDFG, DaceProgram]
         self.curnode = None
         self.filename = filename
         self.lineoffset = lineoffset
@@ -1360,6 +1361,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Entry point to the program
         self.program = None
         self.sdfg = SDFG(name)
+        self.sdfg._temp_transients = temp_transients
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
         if not self.nested:
             self.sdfg.arrays.update(arrays)
@@ -1540,7 +1542,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.globals,
             scope_vars, {},
             self.other_sdfgs,
-            nested=True)
+            nested=True,
+            temp_transients=self.sdfg._temp_transients+1)
 
         return pv.parse_program(node, is_tasklet)
 
