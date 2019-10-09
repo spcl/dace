@@ -36,6 +36,13 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
     return name
 
 
+@oprepo.replaces('dace.define_local_scalar')
+def _define_local_scalar(sdfg: SDFG, state: SDFGState, dtype):
+    name = sdfg.temp_data_name()
+    sdfg.add_scalar(name, dtype, transient=True)
+    return name
+
+
 @oprepo.replaces('dace.define_stream')
 def _define_stream(sdfg: SDFG,
                    state: SDFGState,
@@ -437,24 +444,42 @@ def _reduce(sdfg: SDFG,
             identity=None):
     # TODO(later): If output is None, derive the output size from the input and create a new node
     if output is None:
-        raise NotImplementedError
-    inarr = until(input, '[')
-    outarr = until(output, '[')
+        inarr = until(input, '[')
+        # Convert axes to tuple
+        if axis is not None and not isinstance(axis, (tuple, list)):
+            axis = (axis, )
+        if axis is not None:
+            axis = tuple(pystr_to_symbolic(a) for a in axis)
+        input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
+                                            ast.parse(input).body[0].value, {})
+        input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset, 1)
+        output_shape = None
+        if axis is None:
+            output_shape = [1]
+        else:
+            output_subset = copy.deepcopy(input_subset)
+            output_subset.pop(axis)
+            output_shape = output_subset.size()
+        outarr, arr = sdfg.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
+        output_memlet = Memlet.from_array(outarr, arr)
+    else:
+        inarr = until(input, '[')
+        outarr = until(output, '[')
 
-    # Convert axes to tuple
-    if axis is not None and not isinstance(axis, (tuple, list)):
-        axis = (axis, )
-    if axis is not None:
-        axis = tuple(pystr_to_symbolic(a) for a in axis)
+        # Convert axes to tuple
+        if axis is not None and not isinstance(axis, (tuple, list)):
+            axis = (axis, )
+        if axis is not None:
+            axis = tuple(pystr_to_symbolic(a) for a in axis)
 
-    # Compute memlets
-    input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
-                                        ast.parse(input).body[0].value, {})
-    input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset, 1)
-    output_subset = _parse_memlet_subset(sdfg.arrays[outarr],
-                                         ast.parse(output).body[0].value, {})
-    output_memlet = Memlet(outarr, output_subset.num_elements(), output_subset,
-                           1)
+        # Compute memlets
+        input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
+                                            ast.parse(input).body[0].value, {})
+        input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset, 1)
+        output_subset = _parse_memlet_subset(sdfg.arrays[outarr],
+                                            ast.parse(output).body[0].value, {})
+        output_memlet = Memlet(outarr, output_subset.num_elements(), output_subset,
+                            1)
 
     # Create reduce subgraph
     inpnode = state.add_read(inarr)
@@ -463,7 +488,10 @@ def _reduce(sdfg: SDFG,
     state.add_nedge(inpnode, rednode, input_memlet)
     state.add_nedge(rednode, outnode, output_memlet)
 
-    return []
+    if output is None:
+        return outarr
+    else:
+        return []
 
 
 ############################################
@@ -924,7 +952,9 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
             conn = None
             if PVisitor.nested:
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
-                arrname, _ = PVisitor._add_read_access(
+                # arrname, _ = PVisitor._add_read_access(
+                #     arr_name, arr_rng, target=None)
+                arrname = PVisitor._add_read_access(
                     arr_name, arr_rng, target=None)
                 access = [0] * len(access)
                 conn = 'index_%s_%d' % (arr_name, i)
@@ -1760,7 +1790,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             arr = self.variables[arr]
                         if arr not in self.sdfg.arrays:
                             rng = subsets.Range.from_string(args)
-                            arr, rng = self._add_read_access(arr, rng, node, newvar, data.Scalar)
+                            # arr, rng = self._add_read_access(arr, rng, node, newvar, data.Scalar)
+                            arr = self._add_read_access(arr, rng, node, newvar, data.Scalar)
                             args = str(rng)
                         map_inputs[newvar] = Memlet.simple(arr, args)
                             # ','.join([str(a) for a in expr.args]))
@@ -2229,35 +2260,54 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if not isinstance(node_target, ast.Tuple):
             elts = [node_target]
+            if isinstance(node.value, ast.Num):
+                results = [self._convert_num_to_array(node.value)]
+            else:
+                results = [self._gettype(node.value)]
         else:
             elts = node_target.elts
+            results = []
+            for n in node.value.elts:
+                if isinstance(n, ast.Num):
+                    results.append(self._convert_num_to_array(n))
+                else:
+                    results.append(self._gettype(n))
 
         # state = self._add_state("assign_%d" % node.lineno)
 
         # Return result (UnaryOp, BinOp, BoolOp, Call, etc.)
-        results = self.visit(node.value)
-        if not isinstance(results, (list)):
-            results = [results]
+        # results = self.visit(node.value)
+        # if not isinstance(results, (list)):
+        #     results = [results]
         if len(results) != len(elts):
             raise DaceSyntaxError(
                 self, node,
                 'Function returns %d values but %d provided' % (len(results),
                                                                 len(elts)))
 
-        for target, result in zip(elts, results):
+        for target, (result, rtype) in zip(elts, results):
             # Variable assignment
             if isinstance(target, ast.Name):
                 if op is None:
-                    if (target.id in self.scope_vars
-                            or target.id in self.variables):
+                    name = target.id
+                    if name in self.variables:
+                        real_name = self.variables[name]
+                        arr = self.sdfg.arrays[real_name]
+                    elif name in self.scope_vars:
+                        real_name = self.scope_vars[name]
+                        arr = self.scope_arrays[real_name]
+                    else:
+                        self.variables[name] = result
+                        continue
+                    if isinstance(arr, data.Scalar):
+                        self._add_assignment(node, real_name, result, None)
+                    else:
                         raise DaceSyntaxError(
                             self, target,
-                            'Cannot reassign value to parameter "%s"' %
-                            target.id)
+                            'Cannot reassign value to parameter "%s"' % name)
 
-                    name = target.id
-                    self.variables[name] = result
-                    continue
+                    # self.variables[name] = result
+                    # continue
                 else:
                     name = rname(target)
                     real_name = {**self.variables, **self.scope_vars}[name]
@@ -2850,7 +2900,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 dace.Memlet.simple(name, '0'))
         else:
             name = self.numbers[node.n]
-        return name
+        return name, 'Array'
 
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
@@ -2870,11 +2920,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(node, ast.BinOp):
             if op1type == 'Array' and isinstance(op2, ast.Num):
-                operand2 = self._convert_num_to_array(op2)
-                op2type = 'Array'
+                operand2, op2type = self._convert_num_to_array(op2)
             elif op2type == 'Array' and isinstance(op1, ast.Num):
-                operand1 = self._convert_num_to_array(op1)
-                op1type = 'Array'
+                operand1, op1type = self._convert_num_to_array(op1)
 
         func = oprepo.Replacements.getop(
             op1type, opname, implementation=default_impl, otherclass=op2type)
@@ -2913,11 +2961,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _add_read_access(self, name, rng, target, newname: str=None, arr_type=None):
         if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
+            return self.accesses[(name, rng, 'w')][0]
         elif (name, rng, 'r') in self.accesses:
-            return self.accesses[(name, rng, 'r')]
+            return self.accesses[(name, rng, 'r')][0]
         elif name in self.variables:
-            return (name, rng)
+            # return (name, rng)
+            return name
         elif name in self.scope_vars:
             if newname:
                 vname = newname
@@ -2959,7 +3008,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
             self.inputs[vname] = (dace.Memlet(parent_name, rng.num_elements(),
                                               rng, 1), set())
-            return (vname, sqz_rng)
+            # return (vname, sqz_rng)
+            return vname
 
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript):
@@ -2975,11 +3025,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     **self.scope_arrays
                 })[1])
             if (name, rng, 'w') in self.accesses:
-                return self.accesses[(name, rng, 'w')]
+                return self.accesses[(name, rng, 'w')][0]
             elif (name, rng, 'r') in self.accesses:
-                return self.accesses[(name, rng, 'r')]
+                return self.accesses[(name, rng, 'r')][0]
             elif name in self.variables:
-                return (name, rng)
+                # return (name, rng)
+                return name
             elif name in self.scope_vars:
                 vname = "__tmp_{l}_{c}".format(
                     l=target.lineno, c=target.col_offset)
