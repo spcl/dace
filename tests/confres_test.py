@@ -27,9 +27,12 @@ def confres_test(A, B, red1, red2):
         r2 = 2
 
     dace.reduce(lambda a, b: a + b, A, red2)
-    dace.reduce(lambda a, b: a + b, B[2:H - 2, 5], red1[0:1])
-    dace.reduce(lambda a, b: a + b, B[3:H - 3, 5:7, :], red1[1:], axis=(2, 0))
-    dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :], red1[0:1])
+    red1[0:1] = dace.reduce(lambda a, b: a + b, B[2:H - 2, 5])
+    red1[1:] = dace.reduce(lambda a, b: a + b, B[3:H - 3, 5:7, :], axis=(2, 0))
+    red1[0:1] = dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :])
+    # dace.reduce(lambda a, b: a + b, B[2:H - 2, 5], red1[0:1])
+    # dace.reduce(lambda a, b: a + b, B[3:H - 3, 5:7, :], red1[1:], axis=(2, 0))
+    # dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :], red1[0:1])
 
 
 if __name__ == "__main__":
