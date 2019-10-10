@@ -892,20 +892,26 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         defined_type = self.defined_vars.get(memlet.data)
         updated = node
 
-        if defined_type == DefinedType.Pointer and wcr is not None:
-            # In case of wcr over an array, resolve access to pointer, replacing the code inside
-            # the tasklet
+        if defined_type == DefinedType.Pointer:
             if isinstance(node.targets[0], ast.Subscript):
                 slice = self.visit(node.targets[0].slice)
                 if isinstance(slice.value, ast.Tuple):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)
-
-                redtype = operations.detect_reduction_type(wcr)
-                target_str = "{}[{}]".format(memlet.data, subscript)
-                red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
-                code_str = "{} = {};".format(target_str, red_str)
+                if wcr is not None:
+                    # In case of wcr over an array, resolve access to pointer, replacing the code inside
+                    # the tasklet
+                    slice = self.visit(node.targets[0].slice)
+                    redtype = operations.detect_reduction_type(wcr)
+                    target_str = "{}[{}]".format(memlet.data, subscript)
+                    red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
+                    code_str = "{} = {};".format(target_str, red_str)
+                else:
+                    # FIXME Don't know if this cover all the cases.
+                    #  we should consider that this could be also a global memory area
+                    target_str = "{}[{}]".format(target, subscript)
+                    code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
 
         elif defined_type == DefinedType.Stream and memlet.num_accesses != 1:

@@ -31,7 +31,7 @@ bail() {
 
 run_sample() {
     # Args:
-    #  1 - Name of FPGA test located in tests/intel_fpga
+    #  1 - Relative path of FPGA test starting from test folder
     #  2 - Name of the DAPP program
     #  3 - a string indicating the list of input to pass to the python program (command line inputs)
     #  4 - program command line argument (if any)
@@ -41,9 +41,10 @@ run_sample() {
 
     #1: generate the opencl
     #dirty trick: use type scripting to mask the first segfault due to the missing aocx file
-    command='echo -e "'"${3}"'" |python3 intel_fpga/'"${1}"'.py '"${@:4}"''
+    command='echo -e "'"${3}"'" |python3 '"${1}"'.py '"${@:4}"''
+    echo $command
     script -c  "$command" /tmp/test_intelfpga > /dev/null
-    #echo -e $3 | python3 intel_fpga/$1.py ${@:5} &> /dev/null
+    #echo -e $3 | python3 $1.py ${@:5} &> /dev/null
 
     #2: compile for emulation
     cd .dacecache/$2/build
@@ -55,7 +56,7 @@ run_sample() {
 
     #3: execute the emulation
     cd ../../../
-    echo -e $3 | python3 intel_fpga/$1.py ${@:4}
+    echo -e $3 | python3 $1.py ${@:4}
 
     if [ $? -ne 0 ]; then
         bail "$1 (${RED}Wrong emulation result${NC})"
@@ -73,14 +74,18 @@ run_sample() {
 
 run_all() {
     #Vectorization 1: first vectorize and then transform for FPGA
-    run_sample vec_sum vec_sum "11\n1\n"
+   # run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
     #Vectorization 2: first transform for FPGA then vectorize
-    run_sample vec_sum vec_sum "1\n15\n"
+   # run_sample intel_fpga/vec_sum vec_sum "1\n15\n"
     #Vectorization 3: TODO non vectorizable N
 
 
     #WCR simple on scalar
-    run_sample dot dot "1\n"
+    #run_sample intel_fpga/dot dot "1\n"
+
+    #Sample/Fpga test (dappy)
+    run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
+
 
 
 }
