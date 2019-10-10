@@ -91,6 +91,13 @@ class SDFGOptimizer(object):
                                console.
             @return: An optimized SDFG object
         """
+        sdfg_file = self.sdfg.name + '.sdfg'
+        if os.path.isfile(sdfg_file):
+            ui_input = input(
+                'An SDFG with the filename "%s" was found. '
+                'Would you like to use it instead? [Y/n] ' % sdfg_file)
+            if len(ui_input) == 0 or ui_input[0] not in ['n', 'N']:
+                return dace.SDFG.from_file(sdfg_file)
 
         # Visualize SDFGs during optimization process
         VISUALIZE = Config.get_bool('optimizer', 'visualize')
@@ -119,15 +126,9 @@ class SDFGOptimizer(object):
                 print('No viable transformations found')
                 break
 
-            # Code working for both python 2.x and 3.x.
-            try:
-                ui_input = raw_input(
-                    'Select the pattern to apply (0 - %d or name$id): ' %
-                    (ui_options_idx - 1))
-            except NameError:
-                ui_input = input(
-                    'Select the pattern to apply (0 - %d or name$id): ' %
-                    (ui_options_idx - 1))
+            ui_input = input(
+                'Select the pattern to apply (0 - %d or name$id): ' %
+                (ui_options_idx - 1))
 
             pattern_name, occurrence, param_dict = _parse_cli_input(ui_input)
 
@@ -165,8 +166,8 @@ class SDFGOptimizer(object):
 
             if SAVE_DOTS:
                 self.sdfg.draw_to_file(
-                        'after_%d_%s_b4lprop.dot' %
-                    (pattern_counter + 1, type(pattern_match).__name__))
+                    'after_%d_%s_b4lprop.dot' % (pattern_counter + 1,
+                                                 type(pattern_match).__name__))
 
             if not pattern_match.annotates_memlets():
                 labeling.propagate_labels_sdfg(self.sdfg)
@@ -175,8 +176,8 @@ class SDFGOptimizer(object):
                 pattern_counter += 1
                 if SAVE_DOTS:
                     self.sdfg.draw_to_file(
-                            'after_%d_%s.dot' % (pattern_counter,
-                                                 type(pattern_match).__name__))
+                        'after_%d_%s.dot' % (pattern_counter,
+                                             type(pattern_match).__name__))
                     if VISUALIZE:
                         time.sleep(0.7)
                         os.system(

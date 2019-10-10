@@ -420,6 +420,8 @@ class Property:
             "MultiConnectorEdge": dace.graph.graph.MultiConnectorEdge,
             "InterstateEdge": dace.graph.edges.InterstateEdge,
             "Edge": dace.graph.graph.Edge,
+            "SDFG": dace.sdfg.SDFG,
+            "SDFGState": dace.sdfg.SDFGState,
 
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
@@ -643,23 +645,16 @@ class ListProperty(Property):
 class SDFGReferenceProperty(Property):
     @staticmethod
     def to_json(obj):
-        if obj == None: return 'null'
+        if obj is None: return 'null'
 
-        return json.dumps(obj.label)
+        return json.dumps(obj.toJSON())  # Make a string of a JSON
 
     @staticmethod
     def from_json(s, context=None):
         if s == "null": return None
 
-        # Since this is just a reference and deserialization order is undefined,
-        # the context parameter must contain a callback: str -> SDFG that
-        # returns the SDFG with the corresponding name. This function might
-        # have to create the SDFG.
-        if context['callback'] == None:
-            raise ValueError("from_json got None, expected dict")
-        callback = context['callback']
-        s = json.loads(s)
-        return callback(s)  # Call the function associated to this sdfg name
+        # Parse the string of the JSON back into an SDFG object
+        return dace.SDFG.fromJSON_object(json.loads(json.loads(s)))
 
 
 # TODO: does not currently work because of how enums work

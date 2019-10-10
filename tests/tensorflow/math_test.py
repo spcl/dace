@@ -8,8 +8,6 @@ import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
 
-dace.Config.append(
-    "compiler", "cpu", "args", value=" -faligned-new -fpermissive")
 shape = [10, 11, 12, 13]
 
 inp = tf.placeholder(tf.float64, shape)

@@ -178,11 +178,6 @@ counttests() {
         TOTAL_TESTS=`expr $TOTAL_TESTS + 1`
     done
 
-    for file in *_test_opt.py; do
-        if [ $file == '*_test_opt.py' ]; then break; fi # No files found
-        TOTAL_TESTS=`expr $TOTAL_TESTS + 1`
-    done
-
     for file in *.m; do
         if [ $file == '*.m' ]; then break; fi # No files found
         TOTAL_TESTS=`expr $TOTAL_TESTS + 1`
@@ -220,11 +215,6 @@ runtests() {
     for file in *_test.py; do
         if [ $file == '*_test.py' ]; then break; fi # No files found
         runtest_py $file
-    done
-
-    for file in *_test_opt.py; do
-        if [ $file == '*_test_opt.py' ]; then break; fi # No files found
-        runtest_optscript $file
     done
 
     for file in *.m; do

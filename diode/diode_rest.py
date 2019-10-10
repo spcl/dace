@@ -561,7 +561,7 @@ def getPubSSH():
     except:
         print("Failed to open keyfile")
         traceback.print_exc()
-        return jsonify({"error": "Could not open keyfile"})
+        return jsonify({"pubkey": "0"})
 
 
 @app.route('/dace/api/v1.0/getEnum/<string:name>', methods=['GET'])
@@ -749,7 +749,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
 def create_DaceState(code, sdfg_dict, errors):
     dace_state = None
     try:
-        dace_state = DaceState(code, "fake", headless=True)
+        dace_state = DaceState(code, "fake.py", headless=True)
         for x in dace_state.sdfgs:
             name, sdfg = x
             sdfg_dict[name] = sdfg
@@ -946,7 +946,7 @@ def compileProgram(request, language, perfopts=None):
             else:
                 in_code = ""
             try:
-                dace_state = DaceState(in_code, "fake", headless=True)
+                dace_state = DaceState(in_code, "fake.py", headless=True)
                 dace_state.set_sdfg(
                     list(codegen_sdfgs_dace_state.values())[0],
                     list(codegen_sdfgs_dace_state.keys())[0])
@@ -962,7 +962,11 @@ def compileProgram(request, language, perfopts=None):
         if len(errors) > 0:
             return errors
 
-        return (sdfg_dict, code_tuple_dict, dace_state)
+        # Only return top-level SDFG
+        return ({k: v
+                 for k, v in sdfg_dict.items()
+                 if v.parent is None}, code_tuple_dict, dace_state)
+        #return sdfg_dict, code_tuple_dict, dace_state
 
 
 def get_transformations(sdfgs):
@@ -1477,6 +1481,8 @@ if __name__ == '__main__':
         action="store_true",
         help="Restore the backup file")
 
+    parser.add_argument("-p", "--port", type=int, help="Port to listen on")
+
     args = parser.parse_args()
 
     if args.restoredace:
@@ -1516,6 +1522,7 @@ if __name__ == '__main__':
     app.run(
         host='localhost' if args.localhost else "0.0.0.0",
         debug=True,
+        port=args.port,
         use_reloader=False)
 
     es.stop()
