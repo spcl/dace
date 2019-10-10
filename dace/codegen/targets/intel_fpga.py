@@ -893,6 +893,8 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         updated = node
 
         if defined_type == DefinedType.Pointer:
+            # In case of wcr over an array, resolve access to pointer, replacing the code inside
+            # the tasklet
             if isinstance(node.targets[0], ast.Subscript):
                 slice = self.visit(node.targets[0].slice)
                 if isinstance(slice.value, ast.Tuple):
@@ -900,9 +902,6 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                 else:
                     subscript = unparse(slice)
                 if wcr is not None:
-                    # In case of wcr over an array, resolve access to pointer, replacing the code inside
-                    # the tasklet
-                    slice = self.visit(node.targets[0].slice)
                     redtype = operations.detect_reduction_type(wcr)
                     target_str = "{}[{}]".format(memlet.data, subscript)
                     red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))

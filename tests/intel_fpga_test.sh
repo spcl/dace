@@ -74,17 +74,15 @@ run_sample() {
 
 run_all() {
     #Vectorization 1: first vectorize and then transform for FPGA
-   # run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
+    run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
     #Vectorization 2: first transform for FPGA then vectorize
-   # run_sample intel_fpga/vec_sum vec_sum "1\n15\n"
+    run_sample intel_fpga/vec_sum vec_sum "1\n15\n"
     #Vectorization 3: TODO non vectorizable N
 
 
     #WCR simple on scalar
-    #run_sample intel_fpga/dot dot "1\n"
+    run_sample intel_fpga/dot dot "1\n"
 
-    #Sample/Fpga test (dappy)
-    run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
 
 
 
