@@ -98,13 +98,13 @@ class Property:
             self._to_string = lambda val: val._name_
         else:
             self._to_string = str
-        if from_json == None:
+        if from_json is None:
             import json
 
             def tmp(x, sdfg=None):
                 if self.dtype == bool:
                     return json.loads(x)
-                elif self.dtype == None:
+                elif self.dtype is None:
                     # Return without type cast.
                     return self.from_string(json.loads(x))
                 if self.dtype == dict or self.dtype == object:
@@ -112,52 +112,52 @@ class Property:
                     return json.loads(x, object_hook=Property.json_loader)
 
                 pre = json.loads(x, object_hook=Property.json_loader)
-                if pre == None:
+                if pre is None:
                     return None
                 return self.from_string(pre)
 
             self._from_json = tmp
         else:
             self._from_json = from_json
-        if to_json == None:
+        if to_json is None:
             import json
 
             # We have to add an indirection
             # (if just returning the output of to_string, one could not always parse it back)
             def tmp(x):
-                if x != None:
+                if x is not None:
                     if self.dtype == bool:
                         return json.dumps(x)
-                    elif self.dtype == None:
+                    elif self.dtype is None:
                         # Return without type cast.
                         return json.dumps(None
-                                          if x == None else self.to_string(x))
+                                          if x is None else self.to_string(x))
                     elif self.dtype == dict:
                         # Treat special types (e.g. dict)
                         typecast = dict(x)
                         return json.dumps(
-                            None if x == None else typecast,
+                            None if x is None else typecast,
                             default=Property.json_dumper)
                     elif self.dtype == tuple:
                         typecast = tuple(x)
                         return json.dumps(
-                            None if x == None else typecast,
+                            None if x is None else typecast,
                             default=Property.json_dumper)
                     elif self.dtype == list:
                         typecast = list(x)
                         return json.dumps(
-                            None if x == None else typecast,
+                            None if x is None else typecast,
                             default=Property.json_dumper)
                     elif self.dtype == object:
                         # Not treating this - go away.
                         return json.dumps(x)
 
-                return json.dumps(None if x == None else self.to_string(x))
+                return json.dumps(None if x is None else self.to_string(x))
 
             self._to_json = tmp
         else:
             self._to_json = to_json
-        if meta_to_json == None:
+        if meta_to_json is None:
             import json
 
             def tmp_func(self):
@@ -724,7 +724,7 @@ class RangeProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None:
+        if obj is None:
             return "null"
         # to_string is not enough - it does not preserve all information
 
@@ -764,7 +764,7 @@ class DebugInfoProperty(Property):
     @staticmethod
     def from_string(s):
 
-        if s == None:
+        if s is None:
             return None
 
         f = None
@@ -817,7 +817,7 @@ class DebugInfoProperty(Property):
     @staticmethod
     def from_json(s, sdfg=None):
         s = json.loads(s)
-        if s == None: return None
+        if s is None: return None
 
         return DebugInfo(s['start_line'], s['start_col'], s['end_line'],
                          s['end_col'], s['filename'])
@@ -868,7 +868,7 @@ class SetProperty(Property):
             allow_none=False,
             desc="",
             **kwargs):
-        if to_json == None:
+        if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(
             getter=getter,
@@ -950,7 +950,7 @@ class LambdaProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None: return 'null'
+        if obj is None: return 'null'
         return json.dumps(LambdaProperty.to_string(obj))
 
     @staticmethod
@@ -1028,7 +1028,7 @@ class CodeProperty(Property):
     @staticmethod
     def to_json(obj):
         lang = dace.types.Language.Python
-        if obj == None:
+        if obj is None:
             return json.dumps(obj)
         if isinstance(obj, str):
             return json.dumps(obj)
@@ -1044,7 +1044,7 @@ class CodeProperty(Property):
     def from_json(l, sdfg=None):
         tmp = json.loads(l)
 
-        if tmp == None:
+        if tmp is None:
             return None
 
         try:
@@ -1055,7 +1055,7 @@ class CodeProperty(Property):
         if lang == "NoCode":
             return None
 
-        if lang == None:
+        if lang is None:
             lang = dace.types.Language.Python
         elif lang.endswith("Python"):
             lang = dace.types.Language.Python
@@ -1209,7 +1209,7 @@ class SubsetProperty(Property):
 
     @staticmethod
     def to_json(val):
-        if val == None:
+        if val is None:
             return 'null'
         try:
             return val.toJSON()
@@ -1280,7 +1280,7 @@ class DataProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None:
+        if obj is None:
             return "null"
         return json.dumps(str(obj))
 
@@ -1291,7 +1291,7 @@ class DataProperty(Property):
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
         if s not in sdfg.arrays:
-            if s == None:
+            if s is None:
                 # This is fine
                 #return "null" # Every SDFG has a 'null' element
                 return None
@@ -1343,14 +1343,14 @@ class ShapeProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None:
+        if obj is None:
             return json.dumps(obj)
         return json.dumps([*map(str, obj)])
 
     @staticmethod
     def from_json(s, sdfg=None):
         d = json.loads(s)
-        if d == None:
+        if d is None:
             return None
         return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
 

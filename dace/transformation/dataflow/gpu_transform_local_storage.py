@@ -91,7 +91,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry
-            while current_node != None:
+            while current_node is not None:
                 if (current_node.map.schedule == types.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
                         types.ScheduleType.GPU_ThreadBlock):
@@ -121,7 +121,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
-            while current_node != None:
+            while current_node is not None:
                 if (current_node.map.schedule == types.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
                         types.ScheduleType.GPU_ThreadBlock):

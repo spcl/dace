@@ -20,7 +20,7 @@ class Executor:
         self.exit_on_error = self.headless
         self.rendered_graphs = sdfg_renderer
 
-        self.running_async = async_host != None
+        self.running_async = async_host is not None
         self.async_host = async_host
 
         self._config = None
@@ -34,7 +34,7 @@ class Executor:
         self._config = config
 
     def config_get(self, *key_hierarchy):
-        if self._config == None:
+        if self._config is None:
             return Config.get(*key_hierarchy)
         else:
             return self._config.get(*key_hierarchy)
@@ -180,7 +180,7 @@ class Executor:
                 except FileNotFoundError:
                     print("WARNING: results.log could not be read")
 
-            if not self.headless or self.perfplot == None:
+            if not self.headless or self.perfplot is None:
                 if self.running_async and not self.headless:
                     self.async_host.run_sync(deferred)
                 else:
@@ -191,7 +191,7 @@ class Executor:
                 self.async_host.notify("Done cleaning")
 
             # Update the performance data.
-            if self.rendered_graphs != None:
+            if self.rendered_graphs is not None:
                 self.rendered_graphs.set_memspeed_target()
                 self.rendered_graphs.render_performance_data(
                     self.config_get("instrumentation", "papi_mode"))
@@ -216,7 +216,7 @@ class Executor:
         # We ignore everything in the result log except the timing
 
         # If no perfplot is set, write it to the output as text with a prefix
-        if self.perfplot == None:
+        if self.perfplot is None:
             import re
             with open(resfile) as f:
                 data = f.read()
@@ -234,7 +234,7 @@ class Executor:
     def show_output(self, outstr):
         """ Displays output of any ongoing compilation or computation. """
 
-        if self.output_generator != None:
+        if self.output_generator is not None:
             # Pipe the output
             self.output_generator(outstr)
             return
@@ -279,7 +279,7 @@ class Executor:
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
         perf_instrumentation_result_marker = ""
-        if (omp_num_threads != None):
+        if (omp_num_threads is not None):
             omp_num_threads_str = "export OMP_NUM_THREADS=" + str(
                 omp_num_threads) + "\n"
             omp_num_threads_unset_str = "unset OMP_NUM_THREADS\n"
@@ -442,7 +442,7 @@ class AsyncExecutor:
 
     def notify(self, message):
 
-        if self.diode == None:
+        if self.diode is None:
             return
 
         import time
@@ -465,7 +465,7 @@ class AsyncExecutor:
         time.sleep(0.001)  # Equivalent of `sched_yield()` for Python
 
     def run_async(self, dace_state, fail_on_nonzero=False):
-        if self.running_thread != None and self.running_thread.is_alive():
+        if self.running_thread is not None and self.running_thread.is_alive():
             print("Cannot start another thread!")
             return
 

@@ -71,7 +71,7 @@ class PerfMetaInfo:
 
         # For the last entry:
         prevkey, prevval = tmp
-        if prevkey != None:
+        if prevkey is not None:
             for file, line, col, message in data:
                 if int(prevval) <= int(line):
                     # Valid entry

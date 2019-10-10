@@ -167,7 +167,7 @@ class SDFG(OrderedDiGraph):
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
-                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k != None}, default=Property.json_dumper) if x != None else "null",
+                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k is not None}, default=Property.json_dumper) if x is not None else "null",
                         from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
 
     global_code = CodeProperty(
@@ -228,6 +228,9 @@ class SDFG(OrderedDiGraph):
         self.exit_code = ''
 
     def toJSON(self):
+        """ Serializes this object to JSON format.
+            :return: A string representing the JSON-serialized SDFG.
+        """
         import json
         tmp = super(SDFG, self).toJSON()
         tmp = json.loads(tmp)
@@ -1975,7 +1978,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         )  # When this is set: Under no circumstances try instrumenting this (or any transitive children)
 
     def is_parallel(self):
-        return self._parallel_parent != None
+        return self._parallel_parent is not None
 
     def set_parallel_parent(self, parallel_parent):
         self._parallel_parent = parallel_parent
@@ -2088,7 +2091,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             'label':
             self.name,
             'id':
-            parent.node_id(self) if parent != None else None,
+            parent.node_id(self) if parent is not None else None,
             'collapsed':
             self.is_collapsed,
             'scope_dict':
@@ -3458,7 +3461,7 @@ def scope_contains_scope(sdict, node, other_node):
     """
     curnode = other_node
     nodescope = sdict[node]
-    while curnode != None:
+    while curnode is not None:
         curnode = sdict[curnode]
         if curnode == nodescope:
             return True

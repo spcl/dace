@@ -102,7 +102,7 @@ class MultiConnectorEdge(MultiEdge):
     def fromJSON_object(json_obj, context=None):
 
         sdfg = context['sdfg_state']
-        if sdfg == None:
+        if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
         data = json_obj['attributes']['data']
         src_nid = json_obj['src']
@@ -370,7 +370,7 @@ class SubgraphView(Graph):
         self._parallel_parent = None
 
     def is_parallel(self):
-        return self._parallel_parent != None
+        return self._parallel_parent is not None
 
     def set_parallel_parent(self, parallel_parent):
         self._parallel_parent = parallel_parent

@@ -978,7 +978,7 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 s = offset
             o = None
-        if s != None:
+        if s is not None:
             offset_cppstr = cpp_offset_expr(
                 datadesc, s, o, memlet.veclen if packed_types else 1)
         else:

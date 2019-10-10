@@ -228,7 +228,7 @@ class Memlet(object):
         return self.subset.bounding_box_size()
 
     def validate(self, sdfg, state):
-        if self.data != None and self.data not in sdfg.arrays:
+        if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
     def __label__(self, sdfg, state):

@@ -9,7 +9,7 @@ class AbstractSDFGNode:
 
     def set_nodetype(self, nodetype):
         self.nodetype = nodetype
-        if self.label == None:
+        if self.label is None:
             self.label = nodetype
 
     def get_uid(self):

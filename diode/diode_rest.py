@@ -300,7 +300,7 @@ class ExecutorServer:
                     first = True
                     for x in query_list:
                         name, val = x
-                        if val == None:
+                        if val is None:
                             continue
                         if first:
                             querystring += " WHERE "
@@ -334,7 +334,7 @@ class ExecutorServer:
         import time
         ret = None
         err_count = 0
-        while ret == None:
+        while ret is None:
             with self._oplock:
                 try:
                     ret = self._current_runs[client_id]
@@ -624,7 +624,7 @@ def properties_to_json_list(props):
         if isinstance(x, dace.properties.CodeProperty):
             typestr = "CodeProperty"
 
-            if val == None:
+            if val is None:
                 continue
 
             val = x.to_string(val)
@@ -633,7 +633,7 @@ def properties_to_json_list(props):
         if isinstance(x, dace.properties.DebugInfoProperty):
             typestr = "DebugInfo"
 
-            if val == None:
+            if val is None:
                 continue
 
             nval = {
@@ -657,7 +657,7 @@ def properties_to_json_list(props):
 
 
 def set_properties_from_json(obj, prop, sdfg=None):
-    if prop['default'] == "None" and sdfg == None:
+    if prop['default'] == "None" and sdfg is None:
         # This dropout is only valid for transformations
         # Properties without a default are transformation-generic and should not be settable.
         pass
@@ -682,7 +682,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
         prop_step = 0
         print("applySDFGProperty: step " + str(step) + ", prop_step: " +
               str(prop_step))
-    if step != None and prop_step != step:
+    if step is not None and prop_step != step:
         # Step mismatch; ignore
         return sdfg
 
@@ -707,7 +707,7 @@ def applySDFGProperties(sdfg, properties, step=None):
 def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
     # Iterate over the path, applying the transformations
     global_counter = {}
-    if sdfg_props == None: sdfg_props = []
+    if sdfg_props is None: sdfg_props = []
     step = 0
     for x in optpath:
         optimizer = SDFGOptimizer(sdfg, inplace=True)
@@ -802,7 +802,7 @@ def compileProgram(request, language, perfopts=None):
     except:
         sdfg_props = None
 
-    if perfopts == None:
+    if perfopts is None:
         try:
             perf_mode = request.json['perf_mode']
         except:
@@ -825,7 +825,7 @@ def compileProgram(request, language, perfopts=None):
         else:
             Config.load()
 
-        if perf_mode != None:
+        if perf_mode is not None:
             tmp = perf_mode['mode']
             if tmp != 'noperf':
                 Config.set(
@@ -913,7 +913,7 @@ def compileProgram(request, language, perfopts=None):
         sdfg_dict = copied_dict
 
         if len(errors) == 0:
-            if optpath != None:
+            if optpath is not None:
                 for sdfg_name, op in optpath.items():
                     try:
                         sp = sdfg_props[sdfg_name]
@@ -940,7 +940,7 @@ def compileProgram(request, language, perfopts=None):
                 for n, s in codegen_sdfgs.items():
                     code_tuple_dict[n] = codegen.generate_code(s)
 
-        if dace_state == None:
+        if dace_state is None:
             if "code" in request.json:
                 in_code = request.json['code']
             else:
@@ -1388,14 +1388,14 @@ def get_available_ace_editor_themes():
 def get_settings(client_id, name="", cv=None, config_path=""):
     from dace.config import Config
 
-    if cv == None:
+    if cv is None:
         clientpath = "./client_configs/" + client_id + ".conf"
         if os.path.isfile(clientpath):
             Config.load(clientpath)
         else:
             Config.load()
 
-    if cv == None:
+    if cv is None:
         cv = Config.get()
     ret = {}
     for i, (cname, cval) in enumerate(sorted(cv.items())):
