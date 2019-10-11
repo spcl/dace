@@ -2122,9 +2122,10 @@ def ndslice_cpp(slice, dims, rowmajor=True):
                 "CPU backend does not yet support ranges as inputs/outputs")
 
         # TODO(later): Use access order
-
-        if str(d) == "0":
-            continue
+        #import pdb
+        #pdb.set_trace()
+        #if str(d) == "0":
+         #   continue
 
         if generated_index:
             result.write(" + ")

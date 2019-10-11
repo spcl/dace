@@ -134,9 +134,6 @@ class FPGATransformState(pattern_matching.Transformation):
                     # TODO: handle streams
                     continue
 
-                # here I have problem in dealing with hist_out
-                # we don't know that it's real name is hist
-
                 array = node.desc(sdfg)
                 if node.data in fpga_data:
                     fpga_array = fpga_data[node.data]
@@ -177,7 +174,6 @@ class FPGATransformState(pattern_matching.Transformation):
             post_state = sd.SDFGState('post_' + state.label, sdfg)
 
             for node in output_nodes:
-
                 if (not isinstance(node, dace.graph.nodes.AccessNode)
                         or not isinstance(node.desc(sdfg), dace.data.Array)):
                     # Only transfer array nodes
