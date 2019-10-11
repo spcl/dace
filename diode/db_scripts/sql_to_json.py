@@ -68,7 +68,7 @@ ORDER BY
 
     def __del__(self):
         # We want to make sure that the temporary db is closed (if it was used)
-        if self.cache_db != None:
+        if self.cache_db is not None:
             self.cache_db.close()
 
     def print(self, x):
@@ -82,23 +82,23 @@ ORDER BY
                      RunID=None,
                      papiMode="default"):
 
-        if RunID == None:
+        if RunID is None:
             runsel = ""
         else:
             runsel = "WHERE rs.runid = %d" % int(RunID)
 
-        if papiMode != None:
+        if papiMode is not None:
             if runsel != "":
                 runsel = runsel + ' AND rs.papiMode="%s"' % papiMode
             else:
                 runsel = 'WHERE rs.papiMode="%s"' % papiMode
 
-        if supersection_id == None:
+        if supersection_id is None:
             ss_sel = ""
         else:
             ss_sel = "AND sec.ssid = %d" % int(supersection_id)
 
-        if self.cache_db != None:
+        if self.cache_db is not None:
             # Use caching to reduce the very long waiting times
             pass
             # Do not select SuperSections yet.
@@ -123,7 +123,7 @@ ORDER BY
                 self.cache_for_runid = RunID
 
             cache_c = self.cache_db.cursor()
-            if supersection_id == None:
+            if supersection_id is None:
                 # Nothing to do
                 cache_c.execute("SELECT * FROM `cache_table`;")
             else:
@@ -304,23 +304,23 @@ GROUP BY
         if section_id == -1:
             section_id = 0x0FFFFFFFF  # Convert to unsigned
 
-        if supersection_id != None:
+        if supersection_id is not None:
             supersection_id = int(supersection_id)
-        if RunID != None:
+        if RunID is not None:
             RunID = int(RunID)
 
-        if RunID == None:
+        if RunID is None:
             runsel = ""
         else:
             runsel = "WHERE rs.runid = %d" % int(RunID)
 
-        if papiMode != None:
+        if papiMode is not None:
             if runsel != "":
                 runsel = runsel + ' AND rs.papiMode="%s"' % papiMode
             else:
                 runsel = 'WHERE rs.papiMode="%s"' % papiMode
 
-        if supersection_id == None:
+        if supersection_id is None:
             ss_sel = ""
         else:
             ss_sel = "AND sec.ssid = %d" % int(supersection_id)
@@ -330,7 +330,7 @@ GROUP BY
             source_table=self.source_table) % (ss_sel, runsel)
 
         # Create the temporary table
-        if self.cache_db == None:
+        if self.cache_db is None:
             q = MemoryAnalysis.create_temporary_table_string % q
             c.execute(q, (section_id, ))
         else:
@@ -436,7 +436,7 @@ class MetaFetcher:
         self.data_source = data_source
         self.programID = programID
         if self.data_source != "fresh":
-            assert programID != None
+            assert programID is not None
 
     def print(self, x):
         if self.verbose:
@@ -1031,7 +1031,7 @@ class CriticalPathAnalysis:
                      papimode="default"):
         # This analysis operates on the entire data set
 
-        if section_entry_node == None:
+        if section_entry_node is None:
             unified_id = 0x0FFFFFFFF  # Force unsigned
         else:
             unified_id = (stateid << 16) | (section_entry_node)
@@ -1112,7 +1112,7 @@ ORDER BY
 
             # Get dict
             d = ta.query_values(c, unified_id, t_ssid, RunID=t_runid)
-            if d == None:
+            if d is None:
                 print(
                     "[FAIL] ThreadAnalysis did not return a valid result for parameters ("
                     + str(unified_id) + ", " + str(t_ssid) + ", " +
@@ -1560,7 +1560,7 @@ WHERE
             if defsel_tuple != cache_tuple:
                 # Create a sub-selection because this might be repeated often
                 # Limit recreation to a minimum
-                if cache_tuple == None or (defsel_tuple[0] != cache_tuple[0] or
+                if cache_tuple is None or (defsel_tuple[0] != cache_tuple[0] or
                                            defsel_tuple[1] != cache_tuple[1]):
                     c.execute(
                         "DROP TABLE IF EXISTS `scratch_default`.`subsel_1`;")
@@ -1597,7 +1597,7 @@ WHERE
 
             length_mismatched = False
 
-            if previous_length != None:
+            if previous_length is not None:
                 if previous_length != len(def_fa):
                     print("Length mismatch %d vs %d" % (previous_length,
                                                         len(def_fa)))
@@ -1829,7 +1829,7 @@ GROUP BY
 
         self.print("Running vectorization analysis")
 
-        if self.critical_path_analysis == None:
+        if self.critical_path_analysis is None:
             cpa = CriticalPathAnalysis(perfdata_path=self.perfdata_path)
             cpa_data = cpa.query_values(
                 c, section_id, 0
@@ -1837,9 +1837,9 @@ GROUP BY
         else:
             cpa_data = self.critical_path_analysis(section_id)
 
-        if self.shared_input_db == None:
+        if self.shared_input_db is None:
             ss_sel = ""
-            if supersection_id != None:
+            if supersection_id is not None:
                 ss_sel = "AND sec.ssid = %s" % str(supersection_id)
             q = VectorizationAnalysis.query % ss_sel
 
@@ -1980,7 +1980,7 @@ GROUP BY
         data["dp_ops_256b"] = sp_ops_256b_double
         data["dp_ops_512b"] = sp_ops_512b_double
 
-        if self.shared_input_db == None:
+        if self.shared_input_db is None:
             c.execute("DROP TABLE `scratch_default`.`temp_merge_sel`")
 
         self.print(str(data))
@@ -2043,9 +2043,9 @@ GROUP BY
         #cpa = CriticalPathAnalysis()
         #cpa_data = cpa.query_values(c, section_id, 0) # stateid=0 is fine here because section_id is the unified id.
 
-        if self.shared_input_db == None:
+        if self.shared_input_db is None:
             ss_sel = ""
-            if supersection_id != None:
+            if supersection_id is not None:
                 ss_sel = "AND sec.ssid = %s" % str(supersection_id)
             q = CacheOpAnalysis.query % ss_sel
 
@@ -2086,7 +2086,7 @@ GROUP BY
             elif papiCode == -2147483635:
                 cache_line_intervention.append(val)
 
-        if self.shared_input_db == None:
+        if self.shared_input_db is None:
             c.execute(
                 "DROP TABLE IF EXISTS `scratch_default`.`temp_merge_sel`;")
         data = {}
@@ -2156,9 +2156,9 @@ GROUP BY
 
         self.print("Running cacheop analysis")
 
-        if self.shared_input_db == None:
+        if self.shared_input_db is None:
             ss_sel = ""
-            if supersection_id != None:
+            if supersection_id is not None:
                 ss_sel = "AND sec.ssid = %s" % str(supersection_id)
             q = MemoryOpAnalysis.query % ss_sel
 
@@ -2196,7 +2196,7 @@ GROUP BY
             elif papiCode == -2147483594:
                 store_ins.append(val)
 
-        if self.shared_input_db == None:
+        if self.shared_input_db is None:
             c.execute("DROP TABLE IF EXISTS `temp_merge_sel`;")
         data = {}
 

@@ -1132,7 +1132,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             """ Selects all values of 'event' in correct order from all 
                 entries. """
             return [
-                int(x.get(event)) for x in self.entries if x.get(event) != None
+                int(x.get(event)) for x in self.entries if x.get(event) is not None
             ]
 
         def select_thread(self, thread: int):
@@ -1689,7 +1689,7 @@ LIMIT
                             sel_crit_path = cp["value"]
                             break
 
-                    assert sel_crit_path != None
+                    assert sel_crit_path is not None
 
                     def list_accum(inout, array_to_add):
                         if inout is None:
@@ -2328,7 +2328,7 @@ LIMIT
             except KeyError as e:
                 continue
 
-            if (scope != None):
+            if (scope is not None):
                 parent = scope
                 break
         if (parent is None):
@@ -2995,7 +2995,7 @@ class PerfPAPIInfo:
 
             counter_num_grp = re.search(
                 r"Number of Native Events:\s*(?P<num>\d+)", str(stdout))
-            if counter_num_grp != None:
+            if counter_num_grp is not None:
                 self.preset_cost[x] = int(counter_num_grp['num'])
             else:
                 print("\nError: Expected to find a number here...")

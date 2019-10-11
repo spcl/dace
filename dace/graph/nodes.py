@@ -45,7 +45,7 @@ class Node(object):
         typestr = str(type(self).__name__)
 
         scope_entry_node = parent.entry_node(self)
-        if scope_entry_node != None:
+        if scope_entry_node is not None:
             ens = parent.exit_nodes(parent.entry_node(self))
             scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
             scope_entry_node = str(parent.node_id(scope_entry_node))

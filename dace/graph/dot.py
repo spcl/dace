@@ -16,7 +16,7 @@ def draw_edge_explicit(srcName, dstName, edge, sdfg, graph, **extraOpts):
     elif isinstance(edge.data, edges.InterstateEdge):
         opts.update(edge.data.dotOpts)
     # Unhandled properties
-    elif edge.data != None:
+    elif edge.data is not None:
         raise ValueError("Unhandled edge: " + str(edge.data))
     if extraOpts:
         opts.update(extraOpts)  # Custom options will overwrite default
