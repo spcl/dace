@@ -446,11 +446,11 @@ function offset_sdfg(sdfg, sdfg_graph, offset) {
         if (!state.attributes.is_collapsed)
             offset_state(state, g, offset);
     });
-    sdfg.edges.forEach((e, id) => {
-        let edge = sdfg_graph.edge(e.src, e.dst, eid);
+    sdfg.edges.forEach((e, eid) => {
+        let edge = sdfg_graph.edge(e.src, e.dst);
         edge.x += offset.x;
         edge.y += offset.y;
-        edge.data.points.forEach((p) => {
+        edge.points.forEach((p) => {
             p.x += offset.x;
             p.y += offset.y;
         });

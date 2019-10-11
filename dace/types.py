@@ -236,7 +236,7 @@ class typeclass(object):
         return other is not None and self.ctype == other.ctype
 
     def __ne__(self, other):
-        return other != None and self.ctype != other.ctype
+        return other is not None and self.ctype != other.ctype
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type

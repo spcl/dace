@@ -47,7 +47,7 @@ class RenderedGraph:
         raise ValueError("Unrecognized scroll direction")
 
     def set_dotcode(self, dotcode, preserve_view=False):
-        if self.drawing_area == None:
+        if self.drawing_area is None:
             raise ValueError("You need to assign a drawing area first.")
         xdotcode = self.run_xdot(dotcode)
         if xdotcode is None:
@@ -113,7 +113,7 @@ class RenderedGraph:
         pass
 
     def render(self, wid, cr):
-        if self.drawing_area == None:
+        if self.drawing_area is None:
             raise ValueError("You need to assign a drawing area first.")
         cr.set_source_rgba(1.0, 1.0, 1.0, 1.0)
         cr.paint()
@@ -122,7 +122,7 @@ class RenderedGraph:
         cr.translate(0.5 * rect.width, 0.5 * rect.height)
         cr.scale(self.zoom_ratio, self.zoom_ratio)
         cr.translate(-self.trans_x, -self.trans_y)
-        if self.xdot_graph != None:
+        if self.xdot_graph is not None:
             self.xdot_graph.draw(cr, highlight_items=self.highlighted_elements)
         cr.restore()
 
@@ -174,14 +174,14 @@ class RenderedGraph:
         self.dragging = False
 
     def get_element_by_coords(self, x, y):
-        if self.xdot_graph == None:
+        if self.xdot_graph is None:
             return None
         x, y = self.window2graph(x, y)
         elem = self.xdot_graph.get_element(x, y)
         return elem
 
     def get_subgraph_by_coords(self, x, y):
-        if self.xdot_graph == None:
+        if self.xdot_graph is None:
             return None
         x, y = self.window2graph(x, y)
         subg_label = self.xdot_graph.get_subgraph(x, y)

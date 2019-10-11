@@ -37,7 +37,7 @@ class PropertyRenderer:
             w.destroy()
 
     def update(self):
-        if self.current_render_func != None:
+        if self.current_render_func is not None:
             self.clear_properties()
             self.current_render_func(**self.current_render_args)
 

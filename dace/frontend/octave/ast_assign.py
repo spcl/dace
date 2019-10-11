@@ -83,7 +83,7 @@ class AST_Assign(AST_Node):
                 lhs_data = self.lhs.arrayname.get_datanode(sdfg, state)
                 vardef = self.search_vardef_in_scope(
                     self.lhs.arrayname.get_name())
-                if vardef == None:
+                if vardef is None:
                     raise ValueError("No definition found for " +
                                      self.lhs.arrayname.get_name() +
                                      " searching from " + str(self))

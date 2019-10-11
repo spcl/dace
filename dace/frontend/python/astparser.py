@@ -919,7 +919,7 @@ class ParseDaCe(ExtNodeVisitor):
 
     def visit_TopLevelStr(self, node):
         if isinstance(self.curnode, astnodes._TaskletNode):
-            if self.curnode.extcode != None:
+            if self.curnode.extcode is not None:
                 raise DaCeSyntaxError(
                     self, node,
                     'Cannot provide more than one intrinsic implementation ' +

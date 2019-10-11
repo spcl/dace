@@ -236,7 +236,7 @@ class SDFGEditor:
 
     def AddStream(self, streamname, statelabel):
         state = self.parse_state_label(statelabel)
-        if state == None:
+        if state is None:
             raise ValueError("State " + statelabel + " not found / parsable")
         streamtype = self.sdfg.add_stream("newstream", dace.types.float64, 1,
                                           0)
@@ -278,7 +278,7 @@ class SDFGEditor:
         newmap = dace.graph.nodes.Map(mapname, ["i"],
                                       dace.subsets.Range([("0", "N-1", "1")]))
         state = self.parse_state_label(statelabel)
-        if state == None:
+        if state is None:
             raise ValueError("State " + statelabel + " not found / parsable")
         self.sdfg.nodes()[state].add_node(dace.graph.nodes.MapEntry(newmap))
         self.sdfg.nodes()[state].add_node(dace.graph.nodes.MapExit(newmap))
@@ -287,7 +287,7 @@ class SDFGEditor:
 
     def AddConsume(self, consumename, statelabel):
         state = self.parse_state_label(statelabel)
-        if state == None:
+        if state is None:
             raise ValueError("State " + statelabel + " not found / parsable")
         newconsume = dace.graph.nodes.Consume(
             consumename, ["i"], dace.subsets.Range([("0", "N-1", "1")]))
@@ -306,7 +306,7 @@ class SDFGEditor:
 
     def AddTasklet(self, taskletname, statelabel):
         state = self.parse_state_label(statelabel)
-        if state == None:
+        if state is None:
             self.show_error("You cannot put tasklets outside of states")
             return False
         newtasklet = dace.graph.nodes.Tasklet(taskletname)
@@ -367,7 +367,7 @@ class SDFGEditor:
     def add_array(self, x, y):
         state_label = self.rendered_sdfg.get_subgraph_by_coords(x, y)
         state = self.parse_state_label(state_label)
-        if state == None:
+        if state is None:
             self.show_error("You cannot put arrays outside of states")
             return False
         self.AddArray("newarray", state_label)
@@ -381,7 +381,7 @@ class SDFGEditor:
         newstream = dace.graph.nodes.AccessNode(streamtype)
         state_label = self.rendered_sdfg.get_subgraph_by_coords(x, y)
         state = self.parse_state_label(state_label)
-        if state == None:
+        if state is None:
             self.show_error("You cannot put streams outside of states")
             return False
         self.sdfg.nodes()[state].add_node(newstream)
@@ -391,7 +391,7 @@ class SDFGEditor:
 
     def add_memlet(self, x, y):
         elem = self.rendered_sdfg.get_element_by_coords(x, y)
-        if self.first_selected_node_for_edge == None:
+        if self.first_selected_node_for_edge is None:
             if type(elem).__name__ == "Node":
                 self.first_selected_node_for_edge = elem
             else:
@@ -419,12 +419,12 @@ class SDFGEditor:
 
     def add_state_trans(self, x, y):
         sg = self.rendered_sdfg.get_subgraph_by_coords(x, y)
-        if sg == None:
+        if sg is None:
             self.first_selected_state_for_edge = None
             self.show_error(
                 "You need to select a state to add a state transition")
             return False
-        if self.first_selected_state_for_edge == None:
+        if self.first_selected_state_for_edge is None:
             self.first_selected_state_for_edge = sg
             return False
         self.AddStateTransition(self.first_selected_state_for_edge, sg)
@@ -456,9 +456,9 @@ class SDFGEditor:
     def redirect(self, x, y, direction):
         # If the user didn't select an edge yet, store the selected edge
         # and reset in case they select a node
-        if self.selected_edge_for_redir == None:
+        if self.selected_edge_for_redir is None:
             elem = self.rendered_sdfg.get_element_by_coords(x, y)
-            if (elem == None) or (type(elem).__name__ != "Edge"):
+            if (elem is None) or (type(elem).__name__ != "Edge"):
                 self.selected_edge_for_redir = None
                 return False
             self.selected_edge_for_redir = elem
@@ -524,7 +524,7 @@ class SDFGEditor:
     def add_map(self, x, y):
         state_label = self.rendered_sdfg.get_subgraph_by_coords(x, y)
         state = self.parse_state_label(state_label)
-        if state == None:
+        if state is None:
             self.show_error("You cannot put maps outside of states")
             return False
         self.AddMap("newmap", state_label)
@@ -534,7 +534,7 @@ class SDFGEditor:
     def add_consume(self, x, y):
         state_label = self.rendered_sdfg.get_subgraph_by_coords(x, y)
         state = self.parse_state_label(state_label)
-        if state == None:
+        if state is None:
             self.show_error("You cannot put consumes outside of states")
             return False
         self.AddConsume("newconsume", state_label)
@@ -552,7 +552,7 @@ class SDFGEditor:
     def add_tasklet(self, x, y):
         state_label = self.rendered_sdfg.get_subgraph_by_coords(x, y)
         state = self.parse_state_label(state_label)
-        if state == None:
+        if state is None:
             self.show_error("You cannot put tasklets outside of states")
             return False
         self.AddTasklet("newtasklet", state_label)
@@ -562,7 +562,7 @@ class SDFGEditor:
 
     def delete_node(self, x, y):
         elem = self.rendered_sdfg.get_element_by_coords(x, y)
-        if elem == None:
+        if elem is None:
             return False
         nodeid = elem.id.decode('utf-8')
         self.DeleteNode(nodeid)
@@ -597,7 +597,7 @@ class SDFGEditor:
 
     def delete_edge(self, x, y):
         elem = self.rendered_sdfg.get_element_by_coords(x, y)
-        if elem == None:
+        if elem is None:
             return False
         tail = elem.src.id.decode('utf-8')
         head = elem.dst.id.decode('utf-8')
