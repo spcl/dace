@@ -96,7 +96,7 @@ class FPGATransformState(pattern_matching.Transformation):
         fpga_data = {}
 
         # Input nodes may also be nodes with WCR memlets
-        # We have to recur across nested SDFGs
+        # We have to recur across nested SDFGs to dinf them
         wcr_input_nodes = set()
         stack = []
 
@@ -134,9 +134,6 @@ class FPGATransformState(pattern_matching.Transformation):
                     # TODO: handle streams
                     continue
 
-                # here I have problem in dealing with hist_out
-                # we don't know that it's real name is hist
-
                 array = node.desc(sdfg)
                 if node.data in fpga_data:
                     fpga_array = fpga_data[node.data]
@@ -153,7 +150,6 @@ class FPGATransformState(pattern_matching.Transformation):
                         strides=array.strides,
                         offset=array.offset)
                     fpga_data[node.data] = fpga_array
-                # fpga_node = type(node)(fpga_array)
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
