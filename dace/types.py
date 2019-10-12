@@ -533,7 +533,12 @@ class callback(typeclass):
         return "dace.callback"
 
     def __eq__(self, other):
+        if not isinstance(other, callback):
+            return False
         return self.uid == other.uid
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 
 int8 = typeclass(numpy.int8)
