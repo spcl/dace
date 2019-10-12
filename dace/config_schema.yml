@@ -667,3 +667,11 @@ required:
                 title: Undefined Symbol Check
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
+
+            test_serialization:
+                type: bool
+                default: false
+                title: Test Serialization on validation
+                description: >
+                    Before generating code, verify that a serialization/deserialization loop
+                    generates the same SDFG.
