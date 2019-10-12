@@ -395,11 +395,14 @@ class Property:
 
     @staticmethod
     def json_dumper(obj):
-        try:
+        if hasattr(obj, 'toJSON'):
             # Try the toJSON-methods by default
             tmp = json.loads(obj.toJSON())
             return tmp
-        except:
+        elif isinstance(obj, np.ndarray):
+            # Special case for external structures (numpy arrays)
+            return NumpyLoader.toJSON_object(obj)
+        else:
             # If not available, go for the default str() representation
             return str(obj)
 
@@ -429,10 +432,10 @@ class Property:
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
             "subsets.Indices": dace.subsets.Indices,
-
             "pointer": dace.types.pointer,
             "callback": dace.types.callback,
-            "struct": dace.types.struct
+            "struct": dace.types.struct,
+            "ndarray": NumpyLoader
         }
 
     @staticmethod
@@ -1432,3 +1435,25 @@ class TypeClassProperty(Property):
             return dace.types.pointer.fromJSON_object(d)
         else:
             raise TypeError('Unrecognized typeclass object: %s' % d)
+
+
+class NumpyLoader(object):
+    """ Helper class to load/store numpy arrays from JSON. """
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != 'ndarray':
+            raise TypeError('Object is not a numpy ndarray')
+
+        if 'dtype' in json_obj:
+            return np.array(json_obj['data'], dtype=json_obj['dtype'])
+
+        return np.array(json_obj['data'])
+
+    @staticmethod
+    def toJSON_object(obj):
+        return {
+            'type': 'ndarray',
+            'data': obj.tolist(),
+            'dtype': str(obj.dtype)
+        }
