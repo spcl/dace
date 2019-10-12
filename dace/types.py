@@ -541,6 +541,7 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
+bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
