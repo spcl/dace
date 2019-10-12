@@ -46,6 +46,10 @@ def generate_code(sdfg) -> List[CodeObject]:
                 'SDFG serialization failed - files do not match')
         os.remove('test.sdfg')
         os.remove('test2.sdfg')
+
+        # Run with the deserialized version
+        sdfg = sdfg2
+
     frame = framecode.DaCeCodeGenerator()
     # Instantiate all targets (who register themselves with framecodegen)
     targets = {
