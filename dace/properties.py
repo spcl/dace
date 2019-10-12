@@ -1047,8 +1047,10 @@ class CodeProperty(Property):
         if isinstance(obj, dict):
             lang = obj['language']
 
-        ret = {'string_data': CodeProperty.to_string(obj),
-               'language': lang.name}
+        ret = {
+            'string_data': CodeProperty.to_string(obj),
+            'language': lang.name
+        }
         return json.dumps(ret)
 
     @staticmethod
@@ -1248,6 +1250,9 @@ class SymbolicProperty(Property):
             raise TypeError(
                 "Property {} must an int or symbolic expression".format(
                     self.attr_name))
+        if isinstance(val, (int, float, str, complex)):
+            val = SymbolicProperty.from_string(str(val))
+
         super(SymbolicProperty, self).__set__(obj, val)
 
     @staticmethod
