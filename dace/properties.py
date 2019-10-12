@@ -476,7 +476,10 @@ class Property:
 
 def _property_generator(instance):
     for name, prop in type(instance).__properties__.items():
-        yield prop, getattr(instance, name)
+        if hasattr(instance, "_" + name):
+            yield prop, getattr(instance, "_" + name)
+        else:
+            yield prop, getattr(instance, name)
 
 
 def make_properties(cls):
@@ -1040,14 +1043,12 @@ class CodeProperty(Property):
         lang = dace.types.Language.Python
         if obj is None:
             return json.dumps(obj)
-        if isinstance(obj, str):
-            return json.dumps(obj)
 
         if isinstance(obj, dict):
             lang = obj['language']
-        else:
-            lang = "Python"  # If not specified, we just don't want the validators go haywire
-        ret = {'string_data': CodeProperty.to_string(obj), 'language': lang}
+
+        ret = {'string_data': CodeProperty.to_string(obj),
+               'language': lang.name}
         return json.dumps(ret)
 
     @staticmethod
