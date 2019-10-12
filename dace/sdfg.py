@@ -277,9 +277,10 @@ class SDFG(OrderedDiGraph):
             e = json.loads(json.dumps(e), object_hook=Property.json_loader)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
-        for v in json_obj['undefined_symbols']:
-            symbol = symbolic.symbol(v)
-            #symbol.set(v)
+        # Redefine symbols
+        for k, v in json_obj['undefined_symbols'].items():
+            v = Property.known_types()[v['type']].fromJSON_object(v)
+            symbolic.symbol(k, v.dtype)
 
         ret.validate()
 
@@ -392,8 +393,6 @@ class SDFG(OrderedDiGraph):
             @param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        #self.sourcecode = code
-        #self.language = lang
         self.sourcecode = {'code_or_block': code, 'language': lang}
 
     #@property
@@ -458,6 +457,10 @@ class SDFG(OrderedDiGraph):
     @parent.setter
     def parent(self, value):
         self._parent = value
+
+    @parent_sdfg.setter
+    def parent_sdfg(self, value):
+        self._parent_sdfg = value
 
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
@@ -991,18 +994,26 @@ subgraph cluster_state_{state} {{
                         result.append(node)
         return result
 
-    def save(self, filename: str, use_pickle=True):
+    def save(self, filename: str, use_pickle=False, with_metadata=False):
         """ Save this SDFG to a file.
             @param filename: File name to save to.
             @param use_pickle: Use Python pickle as the SDFG format (default:
-                               True).
+                               JSON).
+            @param with_metadata: Save property metadata (e.g. name,
+                                  description). False or True override current
+                                  option, whereas None keeps default
         """
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
         else:
+            if with_metadata is not None:
+                old_meta = dace.properties.json_store_metadata
+                dace.properties.json_store_metadata = with_metadata
             with open(filename, "w") as fp:
                 fp.write(self.toJSON())
+            if with_metadata is not None:
+                dace.properties.json_store_metadata = old_meta
 
     @staticmethod
     def from_file(filename: str):
@@ -2094,8 +2105,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent.node_id(self) if parent is not None else None,
             'collapsed':
             self.is_collapsed,
-            'scope_dict':
-            self.scope_dict(node_to_children=True, return_ids=True),
+            'scope_dict': {
+                k: sorted(v)
+                for k, v in self.scope_dict(
+                    node_to_children=True, return_ids=True).items()
+            },
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
             'edges': [
                 json.loads(e.toJSON(self)) for e in sorted(

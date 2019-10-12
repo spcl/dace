@@ -42,7 +42,8 @@ def generate_code(sdfg) -> List[CodeObject]:
         sdfg2.save('test2.sdfg')
         print('Testing SDFG serialization...')
         if not filecmp.cmp('test.sdfg', 'test2.sdfg'):
-            raise RuntimeError('SDFG serialization failed - files do not match')
+            raise RuntimeError(
+                'SDFG serialization failed - files do not match')
         os.remove('test.sdfg')
         os.remove('test2.sdfg')
     frame = framecode.DaCeCodeGenerator()

@@ -96,8 +96,7 @@ class Memlet(object):
 
     def toJSON(self, parent_graph=None):
         try:
-            attrs = json.loads(
-                Property.all_properties_to_json(self, {'no_meta': False}))
+            attrs = json.loads(Property.all_properties_to_json(self))
         except Exception as e:
             print("Got exception: " + str(e))
             import traceback
@@ -258,7 +257,8 @@ class Memlet(object):
             if self.num_accesses == -1:
                 result += '(dyn) '
             else:
-                result += '(%s) ' % str(self.num_accesses)
+                result += '(%s) ' % SymbolicProperty.to_string(
+                    self.num_accesses)
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:

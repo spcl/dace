@@ -114,11 +114,11 @@ class Executor:
 
             papi = PAPIUtils.is_papi_used(sdfg)
 
-
             # We got the file there, now we can run with different
             # configurations.
             if papi:
-                multirun_num = PAPISettings.perf_multirun_num(config=self._config)
+                multirun_num = PAPISettings.perf_multirun_num(
+                    config=self._config)
                 for iteration in range(multirun_num):
                     optdict, omp_thread_num = PAPIUtils.get_run_options(
                         self, iteration)
@@ -136,12 +136,9 @@ class Executor:
                         self.async_host.notify("Done option threads=" +
                                                str(omp_thread_num))
             else:
-                self.remote_exec_dace(
-                    remote_workdir,
-                    remote_dace_file,
-                    use_mpi,
-                    fail_on_nonzero)
-                
+                self.remote_exec_dace(remote_workdir, remote_dace_file,
+                                      use_mpi, fail_on_nonzero)
+
             self.show_output("Execution Terminated\n")
 
             try:
@@ -152,11 +149,12 @@ class Executor:
 
             if papi:
                 # Copy back the vectorization results
-                PAPIUtils.retrieve_vectorization_report(self, code_objects,
-                                                        remote_dace_dir)
+                PAPIUtils.retrieve_vectorization_report(
+                    self, code_objects, remote_dace_dir)
 
                 # Copy back the instrumentation results
-                PAPIUtils.retrieve_instrumentation_results(self, remote_workdir)
+                PAPIUtils.retrieve_instrumentation_results(
+                    self, remote_workdir)
 
             if self.running_async:
                 # Add information about what is being run

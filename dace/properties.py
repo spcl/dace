@@ -60,6 +60,9 @@ class PropertyError(Exception):
     pass
 
 
+json_store_metadata = True
+
+
 class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
@@ -333,8 +336,8 @@ class Property:
         return dict_in
 
     @staticmethod
-    def all_properties_to_json(object_with_properties,
-                               options={"no_meta": False}):
+    def all_properties_to_json(object_with_properties, options=None):
+        options = options or dict(no_meta=not json_store_metadata)
         retdict = {}
         for x, v in object_with_properties.properties():
             # The following loads is intended: This is a nested object.
@@ -426,6 +429,10 @@ class Property:
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
             "subsets.Indices": dace.subsets.Indices,
+
+            "pointer": dace.types.pointer,
+            "callback": dace.types.callback,
+            "struct": dace.types.struct
         }
 
     @staticmethod
@@ -945,7 +952,7 @@ class LambdaProperty(Property):
         if obj is None:
             return 'lambda: None'
         if isinstance(obj, str):
-            return obj
+            return unparse(ast.parse(obj))
         return unparse(obj)
 
     @staticmethod
@@ -1241,7 +1248,12 @@ class SymbolicProperty(Property):
 
     @staticmethod
     def from_string(s):
-        return pystr_to_symbolic(s)
+        return pystr_to_symbolic(s, simplify=False)
+
+    @staticmethod
+    def to_string(obj):
+        # Go through sympy once to reorder factors
+        return str(pystr_to_symbolic(str(obj), simplify=False))
 
 
 class DataProperty(Property):
@@ -1398,3 +1410,25 @@ class TypeClassProperty(Property):
     @staticmethod
     def to_string(obj):
         return obj.to_string()
+
+    @staticmethod
+    def to_json(obj):
+        if obj is None:
+            return json.dumps(obj)
+        return obj.dtype.toJSON()
+
+    @staticmethod
+    def from_json(s, sdfg=None):
+        d = json.loads(s)
+        if d is None:
+            return None
+        if isinstance(d, str):
+            return TypeClassProperty.from_string(d)
+        if 'type' in d and d['type'] == 'callback':
+            return dace.types.callback.fromJSON_object(d)
+        elif 'type' in d and d['type'] == 'struct':
+            return dace.types.struct.fromJSON_object(d)
+        elif 'type' in d and d['type'] == 'pointer':
+            return dace.types.pointer.fromJSON_object(d)
+        else:
+            raise TypeError('Unrecognized typeclass object: %s' % d)
