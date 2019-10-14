@@ -80,7 +80,7 @@ run_all() {
     #Vectorization 3: TODO non vectorizable N
 
 
-    #WCR simple on scalar
+    #simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "1\n"
 
 

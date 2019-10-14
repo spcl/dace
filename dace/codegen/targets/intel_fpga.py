@@ -80,10 +80,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "intel_fpga", "mode")
-        sdaccel_dir = os.path.dirname(
-            os.path.dirname(
-                make_absolute(
-                    Config.get("compiler", "intel_fpga", "executable"))))
 
         kernel_file_name = "DACE_BINARY_DIR \"{}".format(self._program_name)
         emulation_flag = ""

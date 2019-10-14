@@ -927,8 +927,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 for i, r in enumerate(node.map.range):
                     var = node.map.params[i]
                     begin, end, skip = r
+                    # decide type of loop variable
+                    type = "size_t" if (begin >= 0 and skip > 0) else "int"
                     result.write(
-                        "for (long {} = {}; {} < {}; {} += {}) {{\n".format(
+                        "for ({} {} = {}; {} < {}; {} += {}) {{\n".format( type,
                             var, cpu.sym2cpp(begin), var, cpu.sym2cpp(end + 1),
                             var, cpu.sym2cpp(skip)), sdfg, state_id, node)
             else:
