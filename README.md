@@ -9,14 +9,14 @@ _Decoupling domain science from performance optimization._
 DaCe compiles code in various programming languages and paradigms (Python/Numpy, MATLAB, TensorFlow) and maps it efficiently to **CPUs, GPUs, and FPGAs** with high utilization, on par with the state-of-the-art. The key feature driving DaCe is its Stateful DataFlow multiGraph (SDFG) *data-centric intermediate representation*: A transformable, interactive representation of code based on data movement.
 With data-centric parallel programming, we enable **direct knowledge transfer** of performance optimization, regardless of the scientific application or the target processor.
 
-DaCe can be written inline in Python and transformed in the command-line, or SDFGs can be interactively modified using the Data-centric Interactive Optimization Development Environment (DIODE).
+DaCe can be written inline in Python and transformed in the command-line/Jupyter Notebooks, or SDFGs can be interactively modified using the Data-centric Interactive Optimization Development Environment (DIODE, currently experimental).
 
 For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
 
 Tutorials
 ---------
 
-* _Implicit Dataflow in Python (coming soon)_
+* _Data-Centric Python Programs with NumPy (coming soon)_
 * [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb)
 * [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
 * [Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)
@@ -29,23 +29,25 @@ To install: `pip install dace`
 Runtime dependencies:
  * A C++14-capable compiler (e.g., gcc 5.3+)
  * Python 3.5 or newer
+ * CMake 2.8.12 or newer (for Windows, CMake 3.15 is recommended)
 
-To run DIODE, either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions.
+To run DIODE (experimental), either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions.
+
+DaCe is Jupyter Notebook-compatible. If a result is an SDFG, it will show up directly in the notebook.
+
+To view SDFGs separately, use SDFV (the SDFG Viewer). Run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can open `diode/sdfv.html` directly and choose a file in the browser.
 
 Publication
 -----------
 
 If you use DaCe, cite us:
 ```bibtex
-@article{dace,
-  author = {Ben-Nun, Tal and de Fine Licht, Johannes and Ziogas, Alexandros Nikolaos and Schneider, Timo and Hoefler, Torsten},
-        title = {Stateful Dataflow Multigraphs: A Data-Centric Model for High-Performance Parallel Programs},
-  journal   = {CoRR},
-  volume    = {abs/1902.10345},
+@inproceedings{dace,
+  author    = {Ben-Nun, Tal and de Fine Licht, Johannes and Ziogas, Alexandros Nikolaos and Schneider, Timo and Hoefler, Torsten},
+  title     = {Stateful Dataflow Multigraphs: A Data-Centric Model for Performance Portability on Heterogeneous Architectures},
   year      = {2019},
-  url       = {http://arxiv.org/abs/1902.10345},
-  archivePrefix = {arXiv},
-  eprint    = {1902.10345}
+  booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+  series = {SC '19}
 }
 ```
 
@@ -62,13 +64,8 @@ Context configuration:
  * `DACE_use_cache` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
  * `DACE_debugprint` (default: True): Print debugging information.
  
-CPU target configuration:
- * `DACE_compiler_cpu_executable` (default: g++): Chooses the default C++ compiler for CPU code.
- * `DACE_compiler_cpu_additional_args` (default: None): Additional compiler flags (separated by spaces).
-  
 SDFG processing:
- * `DACE_optimizer_interface` (default: `dace.transformation.optimizer.SDFGOptimizer`): Controls the SDFG optimization process. If empty or class name is invalid, skips process. By default, uses the transformation command line interface.
- * `DACE_optimizer_visualize` (default: False): Visualizes optimization process by saving .dot (GraphViz) files after each pattern replacement.
+ * `DACE_optimizer_interface` (default: `dace.transformation.optimizer.SDFGOptimizer`): Controls the SDFG optimization process by choosing a Python handler. If empty or class name is invalid, skips process. By default, uses the transformation command line interface.
  
 Profiling:
  * `DACE_profiling` (default: False): Enables profiling measurement of the DaCe program runtime in milliseconds. Produces a log file and prints out median runtime.
@@ -81,5 +78,5 @@ DaCe is an open-source project. We are happy to accept Pull Requests with your c
 
 License
 -------
-DaCe is published under the New BSD license, see LICENSE.
+DaCe is published under the New BSD license, see [LICENSE](LICENSE).
 

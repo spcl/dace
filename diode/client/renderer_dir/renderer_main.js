@@ -1136,25 +1136,6 @@ function message_handler(msg, sdfg_state = undefined) {
 
 }
 
-function isWithinBB(x, y, layoutinfo) {
-    if ((x > layoutinfo.x - layoutinfo.width/2.0) && 
-        (x < layoutinfo.x + layoutinfo.width/2.0) &&
-        (y > layoutinfo.y - layoutinfo.height/2.0) &&
-        (y < layoutinfo.y + layoutinfo.height/2.0)) {
-            return true;
-    }
-    return false;
-}
-
-function isWithinBBEdge(x, y, layoutinfo) {
-    if ((x >= layoutinfo.x) &&
-        (x <= layoutinfo.x + layoutinfo.width) &&
-        (y >= layoutinfo.y) &&
-        (y <= layoutinfo.y + layoutinfo.height)) {
-            return true;
-    }
-    return false;
-}
 
 function addXYOffset(g, x_offs, y_offs) {
     "use strict";
@@ -1310,7 +1291,6 @@ function layout_state(sdfg_state, sdfg, controller_state = undefined) {
         node.attributes.layout.type = node.type;
         node.attributes.layout.in_connectors = node.attributes.in_connectors;
         node.attributes.layout.out_connectors = node.attributes.out_connectors;
-        node.attributes.layout.properties = node.attributes;
         node.attributes.layout.sdfg = sdfg;
         node.attributes.layout.state = sdfg_state;
         g.setNode(node.id, node.attributes.layout);

@@ -8,6 +8,7 @@ import os
 import pickle, json
 from pydoc import locate
 from typing import Any, Dict, Set, Tuple, List
+import warnings
 
 import networkx as nx
 import numpy as np
@@ -46,6 +47,18 @@ def getdebuginfo(old_dinfo=None) -> types.DebugInfo:
 
     caller = getframeinfo(stack()[2][0])
     return types.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+
+
+class Scope(object):
+    """ A class defining a scope, its parent and children scopes, variables, and
+        scope entry/exit nodes. """
+
+    def __init__(self, entrynode, exitnode):
+        self.parent = None
+        self.children = []
+        self.defined_vars = []
+        self.entry = entrynode
+        self.exit = exitnode
 
 
 class InvalidSDFGError(Exception):
@@ -154,7 +167,7 @@ class SDFG(OrderedDiGraph):
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
-                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k != None}, default=Property.json_dumper) if x != None else "null",
+                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k is not None}, default=Property.json_dumper) if x is not None else "null",
                         from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
 
     global_code = CodeProperty(
@@ -215,6 +228,9 @@ class SDFG(OrderedDiGraph):
         self.exit_code = ''
 
     def toJSON(self):
+        """ Serializes this object to JSON format.
+            :return: A string representing the JSON-serialized SDFG.
+        """
         import json
         tmp = super(SDFG, self).toJSON()
         tmp = json.loads(tmp)
@@ -261,9 +277,10 @@ class SDFG(OrderedDiGraph):
             e = json.loads(json.dumps(e), object_hook=Property.json_loader)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
-        for v in json_obj['undefined_symbols']:
-            symbol = symbolic.symbol(v)
-            #symbol.set(v)
+        # Redefine symbols
+        for k, v in json_obj['undefined_symbols'].items():
+            v = Property.known_types()[v['type']].fromJSON_object(v)
+            symbolic.symbol(k, v.dtype)
 
         ret.validate()
 
@@ -376,8 +393,6 @@ class SDFG(OrderedDiGraph):
             @param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        #self.sourcecode = code
-        #self.language = lang
         self.sourcecode = {'code_or_block': code, 'language': lang}
 
     #@property
@@ -442,6 +457,10 @@ class SDFG(OrderedDiGraph):
     @parent.setter
     def parent(self, value):
         self._parent = value
+
+    @parent_sdfg.setter
+    def parent_sdfg(self, value):
+        self._parent_sdfg = value
 
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
@@ -975,12 +994,26 @@ subgraph cluster_state_{state} {{
                         result.append(node)
         return result
 
-    def save(self, filename: str):
-        """ Save this SDFG to a file (uses Pickle as the default format).
+    def save(self, filename: str, use_pickle=False, with_metadata=False):
+        """ Save this SDFG to a file.
             @param filename: File name to save to.
+            @param use_pickle: Use Python pickle as the SDFG format (default:
+                               JSON).
+            @param with_metadata: Save property metadata (e.g. name,
+                                  description). False or True override current
+                                  option, whereas None keeps default
         """
-        with open(filename, "wb") as fp:
-            symbolic.SympyAwarePickler(fp).dump(self)
+        if use_pickle:
+            with open(filename, "wb") as fp:
+                symbolic.SympyAwarePickler(fp).dump(self)
+        else:
+            if with_metadata is not None:
+                old_meta = dace.properties.json_store_metadata
+                dace.properties.json_store_metadata = with_metadata
+            with open(filename, "w") as fp:
+                fp.write(self.toJSON())
+            if with_metadata is not None:
+                dace.properties.json_store_metadata = old_meta
 
     @staticmethod
     def from_file(filename: str):
@@ -989,28 +1022,18 @@ subgraph cluster_state_{state} {{
             @return: An SDFG.
         """
         with open(filename, "rb") as fp:
-            sdfg = symbolic.SympyAwareUnpickler(fp).load()
+            firstbyte = fp.read(1)
+            fp.seek(0)
+            if firstbyte == b'{':  # JSON file
+                sdfg_json = json.load(fp)
+                sdfg = SDFG.fromJSON_object(sdfg_json)
+            else:  # Pickle
+                sdfg = symbolic.SympyAwareUnpickler(fp).load()
+
             if not isinstance(sdfg, SDFG):
                 raise TypeError("Loaded file is not an SDFG (loaded "
                                 "type: %s)" % type(sdfg).__name__)
             return sdfg
-
-    def dumps(self):
-        """ Returns a serialized representation of this SDFG (uses Pickle as the default format)
-        """
-        return pickle.dumps(self)
-
-    @staticmethod
-    def from_bytes(mem: bytes):
-        """ Constructs an SDFG from the serial representation in `bytes`
-            @param mem: bytes object to load SDFG from.
-            @return: An SDFG
-        """
-        sdfg = pickle.loads(mem)
-        if not isinstance(sdfg, SDFG):
-            raise TypeError('Loaded file is not an SDFG (loaded '
-                            'type: %s)' % type(sdfg).__name__)
-        return sdfg
 
     # Dynamic SDFG creation API
     ##############################
@@ -1387,12 +1410,12 @@ subgraph cluster_state_{state} {{
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
 
+        # Fill in scope entry/exit connectors
+        sdfg.fill_scope_connectors()
+
         # Propagate memlets in the graph
         if self._propagate:
             propagate_labels_sdfg(sdfg)
-
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
 
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
@@ -1637,23 +1660,25 @@ subgraph cluster_state_{state} {{
         """
 
         # Import loop "fix"
-        from dace.codegen import codegen, compiler
+        from dace.codegen import codegen
 
         ################################
         # DaCe Code Generation Process #
         sdfg = copy.deepcopy(self)
 
+        # Fill in scope entry/exit connectors
+        sdfg.fill_scope_connectors()
+
         # Propagate memlets in the graph
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
-
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
 
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
                 "optimizer", "autospecialize")) or specialize == True:
             sdfg.specialize()
+
+        sdfg.draw_to_file()
 
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
@@ -1965,7 +1990,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         )  # When this is set: Under no circumstances try instrumenting this (or any transitive children)
 
     def is_parallel(self):
-        return self._parallel_parent != None
+        return self._parallel_parent is not None
 
     def set_parallel_parent(self, parallel_parent):
         self._parallel_parent = parallel_parent
@@ -1981,6 +2006,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def _clear_scopedict_cache(self):
         self._scope_dict_toparent_cached = None
         self._scope_dict_tochildren_cached = None
+        self._scope_tree_cached = None
+        self._scope_leaves_cached = None
 
     @property
     def label(self):
@@ -2071,15 +2098,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def toJSON(self, parent=None):
         import json
         ret = {
-            'type': type(self).__name__,
-            'label': self.name,
-            'id': parent.node_id(self) if parent != None else None,
-            'collapsed': self.is_collapsed,
-            'scope_dict': self.scope_dict(
-                node_to_children=True, return_ids=True),
+            'type':
+            type(self).__name__,
+            'label':
+            self.name,
+            'id':
+            parent.node_id(self) if parent is not None else None,
+            'collapsed':
+            self.is_collapsed,
+            'scope_dict': {
+                k: sorted(v)
+                for k, v in self.scope_dict(
+                    node_to_children=True, return_ids=True).items()
+            },
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
-            'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
-            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'edges': [
+                json.loads(e.toJSON(self)) for e in sorted(
+                    self.edges(),
+                    key=lambda e: (e.src_conn or '', e.dst_conn or ''))
+            ],
+            'attributes':
+            json.loads(Property.all_properties_to_json(self)),
         }
 
         return json.dumps(ret)
@@ -2137,6 +2176,54 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 n.consume = ret.entry_node(n).consume
 
         return ret
+
+    def scope_tree(self):
+        if (hasattr(self, '_scope_tree_cached')
+                and self._scope_tree_cached is not None):
+            return copy.copy(self._scope_tree_cached)
+
+        sdp = self.scope_dict(node_to_children=False)
+        sdc = self.scope_dict(node_to_children=True)
+
+        result = {}
+
+        sdfg_symbols = self.parent.undefined_symbols(True).keys()
+
+        # Get scopes
+        for node, scopenodes in sdc.items():
+            if node is None:
+                exit_node = None
+            else:
+                exit_node = next(
+                    v for v in scopenodes if isinstance(v, nd.ExitNode))
+            scope = Scope(node, exit_node)
+            scope.defined_vars = set(
+                symbolic.pystr_to_symbolic(s)
+                for s in (self.parent.symbols_defined_at(node, self).keys()
+                          | sdfg_symbols))
+            result[node] = scope
+
+        # Scope parents and children
+        for node, scope in result.items():
+            if node is not None:
+                scope.parent = result[sdp[node]]
+            scope.children = [
+                result[n] for n in sdc[node] if isinstance(n, nd.EntryNode)
+            ]
+
+        self._scope_tree_cached = result
+
+        return copy.copy(self._scope_tree_cached)
+
+    def scope_leaves(self):
+        if (hasattr(self, '_scope_leaves_cached')
+                and self._scope_leaves_cached is not None):
+            return copy.copy(self._scope_leaves_cached)
+        st = self.scope_tree()
+        self._scope_leaves_cached = [
+            scope for scope in st.values() if len(scope.children) == 0
+        ]
+        return copy.copy(self._scope_leaves_cached)
 
     def scope_dict(self, node_to_children=False, return_ids=False):
         """ Returns a dictionary that segments an SDFG state into
@@ -2792,8 +2879,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_array" API is deprecated, please '
-              'use "SDFG.add_array" and "SDFGState.add_access"')
+        warnings.warn(
+            'The "SDFGState.add_array" API is deprecated, please '
+            'use "SDFG.add_array" and "SDFGState.add_access"',
+            DeprecationWarning)
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -2826,8 +2915,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_stream" API is deprecated, please '
-              'use "SDFG.add_stream" and "SDFGState.add_access"')
+        warnings.warn(
+            'The "SDFGState.add_stream" API is deprecated, please '
+            'use "SDFG.add_stream" and "SDFGState.add_access"',
+            DeprecationWarning)
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -2856,8 +2947,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
-        print('WARNING: The "SDFGState.add_scalar" API is deprecated, please '
-              'use "SDFG.add_scalar" and "SDFGState.add_access"')
+        warnings.warn(
+            'The "SDFGState.add_scalar" API is deprecated, please '
+            'use "SDFG.add_scalar" and "SDFGState.add_access"',
+            DeprecationWarning)
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
@@ -3003,7 +3096,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 "parent", sdfg, state_id)
 
         # Used in memlet validation
-        undefined_syms = set(sdfg.undefined_symbols(True).keys())
+        if dace.Config.get_bool('experimental', 'validate_undefs'):
+            scope_tree = self.scope_tree()
 
         # Unreachable
         ########################################
@@ -3096,7 +3190,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         if input_found:
                             break
                     if not input_found and node.setzero == False:
-                        print(
+                        warnings.warn(
                             'WARNING: Use of uninitialized transient "%s" in state %s'
                             % (node.data, self.label))
 
@@ -3126,8 +3220,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Connector tests
             ########################################
-            # Check for duplicate connector names
-            if len(node.in_connectors & node.out_connectors) > 0:
+            # Check for duplicate connector names (unless it's a nested SDFG)
+            if (len(node.in_connectors & node.out_connectors) > 0
+                    and not isinstance(node, nd.NestedSDFG)):
                 dups = node.in_connectors & node.out_connectors
                 raise InvalidSDFGNodeError(
                     "Duplicate connectors: " + str(dups), sdfg, state_id, nid)
@@ -3300,21 +3395,21 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                             state_id, eid)
 
                 # Test subset and other_subset for undefined symbols
-                defined_symbols = set(
-                    sdfg.symbols_defined_at(e.dst, self).keys())
-                undefs = (e.data.subset.free_symbols - defined_symbols -
-                          undefined_syms)
-                if len(undefs) > 0:
-                    raise InvalidSDFGEdgeError(
-                        'Undefined symbols %s found in memlet subset' % undefs,
-                        sdfg, state_id, eid)
-                if e.data.other_subset is not None:
-                    undefs = (e.data.other_subset.free_symbols -
-                              defined_symbols - undefined_syms)
+                if dace.Config.get_bool('experimental', 'validate_undefs'):
+                    defined_symbols = set(
+                        map(str, scope_tree[scope[e.dst]].defined_vars))
+                    undefs = (e.data.subset.free_symbols - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
-                            'Undefined symbols %s found in memlet '
-                            'other_subset' % undefs, sdfg, state_id, eid)
+                            'Undefined symbols %s found in memlet subset' %
+                            undefs, sdfg, state_id, eid)
+                    if e.data.other_subset is not None:
+                        undefs = (
+                            e.data.other_subset.free_symbols - defined_symbols)
+                        if len(undefs) > 0:
+                            raise InvalidSDFGEdgeError(
+                                'Undefined symbols %s found in memlet '
+                                'other_subset' % undefs, sdfg, state_id, eid)
             #######################################
 
             # Memlet path scope lifetime checks
@@ -3381,7 +3476,7 @@ def scope_contains_scope(sdict, node, other_node):
     """
     curnode = other_node
     nodescope = sdict[node]
-    while curnode != None:
+    while curnode is not None:
         curnode = sdict[curnode]
         if curnode == nodescope:
             return True
@@ -3819,6 +3914,6 @@ def _get_optimizer_class(class_override):
 
     result = locate(clazz)
     if result is None:
-        print('WARNING: Optimizer interface class "%s" not found' % clazz)
+        warnings.warn('Optimizer interface class "%s" not found' % clazz)
 
     return result

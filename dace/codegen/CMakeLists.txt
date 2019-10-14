@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(dace_program)
 
-# General options 
+# General options
 set(DACE_PROGRAM_NAME "dace_program" CACHE STRING "Name of DaCe program")
 set(DACE_FILES "" CACHE STRING "Host code files")
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
@@ -75,9 +75,8 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 # External dependencies 
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
-file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/" DACE_BINARY_DIR)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-add_definitions(-DDACE_BINARY_DIR=\"${DACE_BINARY_DIR}\")
+add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\")
 set(DACE_LIBS ${DACE_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${OpenMP_CXX_LIBRARIES})
 if(DACE_ENABLE_MPI)
   find_package(MPI REQUIRED)
@@ -88,9 +87,22 @@ if(DACE_ENABLE_CUDA)
   find_package(CUDA REQUIRED)
   set(CUDA_PROPAGATE_HOST_FLAGS OFF)
   include_directories(${CUDA_INCLUDE_DIRS})
+  if (MSVC_IDE)
+    link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib/x64)
+  else()
+    link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
+  endif()
   set(DACE_LIBS ${DACE_LIBS} ${CUDA_LIBRARIES})
   add_definitions(-DWITH_CUDA)
+
+  if (MSVC_IDE)
+    if (${CMAKE_VERSION} VERSION_LESS "3.15.0")
+      message("WARNING: CMake versions older than 3.15 are known to cause issues with CUDA builds on Windows.")
+    endif()
+    cmake_policy(SET CMP0091 NEW)
+  endif()
 endif()
+
 if(DACE_ENABLE_XILINX OR DACE_ENABLE_INTELFPGA)
   set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${DACE_HLSLIB_DIR}/cmake)
@@ -395,21 +407,6 @@ if (MSVC_IDE)
         DEPENDS ${DACE_PROGRAM_NAME}
         COMMENT "Copying binaries" VERBATIM)
 
-    # Replace /MD with /MT so that CUDA links properly
-    # https://stackoverflow.com/a/14172871/6489142
-    set(CompilerFlags
-        CMAKE_CXX_FLAGS
-        CMAKE_CXX_FLAGS_DEBUG
-        CMAKE_CXX_FLAGS_RELEASE
-        CMAKE_CXX_FLAGS_RELWITHDEBINFO
-        CMAKE_CXX_FLAGS_MINSIZEREL
-        CMAKE_C_FLAGS
-        CMAKE_C_FLAGS_DEBUG
-        CMAKE_C_FLAGS_RELEASE
-        CMAKE_C_FLAGS_RELWITHDEBINFO
-        CMAKE_C_FLAGS_MINSIZEREL
-        )
-    foreach(CompilerFlag ${CompilerFlags})
-      string(REPLACE "/MD" "/MT" ${CompilerFlag} "${${CompilerFlag}}")
-    endforeach()
+    set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY
+                 MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()

@@ -212,7 +212,7 @@ class PatternEditor:
                     self.main_sdfg, elem)
 
         elif ev.button == 3:
-            if elem == None:
+            if elem is None:
                 self.rendered_main_sdfg.clear_highlights()
             else:
                 self.rendered_main_sdfg.highlight_element(elem)
@@ -228,10 +228,10 @@ class PatternEditor:
     def OnRepFindNodePropsChanged(self, widget, data):
         elem_in_replace = False
         elem = self.abstract_find_sdfg.find_node(data)
-        if elem == None:
+        if elem is None:
             elem = self.abstract_replace_sdfg.find_node(data)
             elem_in_replace = True
-        if elem == None:
+        if elem is None:
             raise ValueError("Could not find node " + data)
             return
         newval = widget.get_text()
@@ -247,10 +247,10 @@ class PatternEditor:
     def OnRepFindEdgePropsChanged(self, widget, data):
         elem_in_replace = False
         elem = self.abstract_find_sdfg.find_edge(data[0], data[1])
-        if elem == None:
+        if elem is None:
             elem = self.abstract_replace_sdfg.find_edge(data[0], data[1])
             elem_in_replace = True
-        if elem == None:
+        if elem is None:
             raise ValueError("Could not find node " + data)
             return
         newval = widget.get_text()
@@ -347,9 +347,9 @@ class PatternEditor:
 
         elif self.active_tool["type"] == "edge":
             elem = rendered_graph.get_element_by_coords(ev.x, ev.y)
-            if elem == None:
+            if elem is None:
                 return
-            if self.first_selected_node_for_edge == None:
+            if self.first_selected_node_for_edge is None:
                 self.first_selected_node_for_edge = elem.id.decode('utf-8')
             else:
                 second_selected_node_for_edge = elem.id.decode('utf-8')

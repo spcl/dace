@@ -978,7 +978,7 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 s = offset
             o = None
-        if s != None:
+        if s is not None:
             offset_cppstr = cpp_offset_expr(
                 datadesc, s, o, memlet.veclen if packed_types else 1)
         else:
@@ -1338,8 +1338,13 @@ class CPUCodeGen(TargetCodeGenerator):
         node.sdfg.parent = state_dfg
         node.sdfg._parent_sdfg = sdfg
 
+        # Connectors that are both input and output share the same name
+        inout = set(node.in_connectors & node.out_connectors)
+
         # Take care of nested SDFG I/O
         for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
+            if vconn in inout:
+                continue
             callsite_stream.write(
                 self.memlet_definition(sdfg, in_memlet, False, vconn),
                 sdfg,

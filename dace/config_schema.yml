@@ -707,3 +707,26 @@ required:
         default: 100
         title: Profiling Repetitions
         description: Number of times to run program for profiling.
+
+    #############################################
+    # Experimental features
+
+    experimental:
+        type: dict
+        title: Experimental
+        description: Experimental features
+        required:
+            validate_undefs:
+                type: bool
+                default: false
+                title: Undefined Symbol Check
+                description: >
+                    Check for undefined symbols in memlets during SDFG validation.
+
+            test_serialization:
+                type: bool
+                default: false
+                title: Test Serialization on validation
+                description: >
+                    Before generating code, verify that a serialization/deserialization loop
+                    generates the same SDFG.

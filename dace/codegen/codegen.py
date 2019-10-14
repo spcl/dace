@@ -1,10 +1,10 @@
-import numpy as np
-
+import os
 from typing import List
 
 from dace import types
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
+from dace.config import Config
 
 # Import all code generation targets
 from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx, intel_fpga
@@ -37,6 +37,22 @@ def generate_code(sdfg) -> List[CodeObject]:
     """
     # Before compiling, validate SDFG correctness
     sdfg.validate()
+
+    if Config.get_bool('experimental', 'test_serialization'):
+        from dace.sdfg import SDFG
+        import filecmp
+        sdfg.save('test.sdfg')
+        sdfg2 = SDFG.from_file('test.sdfg')
+        sdfg2.save('test2.sdfg')
+        print('Testing SDFG serialization...')
+        if not filecmp.cmp('test.sdfg', 'test2.sdfg'):
+            raise RuntimeError(
+                'SDFG serialization failed - files do not match')
+        os.remove('test.sdfg')
+        os.remove('test2.sdfg')
+
+        # Run with the deserialized version
+        sdfg = sdfg2
 
     frame = framecode.DaCeCodeGenerator()
     # Instantiate all targets (who register themselves with framecodegen)

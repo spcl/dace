@@ -12,6 +12,7 @@ import math
 import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState
+from dace.graph import labeling
 from dace.graph.nodes import Tasklet, NestedSDFG
 from dace.frontend.tensorflow.winograd import winograd_convolution
 
@@ -573,7 +574,7 @@ class TFSession:
             validate=False,
             strict=True,
             name=None,
-            winograd=True,
+            winograd=False,
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
@@ -952,7 +953,7 @@ class TFSession:
             inputNode = state.add_array(
                 name=label + "_Inp", shape=shape, dtype=dace.typeclass(dtype))
 
-            # create and add mapp
+            # create and add map
             mapDict = dict(zip(inputParams, inputDims))
             inMemletDict = dict(
                 j0=Memlet.simple(inputNode, ",".join(inputParams)))
