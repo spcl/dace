@@ -46,7 +46,7 @@ Publication
 If you use DaCe, cite us:
 ```bibtex
 @article{dace,
-  author = {Ben-Nun, Tal and de Fine Licht, Johannes and Ziogas, Alexandros Nikolaos and Schneider, Timo and Hoefler, Torsten},
+  author = {Ben-Nun, Tal and de~Fine~Licht, Johannes and Ziogas, Alexandros Nikolaos and Schneider, Timo and Hoefler, Torsten},
         title = {Stateful Dataflow Multigraphs: A Data-Centric Model for High-Performance Parallel Programs},
   journal   = {CoRR},
   volume    = {abs/1902.10345},
