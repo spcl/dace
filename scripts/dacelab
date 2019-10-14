@@ -7,7 +7,7 @@ import json
 
 import dace
 from dace.frontend.octave import parse
-
+from dace.graph.nodes import AccessNode
 
 def compile(inputfile):
     buf = open(inputfile).read()
@@ -23,6 +23,14 @@ def compile(inputfile):
     sdfg = statements.generate_code()
     sdfg.fill_scope_connectors()
     sdfg.set_sourcecode(buf, "matlab")
+
+    # Clean isolated nodes
+    for state in sdfg.nodes():
+        for node in state.nodes():
+            if (isinstance(node, AccessNode) and
+                    (state.in_degree(node) + state.out_degree(node) == 0)):
+                state.remove_node(node)
+
     return sdfg
 
 

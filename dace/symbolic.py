@@ -582,7 +582,7 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
-def pystr_to_symbolic(expr, symbol_map={}):
+def pystr_to_symbolic(expr, symbol_map={}, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     if isinstance(expr, SymExpr):
         return expr
@@ -596,7 +596,8 @@ def pystr_to_symbolic(expr, symbol_map={}):
     if isinstance(expr, str) and 'not' in expr:
         expr = expr.replace('not', 'Not')
 
-    return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
+    return sympy_to_dace(
+        sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
 
 
 class DaceSympyPrinter(StrPrinter):

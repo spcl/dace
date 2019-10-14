@@ -351,7 +351,7 @@ def make_write_sdfg():
         storage=StorageType.FPGA_Local)
     valid_pipe = state.add_stream(
         "_valid_pipe",
-        dtype=dace.typeclass(bool),
+        dtype=dace.types.bool,
         buffer_size=buffer_size,
         storage=StorageType.FPGA_Local)
     i_write_in = state.add_scalar(
@@ -452,13 +452,13 @@ def make_main_state(sdfg):
         storage=StorageType.FPGA_Local)
     valid_pipe_in = state.add_stream(
         "valid_pipe",
-        dtype=dace.typeclass(bool),
+        dtype=dace.types.bool,
         buffer_size=buffer_size,
         transient=True,
         storage=StorageType.FPGA_Local)
     valid_pipe_out = state.add_stream(
         "valid_pipe",
-        dtype=dace.typeclass(bool),
+        dtype=dace.types.bool,
         buffer_size=buffer_size,
         transient=True,
         storage=StorageType.FPGA_Local)

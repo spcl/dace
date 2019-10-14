@@ -3,6 +3,7 @@ from __future__ import print_function
 import ctypes
 import enum
 import inspect
+import json
 import numpy
 import itertools
 import numpy.ctypeslib as npct
@@ -202,6 +203,14 @@ class typeclass(object):
     """
 
     def __init__(self, wrapped_type):
+        # Convert python basic types
+        if wrapped_type is int:
+            wrapped_type = numpy.int64
+        elif wrapped_type is float:
+            wrapped_type = numpy.float64
+        elif wrapped_type is complex:
+            wrapped_type = numpy.complex128
+
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
@@ -224,6 +233,9 @@ class typeclass(object):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
             return True
         return False
+
+    def toJSON(self):
+        return json.dumps(self.type.__name__)
 
     # Create a new type
     def __call__(self, *args, **kwargs):
@@ -265,6 +277,19 @@ class pointer(typeclass):
         self.dtype = self
         self.materialize_func = None
 
+    def toJSON(self):
+        return json.dumps({
+            'type': 'pointer',
+            'dtype': self._typeclass.toJSON()
+        })
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != 'pointer':
+            raise TypeError("Invalid type for pointer")
+
+        return pointer(_json_to_obj(json.loads(json_obj['dtype'])))
+
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
         return ctypes.POINTER(_FFI_CTYPES[self.type])
@@ -299,6 +324,32 @@ class struct(typeclass):
     @property
     def fields(self):
         return self._data
+
+    def toJSON(self):
+        return json.dumps({
+            'type': 'struct',
+            'name': self.name,
+            'data': {k: v.toJSON()
+                     for k, v in self._data.items()},
+            'length': {k: v
+                       for k, v in self._length.items()},
+            'bytes': self.bytes
+        })
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "struct":
+            raise TypeError("Invalid type for struct")
+
+        ret = struct(json_obj['name'])
+        ret._data = {
+            k: _json_to_obj(json.loads(v))
+            for k, v in json_obj['data'].items()
+        }
+        ret._length = {k: v for k, v in json_obj['length'].items()}
+        ret.bytes = json_obj['bytes']
+
+        return ret
 
     def _parse_field_and_types(self, **fields_and_types):
         self._data = dict()
@@ -455,6 +506,26 @@ class callback(typeclass):
     def __hash__(self):
         return hash((self.uid, self.return_type, *self.input_types))
 
+    def toJSON(self):
+        return json.dumps({
+            'type':
+            'callback',
+            'arguments': [i.toJSON() for i in self.input_types],
+            'returntype':
+            self.return_type.toJSON() if self.return_type else json.dumps(None)
+        })
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "callback":
+            raise TypeError("Invalid type for callback")
+
+        rettype = json.loads(json_obj['returntype'])
+
+        return callback(
+            globals()[rettype] if rettype else None,
+            *(_json_to_obj(json.loads(arg)) for arg in json_obj['arguments']))
+
     def __str__(self):
         return "dace.callback"
 
@@ -462,9 +533,15 @@ class callback(typeclass):
         return "dace.callback"
 
     def __eq__(self, other):
+        if not isinstance(other, callback):
+            return False
         return self.uid == other.uid
 
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
+
+bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -594,6 +671,16 @@ class DebugInfo:
 
 ######################################################
 # Static (utility) functions
+
+
+def _json_to_obj(obj):
+    from dace.properties import Property
+    known_types = Property.known_types()
+    if isinstance(obj, dict) and 'type' in obj:
+        if obj['type'] in known_types:
+            return known_types[obj['type']].fromJSON_object(obj)
+        raise TypeError('Unrecognized object type %s' % obj['type'])
+    return globals()[obj]
 
 
 def deduplicate(iterable):

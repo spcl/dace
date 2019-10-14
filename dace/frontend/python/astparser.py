@@ -286,9 +286,10 @@ class ParseDaCe(ExtNodeVisitor):
         if self.curnode.parent is None:
             # Handle parameters (first set all to symbols, then set type
             # descriptors for arrays)
-            self.curnode.globals.update(
-                {k: symbolic.symbol(k)
-                 for k in self.curnode.params})
+            self.curnode.globals.update({
+                k: symbolic.symbol(k, self.argtypes[k].dtype)
+                for k in self.curnode.params
+            })
             self.curnode.globals.update(self.globals)
             self.curnode.globals.update(self.global_arrays)
         else:
@@ -837,7 +838,7 @@ class ParseDaCe(ExtNodeVisitor):
                 for arg in node.args.args:
 
                     # If it is not the program, add locals as symbols
-                    if self.program != node.name:
+                    if self.program.name != node.name:
                         curprim.globals[rname(arg)] = symbolic.symbol(
                             rname(arg))
                     if curprim is not None:

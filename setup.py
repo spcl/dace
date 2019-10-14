@@ -13,6 +13,7 @@ runtime_files = [
 diode_files = [
     f[len(diode_path):]
     for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
+              glob.glob(diode_path + '**/*.css', recursive=True) +
               glob.glob(diode_path + '**/*.html', recursive=True) +
               glob.glob(diode_path + 'db_scripts/*', recursive=True))
 ]
@@ -33,7 +34,7 @@ with open("README.md", "r") as fp:
 
 setup(
     name='dace',
-    version='0.8.5',
+    version='0.9.0',
     url='https://github.com/spcl/dace',
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',
@@ -56,7 +57,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'scipy', 'pyyaml',
-        'cmake', 'absl-py', 'ply', 'websockets', 'graphviz', 'dace-xdot',
-        'requests', 'flask'
+        'absl-py', 'ply', 'websockets', 'graphviz', 'dace-xdot', 'requests',
+        'flask'
     ],
     scripts=['scripts/diode', 'scripts/dacelab'])

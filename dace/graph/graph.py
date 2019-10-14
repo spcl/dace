@@ -59,7 +59,8 @@ class Edge(object):
         if json_obj['type'] != "Edge":
             raise TypeError("Invalid data type")
 
-        ret = Edge(json_obj['src'], json_obj['dst'], json_obj['attributes']['data'])
+        ret = Edge(json_obj['src'], json_obj['dst'],
+                   json_obj['attributes']['data'])
 
         return ret
 
@@ -92,7 +93,6 @@ class MultiConnectorEdge(MultiEdge):
 
         ret['dst_connector'] = self.dst_conn
         ret['src_connector'] = self.src_conn
-        ret['key'] = self.key
 
         ret['type'] = "MultiConnectorEdge"
 
@@ -114,8 +114,9 @@ class MultiConnectorEdge(MultiEdge):
         dst_conn = json_obj['dst_connector']
         src_conn = json_obj['src_connector']
 
-        # TODO: What is the key for?
-        ret = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, 0)
+        # Auto-create key (used when uniquely identifying networkx multigraph
+        # edges)
+        ret = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, None)
 
         return ret
 
