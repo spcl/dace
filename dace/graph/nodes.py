@@ -519,6 +519,14 @@ class MapExit(ExitNode):
     def map(self, val):
         self._map = val
 
+    @property
+    def schedule(self):
+        return self._map.schedule
+
+    @schedule.setter
+    def schedule(self, val):
+        self._map.schedule = val
+
     def draw_node(self, sdfg, graph):
         return dot.draw_node(sdfg, graph, self, shape="invtrapezium")
 
@@ -681,6 +689,14 @@ class ConsumeExit(ExitNode):
     @consume.setter
     def consume(self, val):
         self._consume = val
+
+    @property
+    def schedule(self):
+        return self._consume.schedule
+
+    @schedule.setter
+    def schedule(self, val):
+        self._consume.schedule = val
 
     def draw_node(self, sdfg, graph):
         return dot.draw_node(

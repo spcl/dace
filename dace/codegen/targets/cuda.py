@@ -209,8 +209,8 @@ void __dace_exit_cuda({params}) {{
 
     @staticmethod
     def node_dispatch_predicate(sdfg, node):
-        if hasattr(node, 'map'):  # NOTE: This also applies to Consume scopes
-            if node.map.schedule in types.GPU_SCHEDULES:
+        if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
+            if node.schedule in types.GPU_SCHEDULES:
                 return True
         return False
 
