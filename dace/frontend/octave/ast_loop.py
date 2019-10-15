@@ -80,9 +80,9 @@ class AST_ForLoop(AST_Node):
             lg_init = dace.graph.edges.InterstateEdge(
                 assignments={
                     loop_guard_var:
-                    self.var.get_name_in_sdfg(sdfg) + '[0]',
+                    self.var.get_name_in_sdfg(sdfg) + '(0)',
                     loop_end_var:
-                    self.initializer.rhs.get_name_in_sdfg(sdfg) + '[0]'
+                    self.initializer.rhs.get_name_in_sdfg(sdfg) + '(0)'
                 })
             sdfg.add_edge(sdfg.nodes()[state], s_guard, lg_init)
 

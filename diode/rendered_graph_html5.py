@@ -82,7 +82,7 @@ class RenderedGraphHTML5:
 
     def open_canned_data(self, can_path, forProgramID=1):
 
-        if can_path == None or can_path == "":
+        if can_path is None or can_path == "":
             raise ValueError("Cannot open can from path " + str(can_path))
         # Just set the data source accordingly
         self.data_source = can_path
@@ -303,7 +303,7 @@ class RenderedGraphHTML5:
             pass
         elif m["msg_type"] == "roofline":
             resp = self.message_handler_roofline(m)
-            if resp != None:
+            if resp is not None:
                 self.add_to_command_queue(json.dumps(resp))
 
         elif m["msg_type"] == "click":
@@ -418,7 +418,7 @@ class RenderedGraphHTML5:
 
                         d = _instance.query_values(c, *params)
                         respval = json.dumps(d)
-                        if d == None:
+                        if d is None:
                             # Special case of undefined
                             d = "null"
 
@@ -431,7 +431,7 @@ class RenderedGraphHTML5:
                             # This has split IDs (instead of the unified id)
                             tmp = [*params]
 
-                            if tmp[0] == None:
+                            if tmp[0] is None:
                                 tmp[0] = 0x0FFFF
                             # Recreate the correct pair and remove the supersection part from the query
                             argparams = [
@@ -456,7 +456,7 @@ WHERE
 --  AND forSection = ?
 ;""".format(ss_q="AND forSuperSection = ?" if query_ss else "",
                         progid_q="forProgramID = %d AND" % self.canned_data_programid
-                        if self.canned_data_programid != None else ""), (
+                        if self.canned_data_programid is not None else ""), (
                         cname,
                         *argparams,
                         ))
@@ -533,7 +533,7 @@ WHERE
         self.data_source = data_source_path
 
         # Set the program ID used for lookups
-        if forProgramID != None:
+        if forProgramID is not None:
             self.canned_data_programid = int(forProgramID)
         elif data_source_path != "fresh":
             pid = 1

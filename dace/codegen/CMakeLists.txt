@@ -1,8 +1,7 @@
-cmake_minimum_required(VERSION 3.15)
-cmake_policy(SET CMP0091 NEW)
+cmake_minimum_required(VERSION 2.8.12)
 project(dace_program)
 
-# General options 
+# General options
 set(DACE_PROGRAM_NAME "dace_program" CACHE STRING "Name of DaCe program")
 set(DACE_FILES "" CACHE STRING "Host code files")
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
@@ -73,7 +72,16 @@ if(DACE_ENABLE_CUDA)
   endif()
   set(DACE_LIBS ${DACE_LIBS} ${CUDA_LIBRARIES})
   add_definitions(-DWITH_CUDA)
+
+  if (MSVC_IDE)
+    if (${CMAKE_VERSION} VERSION_LESS "3.15.0")
+      message("WARNING: CMake versions older than 3.15 are known to cause issues with CUDA builds on Windows.")
+    endif()
+    cmake_policy(SET CMP0091 NEW)
+  endif()
 endif()
+
+
 if(DACE_ENABLE_XILINX)
   set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${DACE_HLSLIB_DIR}/cmake)

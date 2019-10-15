@@ -352,7 +352,7 @@ class AST_FunCall(AST_Node):
             # find the definition of self.funname, if it is anything else
             # than an AST_Function this is an array subaccess
             vardef = self.search_vardef_in_scope(self.funname.get_name())
-            if vardef == None:
+            if vardef is None:
                 raise ValueError("No definition found for " +
                                  self.funname.get_name() + " searching from " +
                                  str(self))

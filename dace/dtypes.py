@@ -3,6 +3,7 @@ from __future__ import print_function
 import ctypes
 import enum
 import inspect
+import json
 import numpy
 from functools import wraps
 
@@ -201,6 +202,14 @@ class typeclass(object):
     """
 
     def __init__(self, wrapped_type):
+        # Convert python basic types
+        if wrapped_type is int:
+            wrapped_type = numpy.int64
+        elif wrapped_type is float:
+            wrapped_type = numpy.float64
+        elif wrapped_type is complex:
+            wrapped_type = numpy.complex128
+
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
@@ -224,15 +233,18 @@ class typeclass(object):
             return True
         return False
 
+    def toJSON(self):
+        return json.dumps(self.type.__name__)
+
     # Create a new type
     def __call__(self, *args, **kwargs):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return other != None and self.ctype == other.ctype
+        return other is not None and self.ctype == other.ctype
 
     def __ne__(self, other):
-        return other != None and self.ctype != other.ctype
+        return other is not None and self.ctype != other.ctype
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
@@ -263,6 +275,19 @@ class pointer(typeclass):
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
         self.materialize_func = None
+
+    def toJSON(self):
+        return json.dumps({
+            'type': 'pointer',
+            'dtype': self._typeclass.toJSON()
+        })
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != 'pointer':
+            raise TypeError("Invalid type for pointer")
+
+        return pointer(_json_to_obj(json.loads(json_obj['dtype'])))
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -298,6 +323,32 @@ class struct(typeclass):
     @property
     def fields(self):
         return self._data
+
+    def toJSON(self):
+        return json.dumps({
+            'type': 'struct',
+            'name': self.name,
+            'data': {k: v.toJSON()
+                     for k, v in self._data.items()},
+            'length': {k: v
+                       for k, v in self._length.items()},
+            'bytes': self.bytes
+        })
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "struct":
+            raise TypeError("Invalid type for struct")
+
+        ret = struct(json_obj['name'])
+        ret._data = {
+            k: _json_to_obj(json.loads(v))
+            for k, v in json_obj['data'].items()
+        }
+        ret._length = {k: v for k, v in json_obj['length'].items()}
+        ret.bytes = json_obj['bytes']
+
+        return ret
 
     def _parse_field_and_types(self, **fields_and_types):
         self._data = dict()
@@ -454,119 +505,25 @@ class callback(typeclass):
     def __hash__(self):
         return hash((self.uid, self.return_type, *self.input_types))
 
-    def __str__(self):
-        return "dace.callback"
+    def toJSON(self):
+        return json.dumps({
+            'type':
+            'callback',
+            'arguments': [i.toJSON() for i in self.input_types],
+            'returntype':
+            self.return_type.toJSON() if self.return_type else json.dumps(None)
+        })
 
-    def __repr__(self):
-        return "dace.callback"
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != "callback":
+            raise TypeError("Invalid type for callback")
 
-    def __eq__(self, other):
-        return self.uid == other.uid
+        rettype = json.loads(json_obj['returntype'])
 
-
-####### Utility function ##############
-def ptrtonumpy(ptr, inner_ctype, shape):
-    import ctypes
-    import numpy as np
-    return np.ctypeslib.as_array(
-        ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
-
-
-def _atomic_counter_generator():
-    ctr = 0
-    while True:
-        ctr += 1
-        yield ctr
-
-
-class callback(typeclass):
-    """ Looks like dace.callback([None, <some_native_type>], *types)"""
-
-    def __init__(self, return_type, *variadic_args):
-        self.uid = next(_atomic_counter_generator())
-        from dace import data
-        if isinstance(return_type, data.Array):
-            raise TypeError(
-                "Callbacks that return arrays are not supported as per SDFG semantics"
-            )
-        self.dtype = self
-        self.return_type = return_type
-        self.input_types = variadic_args
-        self.bytes = int64.bytes
-        self.materialize_func = None
-        self.type = self
-        self.ctype = self
-
-    def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
-        from dace import data
-
-        return_ctype = (self.return_type.as_ctypes()
-                        if self.return_type is not None else None)
-        input_ctypes = []
-        for some_arg in self.input_types:
-            if isinstance(some_arg, data.Array):
-                input_ctypes.append(ctypes.c_void_p)
-            else:
-                input_ctypes.append(some_arg.as_ctypes()
-                                    if some_arg is not None else None)
-        if input_ctypes == [None]:
-            input_ctypes = []
-        cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
-        return cf_object
-
-    def signature(self, name):
-        from dace import data
-
-        return_type_cstring = (self.return_type.ctype
-                               if self.return_type is not None else "void")
-        input_type_cstring = []
-        for arg in self.input_types:
-            if isinstance(arg, data.Array):
-                # const hack needed to prevent error in casting const int* to int*
-                input_type_cstring.append(arg.dtype.ctype + " const *")
-            else:
-                input_type_cstring.append(arg.ctype if arg is not None else "")
-        cstring = return_type_cstring + " " + "(*" + name + ")("
-        for index, inp_arg in enumerate(input_type_cstring):
-            if index > 0:
-                cstring = cstring + ","
-            cstring = cstring + inp_arg
-        cstring = cstring + ")"
-        return cstring
-
-    def get_trampoline(self, pyfunc):
-        from functools import partial
-        from dace import data, symbolic
-
-        arraypos = []
-        types_and_sizes = []
-        for index, arg in enumerate(self.input_types):
-            if isinstance(arg, data.Array):
-                arraypos.append(index)
-                types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-        if len(arraypos) == 0:
-            return pyfunc
-
-        def trampoline(orig_function, indices, data_types_and_sizes,
-                       *other_inputs):
-            list_of_other_inputs = list(other_inputs)
-            for i in indices:
-                data_type, size = data_types_and_sizes[i]
-                non_symbolic_sizes = []
-                for s in size:
-                    if isinstance(s, symbolic.symbol):
-                        non_symbolic_sizes.append(s.get())
-                    else:
-                        non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(
-                    other_inputs[i], data_type, non_symbolic_sizes)
-            return orig_function(*list_of_other_inputs)
-
-        return partial(trampoline, pyfunc, arraypos, types_and_sizes)
-
-    def __hash__(self):
-        return hash((self.uid, self.return_type, *self.input_types))
+        return callback(
+            globals()[rettype] if rettype else None,
+            *(_json_to_obj(json.loads(arg)) for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"
@@ -575,9 +532,15 @@ class callback(typeclass):
         return "dace.callback"
 
     def __eq__(self, other):
+        if not isinstance(other, callback):
+            return False
         return self.uid == other.uid
 
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
+
+bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -734,6 +697,16 @@ class DebugInfo:
 
 ######################################################
 # Static (utility) functions
+
+
+def _json_to_obj(obj):
+    from dace.properties import Property
+    known_types = Property.known_types()
+    if isinstance(obj, dict) and 'type' in obj:
+        if obj['type'] in known_types:
+            return known_types[obj['type']].fromJSON_object(obj)
+        raise TypeError('Unrecognized object type %s' % obj['type'])
+    return globals()[obj]
 
 
 def paramdec(dec):

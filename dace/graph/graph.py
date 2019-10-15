@@ -93,7 +93,6 @@ class MultiConnectorEdge(MultiEdge):
 
         ret['dst_connector'] = self.dst_conn
         ret['src_connector'] = self.src_conn
-        ret['key'] = self.key
 
         ret['type'] = "MultiConnectorEdge"
 
@@ -103,7 +102,7 @@ class MultiConnectorEdge(MultiEdge):
     def fromJSON_object(json_obj, context=None):
 
         sdfg = context['sdfg_state']
-        if sdfg == None:
+        if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
         data = json_obj['attributes']['data']
         src_nid = json_obj['src']
@@ -115,8 +114,9 @@ class MultiConnectorEdge(MultiEdge):
         dst_conn = json_obj['dst_connector']
         src_conn = json_obj['src_connector']
 
-        # TODO: What is the key for?
-        ret = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, 0)
+        # Auto-create key (used when uniquely identifying networkx multigraph
+        # edges)
+        ret = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, None)
 
         return ret
 
@@ -371,7 +371,7 @@ class SubgraphView(Graph):
         self._parallel_parent = None
 
     def is_parallel(self):
-        return self._parallel_parent != None
+        return self._parallel_parent is not None
 
     def set_parallel_parent(self, parallel_parent):
         self._parallel_parent = parallel_parent

@@ -278,7 +278,7 @@ class ImageStore:
         image = Gtk.Image()
         image.set_from_file(filename)
         pixbuf = image.get_pixbuf()
-        if pixbuf == None:
+        if pixbuf is None:
             print("Couldn't load image " + args.file)
             os.exit()
         colorspace = pixbuf.get_colorspace()

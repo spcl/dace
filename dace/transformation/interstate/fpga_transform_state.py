@@ -70,7 +70,7 @@ class FPGATransformState(pattern_matching.Transformation):
             # Recursively check parent for FPGA schedules
             sdict = state.scope_dict()
             current_node = map_entry
-            while current_node != None:
+            while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
                         dtypes.ScheduleType.FPGA_Device

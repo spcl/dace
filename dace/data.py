@@ -91,9 +91,9 @@ class Data(object):
                             'or symbols')
         return True
 
-    def toJSON(self, options={"no_meta": False}):
+    def toJSON(self):
         try:
-            attrs = json.loads(Property.all_properties_to_json(self, options))
+            attrs = json.loads(Property.all_properties_to_json(self))
         except Exception as e:
             print("Got exception: " + str(e))
             import traceback
@@ -284,6 +284,21 @@ class Array(Data):
                      self.offset, self.may_alias, self.toplevel,
                      self.debuginfo)
 
+    def toJSON(self):
+        try:
+            attrs = json.loads(Property.all_properties_to_json(self))
+        except Exception as e:
+            print("Got exception: " + str(e))
+            import traceback
+            traceback.print_exc()
+
+        # Take care of symbolic expressions
+        attrs['strides'] = list(map(str, attrs['strides']))
+
+        retdict = {"type": type(self).__name__, "attributes": attrs}
+
+        return json.dumps(retdict)
+
     @staticmethod
     def fromJSON_object(json_obj, context=None):
         if json_obj['type'] != "Array":
@@ -293,7 +308,7 @@ class Array(Data):
         ret = Array(dace.dtypes.int8, ())
         Property.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
-        ret.strides = [*map(symbolic.pystr_to_symbolic, ret.strides)]
+        ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
 
         # Check validity now
         ret.validate()
@@ -461,6 +476,21 @@ class Stream(Data):
         super(Stream, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
 
+    def toJSON(self):
+        try:
+            attrs = json.loads(Property.all_properties_to_json(self))
+        except Exception as e:
+            print("Got exception: " + str(e))
+            import traceback
+            traceback.print_exc()
+
+        # Take care of symbolic expressions
+        attrs['strides'] = list(map(str, attrs['strides']))
+
+        retdict = {"type": type(self).__name__, "attributes": attrs}
+
+        return json.dumps(retdict)
+
     @staticmethod
     def fromJSON_object(json_obj, context=None):
         if json_obj['type'] != "Stream":
@@ -475,7 +505,7 @@ class Stream(Data):
         # leads to validation errors (contains Strings/Integers, not sympy symbols).
         # To fix this, it needs a custom class
         # For now, this is a workaround:
-        ret.strides = [*map(symbolic.pystr_to_symbolic, ret.strides)]
+        ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
 
         # Check validity now
         ret.validate()

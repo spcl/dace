@@ -2,6 +2,14 @@ import dace
 
 from .ast_node import AST_Node
 
+_OP_TO_STRING = {
+    '+': 'plus',
+    '-': 'minus',
+    '*': 'emult',
+    '/': 'ediv',
+    '%': 'mod'
+}
+
 
 class AST_UnaryExpression(AST_Node):
     def __init__(self, context, arg, op, order):
@@ -124,7 +132,7 @@ class AST_BinExpression(AST_Node):
         C = self.get_datanode(sdfg, state)
 
         s = sdfg.nodes()[state]
-        map_entry, map_exit = s.add_map('M' + op + 'M',
+        map_entry, map_exit = s.add_map('M' + _OP_TO_STRING[op] + 'M',
                                         dict(i='0:' + M, j='0:' + N))
         map_entry._in_connectors.add('IN_1')
         map_entry._in_connectors.add('IN_2')
@@ -134,7 +142,8 @@ class AST_BinExpression(AST_Node):
                    dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
         s.add_edge(B, None, map_entry, 'IN_2', dace.memlet.Memlet.simple(
             B, '0'))
-        tasklet = s.add_tasklet(op, {'a', 'b'}, {'c'}, 'c = a' + op + 'b')
+        tasklet = s.add_tasklet(_OP_TO_STRING[op], {'a', 'b'}, {'c'},
+                                'c = a' + op + 'b')
         s.add_edge(map_entry, "OUT_1", tasklet, "a",
                    dace.memlet.Memlet.simple(A, 'i,j'))
         s.add_edge(map_entry, "OUT_2", tasklet, "b",
@@ -232,7 +241,7 @@ class AST_BinExpression(AST_Node):
         C = self.get_datanode(sdfg, state)
 
         s = sdfg.nodes()[state]
-        map_entry, map_exit = s.add_map('M' + op + 'M',
+        map_entry, map_exit = s.add_map('M' + _OP_TO_STRING[op] + 'M',
                                         dict(i='0:' + M, j='0:' + N))
         map_entry._in_connectors.add('IN_1')
         map_entry._in_connectors.add('IN_2')
@@ -242,7 +251,8 @@ class AST_BinExpression(AST_Node):
                    dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
         s.add_edge(B, None, map_entry, 'IN_2',
                    dace.memlet.Memlet.simple(B, '0:' + N + ', 0:' + M))
-        tasklet = s.add_tasklet(op, {'a', 'b'}, {'c'}, 'c = a' + op + 'b')
+        tasklet = s.add_tasklet(_OP_TO_STRING[op], {'a', 'b'}, {'c'},
+                                'c = a' + op + 'b')
         s.add_edge(map_entry, "OUT_1", tasklet, "a",
                    dace.memlet.Memlet.simple(A, 'i,j'))
         s.add_edge(map_entry, "OUT_2", tasklet, "b",
@@ -258,7 +268,8 @@ class AST_BinExpression(AST_Node):
         C = self.get_datanode(sdfg, state)
 
         s = sdfg.nodes()[state]
-        tasklet = s.add_tasklet(op, {'a', 'b'}, {'c'}, 'c = a' + op + 'b')
+        tasklet = s.add_tasklet(_OP_TO_STRING[op], {'a', 'b'}, {'c'},
+                                'c = a' + op + 'b')
         s.add_edge(A, None, tasklet, 'a', dace.memlet.Memlet.simple(A, '0'))
         s.add_edge(B, None, tasklet, 'b', dace.memlet.Memlet.simple(B, '0'))
         s.add_edge(tasklet, "c", C, None, dace.memlet.Memlet.simple(C, '0'))

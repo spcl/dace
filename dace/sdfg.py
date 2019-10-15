@@ -166,7 +166,7 @@ class SDFG(OrderedDiGraph):
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
-                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k != None}, default=Property.json_dumper) if x != None else "null",
+                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k is not None}, default=Property.json_dumper) if x is not None else "null",
                         from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
 
     global_code = CodeProperty(
@@ -230,6 +230,9 @@ class SDFG(OrderedDiGraph):
         self._num = 0
 
     def toJSON(self):
+        """ Serializes this object to JSON format.
+            :return: A string representing the JSON-serialized SDFG.
+        """
         import json
         tmp = super(SDFG, self).toJSON()
         tmp = json.loads(tmp)
@@ -278,9 +281,10 @@ class SDFG(OrderedDiGraph):
             e = json.loads(json.dumps(e), object_hook=Property.json_loader)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
-        for v in json_obj['undefined_symbols']:
-            symbol = symbolic.symbol(v)
-            #symbol.set(v)
+        # Redefine symbols
+        for k, v in json_obj['undefined_symbols'].items():
+            v = Property.known_types()[v['type']].fromJSON_object(v)
+            symbolic.symbol(k, v.dtype)
 
         ret.validate()
 
@@ -464,8 +468,6 @@ class SDFG(OrderedDiGraph):
             @param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        #self.sourcecode = code
-        #self.language = lang
         self.sourcecode = {'code_or_block': code, 'language': lang}
 
     @property
@@ -542,6 +544,10 @@ class SDFG(OrderedDiGraph):
     @parent.setter
     def parent(self, value):
         self._parent = value
+
+    @parent_sdfg.setter
+    def parent_sdfg(self, value):
+        self._parent_sdfg = value
 
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
@@ -1074,12 +1080,26 @@ subgraph cluster_state_{state} {{
                         result.append(node)
         return result
 
-    def save(self, filename: str):
-        """ Save this SDFG to a file (uses Pickle as the default format).
+    def save(self, filename: str, use_pickle=False, with_metadata=False):
+        """ Save this SDFG to a file.
             @param filename: File name to save to.
+            @param use_pickle: Use Python pickle as the SDFG format (default:
+                               JSON).
+            @param with_metadata: Save property metadata (e.g. name,
+                                  description). False or True override current
+                                  option, whereas None keeps default
         """
-        with open(filename, "wb") as fp:
-            symbolic.SympyAwarePickler(fp).dump(self)
+        if use_pickle:
+            with open(filename, "wb") as fp:
+                symbolic.SympyAwarePickler(fp).dump(self)
+        else:
+            if with_metadata is not None:
+                old_meta = dace.properties.json_store_metadata
+                dace.properties.json_store_metadata = with_metadata
+            with open(filename, "w") as fp:
+                fp.write(self.toJSON())
+            if with_metadata is not None:
+                dace.properties.json_store_metadata = old_meta
 
     @staticmethod
     def from_file(filename: str):
@@ -1088,28 +1108,18 @@ subgraph cluster_state_{state} {{
             @return: An SDFG.
         """
         with open(filename, "rb") as fp:
-            sdfg = symbolic.SympyAwareUnpickler(fp).load()
+            firstbyte = fp.read(1)
+            fp.seek(0)
+            if firstbyte == b'{':  # JSON file
+                sdfg_json = json.load(fp)
+                sdfg = SDFG.fromJSON_object(sdfg_json)
+            else:  # Pickle
+                sdfg = symbolic.SympyAwareUnpickler(fp).load()
+
             if not isinstance(sdfg, SDFG):
                 raise TypeError("Loaded file is not an SDFG (loaded "
                                 "type: %s)" % type(sdfg).__name__)
             return sdfg
-
-    def dumps(self):
-        """ Returns a serialized representation of this SDFG (uses Pickle as the default format)
-        """
-        return pickle.dumps(self)
-
-    @staticmethod
-    def from_bytes(mem: bytes):
-        """ Constructs an SDFG from the serial representation in `bytes`
-            @param mem: bytes object to load SDFG from.
-            @return: An SDFG
-        """
-        sdfg = pickle.loads(mem)
-        if not isinstance(sdfg, SDFG):
-            raise TypeError('Loaded file is not an SDFG (loaded '
-                            'type: %s)' % type(sdfg).__name__)
-        return sdfg
 
     # Dynamic SDFG creation API
     ##############################
@@ -2123,7 +2133,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         )  # When this is set: Under no circumstances try instrumenting this (or any transitive children)
 
     def is_parallel(self):
-        return self._parallel_parent != None
+        return self._parallel_parent is not None
 
     def set_parallel_parent(self, parallel_parent):
         self._parallel_parent = parallel_parent
@@ -2239,15 +2249,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def toJSON(self, parent=None):
         import json
         ret = {
-            'type': type(self).__name__,
-            'label': self.name,
-            'id': parent.node_id(self) if parent != None else None,
-            'collapsed': self.is_collapsed,
-            'scope_dict': self.scope_dict(
-                node_to_children=True, return_ids=True),
+            'type':
+            type(self).__name__,
+            'label':
+            self.name,
+            'id':
+            parent.node_id(self) if parent is not None else None,
+            'collapsed':
+            self.is_collapsed,
+            'scope_dict': {
+                k: sorted(v)
+                for k, v in self.scope_dict(
+                    node_to_children=True, return_ids=True).items()
+            },
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
-            'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
-            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'edges': [
+                json.loads(e.toJSON(self)) for e in sorted(
+                    self.edges(),
+                    key=lambda e: (e.src_conn or '', e.dst_conn or ''))
+            ],
+            'attributes':
+            json.loads(Property.all_properties_to_json(self)),
         }
 
         return json.dumps(ret)
@@ -3601,7 +3623,7 @@ def scope_contains_scope(sdict, node, other_node):
     """
     curnode = other_node
     nodescope = sdict[node]
-    while curnode != None:
+    while curnode is not None:
         curnode = sdict[curnode]
         if curnode == nodescope:
             return True

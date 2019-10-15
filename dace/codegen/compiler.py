@@ -343,7 +343,7 @@ def generate_program_folder(sdfg,
         filelist_file.write("\n".join(filelist))
 
     # Copy snapshot of configuration script
-    if config != None:
+    if config is not None:
         config.save(os.path.join(out_path, "dace.conf"))
     else:
         Config.save(os.path.join(out_path, "dace.conf"))

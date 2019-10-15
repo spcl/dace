@@ -571,7 +571,7 @@ class DIODE:
         # Make sure the "optstate" node is compiled and all its children are
         # displayed, but the children do not need to have a DaceState.
         node = self.find_single_node_in_optgraph_by_label(optstate)
-        if node == None:
+        if node is None:
             raise ValueError("Node " + optstate + " not found")
         self.optimization_graph.set_current(node)
         self.optimization_graph.expand_node(node)
@@ -659,7 +659,7 @@ class DIODE:
         self.propren.update()
 
     def Run(self, fail_on_nonzero=None, run_sync=True):
-        if self.optimization_graph.get_current() == None:
+        if self.optimization_graph.get_current() is None:
             return False
         if fail_on_nonzero is None:
             if self.headless:
@@ -699,7 +699,7 @@ class DIODE:
                 dace_state.compile()
                 trans_self.update_generated_code()
                 func()
-                if new_task != None:
+                if new_task is not None:
                     trans_self.executor.add_async_task(new_task)
                 return False
 

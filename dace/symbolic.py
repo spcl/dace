@@ -610,7 +610,7 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
-def pystr_to_symbolic(expr, symbol_map=None):
+def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     if isinstance(expr, SymExpr):
         return expr
@@ -627,12 +627,14 @@ def pystr_to_symbolic(expr, symbol_map=None):
 
     # TODO: support SymExpr over-approximated expressions
     try:
-        return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
+        return sympy_to_dace(
+            sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
     except TypeError:  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
-        return sympy_to_dace(sympy.sympify(expr, locals), symbol_map)
+        return sympy_to_dace(
+            sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
 
 
 class DaceSympyPrinter(StrPrinter):

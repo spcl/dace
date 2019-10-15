@@ -323,6 +323,9 @@ def negate_expr(node):
         expr = node[0]
     else:
         expr = node
+    if isinstance(expr, ast.Expr):
+        expr = expr.value
+
     newexpr = ast.Expr(value=ast.UnaryOp(op=ast.Not(), operand=expr))
     newexpr = ast.copy_location(newexpr, expr)
     return ast.fix_missing_locations(newexpr)

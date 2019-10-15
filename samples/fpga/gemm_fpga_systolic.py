@@ -938,7 +938,7 @@ def make_fpga_state(sdfg):
         memlet=dace.memlet.Memlet(
             B_pipe_out,
             dace.symbolic.pystr_to_symbolic(
-                "int(p != P - 1) * (N / P) * K * M"),
+                "(p // (P - 1)) * (N / P) * K * M"),
             dace.properties.SubsetProperty.from_string("p + 1"), 1))
     state.add_memlet_path(
         compute_sdfg_node,
