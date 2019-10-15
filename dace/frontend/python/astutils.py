@@ -81,7 +81,7 @@ def getkwarg(node, argname, default=None):
 
 
 def _datadesc(obj: Any):
-    from dapp import data
+    from dace import data
     if isinstance(obj, data.Data):
         return obj
     elif symbolic.issymbolic(obj):

@@ -10,7 +10,8 @@ from dace.config import Config
 from dace.frontend.common import blas, op_impl
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer, rname
+from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
+from dace.frontend.python.astutils import rname
 from dace.graph import nodes
 from dace.graph.labeling import propagate_memlet
 from dace.memlet import Memlet
@@ -21,23 +22,38 @@ from dace.symbolic import pystr_to_symbolic
 import numpy as np
 import sympy
 
-# A type that defines assignment information
-AssignmentInfo = Tuple[SDFG, SDFGState, Tuple[str]]
+# Type hints
+Size = Union[int, dace.symbolic.symbol]
+ShapeTuple = Tuple[Size]
+ShapeList = List[Size]
+Shape = Union[ShapeTuple, ShapeList]
 
 
 class ProgramVisitor:
     pass
 
 
+##############################################################################
+# Python function replacements ###############################################
+##############################################################################
+
+
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('numpy.ndarray')
-def _define_local(sdfg: SDFG, state: SDFGState, shape, dtype):
+def _define_local(sdfg: SDFG,
+                  state: SDFGState,
+                  shape: Shape,
+                  dtype: dace.typeclass):
+    """ Defines a local array in a DaCe program. """
     name, _ = sdfg.add_temp_transient(shape, dtype)
     return name
 
 
 @oprepo.replaces('dace.define_local_scalar')
-def _define_local_scalar(sdfg: SDFG, state: SDFGState, dtype):
+def _define_local_scalar(sdfg: SDFG,
+                         state: SDFGState,
+                         dtype: dace.typeclass):
+    """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True)
     return name
@@ -46,8 +62,8 @@ def _define_local_scalar(sdfg: SDFG, state: SDFGState, dtype):
 @oprepo.replaces('dace.define_stream')
 def _define_stream(sdfg: SDFG,
                    state: SDFGState,
-                   dtype=dtypes.float32,
-                   buffer_size=1):
+                   dtype: dace.typeclass,
+                   buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_stream(name, dtype, buffer_size=buffer_size, transient=True)
@@ -58,19 +74,22 @@ def _define_stream(sdfg: SDFG,
 @oprepo.replaces('dace.stream')
 def _define_streamarray(sdfg: SDFG,
                         state: SDFGState,
-                        dimensions,
-                        dtype=dtypes.float32,
-                        buffer_size=1):
+                        shape: Shape,
+                        dtype: dace.typeclass,
+                        buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_stream(
-        name, dtype, shape=dimensions, buffer_size=buffer_size, transient=True)
+        name, dtype, shape=shape, buffer_size=buffer_size, transient=True)
     return name
 
 
-def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str,
+def _assignop(sdfg: SDFG,
+              state: SDFGState,
+              op1: str,
+              opcode: str,
               opname: str):
-    """ Implements a general element-wise assignment operator. """
+    """ Implements a general element-wise array assignment operator. """
     arr1 = sdfg.arrays[op1]
 
     name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
@@ -96,8 +115,12 @@ def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str,
     return name
 
 
-def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
-    """ Implements a general element-wise unary operator. """
+def _unop(sdfg: SDFG,
+          state: SDFGState,
+          op1: str,
+          opcode: str,
+          opname: str):
+    """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
 
     name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
@@ -118,9 +141,14 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
-           opname: str, restype: dtypes.typeclass):
-    """ Implements a general element-wise binary operator. """
+def _binop(sdfg: SDFG,
+           state: SDFGState,
+           op1: str,
+           op2: str,
+           opcode: str,
+           opname: str,
+           restype: dace.typeclass):
+    """ Implements a general element-wise array binary operator. """
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
     if (len(arr1.shape) != len(arr2.shape)
@@ -154,8 +182,8 @@ def _scalarbinop(sdfg: SDFG,
                  arrop: str,
                  opcode: str,
                  opname: str,
-                 restype: dtypes.typeclass,
-                 reverse=False):
+                 restype: dace.typeclass,
+                 reverse: bool = False):
     """ Implements a general Scalar-Array binary operator. """
     scalar = sdfg.arrays[scalop]
     arr = sdfg.arrays[arrop]
@@ -193,8 +221,11 @@ def _scalarbinop(sdfg: SDFG,
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
-            op2: None):
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2=None):
         return _assignop(sdfg, state, op1, opcode, op)
 
 
@@ -208,14 +239,18 @@ def _makeunop(op, opcode):
         return _unop(sdfg, state, op1, opcode, op)
 
 
-def _is_scalar(sdfg, op):
-    shape = sdfg.arrays[op].shape
+def _is_scalar(sdfg: SDFG,
+               arrname: str):
+    """ Checks whether array is pseudo-scalar (shape=(1,)). """
+    shape = sdfg.arrays[arrname].shape
     if len(shape) == 1 and shape[0] == 1:
         return True
     return False
 
 
-def _inverse_dict_lookup(dict, value):
+def _inverse_dict_lookup(dict: Dict[str, Any],
+                         value: Any):
+    """ Finds the first key in a dictionary with the input value. """
     for k, v in dict.items():
         if v == value:
             return k
@@ -224,7 +259,10 @@ def _inverse_dict_lookup(dict, value):
 
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
             op2: str):
 
         arr1 = sdfg.arrays[op1]
