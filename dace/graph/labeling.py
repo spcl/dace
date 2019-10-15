@@ -725,9 +725,6 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
 
-        # Collect data about edge
-        expr = [edge.subset for edge in aggdata]
-
         if memlet.data not in sdfg.arrays:
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
                            'in SDFG.' % memlet.data)
@@ -737,19 +734,31 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
             [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
         ]
 
-        for pattern in MemletPattern.patterns():
-            if pattern.match(expr, variable_context, mapnode.range,
-                             aggdata):  # Only one level of context
-                new_subset = pattern.propagate(sdfg.arrays[memlet.data], expr,
-                                               mapnode.range)
-                break
-        else:
-            # No patterns found. Emit a warning and propagate the entire array
-            print(
-                'WARNING: Cannot find appropriate memlet pattern to propagate %s '
-                'through %s' % (str(expr), str(mapnode.range)))
+        new_subset = None
+        for md in aggdata:
+            tmp_subset = None
+            for pattern in MemletPattern.patterns():
+                if pattern.match([md.subset], variable_context, mapnode.range,
+                                 [md]):
+                    tmp_subset = pattern.propagate(sdfg.arrays[memlet.data],
+                                                   [md.subset], mapnode.range)
+                    break
+            else:
+                # No patterns found. Emit a warning and propagate the entire
+                # array
+                print('WARNING: Cannot find appropriate memlet pattern to '
+                      'propagate %s through %s' % (str(md.subset),
+                                                   str(mapnode.range)))
+                tmp_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
 
-            new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
+            # Union edges as necessary
+            if new_subset is None:
+                new_subset = tmp_subset
+            else:
+                new_subset = subsets.union(new_subset, tmp_subset)
+
+        assert new_subset is not None
+
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
         new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])

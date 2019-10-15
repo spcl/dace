@@ -3,6 +3,7 @@ import re
 import sympy as sp
 from functools import reduce
 from sympy.core.sympify import SympifyError
+import warnings
 
 
 class Subset(object):
@@ -67,10 +68,7 @@ class Range(Subset):
 
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
-                return {
-                    'main': str(obj.expr),
-                    'approx': str(obj.approx)
-                }
+                return {'main': str(obj.expr), 'approx': str(obj.approx)}
             else:
                 return str(obj)
 
@@ -101,13 +99,14 @@ class Range(Subset):
 
         ranges = obj['ranges']
         tuples = []
+
         def p2s(x):
             pts = symbolic.pystr_to_symbolic
             if isinstance(x, str):
                 return pts(x)
             else:
                 return symbolic.SymExpr(pts(x['main']), pts(x['approx']))
-                
+
         for r in ranges:
             tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']),
                            p2s(r['tile'])))
@@ -665,3 +664,33 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
         subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
         subset_b.max_element())]
     return Range(result)
+
+
+def union(subset_a: Subset, subset_b: Subset) -> Subset:
+    """ Compute the union of two Subset objects.
+        If the subsets are not of the same type, degenerates to bounding-box
+        union.
+        @param subset_a: The first subset.
+        @param subset_b: The second subset.
+        @return: A Subset object whose size is at least the union of the two
+                 inputs.
+    """
+    if type(subset_a) != type(subset_b):
+        return bounding_box_union(subset_a, subset_b)
+    elif subset_a is not None and subset_b is None:
+        return subset_a
+    elif subset_b is not None and subset_a is None:
+        return subset_b
+    elif subset_a is None and subset_b is None:
+        raise TypeError('Both subsets cannot be None')
+    elif isinstance(subset_a, Indices):
+        # Two indices. If they are adjacent, returns a range that contains both,
+        # otherwise, returns a bounding box of the two
+        return bounding_box_union(subset_a, subset_b)
+    elif isinstance(subset_a, Range):
+        # TODO(later): More involved Strided-Tiled Range union
+        return bounding_box_union(subset_a, subset_b)
+    else:
+        warnings.warn('Unrecognized Subset type %s in union, degenerating to'
+                      ' bounding box' % type(subset_a).__name__)
+        return bounding_box_union(subset_a, subset_b)
