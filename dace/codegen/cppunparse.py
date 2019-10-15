@@ -206,7 +206,7 @@ class CPPUnparser:
 
     def enter(self):
         """Print '{', and increase the indentation."""
-        self.write(" {")
+        self.write(" {\n")
         self._indent += 1
 
     def leave(self):
@@ -1061,9 +1061,9 @@ class CPPUnparser:
         raise SyntaxError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True):
+def cppunparse(node, expr_semicolon=True, locals=None):
     strio = StringIO()
-    CPPUnparser(node, 0, CPPLocals(), strio, expr_semicolon=expr_semicolon)
+    CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon)
     return strio.getvalue().strip()
 
 
