@@ -503,9 +503,12 @@ class MapExit(ExitNode):
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
-        m = Map("", [], [])
-        ret = MapExit(map=m)
+        # Set map reference to map entry
+        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+
+        ret = MapExit(map=entry_node.map)
         Property.set_properties_from_json(ret, json_obj, context=context)
+
         return ret
 
     @property
@@ -599,7 +602,6 @@ class Map(object):
 
 # Indirect Map properties to MapEntry and MapExit
 MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
-MapExit = indirect_properties(Map, lambda obj: obj.map)(MapExit)
 
 # ------------------------------------------------------------------------------
 
@@ -661,8 +663,10 @@ class ConsumeExit(ExitNode):
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
-        c = Consume("", ['i', 1], None)
-        ret = ConsumeExit(consume=c)
+        # Set map reference to entry node
+        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+
+        ret = ConsumeExit(consume=entry_node.consume)
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -764,8 +768,6 @@ class Consume(object):
 # Redirect Consume properties to ConsumeEntry and ConsumeExit
 ConsumeEntry = indirect_properties(Consume,
                                    lambda obj: obj.consume)(ConsumeEntry)
-ConsumeExit = indirect_properties(Consume,
-                                  lambda obj: obj.consume)(ConsumeExit)
 
 # ------------------------------------------------------------------------------
 
