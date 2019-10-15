@@ -284,7 +284,7 @@ class SDFG(OrderedDiGraph):
         # Redefine symbols
         for k, v in json_obj['undefined_symbols'].items():
             v = Property.known_types()[v['type']].fromJSON_object(v)
-            symbolic.symbol(k, v.dtype)
+            ret.add_symbol(k, v.dtype)
 
         ret.validate()
 
