@@ -936,7 +936,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             console.log("sdfg", foreground_elem.sdfg);
 
             let dst_nodeid = null;
-            if (foreground_elem instanceof Edge) {
+            if (foreground_elem instanceof Edge && foreground_elem.parent_id !== null) {
                 let edge = foreground_elem.sdfg.nodes[state_id].edges[foreground_elem.id];
                 dst_nodeid = edge.dst;
             }
