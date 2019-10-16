@@ -935,6 +935,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // Get and render the properties from now on
             console.log("sdfg", foreground_elem.sdfg);
 
+            let dst_nodeid = null;
+            if (foreground_elem instanceof Edge) {
+                let edge = foreground_elem.sdfg.nodes[state_id].edges[foreground_elem.id];
+                dst_nodeid = edge.dst;
+            }
+
             let render_props = n => {
                 let attr = n.attributes;
 
@@ -958,9 +964,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 let nid = parseInt(n.id);
                 if (!n || isNaN(nid))
                     nid = null;
+                if (nid === null && dst_nodeid !== null)
+                    nid = dst_nodeid;
+
                 let propobj = {
                     node_id: nid,
                     state_id: state_id,
+                    element: n,
                     sdfg_name: foreground_elem.sdfg.attributes.name,
                     sdfg: foreground_elem.sdfg,
                     data: () => ({props: proplist})
@@ -4638,8 +4648,27 @@ class DIODE {
             // there needs to be lookup by finding the parent nodes (potentially using connectors).
             // A lookup may traverse to top-level and throw if the symbols are not resolved yet.
 
+            let cont = document.createElement("div");
+
+            if(node.data === undefined)
+                return $(cont);
+            
+            
+            let indices = x.value.indices;
+            
+            // Generate string from indices
+            let preview = '[';
+            for (let index of indices) {
+                preview += index + ', ';
+            }
+            preview = preview.slice(0, -2) + ']';
+
+            cont.innerText = preview + '  ';
+
             let elem = document.createElement("button");
-            elem.innerText = "Show";
+            elem.style.float = "right";
+            elem.innerText = "Edit";
+            cont.appendChild(elem);
 
             elem.addEventListener("click", (_click) => {
                 this.project().request(['sdfg_object'], resp => {
@@ -4712,7 +4741,7 @@ class DIODE {
                 }, {});
             });
 
-            return $(elem);
+            return $(cont);
         }
 
         let create_range_input = (transthis, x, node) => {
@@ -4729,13 +4758,41 @@ class DIODE {
                     data_obj = tmp[0];
                 }
             }
+            
+           
+            let cont = document.createElement("div");
 
-            let elem = document.createElement("button");
-            elem.innerText = "Show";
+            if(node.data === undefined)
+                return $(cont);
+            
 
+            
             let ranges = x.value.ranges;
             let popup_div = document.createElement('div');
             
+            // Generate string from range
+            let preview = '[';
+            for (let range of ranges) {
+                preview += range.start + ':' + range.end;
+                if (range.step != 1) {
+                    preview += ':' + range.step;
+                    if (range.tile != 1)
+                        preview += ':' + range.tile;
+                } else if (range.tile != 1) {
+                    preview += '::' + range.tile;
+                }
+                preview += ', ';
+            }
+            preview = preview.slice(0, -2) + ']';
+
+            cont.innerText = preview + '  ';
+
+            let elem = document.createElement("button");
+            elem.style.float = "right";
+            elem.innerText = "Edit";
+            cont.appendChild(elem);
+
+
             let popup_div_body = document.createElement('div');
 
             
@@ -4778,7 +4835,10 @@ class DIODE {
                         if(data_obj != null) {
 
                             this.project().request(['sdfg_object'], sdfg_obj => {
-                                sdfg_obj = JSON.parse(sdfg_obj.sdfg_object);
+                                if (typeof sdfg_obj.sdfg_object === 'object')
+                                    sdfg_obj = sdfg_obj.sdfg_object;
+                                else
+                                    sdfg_obj = JSON.parse(sdfg_obj.sdfg_object);
                                 console.log("got sdfg object", sdfg_obj);
                                 // Iterate over all SDFGs, checking arrays and returning matching data elements
 
@@ -4842,7 +4902,7 @@ class DIODE {
                     height: 800,
                 });
             };
-            return $(elem);
+            return $(cont);
         };
 
         // TODO: Handle enumeration types better
