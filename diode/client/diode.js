@@ -188,7 +188,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this._message_handler = x => alert(x);
 
-        this.renderer_panes = [];
+        this.renderer_pane = null;
 
         this._analysis_values = {};
 
@@ -304,9 +304,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 forSection: x[5],
                 data: JSON.parse(x[6]),
             }));
-            for(let x of this.renderer_panes) {
-                x.drawAllPerfInfo();
-            }
+            this.renderer_pane.drawAllPerfInfo();
         });
 
         this.on(this.project().eventString('-req-sdfg_object'), msg => {
@@ -471,7 +469,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             if (this.highlighted_elements)
                 this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
             this.highlighted_elements = [];
-            this.renderer_panes[0].draw_async();
+            this.renderer_pane.draw_async();
         }
         if(msg.type == 'highlight-elements') {
             // Clear previously highlighted elements
@@ -479,7 +477,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
             this.highlighted_elements = [];
             
-            let graph = this.renderer_panes[0].graph;
+            let graph = this.renderer_pane.graph;
 
             // The input contains a list of multiple elements
             for(let x of msg.elements) {
@@ -492,7 +490,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 this.highlighted_elements.push(elem);
             }
             this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "#D35400";});
-            this.renderer_panes[0].draw_async();
+            this.renderer_pane.draw_async();
         }
         else {
             // Default behavior is passing through (must be an object, not JSON-string)
@@ -776,9 +774,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
             "sdfg_data": tmp
         });
 
-        let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
-                                    (et,e,c,el,r,fge) => this.on_renderer_mouse_event(et, e, c, el, r, fge));
-        this.renderer_panes.push(sdfv);
+        if (this.renderer_pane !== null)
+            this.renderer_pane.set_sdfg(tmp.sdfg);
+        else {
+            let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
+                (et, e, c, el, r, fge) => this.on_renderer_mouse_event(et, e, c, el, r, fge));
+            this.renderer_pane = sdfv;
+        }
 
         // Display data descriptors by default (in parallel to the creation of the renderer)
         this.render_free_variables(true);
@@ -868,8 +870,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 cmenu.addOption((sdfg_elem.attributes.is_collapsed) ? 'Expand' : 'Collapse',
                 x => {
                     sdfg_elem.attributes.is_collapsed = !sdfg_elem.attributes.is_collapsed;
-                    this.renderer_panes[0].relayout();
-                    this.renderer_panes[0].draw_async();
+                    this.renderer_pane.relayout();
+                    this.renderer_pane.draw_async();
                 });
             }
             ///////////////////////////////////////////////////////////
@@ -3788,6 +3790,8 @@ class DIODE {
 
     // Closes all open windows
     closeAll() {
+        if (!this.goldenlayout.root)
+            return;
         let comps = this.goldenlayout.root.getItemsByFilter(x => x.config.type == "component");
         comps.forEach((comp) => comp.close() );
         this.project().clearClosedWindowsList();

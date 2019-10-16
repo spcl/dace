@@ -726,6 +726,12 @@ class SDFGRenderer {
         this.canvas_manager.draw_async();
     }
 
+    set_sdfg(new_sdfg) {
+        this.sdfg = new_sdfg;
+        this.relayout();
+        this.draw_async();
+    }
+
     // Set mouse events (e.g., click, drag, zoom)
     set_mouse_handlers() {
         let canvas = this.canvas;
