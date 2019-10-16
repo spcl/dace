@@ -803,7 +803,7 @@ class Reduce(Node):
         a reduction binary function. """
 
     # Properties
-    axes = ListProperty(dtype=list, allow_none=True)
+    axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(

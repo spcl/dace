@@ -622,16 +622,21 @@ class ListProperty(Property):
     """ Property type for lists.
     """
 
+    def __init__(self, element_type, *args, **kwargs):
+        kwargs['dtype'] = list
+        super().__init__(*args, **kwargs)
+        self.element_type = element_type
+
     def __set__(self, obj, val):
         if isinstance(val, str):
-            val = list(val)
+            val = list(map(self.element_type, list(val)))
         elif isinstance(val, tuple):
-            val = list(val)
+            val = list(map(self.element_type, val))
         super(ListProperty, self).__set__(obj, val)
 
     @staticmethod
     def to_string(l):
-        return str(l.dtype(l))
+        return str(l)
 
     @staticmethod
     def to_json(l):
