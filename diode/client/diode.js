@@ -2816,6 +2816,11 @@ class DIODE_Project {
         this._closed_windows = [];
     }
 
+    clearTransformationHistory() {
+        // Reset transformation history
+        sessionStorage.removeItem("transformation_snapshots");
+    }
+
     getTransformationSnapshots() {
         let sdata = sessionStorage.getItem("transformation_snapshots");
         if(sdata == null) {
@@ -3805,6 +3810,11 @@ class DIODE {
         }
 
         let root = this.goldenlayout.root;
+
+        // In case goldenlayout was not yet initialized, fail silently
+        if (!root)
+            return;
+
         if(root.contentItems.length === 0) {
             // Layout is completely missing, need to add one (row in this case)
             let layout_config = {
@@ -5541,6 +5551,8 @@ class DIODE {
 
     createNewProject() {
         this._current_project = new DIODE_Project(this);
+        this._current_project.clearTransformationHistory();
+        sessionStorage.clear();
         window.sessionStorage.setItem("diode_project", this._current_project._project_id);
         this.setupEvents();
     }
