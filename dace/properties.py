@@ -451,20 +451,19 @@ class Property:
             else:
                 # The object was consumed previously
                 try:
-                    t = obj['type']
-                except:
+                    obj['type']
+                except KeyError:
                     return tmp
                 # If a type is available, the parent element must also be parsed accordingly
 
-        if "type" in obj:
-            try:
-                t = obj['type']
-            except:
-                t = attr_type
+        try:
+            t = obj['type']
+        except KeyError:
+            t = attr_type
 
-            if t in Property.known_types():
-                return (Property.known_types()[t]).fromJSON_object(
-                    obj, context=context)
+        if t in Property.known_types():
+            return (Property.known_types()[t]).fromJSON_object(
+                obj, context=context)
 
         return obj
 
@@ -1420,17 +1419,13 @@ class TypeClassProperty(Property):
         return obj.dtype.toJSON()
 
     def from_json(self, s, sdfg=None):
-        d = json.loads(s)
+        d = json.loads(s, object_hook=Property.json_loader)
         if d is None:
             return None
         if isinstance(d, str):
             return TypeClassProperty.from_string(d)
-        if 'type' in d and d['type'] == 'callback':
-            return dace.types.callback.fromJSON_object(d)
-        elif 'type' in d and d['type'] == 'struct':
-            return dace.types.struct.fromJSON_object(d)
-        elif 'type' in d and d['type'] == 'pointer':
-            return dace.types.pointer.fromJSON_object(d)
+        elif isinstance(d, dace.typeclass):
+            return d
         else:
             raise TypeError('Unrecognized typeclass object: %s' % d)
 
