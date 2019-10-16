@@ -620,6 +620,16 @@ class ListProperty(Property):
     """
 
     def __init__(self, element_type, *args, **kwargs):
+        """
+        Create a List property with a uniform element type.
+        @param element_type: The type of each element in the list, or a function
+                             that converts an element to the wanted type (e.g.,
+                             `dace.symbolic.pystr_to_symbolic` for symbolic
+                             expressions)
+        @param args: Other arguments (inherited from Property).
+        @param kwargs: Other keyword arguments (inherited from Property).
+        """
+
         kwargs['dtype'] = list
         super().__init__(*args, **kwargs)
         self.element_type = element_type
@@ -636,18 +646,28 @@ class ListProperty(Property):
         return str(l)
 
     def to_json(self, l):
+        if l is None:
+            return json.dumps(l)
 
-        # The json_dumper will try to find the correct serialization in `toJSON`
-        # and fallback to str() if that method does not exist
-        return json.dumps(l, default=Property.json_dumper)
+        # If elements are one of the JSON basic types, use directly
+        if self.element_type in (int, float, list, tuple, dict):
+            return json.dumps(l, default=Property.json_dumper)
+        # Otherwise, convert to strings
+        return json.dumps(list(map(str, l)))
 
     @staticmethod
     def from_string(s):
         return list(s)
 
     def from_json(self, s, sdfg=None):
-        # TODO: Typechecks (casts) to a predefined type
-        return json.loads(s, object_hook=Property.json_loader)
+        data = json.loads(s, object_hook=Property.json_loader)
+        if data is None:
+            return data
+        if not isinstance(data, list):
+            raise TypeError('ListProperty expects a list input, got %s' % data)
+
+        # Type-checks (casts) to the element type
+        return list(map(self.element_type, data))
 
 
 ###############################################################################

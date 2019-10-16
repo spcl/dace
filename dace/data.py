@@ -203,8 +203,8 @@ class Array(Data):
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
     access_order = ListProperty(element_type=int)
-    strides = ListProperty(element_type=symbolic.SymExpr)
-    offset = ListProperty(element_type=symbolic.SymExpr)
+    strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
+    offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     may_alias = Property(
         dtype=bool,
         default=False,
@@ -407,8 +407,8 @@ class Stream(Data):
     """ Stream (or stream array) data descriptor. """
 
     # Properties
-    strides = ListProperty(element_type=symbolic.SymExpr)
-    offset = ListProperty(element_type=symbolic.SymExpr)
+    strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
+    offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = Property(dtype=int, desc="Size of internal buffer.")
     veclen = Property(
         dtype=int, desc="Vector length. Memlets must adhere to this.")
