@@ -2165,15 +2165,15 @@ class DIODE_Context_StartPage extends DIODE_Context {
             file_title.innerText = "New";
             file_title.classList = "startpage_title";
             startpage_recent.appendChild(file_title);
-            //#TODO: Add "New" item
+
             startpage_recent.appendChild(this.createStartpageListElement("Create a new Project", null, null, plus, x => {
                 this.container.close();
 
-                // Force creation of a new "project" instance (since we are explicitly creating a new project, not a file)
-                this.diode.createNewProject();
-                //this.diode.newFile(); // We could do this, but it's not necessary - let the user create/load at his own discretion
+                // Force creation of a new "project" instance (since we are explicitly creating a new project)
+                // (NOTE: Functionality moved to "newFile")
+                //this.diode.createNewProject();
 
-
+                this.diode.openUploader("code-python");
             }));
 
 
@@ -3706,6 +3706,9 @@ class DIODE {
     }
 
     load_from_binary_sdfg(sdfg_data) {
+        // Reset project state
+        this.createNewProject();
+
         let post_params = {
             binary: sdfg_data
         };
@@ -3753,6 +3756,12 @@ class DIODE {
         this.getEnum("Language");
     }
 
+    // Closes all open windows
+    closeAll() {
+        let comps = this.goldenlayout.root.getItemsByFilter(x => x.config.type == "component");
+        comps.forEach((comp) => comp.close() );
+        this.project().clearClosedWindowsList();
+    }
 
     addContentItem(config) {
         // Remove all saved instances of this component type from the closed windows list
@@ -3800,7 +3809,10 @@ class DIODE {
     }
 
     newFile(content="") {
-        // TODO(talbn): Reset state
+        // Reset project state
+        this.closeAll();
+        this.createNewProject();
+
         let millis = this.getPseudorandom();
 
         let config = {

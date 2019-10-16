@@ -389,7 +389,9 @@ function start_DIODE() {
                 diode.openUploader("code-python");
             }
             if(event.target === 'file-menu:start') {
-                // TODO(talbn): Reset state, refactor to diode.js
+                // Close all windows before opening Start component
+                diode.closeAll();
+
                 let config = {
                     type: 'component',
                     componentName: 'StartPageComponent',
