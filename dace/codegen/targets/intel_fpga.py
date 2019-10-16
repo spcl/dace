@@ -16,6 +16,7 @@ from dace.codegen.targets import cpu, fpga
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
+from dace.sdfg import SDFGState
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.types.ReductionType.Min: "min",
@@ -652,8 +653,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                      memlet.veclen)
 
         result = ""
-        # import pdb
-        # pdb.set_trace()
 
         def_type = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
@@ -813,7 +812,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if node.label is None or node.label == "":
             return ''
 
-        from dace.sdfg import SDFGState
         state_dfg: SDFGState = sdfg.nodes()[state_id]
 
         # Not [], "" or None
@@ -852,7 +850,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             u, uconn, v, vconn, memlet = edge
             if u == node:
                 # this could be a wcr
-                # TODO is_write_conflicted?
                 memlets[uconn] = (memlet, edge.data.wcr_conflict, edge.data.wcr)
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
@@ -884,7 +881,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             else:
                 rk = OpenCLDaceKeywordRemover(sdfg, self._dispatcher.defined_vars,
                                               memlets, sdfg.constants).visit(stmt)
-
             if rk is not None:
                 result = StringIO()
                 cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols, do_type_inference=True)

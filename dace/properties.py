@@ -60,6 +60,9 @@ class PropertyError(Exception):
     pass
 
 
+json_store_metadata = True
+
+
 class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
@@ -333,8 +336,8 @@ class Property:
         return dict_in
 
     @staticmethod
-    def all_properties_to_json(object_with_properties,
-                               options={"no_meta": False}):
+    def all_properties_to_json(object_with_properties, options=None):
+        options = options or dict(no_meta=not json_store_metadata)
         retdict = {}
         for x, v in object_with_properties.properties():
             # The following loads is intended: This is a nested object.
@@ -392,11 +395,14 @@ class Property:
 
     @staticmethod
     def json_dumper(obj):
-        try:
+        if hasattr(obj, 'toJSON'):
             # Try the toJSON-methods by default
             tmp = json.loads(obj.toJSON())
             return tmp
-        except:
+        elif isinstance(obj, np.ndarray):
+            # Special case for external structures (numpy arrays)
+            return NumpyLoader.toJSON_object(obj)
+        else:
             # If not available, go for the default str() representation
             return str(obj)
 
@@ -426,6 +432,10 @@ class Property:
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
             "subsets.Indices": dace.subsets.Indices,
+            "pointer": dace.types.pointer,
+            "callback": dace.types.callback,
+            "struct": dace.types.struct,
+            "ndarray": NumpyLoader
         }
 
     @staticmethod
@@ -466,7 +476,10 @@ class Property:
 
 def _property_generator(instance):
     for name, prop in type(instance).__properties__.items():
-        yield prop, getattr(instance, name)
+        if hasattr(instance, "_" + name):
+            yield prop, getattr(instance, "_" + name)
+        else:
+            yield prop, getattr(instance, name)
 
 
 def make_properties(cls):
@@ -945,7 +958,7 @@ class LambdaProperty(Property):
         if obj is None:
             return 'lambda: None'
         if isinstance(obj, str):
-            return obj
+            return unparse(ast.parse(obj))
         return unparse(obj)
 
     @staticmethod
@@ -1030,14 +1043,14 @@ class CodeProperty(Property):
         lang = dace.types.Language.Python
         if obj is None:
             return json.dumps(obj)
-        if isinstance(obj, str):
-            return json.dumps(obj)
 
         if isinstance(obj, dict):
             lang = obj['language']
-        else:
-            lang = "Python"  # If not specified, we just don't want the validators go haywire
-        ret = {'string_data': CodeProperty.to_string(obj), 'language': lang}
+
+        ret = {
+            'string_data': CodeProperty.to_string(obj),
+            'language': lang.name
+        }
         return json.dumps(ret)
 
     @staticmethod
@@ -1237,11 +1250,19 @@ class SymbolicProperty(Property):
             raise TypeError(
                 "Property {} must an int or symbolic expression".format(
                     self.attr_name))
+        if isinstance(val, (int, float, str, complex)):
+            val = SymbolicProperty.from_string(str(val))
+
         super(SymbolicProperty, self).__set__(obj, val)
 
     @staticmethod
     def from_string(s):
-        return pystr_to_symbolic(s)
+        return pystr_to_symbolic(s, simplify=False)
+
+    @staticmethod
+    def to_string(obj):
+        # Go through sympy once to reorder factors
+        return str(pystr_to_symbolic(str(obj), simplify=False))
 
 
 class DataProperty(Property):
@@ -1398,3 +1419,47 @@ class TypeClassProperty(Property):
     @staticmethod
     def to_string(obj):
         return obj.to_string()
+
+    @staticmethod
+    def to_json(obj):
+        if obj is None:
+            return json.dumps(obj)
+        return obj.dtype.toJSON()
+
+    @staticmethod
+    def from_json(s, sdfg=None):
+        d = json.loads(s)
+        if d is None:
+            return None
+        if isinstance(d, str):
+            return TypeClassProperty.from_string(d)
+        if 'type' in d and d['type'] == 'callback':
+            return dace.types.callback.fromJSON_object(d)
+        elif 'type' in d and d['type'] == 'struct':
+            return dace.types.struct.fromJSON_object(d)
+        elif 'type' in d and d['type'] == 'pointer':
+            return dace.types.pointer.fromJSON_object(d)
+        else:
+            raise TypeError('Unrecognized typeclass object: %s' % d)
+
+
+class NumpyLoader(object):
+    """ Helper class to load/store numpy arrays from JSON. """
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != 'ndarray':
+            raise TypeError('Object is not a numpy ndarray')
+
+        if 'dtype' in json_obj:
+            return np.array(json_obj['data'], dtype=json_obj['dtype'])
+
+        return np.array(json_obj['data'])
+
+    @staticmethod
+    def toJSON_object(obj):
+        return {
+            'type': 'ndarray',
+            'data': obj.tolist(),
+            'dtype': str(obj.dtype)
+        }

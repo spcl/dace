@@ -4,6 +4,7 @@ import functools
 import itertools
 import re
 import sympy as sp
+import numpy as np
 
 import dace
 from dace import subsets
@@ -17,6 +18,7 @@ from dace.properties import Property, make_properties, indirect_properties
 
 
 class FPGACodeGen(TargetCodeGenerator):
+
     # Set by deriving class
     target_name = None
     title = None
@@ -240,7 +242,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                     and n.desc(scope).storage ==
                                     dace.types.StorageType.FPGA_Global and
                                     n.data not in nested_global_transients_seen
-                            ):
+                                ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -262,7 +264,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                            data))
                     elif (data.storage == dace.types.StorageType.FPGA_Local or
                           data.storage == dace.types.StorageType.FPGA_Registers
-                    ):
+                          ):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -447,8 +449,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     "Streams cannot be unbounded on FPGA")
 
             buffer_length_dynamically_sized = (
-                    isinstance(nodedesc.buffer_size, sp.Expr)
-                    and len(nodedesc.free_symbols) > 0)
+                isinstance(nodedesc.buffer_size, sp.Expr)
+                and len(nodedesc.free_symbols) > 0)
 
             if buffer_length_dynamically_sized:
                 raise dace.codegen.codegen.CodegenError(
@@ -476,7 +478,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if nodedesc not in self._allocated_global_arrays:
                         raise RuntimeError("Cannot allocate global array "
                                            "from device code: {} in {}".format(
-                            node.label, sdfg.name))
+                                               node.label, sdfg.name))
 
                 else:
 
@@ -682,11 +684,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 if not register_to_register:
                     # Language-specific
                     self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+                                                     state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
                     self.generate_flatten_loop_pre(callsite_stream, sdfg,
-                                                   state_id, dst_node)
+                                                    state_id, dst_node)
                 for node in [src_node, dst_node]:
                     if (isinstance(node.desc(sdfg), dace.data.Array)
                             and node.desc(sdfg).storage in [
@@ -704,7 +706,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_pre(callsite_stream, None, sdfg,
-                                                      state_id, dst_node)
+                                                 state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
                         "++__dace_copy{}) {{".format(i, i, copy_dim, i), sdfg,
@@ -712,18 +714,18 @@ class FPGACodeGen(TargetCodeGenerator):
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                                       state_id, dst_node)
+                                                  state_id, dst_node)
 
             # Pragmas
             if num_loops > 0:
                 if not register_to_register:
                     # Language-specific
                     self.generate_pipeline_loop_post(callsite_stream, sdfg,
-                                                     state_id, dst_node)
+                                                      state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
                     self.generate_flatten_loop_post(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+                                                     state_id, dst_node)
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
@@ -829,8 +831,8 @@ class FPGACodeGen(TargetCodeGenerator):
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                dace.types.ScheduleType.Default,
-                dace.types.ScheduleType.FPGA_Device
+                    dace.types.ScheduleType.Default,
+                    dace.types.ScheduleType.FPGA_Device
             ]:
                 # raise dace.codegen.codegen.CodegenError(
                 #     "Cannot produce FPGA code for {} node with schedule {}: ".
@@ -924,8 +926,20 @@ class FPGACodeGen(TargetCodeGenerator):
                 for i, r in enumerate(node.map.range):
                     var = node.map.params[i]
                     begin, end, skip = r
+                    # decide type of loop variable
+                    loop_var_type = "int"
+
+                    if dace.symbolic.eval(begin) >= 0 and dace.symbolic.eval(skip) > 0:
+                        # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
+                        # if we are able to determine it
+                        end_type = dace.symbolic.symbol.s_types.get(cpu.sym2cpp(end+1))
+                        if end_type is not None and end_type.dtype.type > np.dtype('uint32'):
+                            loop_var_type = end.ctype
+                        elif np.issubdtype(end_type.dtype.type, np.unsignedinteger):
+                            loop_var_type = "size_t"
+
                     result.write(
-                        "for (int {} = {}; {} < {}; {} += {}) {{\n".format(
+                        "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(loop_var_type,
                             var, cpu.sym2cpp(begin), var, cpu.sym2cpp(end + 1),
                             var, cpu.sym2cpp(skip)), sdfg, state_id, node)
             else:
@@ -1080,8 +1094,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
                                               node)
             callsite_stream.write(
-                'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
-                    format(
+                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
+                format(
                     var=iterators_inner[i],
                     begin=input_subset[axis][0],
                     end=input_subset[axis][1] + 1,
@@ -1102,12 +1116,12 @@ class FPGACodeGen(TargetCodeGenerator):
         for i, axis in enumerate(output_axes):
             if axis == pipeline_dim:
                 self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
-                                                node)
+                                           node)
                 self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
-                                               node)
+                                          node)
             if unroll_dim[axis]:
                 self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
-                                              node)
+                                         node)
             callsite_stream.write(
                 'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                     format(
@@ -1117,12 +1131,12 @@ class FPGACodeGen(TargetCodeGenerator):
                     skip=output_subset[i][2]), sdfg, state_id, node)
             if axis == pipeline_dim:
                 self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id,
-                                                 node)
+                                            node)
                 self.generate_flatten_loop_post(callsite_stream, sdfg, state_id,
-                                                node)
+                                           node)
             if unroll_dim[axis]:
                 self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                               state_id, node)
+                                          state_id, node)
             end_braces += 1
 
         # Determine reduction type
@@ -1133,10 +1147,10 @@ class FPGACodeGen(TargetCodeGenerator):
         # Input and output variables
         out_var = (accumulator
                    if all_axes_collapsed else cpp_array_expr(
-            sdfg,
-            output_memlet,
-            offset=iterators_outer,
-            relative_offset=False))
+                       sdfg,
+                       output_memlet,
+                       offset=iterators_outer,
+                       relative_offset=False))
         in_var = cpp_array_expr(
             sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
@@ -1338,6 +1352,7 @@ class PipelineExit(dace.graph.nodes.MapExit):
 
 @make_properties
 class Pipeline(dace.graph.nodes.Map):
+
     init_size = Property(
         dtype=int, desc="Number of initialization iterations.")
     init_overlap = Property(

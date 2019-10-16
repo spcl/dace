@@ -404,7 +404,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                         raise dace.codegen.codegen.CodegenError(
                             "Strided unroll not supported")
                     entry_stream.write(
-                        "for (int {param} = {begin}; {param} < {end}; "
+                        "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".
                         format(
                             param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
