@@ -371,8 +371,7 @@ class Property:
             except:
                 continue
 
-            #TODO: Do we need to dump again? Answer: Yes.
-            # Some properties only work from string.
+            # Some properties only work when converted back from string.
             try:
                 stringified = json.dumps(val, default=Property.json_dumper)
                 newval = _v.from_json(stringified, context)
@@ -380,7 +379,7 @@ class Property:
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                # #TODO: Maybe log this...
+                #TODO: Maybe log this...
                 raise e
 
     @staticmethod
@@ -595,8 +594,7 @@ class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
 
-    @staticmethod
-    def to_json(d):
+    def to_json(self, d):
 
         # The ordered dict is more of a list than a dict.
         retlist = [{k: v} for k, v in d.items()]
@@ -637,8 +635,7 @@ class ListProperty(Property):
     def to_string(l):
         return str(l)
 
-    @staticmethod
-    def to_json(l):
+    def to_json(self, l):
 
         # The json_dumper will try to find the correct serialization in `toJSON`
         # and fallback to str() if that method does not exist
@@ -659,8 +656,7 @@ class ListProperty(Property):
 
 
 class SDFGReferenceProperty(Property):
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None: return 'null'
 
         return json.dumps(obj.toJSON())  # Make a string of a JSON
@@ -670,51 +666,6 @@ class SDFGReferenceProperty(Property):
 
         # Parse the string of the JSON back into an SDFG object
         return dace.SDFG.fromJSON_object(json.loads(json.loads(s)))
-
-
-# TODO: does not currently work because of how enums work
-class OrderProperty(Property):
-    """ Custom property class that handles the mapping between the order
-        property and the actual class fields (range and parameters). """
-
-    # This is implemented in the context of dace.nodes.Map, but could in
-    # principle be reused for other objects, assuming they set the internal
-    # fields "_range" and "_params".
-
-    def __get__(self, obj, objtype=None):
-        # Copy to avoid changes in the list at callee to be reflected in
-        # the map directly
-        return list(obj._params)
-
-    def __set__(self, obj, val):
-        """ Update both params and ranges based on the new order. """
-        # Make this more lenient to the input by comparing strings, and
-        # using the new order to shuffle the original lists
-        param_strings = list(map(str, obj._params))
-        update_strings = list(map(str, val))
-        if len(update_strings) != len(param_strings):
-            raise ValueError(
-                "Wrong length of new order: {} (found {}, expected {})".format(
-                    str(val), len(update_strings), len(param_strings)))
-        # The below will throw a ValueError if a parameter doesn't exist
-        # We assume that no parameter will be present twice...
-        indices = [param_strings.index(x) for x in update_strings]
-        obj._params = [obj._params[i] for i in indices]
-        obj._range.reorder(indices)
-
-    @staticmethod
-    def to_string(val):
-        return "({})".format(", ".join(map(str, val)))
-
-    @staticmethod
-    def from_string(s):
-        """Create a list of symbols from a list of strings."""
-        return [sp.Symbol(i) for i in re.sub("[\(\)\[\]]", "", s).split(",")]
-
-    @staticmethod
-    def enum(obj):
-        """Implement enum to populate e.g. dropdown."""
-        return list(itertools.permutations(obj))
 
 
 class RangeProperty(Property):
@@ -737,8 +688,7 @@ class RangeProperty(Property):
     def from_string(s):
         return sbs.Range.from_string(s)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return "null"
         # to_string is not enough - it does not preserve all information
@@ -815,8 +765,7 @@ class DebugInfoProperty(Property):
             di = DebugInfo(f, sl, sc, el, ec)
         return di
 
-    @staticmethod
-    def to_json(s):
+    def to_json(self, s):
         if not isinstance(s, DebugInfo):
             return json.dumps(None)
         nval = {
@@ -854,8 +803,7 @@ class ParamsProperty(Property):
             for m in re.finditer("[a-zA-Z_][a-zA-Z0-9_]*", s)
         ]
 
-    @staticmethod
-    def to_json(l):
+    def to_json(self, l):
         return json.dumps(l, default=Property.json_dumper)
 
     def from_json(self, l, sdfg=None):
@@ -910,9 +858,7 @@ class SetProperty(Property):
     def from_string(s):
         return [eval(i) for i in re.sub("[\{\}\(\)\[\]]", "", s).split(",")]
 
-    @staticmethod
-    def to_json(l):
-        import json
+    def to_json(self, l):
         return json.dumps(list(sorted(l)))
 
     def from_json(self, l, sdfg=None):
@@ -959,8 +905,7 @@ class LambdaProperty(Property):
             return unparse(ast.parse(obj))
         return unparse(obj)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None: return 'null'
         return json.dumps(LambdaProperty.to_string(obj))
 
@@ -989,8 +934,7 @@ class SubgraphProperty(Property):
         if val is not None:
             super(SubgraphProperty, self).__set__(obj, val)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         return json.dumps(str(obj))
 
     def from_json(self, s, sdfg=None):
@@ -1034,8 +978,7 @@ class CodeProperty(Property):
             pass
         return tmp
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         lang = dace.types.Language.Python
         if obj is None:
             return json.dumps(obj)
@@ -1150,7 +1093,8 @@ class CodeProperty(Property):
             if isinstance(val, str):
                 val = self.from_string(val, language)['code_or_block']
             elif isinstance(val, (ast.FunctionDef, ast.With)):
-                # TODO: the original parsing should have already stripped this
+                # The original parsing should have already stripped this,
+                # but it's still good to handle this case.
                 val = CodeBlock(val.body)
             elif isinstance(val, ast.AST):
                 val = CodeBlock([val])
@@ -1215,8 +1159,7 @@ class SubsetProperty(Property):
             return 'None'
         raise TypeError
 
-    @staticmethod
-    def to_json(val):
+    def to_json(self, val):
         if val is None:
             return 'null'
         try:
@@ -1293,8 +1236,7 @@ class DataProperty(Property):
     def to_string(obj):
         return str(obj)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return "null"
         return json.dumps(str(obj))
@@ -1355,8 +1297,7 @@ class ShapeProperty(Property):
     def to_string(obj):
         return ", ".join(map(str, obj))
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return json.dumps(obj)
         return json.dumps([*map(str, obj)])
@@ -1381,8 +1322,6 @@ class TypeProperty(Property):
     def dtype(self):
         return type
 
-    # TODO: this does not work both ways! If converted to a string we lose the
-    # location information.
     @staticmethod
     def from_string(s):
         dtype = pydoc.locate(s)
@@ -1412,8 +1351,7 @@ class TypeClassProperty(Property):
     def to_string(obj):
         return obj.to_string()
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return json.dumps(obj)
         return obj.dtype.toJSON()

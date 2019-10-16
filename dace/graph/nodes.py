@@ -553,7 +553,6 @@ class Map(object):
     label = Property(dtype=str, desc="Label of the map")
     params = ParamsProperty(desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters")
-    #   order = OrderProperty(desc="Order of map dimensions", unmapped=True)
     schedule = Property(
         dtype=types.ScheduleType,
         desc="Map schedule",
