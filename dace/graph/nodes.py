@@ -553,7 +553,6 @@ class Map(object):
     label = Property(dtype=str, desc="Label of the map")
     params = ParamsProperty(desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters")
-    #   order = OrderProperty(desc="Order of map dimensions", unmapped=True)
     schedule = Property(
         dtype=types.ScheduleType,
         desc="Map schedule",
@@ -803,7 +802,7 @@ class Reduce(Node):
         a reduction binary function. """
 
     # Properties
-    axes = ListProperty(dtype=list, allow_none=True)
+    axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
