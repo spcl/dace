@@ -85,9 +85,9 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "float64": "(double)"}
 
-_py2c_typeconversion = {"(int)" : dace.types.typeclass(np.int32), "(float)" : dace.types.typeclass(np.float32)}
+_py2c_typeconversion = {"int" : dace.types.typeclass(np.int32), "float": dace.types.typeclass(np.float32),"float64" : dace.types.typeclass(np.float64)}
 
 def interleave(inter, f, seq):
     """Call f on each item in seq, calling inter() in between.
@@ -196,7 +196,7 @@ class CPPUnparser:
         print("", file=self.f)
         self.f.flush()
 
-    def fill(self, text=""):
+    def fill(self, text="", infer_type=False):
         """Indent a piece of text, according to the current indentation level"""
         if self.firstfill:
             if self.indent_output:
@@ -219,7 +219,7 @@ class CPPUnparser:
 
     def enter(self):
         """Print '{', and increase the indentation."""
-        self.write(" {")
+        self.write(" {\n")
         self._indent += 1
 
     def leave(self):
@@ -237,7 +237,6 @@ class CPPUnparser:
             for t in tree:
                 self.dispatch(t)
         except TypeError:
-            #print("Calling: " + tree.__class__.__name__ + " infer_type: " + str(infer_type))
             meth = getattr(self, "_" + tree.__class__.__name__)
             return meth(tree, infer_type)
 
@@ -649,27 +648,27 @@ class CPPUnparser:
         self._generic_For(t, is_async=True)
 
     def _If(self, t, infer_type=False):
-        self.fill("if (")
-        self.dispatch(t.test)
-        self.write(')')
+        self.fill("if (", infer_type)
+        self.dispatch(t.test, infer_type)
+        self.write(')', infer_type)
         self.enter()
-        self.dispatch(t.body)
+        self.dispatch(t.body, infer_type)
         self.leave()
         # collapse nested ifs into equivalent elifs.
         while (t.orelse and len(t.orelse) == 1
                and isinstance(t.orelse[0], ast.If)):
             t = t.orelse[0]
-            self.fill("else if (")
-            self.dispatch(t.test)
-            self.write(')')
+            self.fill("else if (", infer_type)
+            self.dispatch(t.test, infer_type)
+            self.write(')', infer_type)
             self.enter()
-            self.dispatch(t.body)
+            self.dispatch(t.body, infer_type)
             self.leave()
         # final else
         if t.orelse:
-            self.fill("else")
+            self.fill("else", infer_type)
             self.enter()
-            self.dispatch(t.orelse)
+            self.dispatch(t.orelse,infer_type)
             self.leave()
 
     def _While(self, t, infer_type=False):
@@ -749,19 +748,17 @@ class CPPUnparser:
         else:
             self.write(t.id, infer_type)
 
-            # check if this name is in defined_symbols or in local symbols. If yes, take the type
-            type = None
+            # check if this name is a python type, it is in defined_symbols or in local symbols.
+            # If yes, take the type
+            inferred_type = None
             if infer_type:
-                if t.id in  _py2c_typeconversion:
-                    type = _py2c_typeconversion[t.id]
+                if t.id.strip("()") in  _py2c_typeconversion:
+                    inferred_type = _py2c_typeconversion[t.id.strip("()")]
                 elif self.defined_symbols.get(t.id) is not None:
-                    type = self.defined_symbols.get(t.id)
+                    inferred_type = self.defined_symbols.get(t.id)
                 elif self.locals.is_defined(t.id, self._indent):
-                    type = self.locals.get_type(t.id) if self.locals.get_type(t.id) is not None else None
-                # print("Name: returns " + str(type) + " for: " + t.id )
-            return type
-
-
+                    inferred_type = self.locals.get_type(t.id) if self.locals.get_type(t.id) is not None else None
+            return inferred_type
 
 
     def _NameConstant(self, t, infer_type=False):
@@ -780,12 +777,17 @@ class CPPUnparser:
                     "dace::complexJ()*%s" % repr_n.replace("inf", INFSTR)[:-1])
             else:
                 self.write(repr_n.replace("inf", INFSTR), infer_type)
-                # TODO: min_scalar_type can be problematic
-                # Get the type and return it as string
-                #print("NUM: infer_type "+ str(infer_type) + " : "+repr_n + " = " + str(dace.types.typeclass(np.min_scalar_type(eval(repr_n)).type)) )
-                #derive the smallest type and the convert to the minimum suitable (e.g. uint8 -> uint32)
-                min_scalar_type = dace.types.typeclass(np.min_scalar_type(eval(repr_n)).type)
-                return dace.types._CTYPES_RULES[frozenset({min_scalar_type})] if infer_type else None
+                # If the number has a type, use it
+                if isinstance(t.n, np.uint):
+                    return dace.types.typeclass(np.uint32) if infer_type else None
+                elif isinstance(t.n, np.int):
+                    return dace.types.typeclass(np.int32) if infer_type else None
+                elif isinstance(t.n, np.float):
+                    return dace.types.typeclass(np.float32) if infer_type else None
+                elif isinstance(t.n, np.float64):
+                    return dace.types.typeclass(np.float64) if infer_type else None
+                elif infer_type:
+                    raise TypeError('Unable to convert number')
         else:
             # TODO remove python2 compativility
             # Parenthesize negative numbers, to avoid turning (-1)**2 into -1**2.
@@ -1049,11 +1051,11 @@ class CPPUnparser:
         self.write(")", infer_type)
         return inf_type
 
-    def _Subscript(self, t):
-        self.dispatch(t.value)
-        self.write("[")
-        self.dispatch(t.slice)
-        self.write("]")
+    def _Subscript(self, t, infer_type=False):
+        self.dispatch(t.value,infer_type)
+        self.write("[",infer_type)
+        self.dispatch(t.slice, infer_type)
+        self.write("]",infer_type)
 
     def _Starred(self, t):
         raise SyntaxError('Invalid C++')
@@ -1062,18 +1064,18 @@ class CPPUnparser:
     def _Ellipsis(self, t):
         self.write("...")
 
-    def _Index(self, t):
-        self.dispatch(t.value)
+    def _Index(self, t, infer_type=False):
+        self.dispatch(t.value, infer_type)
 
-    def _Slice(self, t):
+    def _Slice(self, t, infer_type=False):
         if t.lower:
-            self.dispatch(t.lower)
-        self.write(":")
+            self.dispatch(t.lower, infer_type)
+        self.write(":", infer_type)
         if t.upper:
-            self.dispatch(t.upper)
+            self.dispatch(t.upper, infer_type)
         if t.step:
-            self.write(":")
-            self.dispatch(t.step)
+            self.write(":", infer_type)
+            self.dispatch(t.step, infer_type)
 
     def _ExtSlice(self, t):
         interleave(lambda: self.write(', '), self.dispatch, t.dims)

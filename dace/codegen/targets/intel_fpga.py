@@ -80,11 +80,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "intel_fpga", "mode")
-        sdaccel_dir = os.path.dirname(
-            os.path.dirname(
-                make_absolute(
-                    Config.get("compiler", "intel_fpga", "executable"))))
-
         kernel_file_name = "DACE_BINARY_DIR \"{}".format(self._program_name)
         emulation_flag = ""
         if execution_mode == "emulator":
@@ -318,9 +313,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
                                    node):
-        pass
-        # kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
-        #                     state_id, node)
+        kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
+                             state_id, node)
 
     @staticmethod
     def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
@@ -866,11 +860,13 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
         defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()[node]].defined_vars
-        defined_symbols.update(sdfg.constants)
+        #defined_symbols = dace.symbolic.symbol.s_types
 
         #Dtypes is a dictionary containing associations name -> type (ctypes)
         # Add defined variables
         defined_symbols = {str(x): x.dtype for x in defined_symbols}
+        # This could be problematic for numeric constants that have no dtype
+        defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
         for connector, (memlet,_,_) in memlets.items():
             if connector is not None:
@@ -888,11 +884,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             else:
                 rk = OpenCLDaceKeywordRemover(sdfg, self._dispatcher.defined_vars,
                                               memlets, sdfg.constants).visit(stmt)
-                
+
             if rk is not None:
                 result = StringIO()
-                # import pdb
-                # pdb.set_trace()
                 cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols, do_type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
@@ -967,7 +961,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         defined_type = self.defined_vars.get(memlet.data)
         updated = node
 
-        if defined_type == DefinedType.Pointer and wcr is not None:
+        if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
             if isinstance(node.targets[0], ast.Subscript):
@@ -976,11 +970,14 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)
-
-                redtype = operations.detect_reduction_type(wcr)
-                target_str = "{}[{}]".format(memlet.data, subscript)
-                red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
-                code_str = "{} = {};".format(target_str, red_str)
+                if wcr is not None:
+                    redtype = operations.detect_reduction_type(wcr)
+                    target_str = "{}[{}]".format(memlet.data, subscript)
+                    red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
+                    code_str = "{} = {};".format(target_str, red_str)
+                else:
+                    target_str = "{}[{}]".format(target, subscript)
+                    code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
 
         elif defined_type == DefinedType.Stream and memlet.num_accesses != 1:
@@ -993,11 +990,22 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
             # updated = ast.Name(id="write_channel_intel({}[{}], {});".format(
             #     target, subscript, cppunparse.cppunparse(value, expr_semicolon=False)))
         elif memlet is not None and memlet.num_accesses != 1:
-            newnode = ast.Name(id="*{} = {};".format(
+            newnode = ast.Name(id="*{} = {}; ".format(
                 target, cppunparse.cppunparse(value, expr_semicolon=False)))
             return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)
+
+    # Replace default modules (e.g., math) with OpenCL Compliant (e.g. "dace::math::"->"")
+    def visit_Attribute(self, node):
+        attrname = rname(node)
+        module_name = attrname[:attrname.rfind(".")]
+        func_name = attrname[attrname.rfind(".") + 1:]
+        if module_name in types._OPENCL_ALLOWED_MODULES:
+            cppmodname = types._OPENCL_ALLOWED_MODULES[module_name]
+            return ast.copy_location(
+                ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
+        return self.generic_visit(node)
 
     def visit_Call(self, node):
         # enforce compliance to OpenCL

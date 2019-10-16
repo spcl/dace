@@ -569,6 +569,13 @@ _ALLOWED_MODULES = {
     "cmath": "dace::cmath::",
 }
 
+# Lists allowed modules and maps them to OpenCL
+_OPENCL_ALLOWED_MODULES = {
+    "builtins": "",
+    "dace": "",
+    "math": ""
+}
+
 
 def ismoduleallowed(var):
     """ Helper function to determine the source module of an object, and 

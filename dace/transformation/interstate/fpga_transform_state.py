@@ -118,7 +118,8 @@ class FPGATransformState(pattern_matching.Transformation):
                         parent_state = graph.parent.parent
                         if parent_state is not None:
                             for parent_edges in parent_state.edges():
-                                if parent_edges.src_conn == e.dst.data:
+                                if parent_edges.src_conn == e.dst.data or (isinstance(parent_edges.dst,
+                                            dace.graph.nodes.AccessNode) and e.dst.data == parent_edges.dst.data):
                                     # This must be copied to device
                                     input_nodes.append(parent_edges.dst)
                                     wcr_input_nodes.add(parent_edges.dst)
