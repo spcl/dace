@@ -1117,9 +1117,9 @@ class SDFGRenderer {
         
         // Change mouse cursor accordingly
         if (total_elements > 0)
-            document.body.style.cursor = 'pointer';
+            this.canvas.style.cursor = 'pointer';
         else
-            document.body.style.cursor = 'auto';
+            this.canvas.style.cursor = 'auto';
 
         this.tooltip = null;
         this.last_hovered_elements = elements;
