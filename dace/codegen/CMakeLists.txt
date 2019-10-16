@@ -102,12 +102,8 @@ if(DACE_ENABLE_CUDA)
     cmake_policy(SET CMP0091 NEW)
   endif()
 endif()
+
 if(DACE_ENABLE_XILINX OR DACE_ENABLE_INTELFPGA)
-=========
-
-
-if(DACE_ENABLE_XILINX)
->>>>>>>>> Temporary merge branch 2
   set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${DACE_HLSLIB_DIR}/cmake)
   include_directories(SYSTEM ${DACE_HLSLIB_DIR}/include)
