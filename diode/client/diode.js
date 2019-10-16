@@ -467,20 +467,32 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if(msg.sdfg_name != this.getState()['sdfg_name']) {
             return;
         }
+        if (msg.type == 'clear-highlights') {
+            if (this.highlighted_elements)
+                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+            this.highlighted_elements = [];
+            this.renderer_panes[0].draw_async();
+        }
         if(msg.type == 'highlight-elements') {
+            // Clear previously highlighted elements
+            if (this.highlighted_elements)
+                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+            this.highlighted_elements = [];
+            
+            let graph = this.renderer_panes[0].graph;
+
             // The input contains a list of multiple elements
             for(let x of msg.elements) {
-
-                let split = x.split('_');
-
-
-                let modmsg = {
-                    type: 'highlight-element',
-                    'sdfg-id': split[0].slice(1), // Cut off the leading 's'. #TODO: Fix the misnomer sdfg-id => state-id
-                    'node-id': split[1]
-                };
-                //this._message_handler(modmsg);
+                let sid = x[0], nid = x[1];
+                let elem = null;
+                if (sid == -1)
+                    elem = graph.node(nid);
+                else
+                    elem = graph.node(sid).data.graph.node(nid);
+                this.highlighted_elements.push(elem);
             }
+            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "#D35400";});
+            this.renderer_panes[0].draw_async();
         }
         else {
             // Default behavior is passing through (must be an object, not JSON-string)
@@ -793,9 +805,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Check if anything was clicked at all
         if (total_elements == 0 && evtype === 'click') {
+            // Clear highlighted elements
+            if (this.highlighted_elements)
+                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+
             // Nothing was selected
             this.render_free_variables(false);
-            return false;
+            return true;
         }
         if (total_elements == 0 && evtype === 'contextmenu') {
             let cmenu = new ContextMenu();
@@ -927,6 +943,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if (evtype !== "click")
             return false;
 
+        // Clear highlighted elements
+        if (this.highlighted_elements)
+            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+        // Mark this element red
+        this.highlighted_elements = [foreground_elem];
+
         // Render properties asynchronously
         setTimeout(() => {
             // Get and render the properties from now on
@@ -985,17 +1007,23 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 if (n.type.endsWith("Entry")) {
                     // Find the matching exit node
                     let exit_node = find_exit_for_entry(state.nodes, n);
-                    // TODO: Highlight both entry and exit nodes
+                    
+                    // Highlight both entry and exit nodes
+                    let gstate = renderer.graph.node(foreground_elem.parent_id);
+                    let rnode = gstate.data.graph.node(exit_node.id);
+                    this.highlighted_elements.push(rnode);
                     
                     let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
                     render_props(tmp);
-
-                    return;
                 } else if (n.type.endsWith("Exit")) {
                     // Find the matching entry node and continue with that
                     let entry_id = parseInt(n.scope_entry);
                     let entry_node = state.nodes[entry_id];
-                    // TODO: Highlight both entry and exit nodes
+
+                    // Highlight both entry and exit nodes
+                    let gstate = renderer.graph.node(foreground_elem.parent_id);
+                    let rnode = gstate.data.graph.node(entry_node.id);
+                    this.highlighted_elements.push(rnode);
 
                     let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
                     render_props(tmp);
@@ -1004,12 +1032,17 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     let ndesc = foreground_elem.sdfg.attributes._arrays[n.attributes.data];
                     let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
                     render_props(tmp);
-                    return;
                 } else
                     render_props(n);
             } else if (foreground_elem instanceof State)
                 render_props(foreground_elem.data.state);
+
+            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "red";});
+            renderer.draw_async();
         }, 0);
+
+        // Timeout handler draws asynchronously
+        return false;
     }
 }
 
