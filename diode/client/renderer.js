@@ -648,7 +648,8 @@ class SDFGRenderer {
         this.tooltip = null;
 
         // Mouse-related fields
-        this.mousepos = null; // Last position of the mouse pointer
+        this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
+        this.realmousepos = null; // Last position of the mouse pointer (in pixel coordinates)
         this.drag_start = null; // Null if the mouse/touch is not activated
         this.drag_second_start = null; // Null if two touch points are not activated
         this.external_mouse_handler = on_mouse_event;
@@ -816,16 +817,29 @@ class SDFGRenderer {
 
     on_post_draw() {
         if (this.tooltip) {
-            let pos = this.mousepos;
+            let FONTSIZE = 18; // in pixels
+            let br = this.canvas.getBoundingClientRect();
+            let pos = {x: this.realmousepos.x - br.x,
+                       y: this.realmousepos.y - br.y};
             let label = this.tooltip;
             let ctx = this.ctx;
+
+            // Reset scaling and translation
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+            // Set new font
+            let oldfont = ctx.font;
+            ctx.font = FONTSIZE + "px Arial";
+
+            // Draw tooltip
             let x = pos.x + 10;
             let textmetrics = ctx.measureText(label);
             ctx.fillStyle = "black";
-            ctx.fillRect(x, pos.y - LINEHEIGHT, textmetrics.width + LINEHEIGHT, LINEHEIGHT * 1.2);
+            ctx.fillRect(x, pos.y - FONTSIZE, textmetrics.width + FONTSIZE, FONTSIZE * 1.2);
             ctx.fillStyle = "white";
-            ctx.fillText(label, x + LINEHEIGHT / 2, pos.y - 0.1 * LINEHEIGHT);
+            ctx.fillText(label, x + FONTSIZE / 2, pos.y - 0.1 * FONTSIZE);
             ctx.fillStyle = "black";
+            ctx.font = oldfont;
         }
     }
 
@@ -1009,6 +1023,7 @@ class SDFGRenderer {
 
         } else if (evtype === "mousemove" || evtype === "touchmove") {
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
+            this.realmousepos = {x: event.clientX, y: event.clientY};
 
             // Zoom (pinching)
             if (evtype === "touchmove" && e.targetTouches.length == 2) {
