@@ -644,8 +644,7 @@ class ListProperty(Property):
     def from_string(s):
         return list(s)
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         # TODO: Typechecks (casts) to a predefined type
         return json.loads(s, object_hook=Property.json_loader)
 
@@ -662,8 +661,7 @@ class SDFGReferenceProperty(Property):
 
         return json.dumps(obj.toJSON())  # Make a string of a JSON
 
-    @staticmethod
-    def from_json(s, context=None):
+    def from_json(self, s, context=None):
         if s == "null": return None
 
         # Parse the string of the JSON back into an SDFG object
@@ -743,8 +741,7 @@ class RangeProperty(Property):
 
         return obj.toJSON()
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         from dace.subsets import Range
 
         if s == "null": return None
@@ -827,8 +824,7 @@ class DebugInfoProperty(Property):
         }
         return json.dumps(nval)
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         s = json.loads(s)
         if s is None: return None
 
@@ -858,8 +854,7 @@ class ParamsProperty(Property):
     def to_json(l):
         return json.dumps(l, default=Property.json_dumper)
 
-    @staticmethod
-    def from_json(l, sdfg=None):
+    def from_json(self, l, sdfg=None):
         return json.loads(
             l, object_hook=lambda x: Property.json_loader(l, sdfg))
 
@@ -916,8 +911,7 @@ class SetProperty(Property):
         import json
         return json.dumps(list(sorted(l)))
 
-    @staticmethod
-    def from_json(l, sdfg=None):
+    def from_json(self, l, sdfg=None):
         import json
         return set(json.loads(l))
 
@@ -966,8 +960,7 @@ class LambdaProperty(Property):
         if obj is None: return 'null'
         return json.dumps(LambdaProperty.to_string(obj))
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         if s == 'null': return None
         return LambdaProperty.from_string(json.loads(s))
 
@@ -996,8 +989,7 @@ class SubgraphProperty(Property):
     def to_json(obj):
         return json.dumps(str(obj))
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         return None
 
 
@@ -1053,8 +1045,7 @@ class CodeProperty(Property):
         }
         return json.dumps(ret)
 
-    @staticmethod
-    def from_json(l, sdfg=None):
+    def from_json(self, l, sdfg=None):
         tmp = json.loads(l)
 
         if tmp is None:
@@ -1229,8 +1220,7 @@ class SubsetProperty(Property):
         except:
             return json.dumps(SubsetProperty.to_string(val))
 
-    @staticmethod
-    def from_json(val, sdfg=None):
+    def from_json(self, val, sdfg=None):
         if val == 'null':
             return None
         obj = json.loads(val, object_hook=Property.json_loader)
@@ -1305,8 +1295,7 @@ class DataProperty(Property):
             return "null"
         return json.dumps(str(obj))
 
-    @staticmethod
-    def from_json(s, context=None):
+    def from_json(self, s, context=None):
         sdfg = context['sdfg']
         s = json.loads(s)
         if sdfg is None:
@@ -1368,8 +1357,7 @@ class ShapeProperty(Property):
             return json.dumps(obj)
         return json.dumps([*map(str, obj)])
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         d = json.loads(s)
         if d is None:
             return None
@@ -1426,8 +1414,7 @@ class TypeClassProperty(Property):
             return json.dumps(obj)
         return obj.dtype.toJSON()
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         d = json.loads(s)
         if d is None:
             return None
