@@ -507,14 +507,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
     render_free_variables(force_open) {
         let sdfg_dat = this.getSDFGDataFromState();
         if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
-        this.diode.replaceOrCreate(['render-free-vars'], {
+        this.diode.replaceOrCreate(['render-free-vars'], 'PropWinComponent', {
             data: sdfg_dat,
             calling_context: this.created
         },
         () => {
-            if (this.has_component('PropWinComponent'))
-                return;
-
             console.log("Calling recreation function");
             let config = {
                 type: 'component',
@@ -3071,7 +3068,7 @@ class DIODE_Project {
                 delete transthis._rcvbuf[reqid];
                 return transthis._callback(tmp, options.timeout_id);
             }
-            else {
+            else if (timeout !== null) {
                 timeout -= interval_step;
                 if(timeout <= 0) {
                     // Timed out - fail silently
@@ -3783,7 +3780,6 @@ class DIODE {
             this.addContentItem(config);
         }
         else {
-            // #TODO: To get the old DIODE layout, this needs to be smarter
             if(this.goldenlayout.isSubWindow) {
                 // Subwindows don't usually have layouts, so send a request that only the main window should answer
                 this.goldenlayout.eventHub.emit('create-window-in-main', JSON.stringify(config));
@@ -5148,7 +5144,7 @@ class DIODE {
             params: params ? JSON.stringify(params) : undefined,
             options: options
         };
-        this.replaceOrCreate(['display-properties'], dobj,
+        this.replaceOrCreate(['display-properties'], 'PropWinComponent', dobj,
          () => {
             let millis = this.getPseudorandom();
             let config = {
@@ -5578,7 +5574,7 @@ class DIODE {
             };
             this.addContentItem(new_sdfg_config);
         };
-        this.replaceOrCreate(['new-sdfg'], JSON.stringify(sdfg), create_sdfg_func);
+        this.replaceOrCreate(['new-sdfg'], 'SDFGComponent', JSON.stringify(sdfg), create_sdfg_func);
 
         let create_codeout_func = () => {
             let new_codeout_config = {
@@ -5591,7 +5587,7 @@ class DIODE {
         }
         if(sdfg.generated_code != undefined) {
             console.log("requesting using ID", this.project());
-            this.replaceOrCreate(['new-codeout'], sdfg, create_codeout_func);
+            this.replaceOrCreate(['new-codeout'], 'CodeOutComponent', sdfg, create_codeout_func);
         }
     }
 
@@ -5605,7 +5601,7 @@ class DIODE {
             };
             this.addContentItem(new_error_config);
         };
-        this.replaceOrCreate(['new-error'], error, create_error_func);
+        this.replaceOrCreate(['new-error'], 'ErrorComponent', error, create_error_func);
     }
 
     OptGraph_available(optgraph, name="") {
@@ -5625,18 +5621,28 @@ class DIODE {
                     type: 'component',
                     componentName: 'AvailableTransformationsComponent',
                     componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
-                },
-                {
-                    title: name == "" ? "Transformation History" : "Transformation History for `" + name + "`",
-                    type: 'component',
-                    componentName: 'TransformationHistoryComponent',
-                    componentState: { created: millis, for_sdfg: name }
-                }
-                ]
+                }]
             };
             this.addContentItem(new_optgraph_config);
         };
-        this.replaceOrCreate(['new-optgraph-' + name], optgraph, create_optgraph_func);
+        this.replaceOrCreate(['new-optgraph-' + name], 'AvailableTransformationsComponent',
+            optgraph, create_optgraph_func);
+
+        let create_history_func = () => {
+            let new_optgraph_config = {
+                type: "column",
+                content: [{
+                    title: "History",
+                    type: 'component',
+                    componentName: 'TransformationHistoryComponent',
+                    componentState: { created: millis, for_sdfg: name }
+                }]
+            };
+            this.addContentItem(new_optgraph_config);
+        };
+        this.replaceOrCreate(['new-history-' + name], 'TransformationHistoryComponent',
+            optgraph, create_history_func);
+
     }
 
     OptGraphs_available(optgraph) {
@@ -5721,7 +5727,7 @@ class DIODE {
             }
             else {
                 let cb = (resp) => {
-                    this.replaceOrCreate(['extend-optgraph'], resp, (_) => { this.OptGraphs_available(resp);});
+                    this.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => { this.OptGraphs_available(resp);});
                 };
                 if(options['no_optgraph'] === true) {
                     cb = undefined;
@@ -6017,7 +6023,7 @@ class DIODE {
                 props = undefined;
 
             let cb = (resp) => {
-                transthis.replaceOrCreate(['extend-optgraph'], resp, (_) => {transthis.OptGraphs_available(resp);});
+                transthis.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => {transthis.OptGraphs_available(resp);});
             };
 
             transthis.compile(calling_context, code, optpath, props, {
@@ -6046,25 +6052,24 @@ class DIODE {
 
     /*
         Tries to talk to a pre-existing element to replace the contents.
-        If the addressed element does not respond within a given threshold,
-        a new element created.
+        If the addressed element does not exist, a new element is created.
     */
-    // TODO: Likely to cause race conditions and unnecessary open tabs!! Rewrite
-    replaceOrCreate(replace_request, replace_params, recreate_func) {
+    replaceOrCreate(replace_request, window_name, replace_params, recreate_func) {
+        let open_windows = null;
+        if (this.goldenlayout.root)
+            open_windows = this.goldenlayout.root.getItemsByFilter(x => (x.config.type == "component" &&
+                                                                         x.componentName == window_name));
 
-        //#TODO: Find out if it is a bug that one cannot use clearTimeout(recreation_timeout) instead of clearTimeout(tid) when replaceOrCreate-Calls are nested
-        //(the let/const-Variables should be scope-local)
-        const recreation_timeout = setTimeout(() => {
-            // This should be executed only if the replace request was not answered
+        if (open_windows && open_windows.length > 0) {  // Replace
+            this.getCurrentProject().request(replace_request, (resp, tid) => {},
+                {
+                    timeout: null,
+                    params: replace_params,
+                    timeout_id: null
+                });
+        } else {  // Create
             recreate_func(replace_params);
-        }, 1000);
-        this.getCurrentProject().request(replace_request, (resp, tid) => {
-            clearTimeout(tid);
-        }, {
-            timeout: 100,
-            params: replace_params,
-            timeout_id: recreation_timeout
-        });
+        }
     }
     
     /*
