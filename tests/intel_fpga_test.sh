@@ -42,7 +42,6 @@ run_sample() {
     #1: generate the opencl
     #dirty trick: use type scripting to mask the first segfault due to the missing aocx file
     command='echo -e "'"${3}"'" |python3 '"${1}"'.py '"${@:4}"''
-    echo $command
     script -c  "$command" /tmp/test_intelfpga > /dev/null
     #echo -e $3 | python3 $1.py ${@:5} &> /dev/null
 
@@ -73,19 +72,30 @@ run_sample() {
 }
 
 run_all() {
+    # #### VECTORIZATION ####
     #Vectorization 1: first vectorize and then transform for FPGA
     run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
     #Vectorization 2: first transform for FPGA then vectorize
     run_sample intel_fpga/vec_sum vec_sum "1\n15\n"
     #Vectorization 3: TODO non vectorizable N
 
-
+    # #### WCR ####
     #simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "1\n"
 
+    # histogram (WCR on array)
+    run_sample ../samples/simple/histogram histogram "1\n"
+
+    # #### REDUCE ####
+    # Simple reduce
+    run_sample intel_fpga/vector_reduce vector_reduce "1\n"
+
+    # GEMM sample
+    run_sample ../samples/simple/gemm gemm "1\n"
 
 
-
+    # #### MISCELLANNEA ####
+    run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
 }
 
 # Check if aoc is vailable
