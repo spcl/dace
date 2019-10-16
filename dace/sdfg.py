@@ -7,6 +7,8 @@ from inspect import getframeinfo, stack
 import os
 import pickle, json
 from pydoc import locate
+import random
+import sys
 from typing import Any, Dict, Set, Tuple, List
 import warnings
 
@@ -923,12 +925,39 @@ subgraph cluster_state_{state} {{
             "    compound=true;\n" + "    newrank=true;\n" +
             "\n    ".join(nodes + edges) + "\n" + "\n".join(clusters) + "\n}")
 
-    def _repr_svg_(self):
-        """ SVG representation of the SDFG, used mainly for Jupyter
+    # TODO(later): Also implement the "_repr_svg_" method for static output
+    def _repr_html_(self):
+        """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
-        import graphviz
+        sdfv_deps = [
+            'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
+            'renderer_elements.js', 'sdfg_utils.js', 'renderer.js'
+        ]
+        result = ''
 
-        return graphviz.Source(self.draw())._repr_svg_()
+        # Load dependencies
+        root_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'diode',
+            'client')
+        for dep in sdfv_deps:
+            file = os.path.join(root_path, dep)
+            with open(file, 'r') as fp:
+                result += '<script>%s</script>\n' % fp.read()
+
+        # Rely on internet connection for Material icons
+        result += '<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">'
+
+        # Create renderer canvas and load SDFG
+        result += """
+<div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+<script>
+    var sdfg_{uid} = '{sdfg}';
+    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
+        document.getElementById('contents_{uid}'));
+</script>""".format(
+            sdfg=self.toJSON(), uid=random.randint(0, sys.maxsize - 1))
+
+        return result
 
     def transients(self):
         """ Returns a dictionary mapping transient data descriptors to their
