@@ -3636,7 +3636,7 @@ class DIODE {
             </div>
         </div>
     </label>
-    <input id="file-select" type="file" style="position:absolute;"/>
+    <input id="file-select" type="file"  accept=".py,.m" style="position:absolute;"/>
 </div>
 `,
             buttons: '',
@@ -3790,6 +3790,7 @@ class DIODE {
     }
 
     newFile(content="") {
+        // TODO(talbn): Reset state
         let millis = this.getPseudorandom();
 
         let config = {
@@ -3800,19 +3801,9 @@ class DIODE {
         };
 
         this.addContentItem(config);
-    }
 
-    open_diode_settings() {
-        let millis = this.getPseudorandom();
-
-        let config = {
-            title: "DIODE settings",
-            type: 'component',
-            componentName: 'DIODESettingsComponent',
-            componentState: { created: millis }
-        };
-
-        this.addContentItem(config);
+        // Compile automatically after loading
+        this.gatherProjectElementsAndCompile(this, {}, {sdfg_over_code: true});
     }
 
     open_diode_settings() {
