@@ -951,11 +951,12 @@ subgraph cluster_state_{state} {{
         result += """
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
-    var sdfg_{uid} = '{sdfg}';
+    var sdfg_{uid} = {sdfg};
     var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=self.toJSON(), uid=random.randint(0, sys.maxsize - 1))
+            sdfg=json.dumps(self.toJSON()),
+            uid=random.randint(0, sys.maxsize - 1))
 
         return result
 
@@ -2204,6 +2205,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 n.consume = ret.entry_node(n).consume
 
         return ret
+
+    def _repr_html_(self):
+        """ HTML representation of a state, used mainly for Jupyter
+            notebooks. """
+        # Create dummy SDFG with this state as the only one
+        arrays = set(n.data for n in self.data_nodes())
+        sdfg = SDFG(self.label)
+        sdfg._arrays = {k: self._parent.arrays[k] for k in arrays}
+        sdfg.add_node(self)
+
+        return sdfg._repr_html_()
 
     def scope_tree(self):
         if (hasattr(self, '_scope_tree_cached')
