@@ -61,7 +61,7 @@ class InterstateEdge(object):
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
-        return (self.condition == None or InterstateEdge.condition.to_string(
+        return (self.condition is None or InterstateEdge.condition.to_string(
             self.condition).strip() == "1")
 
     def condition_sympy(self):

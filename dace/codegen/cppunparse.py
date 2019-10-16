@@ -206,7 +206,7 @@ class CPPUnparser:
 
     def enter(self):
         """Print '{', and increase the indentation."""
-        self.write(" {")
+        self.write(" {\n")
         self._indent += 1
 
     def leave(self):

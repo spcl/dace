@@ -40,12 +40,12 @@ class Node(object):
     def validate(self, sdfg, state):
         pass
 
-    def toJSON(self, parent, options={"no_meta": False}):
+    def toJSON(self, parent):
         labelstr = str(self)
         typestr = str(type(self).__name__)
 
         scope_entry_node = parent.entry_node(self)
-        if scope_entry_node != None:
+        if scope_entry_node is not None:
             ens = parent.exit_nodes(parent.entry_node(self))
             scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
             scope_entry_node = str(parent.node_id(scope_entry_node))
@@ -399,6 +399,11 @@ class NestedSDFG(CodeNode):
         ret = NestedSDFG("nolabel", SDFG('nosdfg'), set(), set())
 
         Property.set_properties_from_json(ret, json_obj, context)
+
+        if context and 'sdfg_state' in context:
+            ret.sdfg.parent = context['sdfg_state']
+        if context and 'sdfg' in context:
+            ret.sdfg.parent_sdfg = context['sdfg']
 
         return ret
 

@@ -15,21 +15,31 @@
     
 </head>
 <body>
-<div id="filepicker"><form><input type="file"></form></div>
+<div id="filepicker"><form><input type="file"> <input type="button" id="reload" value="Refresh"></form></div>
 <div id="contents" style="position: relative; resize: both; width: 1024px; height: 768px; border: 1px solid; overflow: auto"></div>
 <script>
 var fr;
+var file = null;
 var renderer = null;
 $(document).ready(function(){
     $('input[type="file"]').change(function(e){
         if (e.target.files.length < 1)
             return;
-        var file = e.target.files[0];
-        fr = new FileReader();
-        fr.onload = file_read_complete;
-        fr.readAsText(file);
+        file = e.target.files[0];
+        reload_file();
+    });
+    $('#reload').click(function(e){
+        reload_file();
     });
 });
+
+function reload_file() {
+    if (!file)
+        return;
+    fr = new FileReader();
+    fr.onload = file_read_complete;
+    fr.readAsText(file);
+}
 
 function file_read_complete() {
     let sdfg = parse_sdfg(fr.result);

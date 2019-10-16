@@ -60,6 +60,9 @@ class PropertyError(Exception):
     pass
 
 
+json_store_metadata = True
+
+
 class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
@@ -98,13 +101,13 @@ class Property:
             self._to_string = lambda val: val._name_
         else:
             self._to_string = str
-        if from_json == None:
+        if from_json is None:
             import json
 
             def tmp(x, sdfg=None):
                 if self.dtype == bool:
                     return json.loads(x)
-                elif self.dtype == None:
+                elif self.dtype is None:
                     # Return without type cast.
                     return self.from_string(json.loads(x))
                 if self.dtype == dict or self.dtype == object:
@@ -112,52 +115,52 @@ class Property:
                     return json.loads(x, object_hook=Property.json_loader)
 
                 pre = json.loads(x, object_hook=Property.json_loader)
-                if pre == None:
+                if pre is None:
                     return None
                 return self.from_string(pre)
 
             self._from_json = tmp
         else:
             self._from_json = from_json
-        if to_json == None:
+        if to_json is None:
             import json
 
             # We have to add an indirection
             # (if just returning the output of to_string, one could not always parse it back)
             def tmp(x):
-                if x != None:
+                if x is not None:
                     if self.dtype == bool:
                         return json.dumps(x)
-                    elif self.dtype == None:
+                    elif self.dtype is None:
                         # Return without type cast.
                         return json.dumps(None
-                                          if x == None else self.to_string(x))
+                                          if x is None else self.to_string(x))
                     elif self.dtype == dict:
                         # Treat special types (e.g. dict)
                         typecast = dict(x)
                         return json.dumps(
-                            None if x == None else typecast,
+                            None if x is None else typecast,
                             default=Property.json_dumper)
                     elif self.dtype == tuple:
                         typecast = tuple(x)
                         return json.dumps(
-                            None if x == None else typecast,
+                            None if x is None else typecast,
                             default=Property.json_dumper)
                     elif self.dtype == list:
                         typecast = list(x)
                         return json.dumps(
-                            None if x == None else typecast,
+                            None if x is None else typecast,
                             default=Property.json_dumper)
                     elif self.dtype == object:
                         # Not treating this - go away.
                         return json.dumps(x)
 
-                return json.dumps(None if x == None else self.to_string(x))
+                return json.dumps(None if x is None else self.to_string(x))
 
             self._to_json = tmp
         else:
             self._to_json = to_json
-        if meta_to_json == None:
+        if meta_to_json is None:
             import json
 
             def tmp_func(self):
@@ -333,8 +336,8 @@ class Property:
         return dict_in
 
     @staticmethod
-    def all_properties_to_json(object_with_properties,
-                               options={"no_meta": False}):
+    def all_properties_to_json(object_with_properties, options=None):
+        options = options or dict(no_meta=not json_store_metadata)
         retdict = {}
         for x, v in object_with_properties.properties():
             # The following loads is intended: This is a nested object.
@@ -392,11 +395,14 @@ class Property:
 
     @staticmethod
     def json_dumper(obj):
-        try:
+        if hasattr(obj, 'toJSON'):
             # Try the toJSON-methods by default
             tmp = json.loads(obj.toJSON())
             return tmp
-        except:
+        elif isinstance(obj, np.ndarray):
+            # Special case for external structures (numpy arrays)
+            return NumpyLoader.toJSON_object(obj)
+        else:
             # If not available, go for the default str() representation
             return str(obj)
 
@@ -426,6 +432,10 @@ class Property:
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
             "subsets.Indices": dace.subsets.Indices,
+            "pointer": dace.types.pointer,
+            "callback": dace.types.callback,
+            "struct": dace.types.struct,
+            "ndarray": NumpyLoader
         }
 
     @staticmethod
@@ -466,7 +476,10 @@ class Property:
 
 def _property_generator(instance):
     for name, prop in type(instance).__properties__.items():
-        yield prop, getattr(instance, name)
+        if hasattr(instance, "_" + name):
+            yield prop, getattr(instance, "_" + name)
+        else:
+            yield prop, getattr(instance, name)
 
 
 def make_properties(cls):
@@ -724,7 +737,7 @@ class RangeProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None:
+        if obj is None:
             return "null"
         # to_string is not enough - it does not preserve all information
 
@@ -764,7 +777,7 @@ class DebugInfoProperty(Property):
     @staticmethod
     def from_string(s):
 
-        if s == None:
+        if s is None:
             return None
 
         f = None
@@ -817,7 +830,7 @@ class DebugInfoProperty(Property):
     @staticmethod
     def from_json(s, sdfg=None):
         s = json.loads(s)
-        if s == None: return None
+        if s is None: return None
 
         return DebugInfo(s['start_line'], s['start_col'], s['end_line'],
                          s['end_col'], s['filename'])
@@ -868,7 +881,7 @@ class SetProperty(Property):
             allow_none=False,
             desc="",
             **kwargs):
-        if to_json == None:
+        if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(
             getter=getter,
@@ -945,12 +958,12 @@ class LambdaProperty(Property):
         if obj is None:
             return 'lambda: None'
         if isinstance(obj, str):
-            return obj
+            return unparse(ast.parse(obj))
         return unparse(obj)
 
     @staticmethod
     def to_json(obj):
-        if obj == None: return 'null'
+        if obj is None: return 'null'
         return json.dumps(LambdaProperty.to_string(obj))
 
     @staticmethod
@@ -1028,23 +1041,23 @@ class CodeProperty(Property):
     @staticmethod
     def to_json(obj):
         lang = dace.types.Language.Python
-        if obj == None:
-            return json.dumps(obj)
-        if isinstance(obj, str):
+        if obj is None:
             return json.dumps(obj)
 
         if isinstance(obj, dict):
             lang = obj['language']
-        else:
-            lang = "Python"  # If not specified, we just don't want the validators go haywire
-        ret = {'string_data': CodeProperty.to_string(obj), 'language': lang}
+
+        ret = {
+            'string_data': CodeProperty.to_string(obj),
+            'language': lang.name
+        }
         return json.dumps(ret)
 
     @staticmethod
     def from_json(l, sdfg=None):
         tmp = json.loads(l)
 
-        if tmp == None:
+        if tmp is None:
             return None
 
         try:
@@ -1055,7 +1068,7 @@ class CodeProperty(Property):
         if lang == "NoCode":
             return None
 
-        if lang == None:
+        if lang is None:
             lang = dace.types.Language.Python
         elif lang.endswith("Python"):
             lang = dace.types.Language.Python
@@ -1209,7 +1222,7 @@ class SubsetProperty(Property):
 
     @staticmethod
     def to_json(val):
-        if val == None:
+        if val is None:
             return 'null'
         try:
             return val.toJSON()
@@ -1237,11 +1250,19 @@ class SymbolicProperty(Property):
             raise TypeError(
                 "Property {} must an int or symbolic expression".format(
                     self.attr_name))
+        if isinstance(val, (int, float, str, complex)):
+            val = SymbolicProperty.from_string(str(val))
+
         super(SymbolicProperty, self).__set__(obj, val)
 
     @staticmethod
     def from_string(s):
-        return pystr_to_symbolic(s)
+        return pystr_to_symbolic(s, simplify=False)
+
+    @staticmethod
+    def to_string(obj):
+        # Go through sympy once to reorder factors
+        return str(pystr_to_symbolic(str(obj), simplify=False))
 
 
 class DataProperty(Property):
@@ -1280,7 +1301,7 @@ class DataProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None:
+        if obj is None:
             return "null"
         return json.dumps(str(obj))
 
@@ -1291,7 +1312,7 @@ class DataProperty(Property):
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
         if s not in sdfg.arrays:
-            if s == None:
+            if s is None:
                 # This is fine
                 #return "null" # Every SDFG has a 'null' element
                 return None
@@ -1343,14 +1364,14 @@ class ShapeProperty(Property):
 
     @staticmethod
     def to_json(obj):
-        if obj == None:
+        if obj is None:
             return json.dumps(obj)
         return json.dumps([*map(str, obj)])
 
     @staticmethod
     def from_json(s, sdfg=None):
         d = json.loads(s)
-        if d == None:
+        if d is None:
             return None
         return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
 
@@ -1398,3 +1419,47 @@ class TypeClassProperty(Property):
     @staticmethod
     def to_string(obj):
         return obj.to_string()
+
+    @staticmethod
+    def to_json(obj):
+        if obj is None:
+            return json.dumps(obj)
+        return obj.dtype.toJSON()
+
+    @staticmethod
+    def from_json(s, sdfg=None):
+        d = json.loads(s)
+        if d is None:
+            return None
+        if isinstance(d, str):
+            return TypeClassProperty.from_string(d)
+        if 'type' in d and d['type'] == 'callback':
+            return dace.types.callback.fromJSON_object(d)
+        elif 'type' in d and d['type'] == 'struct':
+            return dace.types.struct.fromJSON_object(d)
+        elif 'type' in d and d['type'] == 'pointer':
+            return dace.types.pointer.fromJSON_object(d)
+        else:
+            raise TypeError('Unrecognized typeclass object: %s' % d)
+
+
+class NumpyLoader(object):
+    """ Helper class to load/store numpy arrays from JSON. """
+
+    @staticmethod
+    def fromJSON_object(json_obj, context=None):
+        if json_obj['type'] != 'ndarray':
+            raise TypeError('Object is not a numpy ndarray')
+
+        if 'dtype' in json_obj:
+            return np.array(json_obj['data'], dtype=json_obj['dtype'])
+
+        return np.array(json_obj['data'])
+
+    @staticmethod
+    def toJSON_object(obj):
+        return {
+            'type': 'ndarray',
+            'data': obj.tolist(),
+            'dtype': str(obj.dtype)
+        }

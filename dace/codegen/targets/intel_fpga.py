@@ -80,10 +80,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "intel_fpga", "mode")
-        sdaccel_dir = os.path.dirname(
-            os.path.dirname(
-                make_absolute(
-                    Config.get("compiler", "intel_fpga", "executable"))))
 
         kernel_file_name = "DACE_BINARY_DIR \"{}".format(self._program_name)
         emulation_flag = ""
@@ -855,7 +851,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             u, uconn, v, vconn, memlet = edge
             if u == node:
                 # this could be a wcr
-                # TODO is_write_conflicted?
                 memlets[uconn] = (memlet, edge.data.wcr_conflict, edge.data.wcr)
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
@@ -943,7 +938,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         defined_type = self.defined_vars.get(memlet.data)
         updated = node
 
-        if defined_type == DefinedType.Pointer and wcr is not None:
+        if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
             if isinstance(node.targets[0], ast.Subscript):
@@ -952,11 +947,16 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)
-
-                redtype = operations.detect_reduction_type(wcr)
-                target_str = "{}[{}]".format(memlet.data, subscript)
-                red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
-                code_str = "{} = {};".format(target_str, red_str)
+                if wcr is not None:
+                    redtype = operations.detect_reduction_type(wcr)
+                    target_str = "{}[{}]".format(memlet.data, subscript)
+                    red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
+                    code_str = "{} = {};".format(target_str, red_str)
+                else:
+                    # FIXME Don't know if this cover all the cases.
+                    #  we should consider that this could be also a global memory area
+                    target_str = "{}[{}]".format(target, subscript)
+                    code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
 
         elif defined_type == DefinedType.Stream and memlet.num_accesses != 1:

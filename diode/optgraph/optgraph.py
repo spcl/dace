@@ -27,7 +27,7 @@ class OptimizationGraphNode:
         self.expanded = False
         self.parent = None
 
-        if label == None:
+        if label is None:
             self.label = str(self.uid)
         if type(self.label) != str:
             raise (TypeError)
@@ -241,7 +241,7 @@ class OptimizationGraph:
 
         # Do a graph traversal and add everything to the treeview
         for n in self.nodes:
-            if n.parent == None:
+            if n.parent is None:
                 label = self.transform_label_uc_to_num(n.label)
                 color = self.parse_color_to_gdk_color(n.color)
                 p = self.treestore.append(parent=None, row=[label, color])

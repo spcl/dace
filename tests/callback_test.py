@@ -7,7 +7,7 @@ def failed_test():
 
 
 def mysquarer(inp):
-    return inp ** 2
+    return inp**2
 
 
 def answertolifeuniverseandeverything():
@@ -22,16 +22,18 @@ def arraysquarer(outp_array, inp_array):
     import numpy as np
     np.copyto(outp_array, np.square(inp_array))
 
+
 M = dace.symbolic.symbol()
 N = dace.symbolic.symbol()
 O = dace.symbolic.symbol()
+
 
 @dace.program(
     dace.uint32[2],
     dace.uint32[2],
     dace.callback(dace.uint32, dace.uint32),
     dace.callback(None, dace.uint32),
-    dace.callback(dace.uint32, None),
+    dace.callback(dace.uint32),
     dace.callback(None),
 )
 def callback_test(A, B, giveandtake, take, give, donothing):
@@ -43,6 +45,7 @@ def callback_test(A, B, giveandtake, take, give, donothing):
         take(a + 1)
         if give() != 42:
             donothing()
+
 
 @dace.program(
     dace.float64[M, N, O],
@@ -58,12 +61,11 @@ def callback_with_arrays(out_arr, in_arr, arrfunc):
 
 if __name__ == "__main__":
 
-    A = dace.ndarray((2,), dtype=dace.int32)
-    B = dace.ndarray((2,), dtype=dace.int32)
+    A = dace.ndarray((2, ), dtype=dace.int32)
+    B = dace.ndarray((2, ), dtype=dace.int32)
 
     A[:] = 5
     B[:] = 0
-
 
     M.set(2)
     N.set(3)
