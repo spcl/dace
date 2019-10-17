@@ -618,7 +618,7 @@ def make_absolute(path):
     else:
         # This is not a path, probably just an executable name, such
         # as "g++". Try to find it on the PATH
-        executable = shutil.which(path).replace('\\', '/')
+        executable = shutil.which(path)
         if not executable:
             raise ValueError("Could not find executable \"{}\"".format(path))
-        return executable
+        return executable.replace('\\', '/')
