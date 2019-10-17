@@ -596,8 +596,8 @@ class FPGACodeGen(TargetCodeGenerator):
                           and src_storage == dace.types.StorageType.FPGA_Global
                           and dst_storage in cpu_storage_types)
         device_to_device = (
-                data_to_data and src_storage == dace.types.StorageType.FPGA_Global
-                and dst_storage == dace.types.StorageType.FPGA_Global)
+            data_to_data and src_storage == dace.types.StorageType.FPGA_Global
+            and dst_storage == dace.types.StorageType.FPGA_Global)
         if (host_to_device or device_to_host) and self._in_device_code:
             raise RuntimeError(
                 "Cannot copy between host and device from device")
@@ -917,9 +917,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     [isinstance(x, dace.graph.nodes.EntryNode) for x in scope])
                 if is_innermost:
                     self.generate_pipeline_loop_pre(result, sdfg, state_id,
-                                                    node)
+                                                     node)
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
-                                                   node)
+                                                    node)
 
             # Generate nested loops
             if not isinstance(node, PipelineEntry):
@@ -966,9 +966,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     [isinstance(x, dace.graph.nodes.EntryNode) for x in scope])
                 if is_innermost:
                     self.generate_pipeline_loop_post(result, sdfg, state_id,
-                                                     node)
+                                                      node)
                     self.generate_flatten_loop_post(result, sdfg, state_id,
-                                                    node)
+                                                     node)
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(
@@ -1073,12 +1073,22 @@ class FPGACodeGen(TargetCodeGenerator):
         else:
             identity = None
 
+        # Determine reduction type
+        reduction_type = operations.detect_reduction_type(node.wcr)
+        if reduction_type == dace.types.ReductionType.Custom:
+            raise NotImplementedError("Custom reduction for FPGA is NYI")
+
         # Initialize accumulator variable if we're collapsing to a single value
-        # Set initial value to zero. This is helpful for Intel Compiler
         all_axes_collapsed = (len(axes) == input_dims)
         if all_axes_collapsed:
             accumulator = "_{}_accumulator".format(output_memlet.data)
-            callsite_stream.write("{} {} = 0;".format(output_type, accumulator),
+            init_value = ""
+            if identity is not None:
+                init_value = " = " + identity
+            elif reduction_type == dace.types.ReductionType.Sum:
+                # Set initial value to zero. Helpful for single cycle clock accumulator in Intel.
+                init_value = " = 0"
+            callsite_stream.write("{} {}{};".format(output_type, accumulator,init_value),
                                   sdfg, state_id, node)
 
         # Generate inner loops (for each collapsed dimension)
@@ -1087,12 +1097,12 @@ class FPGACodeGen(TargetCodeGenerator):
         for i, axis in enumerate(axes):
             if axis == pipeline_dim:
                 self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
-                                                node)
+                                           node)
                 self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
-                                               node)
+                                          node)
             if unroll_dim[axis]:
                 self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
-                                              node)
+                                         node)
             callsite_stream.write(
                 'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                 format(
@@ -1102,12 +1112,12 @@ class FPGACodeGen(TargetCodeGenerator):
                     skip=input_subset[axis][2]), sdfg, state_id, node)
             if axis == pipeline_dim:
                 self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id,
-                                                 node)
+                                            node)
                 self.generate_flatten_loop_post(callsite_stream, sdfg, state_id,
-                                                node)
+                                           node)
             if unroll_dim[axis]:
                 self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                               state_id, node)
+                                          state_id, node)
             end_braces += 1
 
         # Generate outer loops (over different output locations)
@@ -1123,7 +1133,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
                                          node)
             callsite_stream.write(
-                'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
+                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                     format(
                     var=iterators_outer[i],
                     begin=output_subset[i][0],
@@ -1139,10 +1149,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                           state_id, node)
             end_braces += 1
 
-        # Determine reduction type
-        reduction_type = operations.detect_reduction_type(node.wcr)
-        if reduction_type == dace.types.ReductionType.Custom:
-            raise NotImplementedError("Custom reduction for FPGA is NYI")
+
 
         # Input and output variables
         out_var = (accumulator
@@ -1251,7 +1258,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     "Expected at least one tasklet or data node")
             module_name = "_".join(labels)
 
-            # TO BE CHECKED: remove from scalar parameters variable that is already in subgraph_parameters
+            # Remove from scalar parameters variable that are already in subgraph_parameters
             for p in subgraph_parameters[subgraph]:
                 scalar_parameters.pop(p[1],None)
 
@@ -1284,7 +1291,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if not isinstance(arg, dace.data.Stream):
                 kernel_args_call_host.append(
                     arg.signature(False, name=argname))
-            # TO BE CHECKED: remove scalars that are already in kernel args
+            # Remove scalars that are already in kernel args
             scalar_parameters.pop(argname,None)
 
         # Treat scalars as symbols, assuming they can be input only
@@ -1308,7 +1315,7 @@ class FPGACodeGen(TargetCodeGenerator):
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
   hlslib::ocl::Program program = hlslib::ocl::GlobalContext().CurrentlyLoadedProgram();"""
-                .format(
+            .format(
                 host_function_name=host_function_name,
                 kernel_args_opencl=", ".join(kernel_args_opencl)))
 
