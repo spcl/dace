@@ -1074,12 +1074,22 @@ class FPGACodeGen(TargetCodeGenerator):
         else:
             identity = None
 
+        # Determine reduction type
+        reduction_type = operations.detect_reduction_type(node.wcr)
+        if reduction_type == dace.types.ReductionType.Custom:
+            raise NotImplementedError("Custom reduction for FPGA is NYI")
+
         # Initialize accumulator variable if we're collapsing to a single value
-        # Set initial value to zero. This is helpful for Intel Compiler
         all_axes_collapsed = (len(axes) == input_dims)
         if all_axes_collapsed:
             accumulator = "_{}_accumulator".format(output_memlet.data)
-            callsite_stream.write("{} {} = 0;".format(output_type, accumulator),
+            init_value = ""
+            if identity is not None:
+                init_value = " = " + identity
+            elif reduction_type == dace.types.ReductionType.Sum:
+                # Set initial value to zero. Helpful for single cycle clock accumulator in Intel.
+                init_value = " = 0"
+            callsite_stream.write("{} {}{};".format(output_type, accumulator,init_value),
                                   sdfg, state_id, node)
 
         # Generate inner loops (for each collapsed dimension)
@@ -1124,7 +1134,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
                                          node)
             callsite_stream.write(
-                'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
+                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                     format(
                     var=iterators_outer[i],
                     begin=output_subset[i][0],
@@ -1140,10 +1150,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                           state_id, node)
             end_braces += 1
 
-        # Determine reduction type
-        reduction_type = operations.detect_reduction_type(node.wcr)
-        if reduction_type == dace.types.ReductionType.Custom:
-            raise NotImplementedError("Custom reduction for FPGA is NYI")
+
 
         # Input and output variables
         out_var = (accumulator
@@ -1252,7 +1259,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     "Expected at least one tasklet or data node")
             module_name = "_".join(labels)
 
-            # TO BE CHECKED: remove from scalar parameters variable that is already in subgraph_parameters
+            # Remove from scalar parameters variable that are already in subgraph_parameters
             for p in subgraph_parameters[subgraph]:
                 scalar_parameters.pop(p[1],None)
 
@@ -1285,7 +1292,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if not isinstance(arg, dace.data.Stream):
                 kernel_args_call_host.append(
                     arg.signature(False, name=argname))
-            # TO BE CHECKED: remove scalars that are already in kernel args
+            # Remove scalars that are already in kernel args
             scalar_parameters.pop(argname,None)
 
         # Treat scalars as symbols, assuming they can be input only
