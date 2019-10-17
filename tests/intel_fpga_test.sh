@@ -74,21 +74,18 @@ run_sample() {
 run_all() {
     # VECTORIZATION
     #Vectorization 1: first vectorize and then transform for FPGA
-    run_sample vec_sum vec_sum "11\n1\n"
+    run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
     #Vectorization 2: first transform for FPGA then vectorize
-    run_sample vec_sum vec_sum "1\n15\n"
+    run_sample intel_fpga/vec_sum vec_sum "1\n15\n"
     #Vectorization 3: TODO non vectorizable N
 
 
     #simple WCR (accumulates on scalar)
-  #  run_sample intel_fpga/dot dot "1\n"
+    run_sample intel_fpga/dot dot "1\n"
 
     # REDUCE
     # Simple reduce
     run_sample intel_fpga/vector_reduce vector_reduce "1\n"
-
-
-
 
 
 

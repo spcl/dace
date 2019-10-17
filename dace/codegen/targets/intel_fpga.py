@@ -382,6 +382,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     def generate_host_function_epilogue(sdfg, state, host_stream):
         host_stream.write(
             """\
+  const auto start = std::chrono::high_resolution_clock::now();
   std::vector<std::future<std::pair<double, double>>> futures;
   for (auto &k : kernels) {
     futures.emplace_back(k.ExecuteTaskAsync());
@@ -389,6 +390,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
   for (auto &f : futures) {
     f.wait();
   }
+  const auto end = std::chrono::high_resolution_clock::now();
+  const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
@@ -587,8 +591,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
-        node.sdfg._parent = sdfg
         state_dfg = sdfg.nodes()[state_id]
+        node.sdfg.parent = state_dfg
+        node.sdfg._parent_sdfg = sdfg
 
         # Take care of nested SDFG I/O
         for edge in state_dfg.in_edges(node):
@@ -606,6 +611,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                               node)
 
         sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
+
 
         # Generate code for internal SDFG
         global_code, local_code, used_targets = \
