@@ -503,9 +503,12 @@ class MapExit(ExitNode):
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
-        m = Map("", [], [])
-        ret = MapExit(map=m)
+        # Set map reference to map entry
+        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+
+        ret = MapExit(map=entry_node.map)
         Property.set_properties_from_json(ret, json_obj, context=context)
+
         return ret
 
     @property
@@ -515,6 +518,18 @@ class MapExit(ExitNode):
     @map.setter
     def map(self, val):
         self._map = val
+
+    @property
+    def schedule(self):
+        return self._map.schedule
+
+    @schedule.setter
+    def schedule(self, val):
+        self._map.schedule = val
+
+    @property
+    def label(self):
+        return self._map.label
 
     def draw_node(self, sdfg, graph):
         return dot.draw_node(sdfg, graph, self, shape="invtrapezium")
@@ -538,7 +553,6 @@ class Map(object):
     label = Property(dtype=str, desc="Label of the map")
     params = ParamsProperty(desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters")
-    #   order = OrderProperty(desc="Order of map dimensions", unmapped=True)
     schedule = Property(
         dtype=types.ScheduleType,
         desc="Map schedule",
@@ -599,7 +613,6 @@ class Map(object):
 
 # Indirect Map properties to MapEntry and MapExit
 MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
-MapExit = indirect_properties(Map, lambda obj: obj.map)(MapExit)
 
 # ------------------------------------------------------------------------------
 
@@ -661,8 +674,10 @@ class ConsumeExit(ExitNode):
 
     @staticmethod
     def fromJSON_object(json_obj, context=None):
-        c = Consume("", ['i', 1], None)
-        ret = ConsumeExit(consume=c)
+        # Set map reference to entry node
+        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+
+        ret = ConsumeExit(consume=entry_node.consume)
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -677,6 +692,18 @@ class ConsumeExit(ExitNode):
     @consume.setter
     def consume(self, val):
         self._consume = val
+
+    @property
+    def schedule(self):
+        return self._consume.schedule
+
+    @schedule.setter
+    def schedule(self, val):
+        self._consume.schedule = val
+
+    @property
+    def label(self):
+        return self._consume.label
 
     def draw_node(self, sdfg, graph):
         return dot.draw_node(
@@ -764,8 +791,6 @@ class Consume(object):
 # Redirect Consume properties to ConsumeEntry and ConsumeExit
 ConsumeEntry = indirect_properties(Consume,
                                    lambda obj: obj.consume)(ConsumeEntry)
-ConsumeExit = indirect_properties(Consume,
-                                  lambda obj: obj.consume)(ConsumeExit)
 
 # ------------------------------------------------------------------------------
 
@@ -777,7 +802,7 @@ class Reduce(Node):
         a reduction binary function. """
 
     # Properties
-    axes = ListProperty(dtype=list, allow_none=True)
+    axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(

@@ -328,7 +328,7 @@ def match_expression(graph,
             # We return the inverse mapping: {subgraph_node: graph_node} for
             # ease of access
             subgraph = {
-                cexpr.node[j]['node']: digraph.node[i]['node']
+                cexpr.nodes[j]['node']: digraph.nodes[i]['node']
                 for (i, j) in subgraph.items()
             }
 
@@ -374,7 +374,7 @@ def match_pattern(state_id,
             digraph, cexpr, node_match=node_match, edge_match=edge_match)
         for subgraph in graph_matcher.subgraph_isomorphisms_iter():
             subgraph = {
-                cexpr.node[j]['node']: state.node_id(digraph.node[i]['node'])
+                cexpr.nodes[j]['node']: state.node_id(digraph.nodes[i]['node'])
                 for (i, j) in subgraph.items()
             }
             match_found = pattern.can_be_applied(
@@ -417,7 +417,7 @@ def match_stateflow_pattern(sdfg,
             digraph, cexpr, node_match=node_match, edge_match=edge_match)
         for subgraph in graph_matcher.subgraph_isomorphisms_iter():
             subgraph = {
-                cexpr.node[j]['node']: sdfg.node_id(digraph.node[i]['node'])
+                cexpr.nodes[j]['node']: sdfg.node_id(digraph.nodes[i]['node'])
                 for (i, j) in subgraph.items()
             }
             match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,

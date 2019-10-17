@@ -986,7 +986,7 @@ def get_transformations(sdfgs):
                 sid = p.state_id
                 nodes = list(p.subgraph.values())
                 for n in nodes:
-                    nodeids.append("s" + str(sid) + "_" + str(n))
+                    nodeids.append([sid, n])
 
                 properties = json.loads(
                     dace.properties.Property.all_properties_to_json(p))

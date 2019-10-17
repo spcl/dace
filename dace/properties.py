@@ -371,8 +371,7 @@ class Property:
             except:
                 continue
 
-            #TODO: Do we need to dump again? Answer: Yes.
-            # Some properties only work from string.
+            # Some properties only work when converted back from string.
             try:
                 stringified = json.dumps(val, default=Property.json_dumper)
                 newval = _v.from_json(stringified, context)
@@ -380,7 +379,7 @@ class Property:
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                # #TODO: Maybe log this...
+                #TODO: Maybe log this...
                 raise e
 
     @staticmethod
@@ -451,20 +450,19 @@ class Property:
             else:
                 # The object was consumed previously
                 try:
-                    t = obj['type']
-                except:
+                    obj['type']
+                except KeyError:
                     return tmp
                 # If a type is available, the parent element must also be parsed accordingly
 
-        if "type" in obj:
-            try:
-                t = obj['type']
-            except:
-                t = attr_type
+        try:
+            t = obj['type']
+        except KeyError:
+            t = attr_type
 
-            if t in Property.known_types():
-                return (Property.known_types()[t]).fromJSON_object(
-                    obj, context=context)
+        if t in Property.known_types():
+            return (Property.known_types()[t]).fromJSON_object(
+                obj, context=context)
 
         return obj
 
@@ -596,8 +594,7 @@ class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
 
-    @staticmethod
-    def to_json(d):
+    def to_json(self, d):
 
         # The ordered dict is more of a list than a dict.
         retlist = [{k: v} for k, v in d.items()]
@@ -622,32 +619,55 @@ class ListProperty(Property):
     """ Property type for lists.
     """
 
+    def __init__(self, element_type, *args, **kwargs):
+        """
+        Create a List property with a uniform element type.
+        @param element_type: The type of each element in the list, or a function
+                             that converts an element to the wanted type (e.g.,
+                             `dace.symbolic.pystr_to_symbolic` for symbolic
+                             expressions)
+        @param args: Other arguments (inherited from Property).
+        @param kwargs: Other keyword arguments (inherited from Property).
+        """
+
+        kwargs['dtype'] = list
+        super().__init__(*args, **kwargs)
+        self.element_type = element_type
+
     def __set__(self, obj, val):
         if isinstance(val, str):
-            val = list(val)
+            val = list(map(self.element_type, list(val)))
         elif isinstance(val, tuple):
-            val = list(val)
+            val = list(map(self.element_type, val))
         super(ListProperty, self).__set__(obj, val)
 
     @staticmethod
     def to_string(l):
-        return str(l.dtype(l))
+        return str(l)
 
-    @staticmethod
-    def to_json(l):
+    def to_json(self, l):
+        if l is None:
+            return json.dumps(l)
 
-        # The json_dumper will try to find the correct serialization in `toJSON`
-        # and fallback to str() if that method does not exist
-        return json.dumps(l, default=Property.json_dumper)
+        # If elements are one of the JSON basic types, use directly
+        if self.element_type in (int, float, list, tuple, dict):
+            return json.dumps(l, default=Property.json_dumper)
+        # Otherwise, convert to strings
+        return json.dumps(list(map(str, l)))
 
     @staticmethod
     def from_string(s):
         return list(s)
 
-    @staticmethod
-    def from_json(s, sdfg=None):
-        # TODO: Typechecks (casts) to a predefined type
-        return json.loads(s, object_hook=Property.json_loader)
+    def from_json(self, s, sdfg=None):
+        data = json.loads(s, object_hook=Property.json_loader)
+        if data is None:
+            return data
+        if not isinstance(data, list):
+            raise TypeError('ListProperty expects a list input, got %s' % data)
+
+        # Type-checks (casts) to the element type
+        return list(map(self.element_type, data))
 
 
 ###############################################################################
@@ -656,63 +676,16 @@ class ListProperty(Property):
 
 
 class SDFGReferenceProperty(Property):
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None: return 'null'
 
         return json.dumps(obj.toJSON())  # Make a string of a JSON
 
-    @staticmethod
-    def from_json(s, context=None):
+    def from_json(self, s, context=None):
         if s == "null": return None
 
         # Parse the string of the JSON back into an SDFG object
         return dace.SDFG.fromJSON_object(json.loads(json.loads(s)))
-
-
-# TODO: does not currently work because of how enums work
-class OrderProperty(Property):
-    """ Custom property class that handles the mapping between the order
-        property and the actual class fields (range and parameters). """
-
-    # This is implemented in the context of dace.nodes.Map, but could in
-    # principle be reused for other objects, assuming they set the internal
-    # fields "_range" and "_params".
-
-    def __get__(self, obj, objtype=None):
-        # Copy to avoid changes in the list at callee to be reflected in
-        # the map directly
-        return list(obj._params)
-
-    def __set__(self, obj, val):
-        """ Update both params and ranges based on the new order. """
-        # Make this more lenient to the input by comparing strings, and
-        # using the new order to shuffle the original lists
-        param_strings = list(map(str, obj._params))
-        update_strings = list(map(str, val))
-        if len(update_strings) != len(param_strings):
-            raise ValueError(
-                "Wrong length of new order: {} (found {}, expected {})".format(
-                    str(val), len(update_strings), len(param_strings)))
-        # The below will throw a ValueError if a parameter doesn't exist
-        # We assume that no parameter will be present twice...
-        indices = [param_strings.index(x) for x in update_strings]
-        obj._params = [obj._params[i] for i in indices]
-        obj._range.reorder(indices)
-
-    @staticmethod
-    def to_string(val):
-        return "({})".format(", ".join(map(str, val)))
-
-    @staticmethod
-    def from_string(s):
-        """Create a list of symbols from a list of strings."""
-        return [sp.Symbol(i) for i in re.sub("[\(\)\[\]]", "", s).split(",")]
-
-    @staticmethod
-    def enum(obj):
-        """Implement enum to populate e.g. dropdown."""
-        return list(itertools.permutations(obj))
 
 
 class RangeProperty(Property):
@@ -735,16 +708,14 @@ class RangeProperty(Property):
     def from_string(s):
         return sbs.Range.from_string(s)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return "null"
         # to_string is not enough - it does not preserve all information
 
         return obj.toJSON()
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         from dace.subsets import Range
 
         if s == "null": return None
@@ -814,8 +785,7 @@ class DebugInfoProperty(Property):
             di = DebugInfo(f, sl, sc, el, ec)
         return di
 
-    @staticmethod
-    def to_json(s):
+    def to_json(self, s):
         if not isinstance(s, DebugInfo):
             return json.dumps(None)
         nval = {
@@ -827,8 +797,7 @@ class DebugInfoProperty(Property):
         }
         return json.dumps(nval)
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         s = json.loads(s)
         if s is None: return None
 
@@ -854,12 +823,10 @@ class ParamsProperty(Property):
             for m in re.finditer("[a-zA-Z_][a-zA-Z0-9_]*", s)
         ]
 
-    @staticmethod
-    def to_json(l):
+    def to_json(self, l):
         return json.dumps(l, default=Property.json_dumper)
 
-    @staticmethod
-    def from_json(l, sdfg=None):
+    def from_json(self, l, sdfg=None):
         return json.loads(
             l, object_hook=lambda x: Property.json_loader(l, sdfg))
 
@@ -911,13 +878,10 @@ class SetProperty(Property):
     def from_string(s):
         return [eval(i) for i in re.sub("[\{\}\(\)\[\]]", "", s).split(",")]
 
-    @staticmethod
-    def to_json(l):
-        import json
+    def to_json(self, l):
         return json.dumps(list(sorted(l)))
 
-    @staticmethod
-    def from_json(l, sdfg=None):
+    def from_json(self, l, sdfg=None):
         import json
         return set(json.loads(l))
 
@@ -961,13 +925,11 @@ class LambdaProperty(Property):
             return unparse(ast.parse(obj))
         return unparse(obj)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None: return 'null'
         return json.dumps(LambdaProperty.to_string(obj))
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         if s == 'null': return None
         return LambdaProperty.from_string(json.loads(s))
 
@@ -992,12 +954,10 @@ class SubgraphProperty(Property):
         if val is not None:
             super(SubgraphProperty, self).__set__(obj, val)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         return json.dumps(str(obj))
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         return None
 
 
@@ -1038,8 +998,7 @@ class CodeProperty(Property):
             pass
         return tmp
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         lang = dace.types.Language.Python
         if obj is None:
             return json.dumps(obj)
@@ -1053,8 +1012,7 @@ class CodeProperty(Property):
         }
         return json.dumps(ret)
 
-    @staticmethod
-    def from_json(l, sdfg=None):
+    def from_json(self, l, sdfg=None):
         tmp = json.loads(l)
 
         if tmp is None:
@@ -1155,7 +1113,8 @@ class CodeProperty(Property):
             if isinstance(val, str):
                 val = self.from_string(val, language)['code_or_block']
             elif isinstance(val, (ast.FunctionDef, ast.With)):
-                # TODO: the original parsing should have already stripped this
+                # The original parsing should have already stripped this,
+                # but it's still good to handle this case.
                 val = CodeBlock(val.body)
             elif isinstance(val, ast.AST):
                 val = CodeBlock([val])
@@ -1220,8 +1179,7 @@ class SubsetProperty(Property):
             return 'None'
         raise TypeError
 
-    @staticmethod
-    def to_json(val):
+    def to_json(self, val):
         if val is None:
             return 'null'
         try:
@@ -1229,8 +1187,7 @@ class SubsetProperty(Property):
         except:
             return json.dumps(SubsetProperty.to_string(val))
 
-    @staticmethod
-    def from_json(val, sdfg=None):
+    def from_json(self, val, sdfg=None):
         if val == 'null':
             return None
         obj = json.loads(val, object_hook=Property.json_loader)
@@ -1299,14 +1256,12 @@ class DataProperty(Property):
     def to_string(obj):
         return str(obj)
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return "null"
         return json.dumps(str(obj))
 
-    @staticmethod
-    def from_json(s, context=None):
+    def from_json(self, s, context=None):
         sdfg = context['sdfg']
         s = json.loads(s)
         if sdfg is None:
@@ -1362,14 +1317,12 @@ class ShapeProperty(Property):
     def to_string(obj):
         return ", ".join(map(str, obj))
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return json.dumps(obj)
         return json.dumps([*map(str, obj)])
 
-    @staticmethod
-    def from_json(s, sdfg=None):
+    def from_json(self, s, sdfg=None):
         d = json.loads(s)
         if d is None:
             return None
@@ -1389,8 +1342,6 @@ class TypeProperty(Property):
     def dtype(self):
         return type
 
-    # TODO: this does not work both ways! If converted to a string we lose the
-    # location information.
     @staticmethod
     def from_string(s):
         dtype = pydoc.locate(s)
@@ -1420,25 +1371,19 @@ class TypeClassProperty(Property):
     def to_string(obj):
         return obj.to_string()
 
-    @staticmethod
-    def to_json(obj):
+    def to_json(self, obj):
         if obj is None:
             return json.dumps(obj)
         return obj.dtype.toJSON()
 
-    @staticmethod
-    def from_json(s, sdfg=None):
-        d = json.loads(s)
+    def from_json(self, s, sdfg=None):
+        d = json.loads(s, object_hook=Property.json_loader)
         if d is None:
             return None
         if isinstance(d, str):
             return TypeClassProperty.from_string(d)
-        if 'type' in d and d['type'] == 'callback':
-            return dace.types.callback.fromJSON_object(d)
-        elif 'type' in d and d['type'] == 'struct':
-            return dace.types.struct.fromJSON_object(d)
-        elif 'type' in d and d['type'] == 'pointer':
-            return dace.types.pointer.fromJSON_object(d)
+        elif isinstance(d, dace.typeclass):
+            return d
         else:
             raise TypeError('Unrecognized typeclass object: %s' % d)
 
