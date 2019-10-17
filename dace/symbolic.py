@@ -28,6 +28,14 @@ class symbol(sympy.Symbol):
             del symbol.s_types[sym]
             del symbol.s_constraints[sym]
 
+    @staticmethod
+    def erase_all():
+        """ Reset symbol state. """
+        symbol.s_currentsymbol = 0
+        symbol.s_values = {}
+        symbol.s_types = {}
+        symbol.s_constraints = {}
+
     def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
         if name is None:
             # Set name dynamically

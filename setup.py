@@ -60,4 +60,4 @@ setup(
         'absl-py', 'ply', 'websockets', 'graphviz', 'dace-xdot', 'requests',
         'flask'
     ],
-    scripts=['scripts/diode', 'scripts/dacelab'])
+    scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
