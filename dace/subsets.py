@@ -673,24 +673,28 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
         @param subset_a: The first subset.
         @param subset_b: The second subset.
         @return: A Subset object whose size is at least the union of the two
-                 inputs.
+                 inputs. If union failed, returns None.
     """
-    if type(subset_a) != type(subset_b):
-        return bounding_box_union(subset_a, subset_b)
-    elif subset_a is not None and subset_b is None:
-        return subset_a
-    elif subset_b is not None and subset_a is None:
-        return subset_b
-    elif subset_a is None and subset_b is None:
-        raise TypeError('Both subsets cannot be None')
-    elif isinstance(subset_a, Indices):
-        # Two indices. If they are adjacent, returns a range that contains both,
-        # otherwise, returns a bounding box of the two
-        return bounding_box_union(subset_a, subset_b)
-    elif isinstance(subset_a, Range):
-        # TODO(later): More involved Strided-Tiled Range union
-        return bounding_box_union(subset_a, subset_b)
-    else:
-        warnings.warn('Unrecognized Subset type %s in union, degenerating to'
-                      ' bounding box' % type(subset_a).__name__)
-        return bounding_box_union(subset_a, subset_b)
+    try:
+        if type(subset_a) != type(subset_b):
+            return bounding_box_union(subset_a, subset_b)
+        elif subset_a is not None and subset_b is None:
+            return subset_a
+        elif subset_b is not None and subset_a is None:
+            return subset_b
+        elif subset_a is None and subset_b is None:
+            raise TypeError('Both subsets cannot be None')
+        elif isinstance(subset_a, Indices):
+            # Two indices. If they are adjacent, returns a range that contains both,
+            # otherwise, returns a bounding box of the two
+            return bounding_box_union(subset_a, subset_b)
+        elif isinstance(subset_a, Range):
+            # TODO(later): More involved Strided-Tiled Range union
+            return bounding_box_union(subset_a, subset_b)
+        else:
+            warnings.warn(
+                'Unrecognized Subset type %s in union, degenerating to'
+                ' bounding box' % type(subset_a).__name__)
+            return bounding_box_union(subset_a, subset_b)
+    except TypeError:  # cannot determine truth value of Relational
+        return None

@@ -4,16 +4,12 @@
 import copy
 import itertools
 import functools
-import networkx as nx
 import sympy
-import unittest
-import math
+import warnings
 
 from dace import data, subsets, symbolic, types
 from dace.memlet import EmptyMemlet, Memlet
-from dace.graph import nodes, nxutil
-from dace.graph.graph import OrderedMultiDiGraph
-from dace.transformation import pattern_matching
+from dace.graph import nodes
 
 
 class MemletPattern(object):
@@ -746,16 +742,24 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
             else:
                 # No patterns found. Emit a warning and propagate the entire
                 # array
-                print('WARNING: Cannot find appropriate memlet pattern to '
-                      'propagate %s through %s' % (str(md.subset),
-                                                   str(mapnode.range)))
+                warnings.warn('Cannot find appropriate memlet pattern to '
+                              'propagate %s through %s' % (str(md.subset),
+                                                           str(mapnode.range)))
                 tmp_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
 
             # Union edges as necessary
             if new_subset is None:
                 new_subset = tmp_subset
             else:
+                old_subset = new_subset
                 new_subset = subsets.union(new_subset, tmp_subset)
+                if new_subset is None:
+                    warnings.warn('Subset union failed between %s and %s ' %
+                                  (old_subset, tmp_subset))
+
+        # Some unions failed
+        if new_subset is None:
+            new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
 
         assert new_subset is not None
 
