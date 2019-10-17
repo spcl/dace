@@ -560,6 +560,7 @@ DTYPE_TO_TYPECLASS = {
     float: float32,
     bool: uint8,
     numpy.bool: uint8,
+    numpy.bool_: bool,
     numpy.int8: int8,
     numpy.int16: int16,
     numpy.int32: int32,
