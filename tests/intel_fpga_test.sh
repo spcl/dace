@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Executes a bunch of small test for the intel fpga backend
-
+# This are not intended to be performance test: they just check that everything compiles
+# and the correct result is produced
 
 set -a
 
@@ -94,11 +95,18 @@ run_all() {
     run_sample ../samples/simple/gemm gemm "1\n"
 
     # #### TYPE INFERENCE ####
-    # Checks that tasklet python code is generated with proper types
+    run_sample ../samples/simple/mandelbrot mandelbrot "1\n"
+
+    # type inference for statements with annotation
+    run_sample intel_fpga/type_inference type_inference "1\n"
 
 
-    # #### MISCELLANNEA ####
+    # #### MISCELLANEA ####
+    # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
+    # They contain streams
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
+    run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
+    run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
 }
 
 # Check if aoc is vailable

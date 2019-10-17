@@ -217,9 +217,9 @@ class CPPUnparser:
         if not infer_type:
             self.f.write(six.text_type(text))
 
-    def enter(self):
+    def enter(self, infer_type=False):
         """Print '{', and increase the indentation."""
-        self.write(" {\n")
+        self.write(" {\n", infer_type)
         self._indent += 1
 
     def leave(self):
@@ -332,8 +332,6 @@ class CPPUnparser:
 
             self.dispatch(target, infer_type)
 
-        #import pdb
-        #pdb.set_trace()
         self.write(" = ", infer_type)
         self.dispatch(t.value, infer_type)
         self.write(';', infer_type)
@@ -367,18 +365,18 @@ class CPPUnparser:
 
         # Assignment of the form x: int = 0 is converted to int x = (int)0;
         if not self.locals.is_defined(target.id, self._indent):
-            if infer_type is True:
+            if self.do_type_inference is True:
                 # get the type indicated into the annotation
                 wannabe_type = self.dispatch(t.annotation, True)
                 self.locals.define(target.id, t.lineno, self._indent, wannabe_type)
             else:
                 self.locals.define(target.id, t.lineno, self._indent)
 
-            self.dispatch(t.annotation)
-            self.write(' ')
+            self.dispatch(t.annotation, infer_type)
+            self.write(' ', infer_type)
         if not t.simple:
             self.write("(", infer_type)
-        self.dispatch(t.target)
+        self.dispatch(t.target, infer_type)
         if not t.simple:
             self.write(")", infer_type)
         if t.value:
@@ -783,7 +781,6 @@ class CPPUnparser:
                 elif infer_type:
                     raise TypeError('Unable to convert number')
         else:
-            # TODO remove python2 compativility
             # Parenthesize negative numbers, to avoid turning (-1)**2 into -1**2.
             if repr_n.startswith("-"):
                 self.write("(")
@@ -940,29 +937,29 @@ class CPPUnparser:
             type_right = self.dispatch(t.right,infer_type)
 
             self.write(")", infer_type)
-            #if infer_type:
-            #    print("RETURN: max of " + str(type_left) + " vs. "+str(type_right) )
-            return np.result_type(type_left,type_right)
+            #infer type and returns
+            return dace.types._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
         # Special case for integer power
         elif t.op.__class__.__name__ == 'Pow':
-            # TODO type inference
             if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
                     and t.right.n >= 0):
-                self.write("(")
+                self.write("(", infer_type)
                 if t.right.n == 0:
-                    self.write("1")
+                    self.write("1", infer_type)
                 else:
-                    self.dispatch(t.left)
+                    type_left = self.dispatch(t.left, infer_type)
                     for i in range(int(t.right.n) - 1):
-                        self.write(" * ")
-                        self.dispatch(t.left)
-                self.write(")")
+                        self.write(" * ", infer_type)
+                        self.dispatch(t.left, infer_type)
+                self.write(")", infer_type)
+                return dace.types._CTYPES_RULES[frozenset((type_left, typeclass(numpy.uint32)))] if infer_type is True else None
             else:
-                self.write("dace::math::pow(")
-                self.dispatch(t.left)
-                self.write(", ")
-                self.dispatch(t.right)
-                self.write(")")
+                self.write("dace::math::pow(", infer_type)
+                type_left = self.dispatch(t.left, infer_type)
+                self.write(", ", infer_type)
+                type_right = self.dispatch(t.right, infer_type)
+                self.write(")", infer_type)
+                return dace.types._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
         else:
             self.write("(", infer_type)
 
@@ -972,7 +969,6 @@ class CPPUnparser:
             type_right = self.dispatch(t.right, infer_type)
 
             self.write(")", infer_type)
-
             return dace.types._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
 
     cmpops = {

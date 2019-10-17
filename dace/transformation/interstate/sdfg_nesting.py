@@ -50,12 +50,12 @@ class NestSDFG(pattern_matching.Transformation):
         transients = {}
 
         for state in nested_sdfg.nodes():
+            # Take input and output nodes, they will be added as input and output node of the nested SDFG
 
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
                         and not node.desc(nested_sdfg).transient):
                     if (state.out_degree(node) > 0):      # input node
-                        print("Node: " +str(node) + " is input node")
                         arrname = node.data
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
@@ -63,22 +63,16 @@ class NestSDFG(pattern_matching.Transformation):
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             inputs[arrname] = arrname + '_in'
                         node_data_name = arrname + '_in'
-                        print("State: " + state.name + " Added node " + arrname + "_in")
                     if (state.in_degree(node) > 0): # output node
                         arrname = node.data
                         if arrname not in outputs:
-                            print("Node: " + str(node) + " is output node")
                             arrobj = nested_sdfg.arrays[arrname]
                             nested_sdfg.arrays[arrname + '_out'] = arrobj
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
                             outputs[arrname] = arrname + '_out'
-                            print("State: " + state.name + " Added node " + arrname + "_out")
                         node_data_name = arrname + '_out'
                     node.data = node_data_name
-
-
-
 
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
@@ -94,7 +88,6 @@ class NestSDFG(pattern_matching.Transformation):
                             transients[arrname] = arrname + '_out'
                         node.data = arrname + '_out'
 
-
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
         for arrname in outputs.keys():
@@ -105,6 +98,7 @@ class NestSDFG(pattern_matching.Transformation):
             outer_sdfg.arrays[oldarrname].transient = True
         outputs.update(transients)
 
+        # Update memlets
         for state in nested_sdfg.nodes():
             for _, edge in enumerate(state.edges()):
                 _, _, _, _, mem = edge
@@ -121,33 +115,6 @@ class NestSDFG(pattern_matching.Transformation):
                       mem.data in outputs.keys() and
                       dst.data == outputs[mem.data]):
                     mem.data = outputs[mem.data]
-
-            # for _, edge in enumerate(state.edges()):
-            #     _, _, _, _, mem = edge
-            #     src = state.memlet_path(edge)[0].src
-            #     dst = state.memlet_path(edge)[-1].dst
-            #     if isinstance(src, nodes.AccessNode):
-            #         if (mem.data in inputs.keys() and
-            #                 src.data == inputs[mem.data]):
-            #             mem.data = inputs[mem.data]
-            #         elif mem.data in outputs.keys():
-            #             src.data = outputs[mem.data]
-            #             mem.data = outputs[mem.data]
-            #     elif isinstance(dst, nodes.AccessNode):
-            #         if mem.data in outputs.keys():
-            #             if dst.data != outputs[mem.data]:
-            #                 dst.data = outputs[mem.data]
-            #             mem.data = outputs[mem.data]
-            #         elif mem.data in inputs.keys():
-            #             dst.data = inputs[mem.data]
-            #             mem.data = inputs[mem.data]
-
-
-
-            for node in nxutil.find_source_nodes(state):
-                print("Source node: " + str(node))
-            for node in nxutil.find_sink_nodes(state):
-                print("Sink node: " + str(node))
 
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 

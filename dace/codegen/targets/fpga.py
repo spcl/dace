@@ -242,7 +242,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                     and n.desc(scope).storage ==
                                     dace.types.StorageType.FPGA_Global and
                                     n.data not in nested_global_transients_seen
-                                ):
+                            ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -478,7 +478,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if nodedesc not in self._allocated_global_arrays:
                         raise RuntimeError("Cannot allocate global array "
                                            "from device code: {} in {}".format(
-                                               node.label, sdfg.name))
+                            node.label, sdfg.name))
 
                 else:
 
@@ -684,11 +684,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 if not register_to_register:
                     # Language-specific
                     self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                     state_id, dst_node)
+                                                    state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
                     self.generate_flatten_loop_pre(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+                                                   state_id, dst_node)
                 for node in [src_node, dst_node]:
                     if (isinstance(node.desc(sdfg), dace.data.Array)
                             and node.desc(sdfg).storage in [
@@ -706,7 +706,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_pre(callsite_stream, None, sdfg,
-                                                 state_id, dst_node)
+                                                      state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
                         "++__dace_copy{}) {{".format(i, i, copy_dim, i), sdfg,
@@ -714,18 +714,18 @@ class FPGACodeGen(TargetCodeGenerator):
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                                  state_id, dst_node)
+                                                       state_id, dst_node)
 
             # Pragmas
             if num_loops > 0:
                 if not register_to_register:
                     # Language-specific
                     self.generate_pipeline_loop_post(callsite_stream, sdfg,
-                                                      state_id, dst_node)
+                                                     state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
                     self.generate_flatten_loop_post(callsite_stream, sdfg,
-                                                     state_id, dst_node)
+                                                    state_id, dst_node)
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
@@ -831,8 +831,8 @@ class FPGACodeGen(TargetCodeGenerator):
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dace.types.ScheduleType.Default,
-                    dace.types.ScheduleType.FPGA_Device
+                dace.types.ScheduleType.Default,
+                dace.types.ScheduleType.FPGA_Device
             ]:
                 # raise dace.codegen.codegen.CodegenError(
                 #     "Cannot produce FPGA code for {} node with schedule {}: ".
@@ -907,7 +907,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # flattened) loop
             if isinstance(node, PipelineEntry):
                 for i in range(len(node.map.range)):
-                    result.write("int {} = {};\n".format(
+                    result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
 
             if node.map.unroll:
@@ -933,10 +933,11 @@ class FPGACodeGen(TargetCodeGenerator):
                         # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
                         # if we are able to determine it
                         end_type = dace.symbolic.symbol.s_types.get(cpu.sym2cpp(end+1))
-                        if end_type is not None and end_type.dtype.type > np.dtype('uint32'):
-                            loop_var_type = end.ctype
-                        elif np.issubdtype(end_type.dtype.type, np.unsignedinteger):
-                            loop_var_type = "size_t"
+                        if end_type is not None:
+                            if end_type.dtype.type > np.dtype('uint32'):
+                                loop_var_type = end.ctype
+                            elif np.issubdtype(end_type.dtype.type, np.unsignedinteger):
+                                loop_var_type = "size_t"
 
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(loop_var_type,
@@ -1126,12 +1127,12 @@ class FPGACodeGen(TargetCodeGenerator):
         for i, axis in enumerate(output_axes):
             if axis == pipeline_dim:
                 self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
-                                           node)
+                                                node)
                 self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
-                                          node)
+                                               node)
             if unroll_dim[axis]:
                 self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id,
-                                         node)
+                                              node)
             callsite_stream.write(
                 'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
                     format(
@@ -1141,12 +1142,12 @@ class FPGACodeGen(TargetCodeGenerator):
                     skip=output_subset[i][2]), sdfg, state_id, node)
             if axis == pipeline_dim:
                 self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id,
-                                            node)
+                                                 node)
                 self.generate_flatten_loop_post(callsite_stream, sdfg, state_id,
-                                           node)
+                                                node)
             if unroll_dim[axis]:
                 self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                          state_id, node)
+                                               state_id, node)
             end_braces += 1
 
 
@@ -1260,7 +1261,12 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Remove from scalar parameters variable that are already in subgraph_parameters
             for p in subgraph_parameters[subgraph]:
-                scalar_parameters.pop(p[1],None)
+                scalar_parameters.pop(p[1], None)
+
+
+            # Remove from scalar, variables that already in symbols
+            for p in symbol_parameters:
+                scalar_parameters.pop(p, None)
 
             self.generate_module(sdfg, state, module_name, subgraph,
                                  subgraph_parameters[subgraph],
@@ -1293,6 +1299,10 @@ class FPGACodeGen(TargetCodeGenerator):
                     arg.signature(False, name=argname))
             # Remove scalars that are already in kernel args
             scalar_parameters.pop(argname,None)
+
+        #Remove scalars that are already in symbol_parameters
+        for p in symbol_parameters:
+            scalar_parameters.pop(p, None)
 
         # Treat scalars as symbols, assuming they can be input only
         symbol_sigs = [
