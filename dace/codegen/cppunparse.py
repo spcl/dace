@@ -323,15 +323,9 @@ class CPPUnparser:
 
                 # the target is not already defined: we should try to infer the type
                 if self.do_type_inference is True:
-                    #print("-------------------INFER -------------------")
                     wannabe_type = self.dispatch(t.value, True)
                     self.locals.define(target.id, t.lineno, self._indent, wannabe_type)
-                    #print("--Wanna be type: " + dace.types._CTYPES[wannabe_type.type] + "-----------")
-                    # TODO: deal with this
-                    if dace.types._CTYPES[wannabe_type.type] == "half":
-                        self.write("float ")
-                    else:
-                        self.write(dace.types._CTYPES[wannabe_type.type] + " ")
+                    self.write(dace.types._CTYPES[wannabe_type.type] + " ")
                 else:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")
@@ -973,17 +967,11 @@ class CPPUnparser:
             self.write("(", infer_type)
 
             # get left and right types for type inference
-            # print("BIN OP dispathc left")
             type_left = self.dispatch(t.left, infer_type)
             self.write(" " + self.binop[t.op.__class__.__name__] + " ", infer_type)
-            # print("BIN OP dispathc right")
             type_right = self.dispatch(t.right, infer_type)
 
             self.write(")", infer_type)
-            # import pdb
-            # pdb.set_trace()
-            # if infer_type:
-            #     print("RETURN: max of " + str(type_left) + " vs. " + str(type_right) +" = " +  str(dace.types._CTYPES_RULES[frozenset((type_left, type_right))]))
 
             return dace.types._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
 

@@ -95,7 +95,7 @@ run_all() {
 
     # #### TYPE INFERENCE ####
     # Checks that tasklet python code is generated with proper types
-    
+
 
     # #### MISCELLANNEA ####
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
