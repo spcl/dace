@@ -63,27 +63,27 @@ def ortest(A: dace.bool[5, 5], B: dace.bool[5, 5], C: dace.bool[5, 5]):
     C[:] = A or B
 
 @dace.program
-def eqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
+def eqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A == B
 
 @dace.program
-def noteqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
+def noteqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A != B
 
 @dace.program
-def lttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
+def lttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A < B
 
 @dace.program
-def ltetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
+def ltetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A <= B
 
 @dace.program
-def gttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
+def gttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A > B
 
 @dace.program
-def gtetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
+def gtetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A >= B
 
 
@@ -149,7 +149,7 @@ if __name__ == '__main__':
         elif opname in {'and', 'or'}:
             test(Ab, Bb, Cb, np_exec='numpyC[:] = np.logical_{op}(A, B)')
         elif opname in {'eq', 'noteq', 'lt', 'lte', 'gt', 'gte'}:
-            test(Apb, Bpb, Cb)
+            test(Apb, Bpb, Cpb)
         else:
             test(A, B, C)
         

@@ -2866,6 +2866,16 @@ class ProgramVisitor(ExtNodeVisitor):
         for i in range(1, len(node.values)):
             last = self._visit_op(node, last, node.values[i])
         return last
+    
+    def visit_Compare(self, node: ast.Compare):
+        if len(node.ops) > 1 or len(node.comparators) > 1:
+            raise NotImplementedError
+        binop_node = ast.BinOp(node.left,
+                               node.ops[0],
+                               node.comparators[0],
+                               lineno=node.lineno,
+                               col_offset=node.col_offset)
+        return self.visit_BinOp(binop_node)
 
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript):
