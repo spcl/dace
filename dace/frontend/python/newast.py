@@ -399,7 +399,7 @@ augassign_ops = {
 }
 
 # Define all standard Python unary operators
-for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', '!'), ('Invert',
+for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'), ('Invert',
                                                                 '~')]:
     _makeunop(op, opcode)
 
@@ -410,7 +410,7 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
                                                                      '<<'),
                    ('RShift', '>>'), ('BitOr', '|'), ('BitXor',
                                                       '^'), ('BitAnd', '&'),
-                   ('And', '&&'), ('Or', '||'), ('Eq', '=='), ('NotEq', '!='),
+                   ('And', 'and'), ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='),
                    ('Lt', '<'), ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
     _makebinop(op, opcode)
 
