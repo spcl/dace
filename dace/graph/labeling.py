@@ -4,16 +4,12 @@
 import copy
 import itertools
 import functools
-import networkx as nx
 import sympy
-import unittest
-import math
+import warnings
 
 from dace import data, subsets, symbolic, dtypes
 from dace.memlet import EmptyMemlet, Memlet
-from dace.graph import nodes, nxutil
-from dace.graph.graph import OrderedMultiDiGraph
-from dace.transformation import pattern_matching
+from dace.graph import nodes
 
 
 class MemletPattern(object):
@@ -722,7 +718,7 @@ def propagate_memlet(dfg_state,
     if union_inner_edges:
         aggdata = [
             e.data for e in neighboring_edges
-            if e.data.data == memlet.data and e.data != memlet
+            if e.data.data == arr and e.data != memlet
         ]
     else:
         aggdata = []
@@ -731,35 +727,52 @@ def propagate_memlet(dfg_state,
 
     if arr is None:
         if memlet.data not in sdfg.arrays:
-            raise KeyError(
-                'Data descriptor (Array, Stream) "%s" not defined '
-                'in SDFG.' % memlet.data)
+            raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
+                           'in SDFG.' % memlet.data)
         arr = sdfg.arrays[memlet.data]
 
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
 
-        # Collect data about edge
-        expr = [edge.subset for edge in aggdata]
-
         variable_context = [
             defined_vars,
             [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
         ]
 
-        for pattern in MemletPattern.patterns():
-            if pattern.match(expr, variable_context, mapnode.range,
-                             aggdata):  # Only one level of context
-                new_subset = pattern.propagate(arr, expr, mapnode.range)
-                break
-        else:
-            # No patterns found. Emit a warning and propagate the entire array
-            print(
-                'WARNING: Cannot find appropriate memlet pattern to propagate %s '
-                'through %s' % (str(expr), str(mapnode.range)))
+        new_subset = None
+        for md in aggdata:
+            tmp_subset = None
+            for pattern in MemletPattern.patterns():
+                if pattern.match([md.subset], variable_context, mapnode.range,
+                                 [md]):
+                    tmp_subset = pattern.propagate(arr, [md.subset],
+                                                   mapnode.range)
+                    break
+            else:
+                # No patterns found. Emit a warning and propagate the entire
+                # array
+                warnings.warn('Cannot find appropriate memlet pattern to '
+                              'propagate %s through %s' % (str(md.subset),
+                                                           str(mapnode.range)))
+                tmp_subset = subsets.Range.from_array(arr)
 
+            # Union edges as necessary
+            if new_subset is None:
+                new_subset = tmp_subset
+            else:
+                old_subset = new_subset
+                new_subset = subsets.union(new_subset, tmp_subset)
+                if new_subset is None:
+                    warnings.warn('Subset union failed between %s and %s ' %
+                                  (old_subset, tmp_subset))
+
+        # Some unions failed
+        if new_subset is None:
             new_subset = subsets.Range.from_array(arr)
+
+        assert new_subset is not None
+
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
         new_subset = subsets.Range.from_array(arr)

@@ -188,7 +188,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this._message_handler = x => alert(x);
 
-        this.renderer_panes = [];
+        this.renderer_pane = null;
 
         this._analysis_values = {};
 
@@ -274,10 +274,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
             setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
             
             if(msg.type == "symbol-properties") {
-                this.symbolPropertyChanged(msg.node, msg.name, msg.value);
+                this.symbolPropertyChanged(msg.element, msg.name, msg.value);
             }
             else
-                this.propertyChanged(msg.node, msg.name, msg.value);
+                this.propertyChanged(msg.element, msg.name, msg.value);
             
         }, true);
 
@@ -304,9 +304,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 forSection: x[5],
                 data: JSON.parse(x[6]),
             }));
-            for(let x of this.renderer_panes) {
-                x.drawAllPerfInfo();
-            }
+            this.renderer_pane.drawAllPerfInfo();
         });
 
         this.on(this.project().eventString('-req-sdfg_object'), msg => {
@@ -344,7 +342,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
     addDataSymbol(type, aname) {
 
@@ -390,7 +388,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.resetState(old);
 
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
     analysisProvider(aname, nodeinfo) {
@@ -467,20 +465,32 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if(msg.sdfg_name != this.getState()['sdfg_name']) {
             return;
         }
+        if (msg.type == 'clear-highlights') {
+            if (this.highlighted_elements)
+                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+            this.highlighted_elements = [];
+            this.renderer_pane.draw_async();
+        }
         if(msg.type == 'highlight-elements') {
+            // Clear previously highlighted elements
+            if (this.highlighted_elements)
+                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+            this.highlighted_elements = [];
+            
+            let graph = this.renderer_pane.graph;
+
             // The input contains a list of multiple elements
             for(let x of msg.elements) {
-
-                let split = x.split('_');
-
-
-                let modmsg = {
-                    type: 'highlight-element',
-                    'sdfg-id': split[0].slice(1), // Cut off the leading 's'. #TODO: Fix the misnomer sdfg-id => state-id
-                    'node-id': split[1]
-                };
-                //this._message_handler(modmsg);
+                let sid = x[0], nid = x[1];
+                let elem = null;
+                if (sid == -1)
+                    elem = graph.node(nid);
+                else
+                    elem = graph.node(sid).data.graph.node(nid);
+                this.highlighted_elements.push(elem);
             }
+            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "#D35400";});
+            this.renderer_pane.draw_async();
         }
         else {
             // Default behavior is passing through (must be an object, not JSON-string)
@@ -507,14 +517,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
     render_free_variables(force_open) {
         let sdfg_dat = this.getSDFGDataFromState();
         if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
-        this.diode.replaceOrCreate(['render-free-vars'], {
+        this.diode.replaceOrCreate(['render-free-vars'], 'PropWinComponent', {
             data: sdfg_dat,
             calling_context: this.created
         },
         () => {
-            if (this.has_component('PropWinComponent'))
-                return;
-
             console.log("Calling recreation function");
             let config = {
                 type: 'component',
@@ -564,7 +571,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 new_attrs[bprefix + xa] = node_b.attributes[xa];
             }
         }
-        // Copy the entry node for good measure
+        // Copy the first node for good measure
+        // TODO: Inhibits property update for map/array
         let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
@@ -601,7 +609,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 
         */
 
-        let params = node.data().props;
+        let params = node.data;
         let transthis = this;
 
         // Render in the (single, global) property window
@@ -669,7 +677,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         /*
             A data symbol was changed.
         */
-        console.log("symbolPropertyChanged", node.data(), name, value);
+        console.log("symbolPropertyChanged", name, value);
         
         // Search arrays first
         let o = this.getSDFGDataFromState();
@@ -695,7 +703,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
     propertyChanged(node, name, value) {
@@ -703,34 +711,20 @@ class DIODE_Context_SDFG extends DIODE_Context {
             When a node-property is changed, the changed data is written back
             into the state.
         */
-        let nref = this.getSDFGElementReference(node.node_id, node.state_id);
+        let nref = node.element;
+        let sdfg = node.sdfg;
 
-        // Special case: Entry nodes may contain properties of exit nodes
-        if(name.startsWith("exit_")) {
-            let exit_node = find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
-            nref = this.getSDFGElementReference(exit_node.id, node.state_id);
-            name = name.substr("exit_".length);
-        }
-        else if(name.startsWith("entry_")) {
-            name = name.substr("entry_".length);
-        }
-        else if(name.startsWith("datadesc_")) {
-            name = name.substr("datadesc_".length);
-            let sdfg = nref[1];
-            nref = [sdfg.attributes._arrays[nref[0].attributes.data], sdfg];
-        }
-
-        nref[0].attributes[name] = value;
+        nref.attributes[name] = value;
 
         let old = this.getState();
         if(old.type == "SDFG")
-            old = nref[1];
+            old = sdfg;
         else
-            old.sdfg_data.sdfg = nref[1];
+            old.sdfg_data.sdfg = sdfg;
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
 
@@ -767,9 +761,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
             "sdfg_data": tmp
         });
 
-        let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
-                                    (et,e,c,el,r,fge) => this.on_renderer_mouse_event(et, e, c, el, r, fge));
-        this.renderer_panes.push(sdfv);
+        if (this.renderer_pane !== null)
+            this.renderer_pane.set_sdfg(tmp.sdfg);
+        else {
+            let sdfv = new SDFGRenderer(tmp.sdfg, this.container.getElement()[0],
+                (et, e, c, el, r, fge) => this.on_renderer_mouse_event(et, e, c, el, r, fge));
+            this.renderer_pane = sdfv;
+        }
 
         // Display data descriptors by default (in parallel to the creation of the renderer)
         this.render_free_variables(true);
@@ -796,9 +794,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Check if anything was clicked at all
         if (total_elements == 0 && evtype === 'click') {
+            // Clear highlighted elements
+            if (this.highlighted_elements)
+                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+
             // Nothing was selected
             this.render_free_variables(false);
-            return false;
+            return true;
         }
         if (total_elements == 0 && evtype === 'contextmenu') {
             let cmenu = new ContextMenu();
@@ -855,8 +857,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 cmenu.addOption((sdfg_elem.attributes.is_collapsed) ? 'Expand' : 'Collapse',
                 x => {
                     sdfg_elem.attributes.is_collapsed = !sdfg_elem.attributes.is_collapsed;
-                    this.renderer_panes[0].relayout();
-                    this.renderer_panes[0].draw_async();
+                    this.renderer_pane.relayout();
+                    this.renderer_pane.draw_async();
                 });
             }
             ///////////////////////////////////////////////////////////
@@ -930,47 +932,51 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if (evtype !== "click")
             return false;
 
+        // Clear highlighted elements
+        if (this.highlighted_elements)
+            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+        // Mark this element red
+        this.highlighted_elements = [foreground_elem];
+
         // Render properties asynchronously
         setTimeout(() => {
             // Get and render the properties from now on
             console.log("sdfg", foreground_elem.sdfg);
 
-            let render_props = n => {
-                let attr = n.attributes;
+            let dst_nodeid = null;
+            if (foreground_elem instanceof Edge && foreground_elem.parent_id !== null) {
+                let edge = foreground_elem.sdfg.nodes[state_id].edges[foreground_elem.id];
+                dst_nodeid = edge.dst;
+            }
 
-                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
+            let render_props = element_list => {
+                let properties = [];
+                element_list.forEach(element => {
+                    // Collect all properties and metadata for each element
+                    let attr = element.attributes;
+                    let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
 
-                let proplist = [];
-                for (let k of akeys) {
+                    for (let k of akeys) {
+                        let value = attr[k];
+                        let meta = attr["_meta_" + k];
+                        if (meta == undefined)
+                            continue;
 
-                    let value = attr[k];
-                    let meta = attr["_meta_" + k];
-                    if (meta == undefined) {
-                        continue;
+                        let pdata = JSON.parse(JSON.stringify(meta));
+                        pdata.value = value;
+                        pdata.name = k;
+
+                        properties.push({property: pdata, element: element, sdfg: foreground_elem.sdfg,
+                            category: element.type + ' - ' + pdata.category});
                     }
-
-                    let pdata = JSON.parse(JSON.stringify(meta));
-                    pdata.value = value;
-                    pdata.name = k;
-
-                    proplist.push(pdata);
-                }
-                let nid = parseInt(n.id);
-                if (!n || isNaN(nid))
-                    nid = null;
-                let propobj = {
-                    node_id: nid,
-                    state_id: state_id,
-                    sdfg_name: foreground_elem.sdfg.attributes.name,
-                    sdfg: foreground_elem.sdfg,
-                    data: () => ({props: proplist})
-                };
-
-                this.renderProperties(propobj);
+                });
+                this.renderProperties({
+                    data: properties
+                });
             };
 
             if (foreground_elem instanceof Edge)
-                render_props(foreground_elem.data);
+                render_props([foreground_elem.data]);
             else if (foreground_elem instanceof Node) {
                 let n = foreground_elem.data.node;
                 let state = foreground_elem.sdfg.nodes[foreground_elem.parent_id];
@@ -978,31 +984,39 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 if (n.type.endsWith("Entry")) {
                     // Find the matching exit node
                     let exit_node = find_exit_for_entry(state.nodes, n);
-                    // TODO: Highlight both entry and exit nodes
                     
-                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
-                    render_props(tmp);
+                    // Highlight both entry and exit nodes
+                    let gstate = renderer.graph.node(foreground_elem.parent_id);
+                    let rnode = gstate.data.graph.node(exit_node.id);
+                    this.highlighted_elements.push(rnode);
 
-                    return;
+                    render_props([n, exit_node]);
                 } else if (n.type.endsWith("Exit")) {
                     // Find the matching entry node and continue with that
                     let entry_id = parseInt(n.scope_entry);
                     let entry_node = state.nodes[entry_id];
-                    // TODO: Highlight both entry and exit nodes
 
-                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
-                    render_props(tmp);
+                    // Highlight both entry and exit nodes
+                    let gstate = renderer.graph.node(foreground_elem.parent_id);
+                    let rnode = gstate.data.graph.node(entry_node.id);
+                    this.highlighted_elements.push(rnode);
+
+                    render_props([entry_node, n]);
                 } else if (n.type === "AccessNode") {
                     // Find matching data descriptor and show that as well
                     let ndesc = foreground_elem.sdfg.attributes._arrays[n.attributes.data];
-                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
-                    render_props(tmp);
-                    return;
+                    render_props([n, ndesc]);
                 } else
-                    render_props(n);
+                    render_props([n]);
             } else if (foreground_elem instanceof State)
-                render_props(foreground_elem.data.state);
+                render_props([foreground_elem.data.state]);
+
+            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "red";});
+            renderer.draw_async();
         }, 0);
+
+        // Timeout handler draws asynchronously
+        return false;
     }
 }
 
@@ -1204,7 +1218,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
-            this.propertyChanged(msg.node, msg.name, msg.value);
+            this.propertyChanged(msg.element, msg.name, msg.value);
             setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
         });
     }
@@ -1246,14 +1260,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 
     propertyChanged2(node, name, value) {
-        /*
-            The new transformation model does not allow changing properties
-            of an already-applied transformation. This means there is no recompilation
-        */
-
-        let tmp = node.data();
-        
-        tmp[name] = value;
+        node.element[name] = value;
     }
 
     renderProperties(node, pos, apply_params) {
@@ -2155,15 +2162,15 @@ class DIODE_Context_StartPage extends DIODE_Context {
             file_title.innerText = "New";
             file_title.classList = "startpage_title";
             startpage_recent.appendChild(file_title);
-            //#TODO: Add "New" item
+
             startpage_recent.appendChild(this.createStartpageListElement("Create a new Project", null, null, plus, x => {
                 this.container.close();
 
-                // Force creation of a new "project" instance (since we are explicitly creating a new project, not a file)
-                this.diode.createNewProject();
-                //this.diode.newFile(); // We could do this, but it's not necessary - let the user create/load at his own discretion
+                // Force creation of a new "project" instance (since we are explicitly creating a new project)
+                // (NOTE: Functionality moved to "newFile")
+                //this.diode.createNewProject();
 
-
+                this.diode.openUploader("code-python");
             }));
 
 
@@ -2774,6 +2781,11 @@ class DIODE_Project {
         this._closed_windows = [];
     }
 
+    clearTransformationHistory() {
+        // Reset transformation history
+        sessionStorage.removeItem("transformation_snapshots");
+    }
+
     getTransformationSnapshots() {
         let sdata = sessionStorage.getItem("transformation_snapshots");
         if(sdata == null) {
@@ -3061,7 +3073,7 @@ class DIODE_Project {
                 delete transthis._rcvbuf[reqid];
                 return transthis._callback(tmp, options.timeout_id);
             }
-            else {
+            else if (timeout !== null) {
                 timeout -= interval_step;
                 if(timeout <= 0) {
                     // Timed out - fail silently
@@ -3636,7 +3648,7 @@ class DIODE {
             </div>
         </div>
     </label>
-    <input id="file-select" type="file" style="position:absolute;"/>
+    <input id="file-select" type="file"  accept=".py,.m" style="position:absolute;"/>
 </div>
 `,
             buttons: '',
@@ -3696,6 +3708,9 @@ class DIODE {
     }
 
     load_from_binary_sdfg(sdfg_data) {
+        // Reset project state
+        this.createNewProject();
+
         let post_params = {
             binary: sdfg_data
         };
@@ -3743,6 +3758,14 @@ class DIODE {
         this.getEnum("Language");
     }
 
+    // Closes all open windows
+    closeAll() {
+        if (!this.goldenlayout.root)
+            return;
+        let comps = this.goldenlayout.root.getItemsByFilter(x => x.config.type == "component");
+        comps.forEach((comp) => comp.close() );
+        this.project().clearClosedWindowsList();
+    }
 
     addContentItem(config) {
         // Remove all saved instances of this component type from the closed windows list
@@ -3752,6 +3775,11 @@ class DIODE {
         }
 
         let root = this.goldenlayout.root;
+
+        // In case goldenlayout was not yet initialized, fail silently
+        if (!root)
+            return;
+
         if(root.contentItems.length === 0) {
             // Layout is completely missing, need to add one (row in this case)
             let layout_config = {
@@ -3764,7 +3792,6 @@ class DIODE {
             this.addContentItem(config);
         }
         else {
-            // #TODO: To get the old DIODE layout, this needs to be smarter
             if(this.goldenlayout.isSubWindow) {
                 // Subwindows don't usually have layouts, so send a request that only the main window should answer
                 this.goldenlayout.eventHub.emit('create-window-in-main', JSON.stringify(config));
@@ -3790,6 +3817,10 @@ class DIODE {
     }
 
     newFile(content="") {
+        // Reset project state
+        this.closeAll();
+        this.createNewProject();
+
         let millis = this.getPseudorandom();
 
         let config = {
@@ -3800,19 +3831,9 @@ class DIODE {
         };
 
         this.addContentItem(config);
-    }
 
-    open_diode_settings() {
-        let millis = this.getPseudorandom();
-
-        let config = {
-            title: "DIODE settings",
-            type: 'component',
-            componentName: 'DIODESettingsComponent',
-            componentState: { created: millis }
-        };
-
-        this.addContentItem(config);
+        // Compile automatically after loading
+        this.gatherProjectElementsAndCompile(this, {}, {sdfg_over_code: true});
     }
 
     open_diode_settings() {
@@ -3872,6 +3893,8 @@ class DIODE {
             return;
         }
         if(!Array.isArray(params)) {
+            let realparams = params;
+
             // Format is different (diode to_json with seperate meta / value - fix before passing to renderer)
             let params_keys = Object.keys(params).filter(x => !x.startsWith('_meta_'));
             params_keys = params_keys.filter(x => Object.keys(params).includes('_meta_' + x));
@@ -3882,7 +3905,7 @@ class DIODE {
                 mx.name = x;
                 mx.value = params[x];
 
-                return mx;
+                return {property: mx, category: mx.category, element: realparams, data: node.data};
             });
 
             params = _lst;
@@ -3892,19 +3915,25 @@ class DIODE {
             // Event-based
             let target_name = transthis;
             transthis = {
-                propertyChanged: (node, name, value) => {
+                propertyChanged: (element, name, value) => {
+                    // Modify in SDFG object first
                     this.project().request(['property-changed-' + target_name], x => {
 
                     }, {
                         timeout: 200,
                         params: {
-                            node: node,
+                            element: element,
                             name: name,
                             value: value,
                             type: options ? options.type : options
                         }
                     });
-                    this.showStaleDataButton();
+
+                    // No need to refresh SDFG if transformation
+                    if (options && options.type === 'transformation')
+                        return;
+                    
+                    this.refreshSDFG();
                 },
                 applyTransformation: () => {
                     this.project().request(['apply-adv-transformation-' + target_name], x => {
@@ -3926,7 +3955,6 @@ class DIODE {
             };
         }
         let dt = new DiodeTables.Table();
-        let i = 0;
         let cur_dt = dt;
 
         let dtc = null;
@@ -3946,7 +3974,7 @@ class DIODE {
             
             // Sort within category
             let cat_name = z[0];
-            let y = z[1].sort((a, b) => a.name.localeCompare(b.name));
+            let y = z[1].sort((a, b) => a.property.name.localeCompare(b.property.name));
 
 
             // Add Category header
@@ -3958,11 +3986,12 @@ class DIODE {
 
             dtc = new DiodeTables.TableCategory(cur_dt, tr);
 
-            for(let x of y) {
+            for(let propx of y) {
                 let title_part = document.createElement("span");
+                let x = propx.property;
                 title_part.innerText = x.name;
                 title_part.title = x.desc;
-                let value_part = diode.getMatchingInput(transthis, x, node);
+                let value_part = diode.getMatchingInput(transthis, x, propx);
                 let cr = cur_dt.addRow(title_part, value_part);
                 if(dtc != null) {
                     dtc.addContentRow(cr);
@@ -3996,9 +4025,10 @@ class DIODE {
             let button = document.createElement('button');
             button.innerText = "Apply advanced transformation";
             button.addEventListener('click', _x => {
+                button.disabled = true;
                 this.project().request(['apply-adv-transformation-' + options.sdfg_name], _y => {}, {
                     params: JSON.stringify(options.apply_params)
-                })
+                });
             });
             parent.appendChild(button);
 
@@ -4647,8 +4677,27 @@ class DIODE {
             // there needs to be lookup by finding the parent nodes (potentially using connectors).
             // A lookup may traverse to top-level and throw if the symbols are not resolved yet.
 
+            let cont = document.createElement("div");
+
+            if(node.data === undefined)
+                return $(cont);
+            
+            
+            let indices = x.value.indices;
+            
+            // Generate string from indices
+            let preview = '[';
+            for (let index of indices) {
+                preview += index + ', ';
+            }
+            preview = preview.slice(0, -2) + ']';
+
+            cont.innerText = preview + '  ';
+
             let elem = document.createElement("button");
-            elem.innerText = "Show";
+            elem.style.float = "right";
+            elem.innerText = "Edit";
+            cont.appendChild(elem);
 
             elem.addEventListener("click", (_click) => {
                 this.project().request(['sdfg_object'], resp => {
@@ -4721,7 +4770,7 @@ class DIODE {
                 }, {});
             });
 
-            return $(elem);
+            return $(cont);
         }
 
         let create_range_input = (transthis, x, node) => {
@@ -4738,13 +4787,41 @@ class DIODE {
                     data_obj = tmp[0];
                 }
             }
+            
+           
+            let cont = document.createElement("div");
 
-            let elem = document.createElement("button");
-            elem.innerText = "Show";
+            if(node.data === undefined)
+                return $(cont);
+            
 
+            
             let ranges = x.value.ranges;
             let popup_div = document.createElement('div');
             
+            // Generate string from range
+            let preview = '[';
+            for (let range of ranges) {
+                preview += range.start + ':' + range.end;
+                if (range.step != 1) {
+                    preview += ':' + range.step;
+                    if (range.tile != 1)
+                        preview += ':' + range.tile;
+                } else if (range.tile != 1) {
+                    preview += '::' + range.tile;
+                }
+                preview += ', ';
+            }
+            preview = preview.slice(0, -2) + ']';
+
+            cont.innerText = preview + '  ';
+
+            let elem = document.createElement("button");
+            elem.style.float = "right";
+            elem.innerText = "Edit";
+            cont.appendChild(elem);
+
+
             let popup_div_body = document.createElement('div');
 
             
@@ -4787,7 +4864,10 @@ class DIODE {
                         if(data_obj != null) {
 
                             this.project().request(['sdfg_object'], sdfg_obj => {
-                                sdfg_obj = JSON.parse(sdfg_obj.sdfg_object);
+                                if (typeof sdfg_obj.sdfg_object === 'object')
+                                    sdfg_obj = sdfg_obj.sdfg_object;
+                                else
+                                    sdfg_obj = JSON.parse(sdfg_obj.sdfg_object);
                                 console.log("got sdfg object", sdfg_obj);
                                 // Iterate over all SDFGs, checking arrays and returning matching data elements
 
@@ -4851,7 +4931,7 @@ class DIODE {
                     height: 800,
                 });
             };
-            return $(elem);
+            return $(cont);
         };
 
         // TODO: Handle enumeration types better
@@ -5027,7 +5107,7 @@ class DIODE {
             }, storage_types, qualified);
         }
         else if(x.type == "typeclass") {
-            // #TODO: Find a better type for this
+            // #TODO: Type combobox
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
@@ -5082,10 +5162,10 @@ class DIODE {
         let dobj = {
             transthis: typeof(transthis) == 'string' ? transthis : transthis.created,
             node: node,
-            params: params ? JSON.stringify(params) : undefined,
+            params: params,
             options: options
         };
-        this.replaceOrCreate(['display-properties'], dobj,
+        this.replaceOrCreate(['display-properties'], 'PropWinComponent', dobj,
          () => {
             let millis = this.getPseudorandom();
             let config = {
@@ -5106,6 +5186,10 @@ class DIODE {
     }
     removeStaleDataButton() {
         this.project().request(['remove_stale_data_button'], x=>{}, {});
+    }
+
+    refreshSDFG() {
+        this.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true });
     }
 
     __impl_showStaleDataButton() {
@@ -5445,6 +5529,8 @@ class DIODE {
 
     createNewProject() {
         this._current_project = new DIODE_Project(this);
+        this._current_project.clearTransformationHistory();
+        sessionStorage.clear();
         window.sessionStorage.setItem("diode_project", this._current_project._project_id);
         this.setupEvents();
     }
@@ -5515,7 +5601,7 @@ class DIODE {
             };
             this.addContentItem(new_sdfg_config);
         };
-        this.replaceOrCreate(['new-sdfg'], JSON.stringify(sdfg), create_sdfg_func);
+        this.replaceOrCreate(['new-sdfg'], 'SDFGComponent', JSON.stringify(sdfg), create_sdfg_func);
 
         let create_codeout_func = () => {
             let new_codeout_config = {
@@ -5528,7 +5614,7 @@ class DIODE {
         }
         if(sdfg.generated_code != undefined) {
             console.log("requesting using ID", this.project());
-            this.replaceOrCreate(['new-codeout'], sdfg, create_codeout_func);
+            this.replaceOrCreate(['new-codeout'], 'CodeOutComponent', sdfg, create_codeout_func);
         }
     }
 
@@ -5542,7 +5628,7 @@ class DIODE {
             };
             this.addContentItem(new_error_config);
         };
-        this.replaceOrCreate(['new-error'], error, create_error_func);
+        this.replaceOrCreate(['new-error'], 'ErrorComponent', error, create_error_func);
     }
 
     OptGraph_available(optgraph, name="") {
@@ -5562,18 +5648,28 @@ class DIODE {
                     type: 'component',
                     componentName: 'AvailableTransformationsComponent',
                     componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
-                },
-                {
-                    title: name == "" ? "Transformation History" : "Transformation History for `" + name + "`",
-                    type: 'component',
-                    componentName: 'TransformationHistoryComponent',
-                    componentState: { created: millis, for_sdfg: name }
-                }
-                ]
+                }]
             };
             this.addContentItem(new_optgraph_config);
         };
-        this.replaceOrCreate(['new-optgraph-' + name], optgraph, create_optgraph_func);
+        this.replaceOrCreate(['new-optgraph-' + name], 'AvailableTransformationsComponent',
+            optgraph, create_optgraph_func);
+
+        let create_history_func = () => {
+            let new_optgraph_config = {
+                type: "column",
+                content: [{
+                    title: "History",
+                    type: 'component',
+                    componentName: 'TransformationHistoryComponent',
+                    componentState: { created: millis, for_sdfg: name }
+                }]
+            };
+            this.addContentItem(new_optgraph_config);
+        };
+        this.replaceOrCreate(['new-history-' + name], 'TransformationHistoryComponent',
+            optgraph, create_history_func);
+
     }
 
     OptGraphs_available(optgraph) {
@@ -5658,7 +5754,7 @@ class DIODE {
             }
             else {
                 let cb = (resp) => {
-                    this.replaceOrCreate(['extend-optgraph'], resp, (_) => { this.OptGraphs_available(resp);});
+                    this.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => { this.OptGraphs_available(resp);});
                 };
                 if(options['no_optgraph'] === true) {
                     cb = undefined;
@@ -5954,7 +6050,7 @@ class DIODE {
                 props = undefined;
 
             let cb = (resp) => {
-                transthis.replaceOrCreate(['extend-optgraph'], resp, (_) => {transthis.OptGraphs_available(resp);});
+                transthis.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => {transthis.OptGraphs_available(resp);});
             };
 
             transthis.compile(calling_context, code, optpath, props, {
@@ -5983,25 +6079,24 @@ class DIODE {
 
     /*
         Tries to talk to a pre-existing element to replace the contents.
-        If the addressed element does not respond within a given threshold,
-        a new element created.
+        If the addressed element does not exist, a new element is created.
     */
-    // TODO: Likely to cause race conditions and unnecessary open tabs!! Rewrite
-    replaceOrCreate(replace_request, replace_params, recreate_func) {
+    replaceOrCreate(replace_request, window_name, replace_params, recreate_func) {
+        let open_windows = null;
+        if (this.goldenlayout.root)
+            open_windows = this.goldenlayout.root.getItemsByFilter(x => (x.config.type == "component" &&
+                                                                         x.componentName == window_name));
 
-        //#TODO: Find out if it is a bug that one cannot use clearTimeout(recreation_timeout) instead of clearTimeout(tid) when replaceOrCreate-Calls are nested
-        //(the let/const-Variables should be scope-local)
-        const recreation_timeout = setTimeout(() => {
-            // This should be executed only if the replace request was not answered
+        if (open_windows && open_windows.length > 0) {  // Replace
+            this.getCurrentProject().request(replace_request, (resp, tid) => {},
+                {
+                    timeout: null,
+                    params: replace_params,
+                    timeout_id: null
+                });
+        } else {  // Create
             recreate_func(replace_params);
-        }, 1000);
-        this.getCurrentProject().request(replace_request, (resp, tid) => {
-            clearTimeout(tid);
-        }, {
-            timeout: 100,
-            params: replace_params,
-            timeout_id: recreation_timeout
-        });
+        }
     }
     
     /*

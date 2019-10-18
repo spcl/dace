@@ -41,7 +41,7 @@ if __name__ == "__main__":
     with dacetf.TFSession(seed=SEED) as sess:
         # TFSession.train is a special mode where one SDFG runs for the entire
         # training process.
-        _, dace_variables = sess.train(optimizer, init, ITER, {
+        dace_variables, _ = sess.train(optimizer, init, ITER, {
             image_node: image,
             label_node: label
         }, trainable_variables)
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         tf_variables = sess.run(trainable_variables)
 
     # Correctness check
-    for tfvar, dacevar in zip(tf_variables, dace_variables):
+    for tfvar, dacevar in zip(tf_variables, dace_variables.values()):
         frob_norm = np.linalg.norm((tfvar - dacevar).flatten(), ord=1)
         inf_norm = np.linalg.norm((tfvar - dacevar).flatten(), ord=np.inf)
         print("Abs. Diff:", frob_norm)

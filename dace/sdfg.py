@@ -7,6 +7,8 @@ from inspect import getframeinfo, stack
 import os
 import pickle, json
 from pydoc import locate
+import random
+import sys
 from typing import Any, Dict, Set, Tuple, List, Union
 import warnings
 import numpy as np
@@ -177,6 +179,10 @@ class SDFG(OrderedDiGraph):
         desc="Code generated in the `__dapp_init` function.", default="")
     exit_code = CodeProperty(
         desc="Code generated in the `__dapp_exit` function.", default="")
+
+    # An internal per-process (per-kernel) variable for Jupyter to know for
+    # saving the header javascript in the notebook only once
+    _JUPYTER_SHOULD_WRITE_RENDERER = True
 
     def __init__(self,
                  name: str,
@@ -1009,12 +1015,44 @@ subgraph cluster_state_{state} {{
             "    compound=true;\n" + "    newrank=true;\n" +
             "\n    ".join(nodes + edges) + "\n" + "\n".join(clusters) + "\n}")
 
-    def _repr_svg_(self):
-        """ SVG representation of the SDFG, used mainly for Jupyter
+    # TODO(later): Also implement the "_repr_svg_" method for static output
+    def _repr_html_(self):
+        """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
-        import graphviz
+        sdfv_deps = [
+            'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
+            'renderer_elements.js', 'sdfg_utils.js', 'renderer.js'
+        ]
+        result = ''
 
-        return graphviz.Source(self.draw())._repr_svg_()
+        # Load dependencies
+        if SDFG._JUPYTER_SHOULD_WRITE_RENDERER:
+            root_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), '..', 'diode',
+                'client')
+            for dep in sdfv_deps:
+                file = os.path.join(root_path, dep)
+                with open(file, 'r') as fp:
+                    result += '<script>%s</script>\n' % fp.read()
+
+            # Rely on internet connection for Material icons
+            result += '<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">'
+
+            # Run this code once
+            SDFG._JUPYTER_SHOULD_WRITE_RENDERER = False
+
+        # Create renderer canvas and load SDFG
+        result += """
+<div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+<script>
+    var sdfg_{uid} = {sdfg};
+    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
+        document.getElementById('contents_{uid}'));
+</script>""".format(
+            sdfg=json.dumps(self.toJSON()),
+            uid=random.randint(0, sys.maxsize - 1))
+
+        return result
 
     def transients(self):
         """ Returns a dictionary mapping transient data descriptors to their
@@ -2327,6 +2365,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 n.consume = ret.entry_node(n).consume
 
         return ret
+
+    def _repr_html_(self):
+        """ HTML representation of a state, used mainly for Jupyter
+            notebooks. """
+        # Create dummy SDFG with this state as the only one
+        arrays = set(n.data for n in self.data_nodes())
+        sdfg = SDFG(self.label)
+        sdfg._arrays = {k: self._parent.arrays[k] for k in arrays}
+        sdfg.add_node(self)
+
+        return sdfg._repr_html_()
 
     def scope_tree(self):
         if (hasattr(self, '_scope_tree_cached')
