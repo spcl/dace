@@ -4052,9 +4052,10 @@ class DIODE {
             let button = document.createElement('button');
             button.innerText = "Apply advanced transformation";
             button.addEventListener('click', _x => {
+                button.disabled = true;
                 this.project().request(['apply-adv-transformation-' + options.sdfg_name], _y => {}, {
                     params: JSON.stringify(options.apply_params)
-                })
+                });
             });
             parent.appendChild(button);
 
