@@ -342,7 +342,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
     addDataSymbol(type, aname) {
 
@@ -388,7 +388,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.resetState(old);
 
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
     analysisProvider(aname, nodeinfo) {
@@ -571,7 +571,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 new_attrs[bprefix + xa] = node_b.attributes[xa];
             }
         }
-        // Copy the entry node for good measure
+        // Copy the first node for good measure
         let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
@@ -702,7 +702,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
     propertyChanged(node, name, value) {
@@ -737,7 +737,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
 
@@ -3948,19 +3948,21 @@ class DIODE {
             // Event-based
             let target_name = transthis;
             transthis = {
-                propertyChanged: (node, name, value) => {
+                propertyChanged: (element, name, value) => {
+                    // Modify in SDFG object first
                     this.project().request(['property-changed-' + target_name], x => {
 
                     }, {
                         timeout: 200,
                         params: {
-                            node: node,
+                            element: element,
                             name: name,
                             value: value,
                             type: options ? options.type : options
                         }
                     });
-                    this.showStaleDataButton();
+                    
+                    this.refreshSDFG();
                 },
                 applyTransformation: () => {
                     this.project().request(['apply-adv-transformation-' + target_name], x => {
@@ -3982,7 +3984,6 @@ class DIODE {
             };
         }
         let dt = new DiodeTables.Table();
-        let i = 0;
         let cur_dt = dt;
 
         let dtc = null;
@@ -5133,7 +5134,7 @@ class DIODE {
             }, storage_types, qualified);
         }
         else if(x.type == "typeclass") {
-            // #TODO: Find a better type for this
+            // #TODO: Type combobox
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
@@ -5212,6 +5213,10 @@ class DIODE {
     }
     removeStaleDataButton() {
         this.project().request(['remove_stale_data_button'], x=>{}, {});
+    }
+
+    refreshSDFG() {
+        this.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true });
     }
 
     __impl_showStaleDataButton() {
