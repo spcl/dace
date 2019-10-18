@@ -572,6 +572,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             }
         }
         // Copy the first node for good measure
+        // TODO: Inhibits property update for map/array
         let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
@@ -969,12 +970,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
                 let proplist = [];
                 for (let k of akeys) {
-
                     let value = attr[k];
                     let meta = attr["_meta_" + k];
-                    if (meta == undefined) {
+                    if (meta == undefined)
                         continue;
-                    }
 
                     let pdata = JSON.parse(JSON.stringify(meta));
                     pdata.value = value;

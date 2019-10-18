@@ -490,7 +490,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         node.attributes.layout.width = nodesize.width;
         node.attributes.layout.height = nodesize.height;
         node.attributes.layout.label = node.label;
-        node.attributes.layout.type = node.type;
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
