@@ -63,27 +63,27 @@ def ortest(A: dace.bool[5, 5], B: dace.bool[5, 5], C: dace.bool[5, 5]):
     C[:] = A or B
 
 @dace.program
-def eqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def eqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A == B
 
 @dace.program
-def noteqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def noteqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A != B
 
 @dace.program
-def lttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def lttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A < B
 
 @dace.program
-def ltetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def ltetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A <= B
 
 @dace.program
-def gttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def gttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A > B
 
 @dace.program
-def gtetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def gtetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A >= B
 
 
@@ -131,17 +131,19 @@ if __name__ == '__main__':
             numpyC = C.copy()
             if not np_exec:
                 exec('numpyC[:] = A {op} B'.format(op=op))
-                norm_diff = np.linalg.norm(numpyC - daceC)
             else:
                 exec(np_exec.format(op=op))
+            if C.dtype == 'bool':
                 norm_diff = 1.0
                 if np.array_equal(numpyC, daceC):
                     norm_diff = 0.0
+            else:
+                norm_diff = np.linalg.norm(numpyC - daceC)
             if norm_diff == 0.0:
-                print('Augmented {opn}: OK'.format(opn=opname))
+                print('Binary operator {opn}: OK'.format(opn=opname))
             else:
                 failed_tests.add(opname)
-                print('Augmented {opn}: FAIL ({diff})'.format(opn=opname,
+                print('Binary operator {opn}: FAIL ({diff})'.format(opn=opname,
                                                             diff=norm_diff))
         
         if opname == 'div':
@@ -149,7 +151,7 @@ if __name__ == '__main__':
         elif opname in {'and', 'or'}:
             test(Ab, Bb, Cb, np_exec='numpyC[:] = np.logical_{op}(A, B)')
         elif opname in {'eq', 'noteq', 'lt', 'lte', 'gt', 'gte'}:
-            test(Apb, Bpb, Cpb)
+            test(Apb, Bpb, Cb)
         else:
             test(A, B, C)
         
