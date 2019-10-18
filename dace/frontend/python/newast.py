@@ -266,8 +266,8 @@ def _scalarbinop(sdfg: SDFG,
                  arrop, ','.join(['__i%d' % i
                                   for i in range(len(arr.shape))])),
          },
-        'out = %s * %s' % ('in1' if reverse else 'in2', 'in2'
-                           if reverse else 'in1'),
+        'out = %s %s %s' % ('in2' if reverse else 'in1', opcode,
+                            'in1' if reverse else 'in2'),
         {
             'out':
             Memlet.simple(
@@ -316,6 +316,12 @@ def _inverse_dict_lookup(dict: Dict[str, Any],
     return None
 
 
+def _is_op_boolean(op: str):
+    if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'}:
+        return True
+    return False
+
+
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op)
     def _op(visitor: ProgramVisitor,
@@ -336,7 +342,10 @@ def _makebinop(op, opcode):
         isnum2 = isscal2 and (op2 in visitor.numbers.values())
         if isnum2:
             type2 = _inverse_dict_lookup(visitor.numbers, op2)
-        restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+        if _is_op_boolean(op):
+            restype = dace.bool
+        else:
+            restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
 
         if isscal1:
             if isscal2:
@@ -400,7 +409,7 @@ augassign_ops = {
 
 # Define all standard Python unary operators
 for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'), ('Invert',
-                                                                '~')]:
+                                                                  '~')]:
     _makeunop(op, opcode)
 
 # Define all standard Python binary operators
