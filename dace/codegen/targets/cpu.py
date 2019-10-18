@@ -2121,10 +2121,10 @@ def ndslice_cpp(slice, dims, rowmajor=True):
                 "CPU backend does not yet support ranges as inputs/outputs")
 
         # TODO(later): Use access order
-        #import pdb
-        #pdb.set_trace()
+        # TODO: not sure why this was like this before, but it creates problem
+        # with subscript in C, as the output could look like 'array[ + i]'
         #if str(d) == "0":
-         #   continue
+        #   continue
 
         if generated_index:
             result.write(" + ")
