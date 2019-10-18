@@ -207,7 +207,7 @@ class MapFusion(pattern_matching.Transformation):
                     new_tuple = []
                     if isinstance(_tup, symbolic.symbol):
                         new_tuple = symbolic.symbol(params_dict[str(_tup)])
-                    else:
+                    elif isinstance(_tup, (list, tuple)):
                         for _sym in _tup:
                             if isinstance(_sym, symbolic.symbol):
                                 new_tuple.append(
@@ -215,6 +215,8 @@ class MapFusion(pattern_matching.Transformation):
                             else:
                                 new_tuple.append(_sym)
                         new_tuple = tuple(new_tuple)
+                    else:
+                        new_tuple = _tup
                     expected_second_subset.append(new_tuple)
                 if expected_second_subset == list(second_memlet.subset):
                     provided = True
