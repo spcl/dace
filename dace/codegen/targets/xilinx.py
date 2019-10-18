@@ -264,6 +264,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 data, dataname, self._memory_widths[dataname], is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
+            # TO BE CHECKED: remove scalars that are already in kernel args
+            scalar_parameters.pop(dataname,None)
         kernel_args += [
             arg.signature(with_types=True, name=argname)
             for argname, arg in itertools.chain(scalar_parameters.items(),
@@ -308,6 +310,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_args = [
             p.signature(False, name=name) for is_output, name, p in parameters
         ]
+
+        #TO BE CHECKED: remove scalar parameters that are already present in kernel_args
+        for p in kernel_args:
+            scalar_parameters.pop(p[0], None)
+
         kernel_args += scalar_parameters.keys()
         kernel_args += symbol_parameters.keys()
 
@@ -490,11 +497,43 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
     @staticmethod
-    def make_reduction(dtype, vector_length_in, vector_length_out,
-                       reduction_type):
-        return "dace::Reduce<{}, {}, {}, {}<{}>>".format(
+    def make_reduction(sdfg, state_id, node, output_memlet, dtype, vector_length_in, vector_length_out, output_type,
+                       reduction_type, callsite_stream,iterators_inner, input_subset, identity,out_var,in_var):
+        """
+        Generates reduction loop body
+        """
+        axes = node.axes
+
+        #generate library call
+        reduction_cpp = "dace::Reduce<{}, {}, {}, {}<{}>>".format(
             dtype.ctype, vector_length_in, vector_length_out,
             REDUCTION_TYPE_TO_HLSLIB[reduction_type], dtype.ctype)
+
+        # Check if this is the first iteration of accumulating into this
+        # location
+
+        is_first_iteration = " && ".join([
+            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
+            for i, axis in enumerate(axes)
+        ])
+        if identity is not None:
+            # If this is the first iteration, set the previous value to be
+            # identity, otherwise read the value from the output location
+            prev_var = "{}_prev".format(output_memlet.data)
+            callsite_stream.write(
+                "{} {} = ({}) ? ({}) : ({});".format(
+                    output_type, prev_var, is_first_iteration, identity,
+                    out_var), sdfg, state_id, node)
+            callsite_stream.write(
+                "{} = {}({}, {});".format(out_var, reduction_cpp, prev_var,
+                                          in_var), sdfg, state_id, node)
+        else:
+            # If this is the first iteration, assign the value read from the
+            # input directly to the output
+            callsite_stream.write(
+                "{} = ({}) ? ({}) : {}({}, {});".format(
+                    out_var, is_first_iteration, in_var, reduction_cpp,
+                    out_var, in_var), sdfg, state_id, node)
 
     def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
                                  kernel_stream, function_stream,
@@ -566,10 +605,15 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     continue
                 seen.add(name)
                 kernel_args.append(arg.signature(with_types=True, name=name))
+            # remove scalars that are already in kernel args
+            scalar_parameters.pop(name, None)
+
+
         kernel_args += [
             v.signature(with_types=True, name=k) for k, v in itertools.chain(
                 scalar_parameters.items(), symbol_parameters.items())
         ]
+
 
         host_code_stream.write(
             """\

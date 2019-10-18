@@ -300,7 +300,6 @@ class FPGACodeGen(TargetCodeGenerator):
                               function_stream, callsite_stream):
 
         for sg in subgraphs:
-
             self._dispatcher.dispatch_subgraph(
                 sdfg,
                 sg,
@@ -1057,8 +1056,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 octr += 1
             if ((isinstance(src_data, dace.data.Stream)
                  and src_data.is_stream_array()) or
-                (isinstance(src_data, dace.data.Array) and
-                 src_data.storage == dace.types.StorageType.FPGA_Registers)):
+                    (isinstance(src_data, dace.data.Array) and
+                     src_data.storage == dace.types.StorageType.FPGA_Registers)):
                 # Unroll reads from registers and stream arrays
                 unroll_dim.append(True)
             else:
@@ -1075,11 +1074,22 @@ class FPGACodeGen(TargetCodeGenerator):
         else:
             identity = None
 
+        # Determine reduction type
+        reduction_type = operations.detect_reduction_type(node.wcr)
+        if reduction_type == dace.types.ReductionType.Custom:
+            raise NotImplementedError("Custom reduction for FPGA is NYI")
+
         # Initialize accumulator variable if we're collapsing to a single value
         all_axes_collapsed = (len(axes) == input_dims)
         if all_axes_collapsed:
             accumulator = "_{}_accumulator".format(output_memlet.data)
-            callsite_stream.write("{} {};".format(output_type, accumulator),
+            init_value = ""
+            if identity is not None:
+                init_value = " = " + identity
+            elif reduction_type == dace.types.ReductionType.Sum:
+                # Set initial value to zero. Helpful for single cycle clock accumulator in Intel.
+                init_value = " = 0"
+            callsite_stream.write("{} {}{};".format(output_type, accumulator,init_value),
                                   sdfg, state_id, node)
 
         # Generate inner loops (for each collapsed dimension)
@@ -1125,7 +1135,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                          node)
             callsite_stream.write(
                 'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
-                format(
+                    format(
                     var=iterators_outer[i],
                     begin=output_subset[i][0],
                     end=output_subset[i][1] + 1,
@@ -1140,10 +1150,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                           state_id, node)
             end_braces += 1
 
-        # Determine reduction type
-        reduction_type = operations.detect_reduction_type(node.wcr)
-        if reduction_type == dace.types.ReductionType.Custom:
-            raise NotImplementedError("Custom reduction for FPGA is NYI")
+
 
         # Input and output variables
         out_var = (accumulator
@@ -1155,35 +1162,11 @@ class FPGACodeGen(TargetCodeGenerator):
         in_var = cpp_array_expr(
             sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
-        # Call library function to perform reduction
-        reduction_cpp = self.make_reduction(
-            dst_data.dtype, input_memlet.veclen, output_memlet.veclen,
-            reduction_type)
+        # generate reduction code
 
-        # Check if this is the first iteration of accumulating into this
-        # location
-        is_first_iteration = " && ".join([
-            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
-            for i, axis in enumerate(axes)
-        ])
-        if identity is not None:
-            # If this is the first iteration, set the previous value to be
-            # identity, otherwise read the value from the output location
-            prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(
-                    output_type, prev_var, is_first_iteration, identity,
-                    out_var), sdfg, state_id, node)
-            callsite_stream.write(
-                "{} = {}({}, {});".format(out_var, reduction_cpp, prev_var,
-                                          in_var), sdfg, state_id, node)
-        else:
-            # If this is the first iteration, assign the value read from the
-            # input directly to the output
-            callsite_stream.write(
-                "{} = ({}) ? ({}) : {}({}, {});".format(
-                    out_var, is_first_iteration, in_var, reduction_cpp,
-                    out_var, in_var), sdfg, state_id, node)
+        self.make_reduction(sdfg, state_id, node, output_memlet, dst_data.dtype, input_memlet.veclen,
+                            output_memlet.veclen, output_type,
+                            reduction_type, callsite_stream, iterators_inner, input_subset, identity, out_var, in_var)
 
         # Generate closing braces
         for i in range(end_braces):
@@ -1275,6 +1258,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise RuntimeError(
                     "Expected at least one tasklet or data node")
             module_name = "_".join(labels)
+
+            # Remove from scalar parameters variable that are already in subgraph_parameters
+            for p in subgraph_parameters[subgraph]:
+                scalar_parameters.pop(p[1],None)
+
             self.generate_module(sdfg, state, module_name, subgraph,
                                  subgraph_parameters[subgraph],
                                  scalar_parameters, symbol_parameters,
@@ -1304,6 +1292,8 @@ class FPGACodeGen(TargetCodeGenerator):
             if not isinstance(arg, dace.data.Stream):
                 kernel_args_call_host.append(
                     arg.signature(False, name=argname))
+            # Remove scalars that are already in kernel args
+            scalar_parameters.pop(argname,None)
 
         # Treat scalars as symbols, assuming they can be input only
         symbol_sigs = [
