@@ -21,7 +21,7 @@ def spmv(A_row, A_col, A_val, x, b):
         def compute(j):
             a << A_val[j]
             in_x << x[A_col[j]]
-            out >> b(1, lambda x, y: x + y, 0)[i]
+            out >> b(1, lambda x, y: x + y)[i]
 
             out = a * in_x
 
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     #########################
 
     x[:] = np.random.rand(W.get()).astype(dace.float32.type)
-    #b[:] = dace.float32(0)
+    b[:] = dace.float32(0)
 
     # Setup regression
     A_sparse = scipy.sparse.csr_matrix(
