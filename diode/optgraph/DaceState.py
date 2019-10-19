@@ -105,8 +105,14 @@ func({args})
                           if isinstance(obj, DaceProgram)]
             self.sdfgs += [(name, obj) for name, obj in gen_module.items()
                            if isinstance(obj, SDFG)]
-            # TODO: detecting parents is broken, just take the first one for now
-            self.sdfg = self.sdfgs[0][1]
+            try:
+                self.sdfg = self.sdfgs[0][1]
+            except IndexError:
+                if len(self.sdfgs) == 0:
+                    raise ValueError('No SDFGs found in file. SDFGs are only '
+                                     'recognized when @dace.programs or SDFG '
+                                     'objects are found in the global scope')
+                raise
             if len(self.sdfg) > 1:
                 self.has_multiple_eligible_sdfgs = True
 

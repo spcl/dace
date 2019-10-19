@@ -945,17 +945,13 @@ def compileProgram(request, language, perfopts=None):
                 in_code = request.json['code']
             else:
                 in_code = ""
-            try:
-                dace_state = DaceState(in_code, "fake.py", headless=True)
-                dace_state.set_sdfg(
-                    list(codegen_sdfgs_dace_state.values())[0],
-                    list(codegen_sdfgs_dace_state.keys())[0])
-                if len(dace_state.errors) > 0:
-                    print("ERRORS: " + str(dace_state.errors))
-                    errors.extend(dace_state.errors)
-            except Exception as e:
-                traceback.print_exc()
-                print("Failed to create DaceState")
+            dace_state = DaceState(in_code, "tmp.py", headless=True)
+            dace_state.set_sdfg(
+                list(codegen_sdfgs_dace_state.values())[0],
+                list(codegen_sdfgs_dace_state.keys())[0])
+            if len(dace_state.errors) > 0:
+                print("ERRORS: " + str(dace_state.errors))
+                errors.extend(dace_state.errors)
 
         # The config won't save back on its own, and we don't want it to - these changes are transient
 
