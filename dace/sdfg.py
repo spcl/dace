@@ -4120,11 +4120,20 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     sink_paths = []
     for e in dfg.in_edges(node):
         src_node = dfg.memlet_path(e)[0].src
+        # Append empty path to differentiate between a copy and an array-view
+        if isinstance(src_node, nd.CodeNode):
+            source_paths.append(None)
+        # Append path from source node
         if isinstance(src_node, nd.AccessNode) and isinstance(
                 src_node.desc(sdfg), dt.Array):
             source_paths.append(src_node)
     for e in dfg.out_edges(node):
         sink_node = dfg.memlet_path(e)[-1].dst
+
+        # Append empty path to differentiate between a copy and an array-view
+        if isinstance(sink_node, nd.CodeNode):
+            sink_paths.append(None)
+        # Append path to sink node
         if isinstance(sink_node, nd.AccessNode) and isinstance(
                 sink_node.desc(sdfg), dt.Array):
             sink_paths.append(sink_node)
