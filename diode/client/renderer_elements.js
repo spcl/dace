@@ -415,7 +415,7 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
 
         
         
-        if (!node.data.state.attributes.is_collapsed/* && isBBoverlapped(curx, cury, curw, curh, layout)*/)
+        if (!node.data.state.attributes.is_collapsed && ng)
         {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
