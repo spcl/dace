@@ -854,7 +854,7 @@ def compileProgram(request, language, perfopts=None):
                 if len(in_sdfg) > 1:
                     print("More than 1 sdfg provided!")
                     raise Exception("#TODO: Allow multiple sdfg inputs")
-                    abort(400)
+
                 in_sdfg = in_sdfg[0]
 
             if isinstance(in_sdfg, str):

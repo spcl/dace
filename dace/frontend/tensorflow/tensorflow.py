@@ -517,7 +517,7 @@ class TFSession:
                 #        )
                 #        sdfg_args[aname][:] = arg
 
-            if len(patterns) > 0:
+            if patterns and len(patterns) > 0:
                 for _pattern in patterns:
                     self.graph.apply_transformations(_pattern, validate,
                                                      strict)
@@ -536,7 +536,7 @@ class TFSession:
             if feed_dict is not None:
                 invoke_args = dict(
                     sdfg_args, **{(k if isinstance(k, str) else
-                                   _string_builder(k.name)): v
+                                   string_builder(k.name)): v
                                   for k, v in feed_dict.items()})
 
                 compiled_sdfg(**invoke_args)

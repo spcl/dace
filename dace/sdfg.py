@@ -4100,7 +4100,7 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             if isinstance(propclass, properties.RangeProperty):
                 setattr(node, pname, replsym(propval))
             if isinstance(propclass, properties.CodeProperty):
-                for stmt in propval:
+                for stmt in propval['code_or_block']:
                     ASTFindReplace({name: new_name}).visit(stmt)
 
     # Replace in memlets
