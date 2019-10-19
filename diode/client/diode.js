@@ -5780,7 +5780,7 @@ class DIODE {
         */
         let post_params = {};
         if(options.code_is_sdfg === true) {
-            post_params = { "sdfg": code };
+            post_params = { "sdfg": stringify_sdfg(code) };
 
             post_params['code'] = options.runnercode;
         }
@@ -5944,7 +5944,7 @@ class DIODE {
         */
         let post_params = {};
         if(options.code_is_sdfg === true) {
-            post_params = { "sdfg": code };
+            post_params = { "sdfg": stringify_sdfg(code) };
             post_params['code'] = options.runnercode;
         }
         else {

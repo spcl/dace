@@ -880,6 +880,8 @@ def compileProgram(request, language, perfopts=None):
                     # Leave it be if the sdfg was already created
                     # (this might happen with SDFG references)
                     if k in sdfg_dict: continue
+                    if isinstance(v, str):
+                        v = json.loads(v)
                     sdfg_dict[k] = dace.SDFG.fromJSON_object(
                         v, {
                             'sdfg': None,
