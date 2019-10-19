@@ -14,7 +14,8 @@
     <script src="/renderer.js"></script>
     <script type="module">
         var sdfg_json = {{sdfg|safe}};
-        var renderer = new SDFGRenderer(sdfg_json, document.getElementById('contents'));
+        var sdfg = parse_sdfg(sdfg_json);
+        var renderer = new SDFGRenderer(sdfg, document.getElementById('contents'));
     </script>
 </head>
 <body>
