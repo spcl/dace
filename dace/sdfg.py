@@ -245,6 +245,7 @@ class SDFG(OrderedDiGraph):
 
         # Inject the undefined symbols
         tmp['undefined_symbols'] = self.undefined_symbols(True)
+        tmp['scalar_parameters'] = self.scalar_parameters(True)
 
         tmp['attributes']['name'] = self.name
 
@@ -289,6 +290,10 @@ class SDFG(OrderedDiGraph):
 
         # Redefine symbols
         for k, v in json_obj['undefined_symbols'].items():
+            v = Property.known_types()[v['type']].fromJSON_object(v)
+            symbolic.symbol(k, v.dtype)
+
+        for k, v in json_obj['scalar_parameters']:
             v = Property.known_types()[v['type']].fromJSON_object(v)
             ret.add_symbol(k, v.dtype)
 

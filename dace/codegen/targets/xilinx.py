@@ -438,7 +438,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                     data.signature(with_types=True, name=dataname))
         kernel_args += ([
             arg.signature(with_types=True, name=argname)
-            for _, argname, arg in scalar_parameters
+            for argname, arg in scalar_parameters
         ] + symbol_params)
 
         # Write kernel signature
