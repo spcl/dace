@@ -207,6 +207,7 @@ class StateFusion(pattern_matching.Transformation):
                 continue
             nxutil.change_edge_src(first_state, old_node, node)
             first_state.remove_node(old_node)
+            second_input.remove(old_node)
         for node in first_output:
             try:
                 new_node = next(
@@ -215,6 +216,7 @@ class StateFusion(pattern_matching.Transformation):
                 continue
             nxutil.change_edge_dest(first_state, node, new_node)
             first_state.remove_node(node)
+            second_input.remove(new_node)
 
         # Redirect edges and remove second state
         nxutil.change_edge_src(sdfg, second_state, first_state)
