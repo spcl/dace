@@ -114,9 +114,8 @@ def parse_from_function(function, *compilation_args, strict=None):
     ########################
 
     # Apply strict transformations automatically
-    if (strict == True
-            or (strict is None
-                and Config.get_bool('optimizer', 'automatic_state_fusion'))):
+    if (strict == True or (strict is None and Config.get_bool(
+            'optimizer', 'automatic_strict_transformations'))):
         sdfg.apply_strict_transformations()
 
     # Drawing the SDFG (again) to a .dot file

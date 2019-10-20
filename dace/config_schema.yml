@@ -50,7 +50,7 @@ required:
                 title: Save dot files
                 description: Save GraphViz .dot files after every transformation.
 
-            automatic_state_fusion:
+            automatic_strict_transformations:
                 type: bool
                 default: true
                 title: Automatic strict transformations
