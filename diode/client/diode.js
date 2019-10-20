@@ -5748,6 +5748,7 @@ class DIODE {
                 if(options['perfmodes']) {
                     runopts['perfmodes'] = options['perfmodes'];
                 }
+                runopts['repetitions'] = 5; // TODO(later): Allow users to configure number
                 runopts['code_is_sdfg'] = cis;
                 runopts['runnercode'] = values['input_code'];
                 this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts);
@@ -5978,6 +5979,7 @@ class DIODE {
                 not = JSON.parse(not);
             }
             post_params['corecounts'] = not.map(x => parseInt(x));
+            post_params['repetitions'] = 5; // TODO(later): Allow users to configure number
             //post_params['corecounts'] = [1,2,3,4];
             let version_string = "1.0";
             REST_request("/dace/api/v" + version_string + "/run/", post_params, (xhr) => {

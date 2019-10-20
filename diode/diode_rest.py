@@ -1210,6 +1210,11 @@ def run():
     except:
         corecounts = [0]
 
+    try:
+        repetitions = request.json['repetitions']
+    except:
+        repetitions = 1
+
     # Obtain the reference
     es = es_ref[0]
 
@@ -1217,7 +1222,11 @@ def run():
     es.addRun(client_id, "start", {})
 
     for pmode in perfmodes:
-        perfopts = {'mode': pmode, 'core_counts': corecounts}
+        perfopts = {
+            'mode': pmode,
+            'core_counts': corecounts,
+            'repetitions': repetitions
+        }
         tmp = compileProgram(request, 'dace', perfopts)
         if len(tmp) > 1:
             sdfgs, code_tuples, dace_state = tmp

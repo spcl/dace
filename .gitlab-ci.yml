@@ -1,4 +1,4 @@
-# Docker image. You can delete this line if you're not using Docker
+# Docker image. You can delete this line if not using Docker
 image: python:3-stretch
 
 variables:
@@ -11,8 +11,8 @@ setup_dace:
   script:
     - echo "Reverting configuration to defaults"
     - rm -f ~/.dace.conf
-    - echo "Clearing binary cache"
-    - rm -rf .dacecache tests/.dacecache
+    - echo "Clearing caches"
+    - rm -rf .dacecache tests/.dacecache client_configs tests/client_configs
     - echo "Installing additional dependencies"
     - pip3 install --upgrade --user tensorflow-gpu==1.14.0
     - echo "Installing DaCe"

@@ -274,7 +274,12 @@ class Executor:
             nprocs = self.config_get("execution", "mpi", "num_procs")
         else:
             nprocs = 1
-        repetitions = self.config_get("execution", "general", "repetitions")
+
+        if 'repetitions' in additional_options_dict:
+            repetitions = additional_options_dict['repetitions']
+        else:
+            repetitions = self.config_get("execution", "general",
+                                          "repetitions")
 
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
