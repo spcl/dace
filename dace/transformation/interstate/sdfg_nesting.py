@@ -52,8 +52,8 @@ class NestSDFG(pattern_matching.Transformation):
         for state in nested_sdfg.nodes():
 
             for node in nxutil.find_source_nodes(state):
-                if (isinstance(node, nodes.AccessNode) and
-                        not node.desc(nested_sdfg).transient):
+                if (isinstance(node, nodes.AccessNode)
+                        and not node.desc(nested_sdfg).transient):
                     arrname = node.data
                     if arrname not in inputs:
                         arrobj = nested_sdfg.arrays[arrname]
@@ -63,8 +63,8 @@ class NestSDFG(pattern_matching.Transformation):
                     node.data = arrname + '_in'
 
             for node in nxutil.find_sink_nodes(state):
-                if (isinstance(node, nodes.AccessNode) and
-                        not node.desc(nested_sdfg).transient):
+                if (isinstance(node, nodes.AccessNode)
+                        and not node.desc(nested_sdfg).transient):
                     arrname = node.data
                     if arrname not in outputs:
                         arrobj = nested_sdfg.arrays[arrname]
@@ -113,7 +113,7 @@ class NestSDFG(pattern_matching.Transformation):
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
         for arrname in outputs.keys():
-            nested_sdfg.arrays.pop(arrname, None)        
+            nested_sdfg.arrays.pop(arrname, None)
         for oldarrname, newarrname in transients.items():
             nested_sdfg.arrays.pop(oldarrname)
             nested_sdfg.arrays[newarrname].transient = False
@@ -126,22 +126,22 @@ class NestSDFG(pattern_matching.Transformation):
                 src = state.memlet_path(edge)[0].src
                 dst = state.memlet_path(edge)[-1].dst
                 if isinstance(src, nodes.AccessNode):
-                    if (mem.data in inputs.keys() and
-                            src.data == inputs[mem.data]):
+                    if (mem.data in inputs.keys()
+                            and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
-                    elif (mem.data in outputs.keys() and
-                            src.data == outputs[mem.data]):
+                    elif (mem.data in outputs.keys()
+                          and src.data == outputs[mem.data]):
                         mem.data = outputs[mem.data]
-                elif (isinstance(dst, nodes.AccessNode) and
-                        mem.data in outputs.keys() and
-                        dst.data == outputs[mem.data]):
+                elif (isinstance(dst, nodes.AccessNode)
+                      and mem.data in outputs.keys()
+                      and dst.data == outputs[mem.data]):
                     mem.data = outputs[mem.data]
 
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
-        nested_node = outer_state.add_nested_sdfg(
-            nested_sdfg, outer_sdfg, inputs.values(), outputs.values()
-        )
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
+                                                  inputs.values(),
+                                                  outputs.values())
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)
             outer_state.add_edge(
@@ -263,6 +263,11 @@ class InlineSDFG(pattern_matching.Transformation):
                     sdfg.arrays[name] = nsdfg.arrays[node.data]
                     # Rename all internal uses
                     torename[node.data] = name
+            # Set all parents of nested SDFG nodes in the inlined SDFG to their
+            # new parent
+            elif isinstance(node, nodes.NestedSDFG):
+                node.sdfg.parent = graph
+                node.sdfg.parent_sdfg = sdfg
 
             graph.add_node(node)
 
