@@ -868,7 +868,12 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
-    def memlet_definition(self, sdfg, memlet, output, local_name):
+    def memlet_definition(self,
+                          sdfg,
+                          memlet,
+                          output,
+                          local_name,
+                          allow_shadowing=False):
         result = ("auto __%s = " % local_name + self.memlet_ctor(
             sdfg, memlet, output) + ";\n")
 
@@ -899,8 +904,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     result += "{} {};".format(memlet_type, local_name)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             elif memlet.num_accesses == -1:
                 if output:
                     # Variable number of writes: get reference to the target of
@@ -912,8 +919,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary
                     result += "auto const &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             else:
                 raise dace.codegen.codegen.CodegenError(
                     "Unsupported number of accesses {} for scalar {}".format(
@@ -925,20 +934,26 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     result += "{} {} = __{}.val<{}>();".format(
                         memlet_type, local_name, local_name, memlet.veclen)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             else:
                 if memlet.subset.data_dims() == 0:
                     # Forward ArrayView
                     result += "auto &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Scalar)
+                    self._dispatcher.defined_vars.add(
+                        local_name,
+                        DefinedType.Scalar,
+                        allow_shadowing=allow_shadowing)
                 else:
                     result += "auto *{} = __{}.ptr<{}>();".format(
                         local_name, local_name, memlet.veclen)
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Pointer)
+                    self._dispatcher.defined_vars.add(
+                        local_name,
+                        DefinedType.Pointer,
+                        allow_shadowing=allow_shadowing)
         elif var_type == DefinedType.Stream or var_type == DefinedType.StreamArray:
             if memlet.num_accesses == 1:
                 if output:
@@ -946,13 +961,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     result += "auto {} = __{}.pop();".format(
                         local_name, local_name)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             else:
                 # Just forward actions to the underlying object
                 result += "auto &{} = __{};".format(local_name, local_name)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Stream)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Stream,
+                    allow_shadowing=allow_shadowing)
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
 
@@ -1404,13 +1423,17 @@ class CPUCodeGen(TargetCodeGenerator):
         for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
             if vconn in inout or in_memlet.data is None:
                 continue
+            # TODO: Instead of allowing shadowing, emit nested SDFG as a
+            #       separate function
             callsite_stream.write(
-                self.memlet_definition(sdfg, in_memlet, False, vconn), sdfg,
+                self.memlet_definition(
+                    sdfg, in_memlet, False, vconn, allow_shadowing=True), sdfg,
                 state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
                 callsite_stream.write(
-                    self.memlet_definition(sdfg, out_memlet, True, uconn),
+                    self.memlet_definition(
+                        sdfg, out_memlet, True, uconn, allow_shadowing=True),
                     sdfg, state_id, node)
 
         callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,

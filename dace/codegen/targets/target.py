@@ -200,7 +200,11 @@ class DefinedMemlets:
                 return scope[name]
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name, connector_type, ancestor: int = 0):
+    def add(self,
+            name,
+            connector_type,
+            ancestor: int = 0,
+            allow_shadowing: bool = False):
         if not isinstance(name, str):
             raise TypeError(
                 'Variable name type cannot be %s' % type(name).__name__)
@@ -209,8 +213,10 @@ class DefinedMemlets:
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(
                     name, scope[name], connector_type)
-                if dace.config.Config.get_bool("compiler", "allow_shadowing"):
-                    print("WARNING: " + err_str)
+                if (allow_shadowing or dace.config.Config.get_bool(
+                        "compiler", "allow_shadowing")):
+                    if not allow_shadowing:
+                        print("WARNING: " + err_str)
                 else:
                     raise dace.codegen.codegen.CodegenError(err_str)
         self._scopes[-1 - ancestor][1][name] = connector_type
