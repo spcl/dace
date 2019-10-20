@@ -4089,9 +4089,12 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             return symlist.subs(symrepl)
         for i, dim in enumerate(symlist):
             try:
-                symlist[i] = tuple(d.subs(symrepl) for d in dim)
+                symlist[i] = tuple(
+                    d.subs(symrepl) if symbolic.issymbolic(d) else d
+                    for d in dim)
             except TypeError:
-                symlist[i] = dim.subs(symrepl)
+                symlist[i] = (dim.subs(symrepl)
+                              if symbolic.issymbolic(dim) else dim)
         return symlist
 
     # Replace in node properties
