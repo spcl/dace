@@ -1974,6 +1974,20 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             end_braces += 1
             use_tmpout = True
 
+        # Compute output expression
+        outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
+            sdfg,
+            output_memlet,
+            offset=["__o%d" % i for i in range(output_dims)],
+            relative_offset=False,
+        ))
+
+        if len(axes) != input_dims and node.identity is not None:
+            # Write code for identity value in multiple axes
+            callsite_stream.write(
+                "%s = %s;" % (outvar, sym2cpp(node.identity)), sdfg, state_id,
+                node)
+
         # Instrumentation: internal part
         if instr is not None:
             callsite_stream.write(inner_stream.getvalue())
@@ -1999,13 +2013,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         credtype = "dace::ReductionType::" + str(
             redtype)[str(redtype).find(".") + 1:]
 
-        # Use index expressions
-        outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
-            sdfg,
-            output_memlet,
-            offset=["__o%d" % i for i in range(output_dims)],
-            relative_offset=False,
-        ))
         invar = cpp_array_expr(
             sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
