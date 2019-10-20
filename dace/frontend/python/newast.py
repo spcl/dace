@@ -322,56 +322,91 @@ def _is_op_boolean(op: str):
     return False
 
 
+def _array_x_binop(visitor: ProgramVisitor,
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   op1: str,
+                   op2: str,
+                   op: str,
+                   opcode: str):
+
+    arr1 = sdfg.arrays[op1]
+    type1 = arr1.dtype.type
+    isscal1 = _is_scalar(sdfg, op1)
+    isnum1 = isscal1 and (op1 in visitor.numbers.values())
+    if isnum1:
+        type1 = _inverse_dict_lookup(visitor.numbers, op1)
+    arr2 = sdfg.arrays[op2]
+    type2 = arr2.dtype.type
+    isscal2 = _is_scalar(sdfg, op2)
+    isnum2 = isscal2 and (op2 in visitor.numbers.values())
+    if isnum2:
+        type2 = _inverse_dict_lookup(visitor.numbers, op2)
+    if _is_op_boolean(op):
+        restype = dace.bool
+    else:
+        restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+
+    if isscal1:
+        if isscal2:
+            arr1 = sdfg.arrays[op1]
+            arr2 = sdfg.arrays[op2]
+            op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
+            tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'},
+                                        {'s3'}, 's3 = s1 %s s2' % opcode)
+            n1 = state.add_read(op1)
+            n2 = state.add_read(op2)
+            n3 = state.add_write(op3)
+            state.add_edge(n1, None, tasklet, 's1',
+                            dace.Memlet.from_array(op1, arr1))
+            state.add_edge(n2, None, tasklet, 's2',
+                            dace.Memlet.from_array(op2, arr2))
+            state.add_edge(tasklet, 's3', n3, None,
+                            dace.Memlet.from_array(op3, arr3))
+            return op3
+        else:
+            return _scalarbinop(sdfg, state, op1, op2, opcode, op, restype)
+    else:
+        if isscal2:
+            return _scalarbinop(sdfg, state, op2, op1, opcode, op, restype,
+                                True)
+        else:
+            return _binop(sdfg, state, op1, op2, opcode, op, restype)
+
+
 def _makebinop(op, opcode):
-    @oprepo.replaces_operator('Array', op)
+
+    @oprepo.replaces_operator('Array', op, otherclass='Array')
     def _op(visitor: ProgramVisitor,
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
             op2: str):
+        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
-        arr1 = sdfg.arrays[op1]
-        type1 = arr1.dtype.type
-        isscal1 = _is_scalar(sdfg, op1)
-        isnum1 = isscal1 and (op1 in visitor.numbers.values())
-        if isnum1:
-            type1 = _inverse_dict_lookup(visitor.numbers, op1)
-        arr2 = sdfg.arrays[op2]
-        type2 = arr2.dtype.type
-        isscal2 = _is_scalar(sdfg, op2)
-        isnum2 = isscal2 and (op2 in visitor.numbers.values())
-        if isnum2:
-            type2 = _inverse_dict_lookup(visitor.numbers, op2)
-        if _is_op_boolean(op):
-            restype = dace.bool
-        else:
-            restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+    @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2: str):
+        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
-        if isscal1:
-            if isscal2:
-                arr1 = sdfg.arrays[op1]
-                arr2 = sdfg.arrays[op2]
-                op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
-                tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'},
-                                            {'s3'}, 's3 = s1 %s s2' % opcode)
-                n1 = state.add_read(op1)
-                n2 = state.add_read(op2)
-                n3 = state.add_write(op3)
-                state.add_edge(n1, None, tasklet, 's1',
-                               dace.Memlet.from_array(op1, arr1))
-                state.add_edge(n2, None, tasklet, 's2',
-                               dace.Memlet.from_array(op2, arr2))
-                state.add_edge(tasklet, 's3', n3, None,
-                               dace.Memlet.from_array(op3, arr3))
-                return op3
-            else:
-                return _scalarbinop(sdfg, state, op1, op2, opcode, op, restype)
-        else:
-            if isscal2:
-                return _scalarbinop(sdfg, state, op2, op1, opcode, op, restype,
-                                    True)
-            else:
-                return _binop(sdfg, state, op1, op2, opcode, op, restype)
+    @oprepo.replaces_operator('Array', op, otherclass='Scalar')
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2: str):
+        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('Scalar', op, otherclass='Array')
+    def _op(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2: str):
+        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
 
 # Define all standard Python augmented assignment operators
@@ -424,57 +459,57 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
     _makebinop(op, opcode)
 
 
-@oprepo.replaces_operator('Scalar', 'Mult', otherclass='Array')
-def _scalarrmult(
-        visitor,  #: ProgramVisitor,
-        sdfg: SDFG,
-        state: SDFGState,
-        scalop: str,
-        arrop: str,
-        reverse=False):
-    """ Implements a Scalar-Array element-wise multiplication operator. """
-    scalar = scalop
-    arr = sdfg.arrays[arrop]
+# @oprepo.replaces_operator('Scalar', 'Mult', otherclass='Array')
+# def _scalarrmult(
+#         visitor,  #: ProgramVisitor,
+#         sdfg: SDFG,
+#         state: SDFGState,
+#         scalop: str,
+#         arrop: str,
+#         reverse=False):
+#     """ Implements a Scalar-Array element-wise multiplication operator. """
+#     scalar = scalop
+#     arr = sdfg.arrays[arrop]
 
-    # Argument type checking
-    if isinstance(scalar, str):
-        if scalar not in sdfg.symbols:
-            raise SyntaxError('Scalar "%s" not defined in SDFG' % scalar)
-        scaltype = sdfg.symbols[scalar]
-    else:
-        scaltype = type(scalar)
-        if scaltype in dtypes.DTYPE_TO_TYPECLASS:
-            scaltype = dtypes.DTYPE_TO_TYPECLASS[scaltype]
-    if scaltype != arr.dtype:
-        print(
-            "WARNING: Different types in scalar-array multiplication (%s scalar, %s array)"
-            % (scaltype.to_string(), arr.dtype.to_string()))
-    # End of argument type checking
+#     # Argument type checking
+#     if isinstance(scalar, str):
+#         if scalar not in sdfg.symbols:
+#             raise SyntaxError('Scalar "%s" not defined in SDFG' % scalar)
+#         scaltype = sdfg.symbols[scalar]
+#     else:
+#         scaltype = type(scalar)
+#         if scaltype in dtypes.DTYPE_TO_TYPECLASS:
+#             scaltype = dtypes.DTYPE_TO_TYPECLASS[scaltype]
+#     if scaltype != arr.dtype:
+#         print(
+#             "WARNING: Different types in scalar-array multiplication (%s scalar, %s array)"
+#             % (scaltype.to_string(), arr.dtype.to_string()))
+#     # End of argument type checking
 
-    name, _ = sdfg.add_temp_transient(arr.shape, arr.dtype, arr.storage)
-    state.add_mapped_tasklet(
-        "_SA%s_" % 'Mult',
-        {'__i%d' % i: '0:%s' % s
-         for i, s in enumerate(arr.shape)}, {
-             'inp':
-             Memlet.simple(
-                 arrop, ','.join(['__i%d' % i
-                                  for i in range(len(arr.shape))])),
-         },
-        'out = %s * %s' % ('inp' if reverse else str(scalar), str(scalar)
-                           if reverse else 'inp'),
-        {
-            'out':
-            Memlet.simple(
-                name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
-        },
-        external_edges=True)
-    return name
+#     name, _ = sdfg.add_temp_transient(arr.shape, arr.dtype, arr.storage)
+#     state.add_mapped_tasklet(
+#         "_SA%s_" % 'Mult',
+#         {'__i%d' % i: '0:%s' % s
+#          for i, s in enumerate(arr.shape)}, {
+#              'inp':
+#              Memlet.simple(
+#                  arrop, ','.join(['__i%d' % i
+#                                   for i in range(len(arr.shape))])),
+#          },
+#         'out = %s * %s' % ('inp' if reverse else str(scalar), str(scalar)
+#                            if reverse else 'inp'),
+#         {
+#             'out':
+#             Memlet.simple(
+#                 name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
+#         },
+#         external_edges=True)
+#     return name
 
 
-@oprepo.replaces_operator('Array', 'Mult', otherclass='Scalar')
-def _arrscalmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-    return _scalarrmult(sdfg, state, op2, op1, reverse=True)
+# @oprepo.replaces_operator('Array', 'Mult', otherclass='Scalar')
+# def _arrscalmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+#     return _scalarrmult(sdfg, state, op2, op1, reverse=True)
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
