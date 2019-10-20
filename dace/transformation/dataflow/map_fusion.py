@@ -2,71 +2,12 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import data, dtypes, subsets, symbolic
+from dace import dtypes, symbolic
 from dace.graph import nodes, nxutil
+from dace.sdfg import replace
 from dace.transformation import pattern_matching
-from typing import List, Dict, Union
-import ast
+from typing import List, Union
 import networkx as nx
-
-
-class ASTFindReplace(ast.NodeTransformer):
-    def __init__(self, repldict: Dict[str, str]):
-        self.repldict = repldict
-
-    def visit_Name(self, node):
-        if node.id in self.repldict:
-            node.id = self.repldict[node.id]
-        return node
-
-
-def replace(subgraph, name: str, new_name: str):
-    """ Finds and replaces all occurrences of a symbol or array in a subgraph.
-        @param name: Name to find.
-        @param new_name: Name to replace.
-    """
-    from dace import properties
-    import sympy as sp
-
-    symrepl = {
-        symbolic.symbol(name):
-        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
-    }
-
-    def replsym(symlist):
-        if symlist is None:
-            return None
-        if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
-            return symlist.subs(symrepl)
-        for i, dim in enumerate(symlist):
-            try:
-                symlist[i] = tuple(d.subs(symrepl) for d in dim)
-            except TypeError:
-                symlist[i] = dim.subs(symrepl)
-        return symlist
-
-        # Replace in node properties
-
-    for node in subgraph.nodes():
-        for propclass, propval in node.properties():
-            pname = propclass.attr_name
-            if isinstance(propclass, properties.SymbolicProperty):
-                setattr(node, pname, propval.subs({name: new_name}))
-            if isinstance(propclass, properties.DataProperty):
-                if propval == name:
-                    setattr(node, pname, new_name)
-            if isinstance(propclass, properties.RangeProperty):
-                setattr(node, pname, replsym(propval))
-            if isinstance(propclass, properties.CodeProperty):
-                for stmt in propval['code_or_block']:
-                    ASTFindReplace({name: new_name}).visit(stmt)
-
-    # Replace in memlets
-    for edge in subgraph.edges():
-        if edge.data.data == name:
-            edge.data.data = new_name
-        edge.data.subset = replsym(edge.data.subset)
-        edge.data.other_subset = replsym(edge.data.other_subset)
 
 
 class MapFusion(pattern_matching.Transformation):
