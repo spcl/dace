@@ -1215,10 +1215,12 @@ class TaskletTransformer(ExtNodeTransformer):
             if isinstance(node.value.op, (ast.LShift, ast.RShift)):
                 if isinstance(node.value.op, ast.LShift):
                     target = node.value.right
+                    name = rname(target)
+                    variables = {**self.variables, **self.scope_vars}
                     has_indirection = False
                     if self.nested:  # and isinstance(target, ast.Subscript):
-                        name = rname(target)
-                        real_name = {**self.variables, **self.scope_vars}[name]
+                        # name = rname(target)
+                        real_name = variables[name]
                         if isinstance(target, ast.Name):
                             real_target = copy.deepcopy(target)
                             real_target.id = real_name
@@ -1245,13 +1247,24 @@ class TaskletTransformer(ExtNodeTransformer):
                         else:
                             raise NotImplementedError
                         if (name, rng, 'w') in self.accesses:
-                            node.value.right = ast.Name(id=self.accesses[(
-                                name, rng, 'w')][0])
+                            access = self.accesses[(name, rng, 'w')]
+                            if isinstance(access, tuple):
+                                access = access[0]
+                            node.value.right = ast.Name(id=access)
                         elif (name, rng, 'r') in self.accesses:
-                            node.value.right = ast.Name(id=self.accesses[(
-                                name, rng, 'r')][0])
+                            access = self.accesses[(name, rng, 'r')]
+                            if isinstance(access, tuple):
+                                access = access[0]
+                            node.value.right = ast.Name(id=access)
                         elif name in self.variables:
-                            pass
+                            if isinstance(target, ast.Name):
+                                node.value.right.id = real_name
+                            elif isinstance(target, ast.Subscript):
+                                node.value.right.value.id = real_name
+                            elif isinstance(target, ast.Call):
+                                node.value.right.func.id = real_name
+                            else:
+                                raise NotImplementedError
                         elif name in self.scope_vars:
                             vname = "__tmp_{l}_{c}".format(
                                 l=target.lineno, c=target.col_offset)
@@ -1295,6 +1308,17 @@ class TaskletTransformer(ExtNodeTransformer):
                                 self, target,
                                 'Array "{}" used before definition'.format(
                                     name))
+                    else:
+                        if name in variables:
+                            real_name = variables[name]
+                            if isinstance(target, ast.Name):
+                                node.value.right.id = real_name
+                            elif isinstance(target, ast.Subscript):
+                                node.value.right.value.id = real_name
+                            elif isinstance(target, ast.Call):
+                                node.value.right.func.id = real_name
+                            else:
+                                raise NotImplementedError
                     connector, memlet = _parse_memlet(self, node.value.right,
                                                       node.value.left,
                                                       self.sdfg.arrays)
@@ -1309,10 +1333,12 @@ class TaskletTransformer(ExtNodeTransformer):
                     self.inputs[connector] = memlet
                 elif isinstance(node.value.op, ast.RShift):
                     target = node.value.right
+                    name = rname(target)
+                    variables = {**self.variables, **self.scope_vars}
                     new_output = False
                     if self.nested:  # and isinstance(target, ast.Subscript):
-                        name = rname(target)
-                        real_name = {**self.variables, **self.scope_vars}[name]
+                        # name = rname(target)
+                        real_name = variables[name]
                         if isinstance(target, ast.Name):
                             real_target = copy.deepcopy(target)
                             real_target.id = real_name
@@ -1339,10 +1365,23 @@ class TaskletTransformer(ExtNodeTransformer):
                         else:
                             raise NotImplementedError
                         if (name, rng, 'w') in self.accesses:
-                            node.value.right = ast.Name(id=self.accesses[(
-                                name, rng, 'w')][0])
+                            access = self.accesses[(name, rng, 'w')]
+                            if isinstance(access, tuple):
+                                access = access[0]
+                            node.value.right = ast.Name(id=access)
                         elif name in self.variables:
-                            pass
+                            if isinstance(target, ast.Name):
+                                node.value.right = ast.Name(id=real_name)
+                            elif isinstance(target, ast.Subscript):
+                                if isinstance(target.value, ast.Call):
+                                    node.value.right = node.value.right.value
+                                    node.value.right.func = ast.Name(id=real_name)
+                                else:
+                                    node.value.right = ast.Name(id=real_name)
+                            elif isinstance(target, ast.Call):
+                                node.value.right.func = ast.Name(id=real_name)
+                            else:
+                                raise NotImplementedError
                         elif ((name, rng, 'r') in self.accesses
                               or name in self.scope_vars):
                             vname = "__tmp_{l}_{c}".format(
@@ -1366,8 +1405,9 @@ class TaskletTransformer(ExtNodeTransformer):
                                 parent_name, rng.num_elements(), rng, 1),
                                                         set())
                             # self.defined[vname] = self.sdfg.arrays[vname]
-                            new_output = True
-                            if isinstance(target, (ast.Name, ast.Subscript)):
+                            if isinstance(target, ast.Name):
+                                node.value.right = ast.Name(id=vname)
+                            elif isinstance(target, ast.Subscript):
                                 if isinstance(target.value, ast.Call):
                                     node.value.right = node.value.right.value
                                     node.value.right.func = ast.Name(id=vname)
@@ -1377,11 +1417,26 @@ class TaskletTransformer(ExtNodeTransformer):
                                 node.value.right.func = ast.Name(id=vname)
                             else:
                                 raise NotImplementedError
+                            new_output = True
                         else:
                             raise DaceSyntaxError(
                                 self, target,
                                 'Array "{}" used before definition'.format(
                                     name))
+                    else:
+                        if name in variables:
+                            real_name = variables[name]
+                            if isinstance(target, ast.Name):
+                                node.value.right.id = real_name
+                            elif isinstance(target, ast.Subscript):
+                                if isinstance(target.value, ast.Call):
+                                    node.value.right.value.func.id = real_name
+                                else:
+                                    node.value.right.value.id = real_name
+                            elif isinstance(target, ast.Call):
+                                node.value.right.func.id = real_name
+                            else:
+                                raise NotImplementedError
                     connector, memlet = _parse_memlet(self, node.value.left,
                                                       node.value.right,
                                                       self.sdfg.arrays)
