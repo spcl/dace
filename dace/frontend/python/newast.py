@@ -1219,7 +1219,16 @@ class TaskletTransformer(ExtNodeTransformer):
                     if self.nested:  # and isinstance(target, ast.Subscript):
                         name = rname(target)
                         real_name = {**self.variables, **self.scope_vars}[name]
-                        if isinstance(target, ast.Subscript):
+                        if isinstance(target, ast.Name):
+                            real_target = copy.deepcopy(target)
+                            real_target.id = real_name
+                            rng = dace.subsets.Range(
+                                astutils.subscript_to_slice(
+                                    real_target, {
+                                        **self.sdfg.arrays,
+                                        **self.scope_arrays
+                                    })[1])
+                        elif isinstance(target, ast.Subscript):
                             real_target = copy.deepcopy(target)
                             real_target.value.id = real_name
                             rng = dace.subsets.Range(
@@ -1275,7 +1284,7 @@ class TaskletTransformer(ExtNodeTransformer):
                                     parent_name, rng.num_elements(), rng, 1),
                                                            set())
                             # self.defined[vname] = self.sdfg.arrays[vname]
-                            if isinstance(target, ast.Subscript):
+                            if isinstance(target, (ast.Name, ast.Subscript)):
                                 node.value.right = ast.Name(id=vname)
                             elif isinstance(target, ast.Call):
                                 node.value.right.func = ast.Name(id=vname)
@@ -1304,7 +1313,16 @@ class TaskletTransformer(ExtNodeTransformer):
                     if self.nested:  # and isinstance(target, ast.Subscript):
                         name = rname(target)
                         real_name = {**self.variables, **self.scope_vars}[name]
-                        if isinstance(target, ast.Subscript):
+                        if isinstance(target, ast.Name):
+                            real_target = copy.deepcopy(target)
+                            real_target.id = real_name
+                            rng = dace.subsets.Range(
+                                astutils.subscript_to_slice(
+                                    real_target, {
+                                        **self.sdfg.arrays,
+                                        **self.scope_arrays
+                                    })[1])
+                        elif isinstance(target, ast.Subscript):
                             real_target = copy.deepcopy(target)
                             real_target.value.id = real_name
                             rng = dace.subsets.Range(
@@ -1349,7 +1367,7 @@ class TaskletTransformer(ExtNodeTransformer):
                                                         set())
                             # self.defined[vname] = self.sdfg.arrays[vname]
                             new_output = True
-                            if isinstance(target, ast.Subscript):
+                            if isinstance(target, (ast.Name, ast.Subscript)):
                                 if isinstance(target.value, ast.Call):
                                     node.value.right = node.value.right.value
                                     node.value.right.func = ast.Name(id=vname)
