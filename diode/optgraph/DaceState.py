@@ -51,6 +51,7 @@ class DaceState:
         self.headless = headless
         self.dace_code = dace_code
         self.source_code = source_code
+        self.repetitions = None
         self.errors = [
         ]  # Any errors that arise from compilation are placed here to show
         # them once the sdfg is rendered

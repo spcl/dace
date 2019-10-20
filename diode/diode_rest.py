@@ -1235,6 +1235,8 @@ def run():
             print("An error occurred")
             abort(400)
 
+        dace_state.repetitions = repetitions
+
         more_options = {}
         more_options['perfopts'] = perfopts
         runner = es.addRun(client_id, (sdfgs, code_tuples, dace_state),

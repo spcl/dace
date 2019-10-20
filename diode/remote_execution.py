@@ -130,6 +130,7 @@ class Executor:
                         use_mpi,
                         fail_on_nonzero,
                         omp_num_threads=omp_thread_num,
+                        repetitions=dace_state.repetitions,
                         additional_options_dict=optdict)
 
                     if self.running_async:
@@ -137,8 +138,12 @@ class Executor:
                         self.async_host.notify("Done option threads=" +
                                                str(omp_thread_num))
             else:
-                self.remote_exec_dace(remote_workdir, remote_dace_file,
-                                      use_mpi, fail_on_nonzero)
+                self.remote_exec_dace(
+                    remote_workdir,
+                    remote_dace_file,
+                    use_mpi,
+                    fail_on_nonzero,
+                    repetitions=dace_state.repetitions)
 
             self.show_output("Execution Terminated\n")
 
@@ -266,7 +271,8 @@ class Executor:
                          use_mpi=True,
                          fail_on_nonzero=False,
                          omp_num_threads=None,
-                         additional_options_dict=None):
+                         additional_options_dict=None,
+                         repetitions=None):
         additional_options_dict = additional_options_dict or {}
         run = "${command} "
         if use_mpi == True:
@@ -275,11 +281,8 @@ class Executor:
         else:
             nprocs = 1
 
-        if 'repetitions' in additional_options_dict:
-            repetitions = additional_options_dict['repetitions']
-        else:
-            repetitions = self.config_get("execution", "general",
-                                          "repetitions")
+        repetitions = (repetitions or self.config_get("execution", "general",
+                                                      "repetitions"))
 
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
@@ -299,7 +302,6 @@ class Executor:
             miscoptresetstring += "unset " + str(optkey) + "\n"
 
         # Create a startscript which exports necessary env-vars
-
         start_sh = "set -x\n" + \
                    "export DACE_compiler_use_cache=1\n" + \
                    "export DACE_optimizer_interface=''\n" + \
