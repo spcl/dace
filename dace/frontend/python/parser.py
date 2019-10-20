@@ -2,6 +2,7 @@
 from __future__ import print_function
 import inspect
 import copy
+import os
 
 from dace import symbolic, dtypes
 from dace.config import Config
@@ -120,6 +121,7 @@ def parse_from_function(function, *compilation_args, strict=None):
 
     # Drawing the SDFG (again) to a .dot file
     sdfg.draw_to_file(recursive=True)
+    sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()

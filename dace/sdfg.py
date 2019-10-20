@@ -1865,6 +1865,7 @@ subgraph cluster_state_{state} {{
             sdfg.specialize()
 
         sdfg.draw_to_file()
+        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
