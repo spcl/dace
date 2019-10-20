@@ -59,11 +59,14 @@ class StateFusion(pattern_matching.Transformation):
                     return False
 
         if strict:
-
             # If second state has other input edges, there might be issues
+            # Exceptions are when none of the states contain dataflow, unless
+            # the first state is an initial state (in which case the new initial
+            # state would be ambiguous).
+            first_in_edges = graph.in_edges(first_state)
             second_in_edges = graph.in_edges(second_state)
-            if (not second_state.is_empty() or
-                    not first_state.is_empty()) and len(second_in_edges) != 1:
+            if ((not second_state.is_empty() or not first_state.is_empty()
+                 or len(first_in_edges) == 0) and len(second_in_edges) != 1):
                 return False
 
             # Get connected components.
