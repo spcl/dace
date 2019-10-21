@@ -1209,121 +1209,177 @@ class TaskletTransformer(ExtNodeTransformer):
             debuginfo=locinfo)
 
         return t, self.inputs, self.outputs
+    
+    def _add_access(self,
+                    name: str,
+                    rng: subsets.Range,
+                    access_type: str, # 'r' or 'w'
+                    target: Union[ast.Name, ast.Subscript],
+                    new_name: str = None,
+                    arr_type: data.Data = None) -> str:
+        if access_type not in ('r', 'w'):
+            raise ValueError("Access type {} is invalid".format(access_type))
+        if new_name:
+            var_name = new_name
+        elif target:
+            var_name = "__tmp_{l}_{c}".format(l=target.lineno,
+                                              c=target.col_offset)
+        else:
+            var_name = self.sdfg.temp_data_name()
+
+        parent_name = self.scope_vars[name]
+        parent_array = self.scope_arrays[parent_name]
+        if _subset_has_indirection(rng):
+            squeezed_rng = list(range(len(rng)))
+            shape = parent_array.shape
+            strides = [parent_array.strides[d] for d in squeezed_rng]
+        else:
+            squeezed_rng = copy.deepcopy(rng)
+            non_squeezed = squeezed_rng.squeeze()
+            shape = squeezed_rng.size()
+            strides = [parent_array.strides[d] for d in non_squeezed]
+        dtype = parent_array.dtype
+
+        if arr_type is None:
+            arr_type = type(parent_array)
+        if arr_type == data.Scalar:
+            self.sdfg.add_scalar(var_name, dtype)
+        elif arr_type == data.Array:
+            self.sdfg.add_array(var_name, shape, dtype,
+                                strides=strides)
+        elif arr_type == data.Stream:
+            self.sdfg.add_stream(var_name, dtype)
+        else:
+            raise NotImplementedError(
+                "Data type {} is not implemented".format(arr_type))
+
+        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+        if access_type == 'r':
+            if _subset_has_indirection(rng):
+                self.sdfg_inputs[var_name] = (
+                    dace.Memlet.from_array(parent_name, parent_array), set())
+            else:
+                self.sdfg_inputs[var_name] = (dace.Memlet(parent_name,
+                                                          rng.num_elements(),
+                                                          rng, 1), set())
+        else:
+            if _subset_has_indirection(rng):
+                self.sdfg_outputs[var_name] = (
+                    dace.Memlet.from_array(parent_name, parent_array), set())
+            else:
+                self.sdfg_outputs[var_name] = (dace.Memlet(parent_name,
+                                                           rng.num_elements(),
+                                                           rng, 1), set())
+
+        return (var_name, squeezed_rng)
+    
+    def _add_read_access(self,
+                         name: str,
+                         rng: subsets.Range,
+                         target: Union[ast.Name, ast.Subscript],
+                         new_name: str = None,
+                         arr_type: data.Data = None):
+
+        if (name, rng, 'w') in self.accesses:
+            return self.accesses[(name, rng, 'w')]
+        elif (name, rng, 'r') in self.accesses:
+            return self.accesses[(name, rng, 'r')]
+        elif name in self.variables:
+            return (self.variables[name], None)
+        elif name in self.scope_vars:
+            return self._add_access(name, rng, 'r', target, new_name, arr_type)
+        else:
+            raise NotImplementedError
+
+    def _add_write_access(self,
+                          name: str,
+                          rng: subsets.Range,
+                          target: Union[ast.Name, ast.Subscript],
+                          new_name: str = None,
+                          arr_type: data.Data = None):
+
+        if (name, rng, 'w') in self.accesses:
+            return self.accesses[(name, rng, 'w')]
+        elif name in self.variables:
+            return (self.variables[name], None)
+        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
+            return self._add_access(name, rng, 'w', target, new_name, arr_type)
+        else:
+            raise NotImplementedError
+    
+    def _get_range(self,
+                   node: Union[ast.Name, ast.Subscript, ast.Call],
+                   name: str):
+        if isinstance(node, ast.Name):
+            actual_node = copy.deepcopy(node)
+            actual_node.id = name
+            rng = dace.subsets.Range(
+                astutils.subscript_to_slice(actual_node,
+                                            {**self.sdfg.arrays,
+                                             **self.scope_arrays})[1])
+        elif isinstance(node, ast.Subscript):
+            actual_node = copy.deepcopy(node)
+            actual_node.value.id = name
+            rng = dace.subsets.Range(
+                astutils.subscript_to_slice(actual_node,
+                                            {**self.sdfg.arrays,
+                                             **self.scope_arrays})[1])
+        elif isinstance(node, ast.Call):
+            rng = dace.subsets.Range.from_array({**self.sdfg.arrays,
+                                                 **self.scope_arrays}[name])
+        else:
+            raise NotImplementedError
+
+        return rng
+    
+    def _update_names(self,
+                      node: Union[ast.Name, ast.Subscript, ast.Call],
+                      name: str,
+                      name_subscript: bool = False):
+        if isinstance(node, ast.Name):
+            node.id = name
+        elif isinstance(node, ast.Subscript):
+            if isinstance(node.value, ast.Call):
+                node = node.value
+                node.func.id = name
+            elif name_subscript:
+                node = node.value
+                node.id = name
+            else:
+                node.value.id = name
+        elif isinstance(node, ast.Call):
+            node.func.id = name
+        else:
+            raise NotImplementedError
+
+        return node
 
     def visit_TopLevelExpr(self, node):
         if isinstance(node.value, ast.BinOp):
             if isinstance(node.value.op, (ast.LShift, ast.RShift)):
+                variables = {**self.variables, **self.scope_vars}
+                target = node.value.right
+                name = rname(target)
+                name_sub = False
                 if isinstance(node.value.op, ast.LShift):
-                    target = node.value.right
-                    name = rname(target)
-                    variables = {**self.variables, **self.scope_vars}
-                    has_indirection = False
-                    if self.nested:  # and isinstance(target, ast.Subscript):
-                        # name = rname(target)
+                    if self.nested:
                         real_name = variables[name]
-                        if isinstance(target, ast.Name):
-                            real_target = copy.deepcopy(target)
-                            real_target.id = real_name
-                            rng = dace.subsets.Range(
-                                astutils.subscript_to_slice(
-                                    real_target, {
-                                        **self.sdfg.arrays,
-                                        **self.scope_arrays
-                                    })[1])
-                        elif isinstance(target, ast.Subscript):
-                            real_target = copy.deepcopy(target)
-                            real_target.value.id = real_name
-                            rng = dace.subsets.Range(
-                                astutils.subscript_to_slice(
-                                    real_target, {
-                                        **self.sdfg.arrays,
-                                        **self.scope_arrays
-                                    })[1])
-                        elif isinstance(target, ast.Call):
-                            rng = dace.subsets.Range.from_array({
-                                **self.sdfg.arrays,
-                                **self.scope_arrays
-                            }[real_name])
-                        else:
-                            raise NotImplementedError
-                        if (name, rng, 'w') in self.accesses:
-                            access = self.accesses[(name, rng, 'w')]
-                            if isinstance(access, tuple):
-                                access = access[0]
-                            node.value.right = ast.Name(id=access)
-                        elif (name, rng, 'r') in self.accesses:
-                            access = self.accesses[(name, rng, 'r')]
-                            if isinstance(access, tuple):
-                                access = access[0]
-                            node.value.right = ast.Name(id=access)
-                        elif name in self.variables:
-                            if isinstance(target, ast.Name):
-                                node.value.right.id = real_name
-                            elif isinstance(target, ast.Subscript):
-                                node.value.right.value.id = real_name
-                            elif isinstance(target, ast.Call):
-                                node.value.right.func.id = real_name
-                            else:
-                                raise NotImplementedError
-                        elif name in self.scope_vars:
-                            vname = "__tmp_{l}_{c}".format(
-                                l=target.lineno, c=target.col_offset)
-                            parent_name = self.scope_vars[name]
-                            parent_array = self.scope_arrays[parent_name]
-                            sqz_rng = copy.deepcopy(rng)
-                            if _subset_has_indirection(rng):
-                                has_indirection = True
-                                non_sqz = list(range(len(rng)))
-                                shape = parent_array.shape
-                            else:
-                                non_sqz = sqz_rng.squeeze()
-                                shape = sqz_rng.size()
-                            dtype = parent_array.dtype
-                            strides = [
-                                parent_array.strides[d] for d in non_sqz
-                            ]
-                            if isinstance(parent_array, data.Stream):
-                                self.sdfg.add_stream(vname, dtype)
-                            else:
-                                self.sdfg.add_array(
-                                    vname, shape, dtype, strides=strides)
-                            self.accesses[(name, rng, 'r')] = (vname, sqz_rng)
-                            if _subset_has_indirection(rng):
-                                self.sdfg_inputs[vname] = (
-                                    dace.Memlet.from_array(
-                                        parent_name, parent_array), set())
-                            else:
-                                self.sdfg_inputs[vname] = (dace.Memlet(
-                                    parent_name, rng.num_elements(), rng, 1),
-                                                           set())
-                            # self.defined[vname] = self.sdfg.arrays[vname]
-                            if isinstance(target, (ast.Name, ast.Subscript)):
-                                node.value.right = ast.Name(id=vname)
-                            elif isinstance(target, ast.Call):
-                                node.value.right.func = ast.Name(id=vname)
-                            else:
-                                raise NotImplementedError
-                        else:
-                            raise DaceSyntaxError(
-                                self, target,
-                                'Array "{}" used before definition'.format(
-                                    name))
+                        rng = self._get_range(target, real_name)
+                        name, squeezed_rng = self._add_read_access(name, rng,
+                                                                   target)
+                        if squeezed_rng is not None:
+                            name_sub = True
                     else:
                         if name in variables:
-                            real_name = variables[name]
-                            if isinstance(target, ast.Name):
-                                node.value.right.id = real_name
-                            elif isinstance(target, ast.Subscript):
-                                node.value.right.value.id = real_name
-                            elif isinstance(target, ast.Call):
-                                node.value.right.func.id = real_name
-                            else:
-                                raise NotImplementedError
+                            name = variables[name]
+                    node.value.right = self._update_names(
+                        node.value.right, name, name_subscript=name_sub)
                     connector, memlet = _parse_memlet(self, node.value.right,
                                                       node.value.left,
                                                       self.sdfg.arrays)
-                    if has_indirection:
-                        memlet = dace.Memlet(memlet.data, rng.num_elements(),
+                    if self.nested and _subset_has_indirection(rng):
+                        memlet = dace.Memlet(memlet.data,
+                                             rng.num_elements(),
                                              rng, 1)
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
@@ -1332,116 +1388,23 @@ class TaskletTransformer(ExtNodeTransformer):
                         )
                     self.inputs[connector] = memlet
                 elif isinstance(node.value.op, ast.RShift):
-                    target = node.value.right
-                    name = rname(target)
-                    variables = {**self.variables, **self.scope_vars}
-                    new_output = False
-                    if self.nested:  # and isinstance(target, ast.Subscript):
-                        # name = rname(target)
+                    if self.nested:
                         real_name = variables[name]
-                        if isinstance(target, ast.Name):
-                            real_target = copy.deepcopy(target)
-                            real_target.id = real_name
-                            rng = dace.subsets.Range(
-                                astutils.subscript_to_slice(
-                                    real_target, {
-                                        **self.sdfg.arrays,
-                                        **self.scope_arrays
-                                    })[1])
-                        elif isinstance(target, ast.Subscript):
-                            real_target = copy.deepcopy(target)
-                            real_target.value.id = real_name
-                            rng = dace.subsets.Range(
-                                astutils.subscript_to_slice(
-                                    real_target, {
-                                        **self.sdfg.arrays,
-                                        **self.scope_arrays
-                                    })[1])
-                        elif isinstance(target, ast.Call):
-                            rng = dace.subsets.Range.from_array({
-                                **self.sdfg.arrays,
-                                **self.scope_arrays
-                            }[real_name])
-                        else:
-                            raise NotImplementedError
-                        if (name, rng, 'w') in self.accesses:
-                            access = self.accesses[(name, rng, 'w')]
-                            if isinstance(access, tuple):
-                                access = access[0]
-                            node.value.right = ast.Name(id=access)
-                        elif name in self.variables:
-                            if isinstance(target, ast.Name):
-                                node.value.right = ast.Name(id=real_name)
-                            elif isinstance(target, ast.Subscript):
-                                if isinstance(target.value, ast.Call):
-                                    node.value.right = node.value.right.value
-                                    node.value.right.func = ast.Name(id=real_name)
-                                else:
-                                    node.value.right = ast.Name(id=real_name)
-                            elif isinstance(target, ast.Call):
-                                node.value.right.func = ast.Name(id=real_name)
-                            else:
-                                raise NotImplementedError
-                        elif ((name, rng, 'r') in self.accesses
-                              or name in self.scope_vars):
-                            vname = "__tmp_{l}_{c}".format(
-                                l=target.lineno, c=target.col_offset)
-                            parent_name = self.scope_vars[name]
-                            parent_array = self.scope_arrays[parent_name]
-                            sqz_rng = copy.deepcopy(rng)
-                            non_sqz = sqz_rng.squeeze()
-                            shape = sqz_rng.size()
-                            dtype = parent_array.dtype
-                            strides = [
-                                parent_array.strides[d] for d in non_sqz
-                            ]
-                            if isinstance(parent_array, data.Stream):
-                                self.sdfg.add_stream(vname, dtype)
-                            else:
-                                self.sdfg.add_array(
-                                    vname, shape, dtype, strides=strides)
-                            self.accesses[(name, rng, 'w')] = (vname, sqz_rng)
-                            self.sdfg_outputs[vname] = (dace.Memlet(
-                                parent_name, rng.num_elements(), rng, 1),
-                                                        set())
-                            # self.defined[vname] = self.sdfg.arrays[vname]
-                            if isinstance(target, ast.Name):
-                                node.value.right = ast.Name(id=vname)
-                            elif isinstance(target, ast.Subscript):
-                                if isinstance(target.value, ast.Call):
-                                    node.value.right = node.value.right.value
-                                    node.value.right.func = ast.Name(id=vname)
-                                else:
-                                    node.value.right = ast.Name(id=vname)
-                            elif isinstance(target, ast.Call):
-                                node.value.right.func = ast.Name(id=vname)
-                            else:
-                                raise NotImplementedError
-                            new_output = True
-                        else:
-                            raise DaceSyntaxError(
-                                self, target,
-                                'Array "{}" used before definition'.format(
-                                    name))
+                        rng = self._get_range(target, real_name)
+                        name, squeezed_rng = self._add_write_access(name, rng,
+                                                                   target)
+                        if squeezed_rng is not None:
+                            name_sub = True
                     else:
                         if name in variables:
-                            real_name = variables[name]
-                            if isinstance(target, ast.Name):
-                                node.value.right.id = real_name
-                            elif isinstance(target, ast.Subscript):
-                                if isinstance(target.value, ast.Call):
-                                    node.value.right.value.func.id = real_name
-                                else:
-                                    node.value.right.value.id = real_name
-                            elif isinstance(target, ast.Call):
-                                node.value.right.func.id = real_name
-                            else:
-                                raise NotImplementedError
+                            name = variables[name]
+                    node.value.right = self._update_names(
+                        node.value.right, name, name_subscript=name_sub)
                     connector, memlet = _parse_memlet(self, node.value.left,
                                                       node.value.right,
                                                       self.sdfg.arrays)
-                    if new_output:
-                        out_memlet = self.sdfg_outputs[vname][0]
+                    if self.nested and name in self.sdfg_outputs:
+                        out_memlet = self.sdfg_outputs[name][0]
                         out_memlet.wcr = memlet.wcr
                         out_memlet.wcr_identity = memlet.wcr_identity
                         out_memlet.wcr_conflict = memlet.wcr_conflict
