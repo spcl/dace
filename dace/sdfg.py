@@ -632,7 +632,7 @@ class SDFG(OrderedDiGraph):
             for var, expr in edge_data.assignments.items():
                 assigned[var] = dt.Scalar(symbolic.symtype(expr))
                 if isinstance(expr, str):
-                    expr = sp.sympify(expr)  # Convert string to sympy expr
+                    expr = symbolic.pystr_to_symbolic(expr, simplify=False)
                 if isinstance(expr, sp.Expr):
                     for s in dace.symbolic.symbols_in_sympy_expr(expr):
                         used[s] = dt.Scalar(symbolic.symbol(s).dtype)
