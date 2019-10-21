@@ -15,7 +15,7 @@ TH = dace.symbol('TH')
 
 @dace.program(dace.float32[H, W], dace.float32[H, W], dace.int32, dace.int32)
 def transpose_tiled(A, B, TW, TH):
-    @dace.map(_[0:H:TH, 0:W:TW])
+    @dace.mapscope(_[0:H:TH, 0:W:TW])
     def compute(tile_i, tile_j):
         @dace.map(_[0:TH, 0:TW])
         def compute_tile(i, j):

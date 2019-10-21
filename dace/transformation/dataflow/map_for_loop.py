@@ -3,7 +3,7 @@
 
 import dace
 from copy import deepcopy as dcpy
-from dace import data, symbolic, types, subsets
+from dace import data, symbolic, dtypes, subsets
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from math import ceil

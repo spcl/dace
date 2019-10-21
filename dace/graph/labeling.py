@@ -7,7 +7,7 @@ import functools
 import sympy
 import warnings
 
-from dace import data, subsets, symbolic, types
+from dace import data, subsets, symbolic, dtypes
 from dace.memlet import EmptyMemlet, Memlet
 from dace.graph import nodes
 
@@ -232,7 +232,8 @@ class AffineSMemlet(SeparableMemletPattern):
                 self.internal_range.add((brb, bre))
 
             if step is not None:
-                if self.param in step.free_symbols:
+                if (symbolic.issymbolic(step)
+                        and self.param in step.free_symbols):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
@@ -409,7 +410,7 @@ class ConstantSMemlet(SeparableMemletPattern):
         if isinstance(dexpr, tuple) and len(dexpr) == 3:
             # Try to match a constant expression for the range
             for rngelem in dexpr:
-                if types.isconstant(rngelem):
+                if dtypes.isconstant(rngelem):
                     continue
 
                 matches = rngelem.match(cst)
@@ -420,7 +421,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 
         else:  # Single element case
             # Try to match a constant expression
-            if not types.isconstant(dexpr):
+            if not dtypes.isconstant(dexpr):
                 matches = dexpr.match(cst)
                 if matches is None or len(matches) != 1:
                     return False
@@ -455,7 +456,11 @@ class GenericSMemlet(SeparableMemletPattern):
         self.params = variable_context[-1]
         defined_vars = variable_context[-2]
 
-        used_symbols = set([s for dim in dims for s in dim.free_symbols])
+        used_symbols = set()
+        for dim in dims:
+            if symbolic.issymbolic(dim):
+                used_symbols.update(dim.free_symbols)
+
         if (used_symbols & set(self.params)
                 and any(s not in defined_vars
                         for s in node_range.free_symbols)):
@@ -545,7 +550,7 @@ class ConstantRangeMemlet(MemletPattern):
         constant_range = True
         for dim in node_range:
             for rngelem in dim:  # For (begin, end, skip)
-                if not types.isconstant(rngelem) and not isinstance(
+                if not dtypes.isconstant(rngelem) and not isinstance(
                         rngelem, sympy.Number):
                     constant_range = False
                     break
@@ -676,8 +681,11 @@ def _propagate_node(dfg_state, node):
 
 
 # External API
-def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
-                     union_inner_edges: bool):
+def propagate_memlet(dfg_state,
+                     memlet: Memlet,
+                     scope_node: nodes.EntryNode,
+                     union_inner_edges: bool,
+                     arr=None):
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
@@ -710,20 +718,22 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
     if union_inner_edges:
         aggdata = [
             e.data for e in neighboring_edges
-            if e.data.data == memlet.data and e.data != memlet
+            if e.data.data == arr and e.data != memlet
         ]
     else:
         aggdata = []
 
     aggdata.append(memlet)
 
-    # Propagate subset
-    if isinstance(entry_node, nodes.MapEntry):
-        mapnode = entry_node.map
-
+    if arr is None:
         if memlet.data not in sdfg.arrays:
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
                            'in SDFG.' % memlet.data)
+        arr = sdfg.arrays[memlet.data]
+
+    # Propagate subset
+    if isinstance(entry_node, nodes.MapEntry):
+        mapnode = entry_node.map
 
         variable_context = [
             defined_vars,
@@ -736,8 +746,8 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
             for pattern in MemletPattern.patterns():
                 if pattern.match([md.subset], variable_context, mapnode.range,
                                  [md]):
-                    tmp_subset = pattern.propagate(sdfg.arrays[memlet.data],
-                                                   [md.subset], mapnode.range)
+                    tmp_subset = pattern.propagate(arr, [md.subset],
+                                                   mapnode.range)
                     break
             else:
                 # No patterns found. Emit a warning and propagate the entire
@@ -745,7 +755,7 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
                 warnings.warn('Cannot find appropriate memlet pattern to '
                               'propagate %s through %s' % (str(md.subset),
                                                            str(mapnode.range)))
-                tmp_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
+                tmp_subset = subsets.Range.from_array(arr)
 
             # Union edges as necessary
             if new_subset is None:
@@ -759,13 +769,13 @@ def propagate_memlet(dfg_state, memlet: Memlet, scope_node: nodes.EntryNode,
 
         # Some unions failed
         if new_subset is None:
-            new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
+            new_subset = subsets.Range.from_array(arr)
 
         assert new_subset is not None
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
-        new_subset = subsets.Range.from_array(sdfg.arrays[memlet.data])
+        new_subset = subsets.Range.from_array(arr)
     else:
         raise NotImplementedError(
             'Unimplemented primitive: %s' % type(scope_node))

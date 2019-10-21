@@ -4,7 +4,7 @@
 import copy
 import dace
 from copy import deepcopy as dcpy
-from dace import types, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.properties import make_properties, Property, ParamsProperty, ShapeProperty
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
@@ -224,7 +224,7 @@ class OrthogonalTiling(pattern_matching.Transformation):
         new_exit = nodes.MapExit(new_map)
 
         # Make internal map's schedule to "not parallel"
-        map_entry.map._schedule = types.ScheduleType.Default
+        map_entry.map._schedule = dtypes.ScheduleType.Default
 
         # Redirect/create edges.
         new_in_edges = {}

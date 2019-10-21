@@ -455,11 +455,11 @@ class PropertyRenderer:
         sdfg = cb_data[1]
         namefield = cb_data[2]
         if datatype == "scalar":
-            sdfg.add_scalar(namefield.get_text(), dace.types.int32)
+            sdfg.add_scalar(namefield.get_text(), dace.dtypes.int32)
         elif datatype == "array":
-            sdfg.add_array(namefield.get_text(), [2, 2], dace.types.float32)
+            sdfg.add_array(namefield.get_text(), [2, 2], dace.dtypes.float32)
         elif datatype == "stream":
-            sdfg.add_stream(namefield.get_text(), dace.types.float32, 1)
+            sdfg.add_stream(namefield.get_text(), dace.dtypes.float32, 1)
         self.render_free_symbols(sdfg)
 
     def show_delete_error(self, sdfg, state, element):

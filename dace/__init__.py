@@ -1,4 +1,4 @@
-from .types import *
+from .dtypes import *
 
 # Python frontend
 from .frontend.python.decorators import *

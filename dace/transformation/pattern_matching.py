@@ -388,7 +388,8 @@ def match_pattern(state_id,
         if isinstance(node, dace.graph.nodes.NestedSDFG):
             sub_sdfg = node.sdfg
             for i, sub_state in enumerate(sub_sdfg.nodes()):
-                yield from match_pattern(i, sub_state, pattern, sub_sdfg)
+                yield from match_pattern(
+                    i, sub_state, pattern, sub_sdfg, strict=strict)
 
 
 def match_stateflow_pattern(sdfg,
@@ -429,4 +430,5 @@ def match_stateflow_pattern(sdfg,
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                yield from match_stateflow_pattern(node.sdfg, pattern)
+                yield from match_stateflow_pattern(
+                    node.sdfg, pattern, strict=strict)

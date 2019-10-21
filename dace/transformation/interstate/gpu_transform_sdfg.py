@@ -3,7 +3,7 @@
 import copy
 import itertools
 
-from dace import data, memlet, types, sdfg as sd, subsets as sbs, symbolic
+from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.config import Config
 from dace.graph import nodes, nxutil, edges as ed
 from dace.transformation import pattern_matching, optimizer
@@ -119,7 +119,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
             newdesc = inode.clone()
-            newdesc.storage = types.StorageType.GPU_Global
+            newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
             sdfg.add_datadesc('gpu_' + inodename, newdesc)
             cloned_arrays[inodename] = 'gpu_' + inodename
@@ -128,7 +128,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             if onodename in cloned_arrays:
                 continue
             newdesc = onode.clone()
-            newdesc.storage = types.StorageType.GPU_Global
+            newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
             sdfg.add_datadesc('gpu_' + onodename, newdesc)
             cloned_arrays[onodename] = 'gpu_' + onodename
@@ -206,7 +206,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                     if sdict[node] is None:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
-                        nodedesc.storage = types.StorageType.GPU_Global
+                        nodedesc.storage = dtypes.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
                         if (self.toplevel_trans
@@ -215,7 +215,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                     else:
                         # Make internal transients registers
                         if self.register_trans:
-                            nodedesc.storage = types.StorageType.Register
+                            nodedesc.storage = dtypes.StorageType.Register
 
         #######################################################
         # Step 5: Wrap free tasklets and nested SDFGs with a GPU map
@@ -225,7 +225,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 # Create map and connectors
                 me, mx = state.add_map(
                     gcode.label + '_gmap', {gcode.label + '__gmapi': '0:1'},
-                    schedule=types.ScheduleType.GPU_Device)
+                    schedule=dtypes.ScheduleType.GPU_Device)
                 # Store in/out edges in lists so that they don't get corrupted
                 # when they are removed from the graph
                 in_edges = list(state.in_edges(gcode))
@@ -260,9 +260,9 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             for node in state.nodes():
                 if isinstance(node, nodes.EntryNode):
                     if sdict[node] is None:
-                        node.schedule = types.ScheduleType.GPU_Device
+                        node.schedule = dtypes.ScheduleType.GPU_Device
                     elif self.sequential_innermaps:
-                        node.schedule = types.ScheduleType.Sequential
+                        node.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################
         # Step 7: Introduce copy-out if data used in outgoing interstate edges

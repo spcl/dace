@@ -6,7 +6,7 @@ import dace
 import math
 import numpy as np
 
-from dace.types import StorageType, Language
+from dace.dtypes import StorageType, Language
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 from dace.subsets import Indices
@@ -80,7 +80,7 @@ def make_iteration_space(sdfg, add_one=False):
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i < N" + (" + W" if add_one else ""),
-                language=dace.types.Language.Python)))
+                language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry,
@@ -88,7 +88,7 @@ def make_iteration_space(sdfg, add_one=False):
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i >= N" + (" + W" if add_one else ""),
-                language=dace.types.Language.Python)))
+                language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_body,
@@ -306,7 +306,7 @@ def make_write_sdfg():
 
     i_write_zero = loop_begin.add_scalar(
         "i_write",
-        dtype=dace.types.uint32,
+        dtype=dace.dtypes.uint32,
         transient=True,
         storage=StorageType.FPGA_Registers)
     zero_tasklet = loop_begin.add_tasklet("zero", {}, {"i_write_out"},
@@ -327,14 +327,14 @@ def make_write_sdfg():
         state,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "i < N + W", language=dace.types.Language.Python)))
+                "i < N + W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry,
         loop_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "i >= N + W", language=dace.types.Language.Python)))
+                "i >= N + W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         state,
@@ -351,17 +351,17 @@ def make_write_sdfg():
         storage=StorageType.FPGA_Local)
     valid_pipe = state.add_stream(
         "_valid_pipe",
-        dtype=dace.types.bool,
+        dtype=dace.dtypes.bool,
         buffer_size=buffer_size,
         storage=StorageType.FPGA_Local)
     i_write_in = state.add_scalar(
         "i_write",
-        dtype=dace.types.uint32,
+        dtype=dace.dtypes.uint32,
         transient=True,
         storage=StorageType.FPGA_Registers)
     i_write_out = state.add_scalar(
         "i_write",
-        dtype=dace.types.uint32,
+        dtype=dace.dtypes.uint32,
         transient=True,
         storage=StorageType.FPGA_Registers)
 
@@ -452,13 +452,13 @@ def make_main_state(sdfg):
         storage=StorageType.FPGA_Local)
     valid_pipe_in = state.add_stream(
         "valid_pipe",
-        dtype=dace.types.bool,
+        dtype=dace.dtypes.bool,
         buffer_size=buffer_size,
         transient=True,
         storage=StorageType.FPGA_Local)
     valid_pipe_out = state.add_stream(
         "valid_pipe",
-        dtype=dace.types.bool,
+        dtype=dace.dtypes.bool,
         buffer_size=buffer_size,
         transient=True,
         storage=StorageType.FPGA_Local)

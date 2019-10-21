@@ -81,7 +81,8 @@ class InstrumentationProvider(object):
         pass
 
     def on_copy_begin(self, sdfg, state, src_node, dst_node, edge,
-                      local_stream, global_stream, copy_shape, src_strides, dst_strides):
+                      local_stream, global_stream, copy_shape, src_strides,
+                      dst_strides):
         """ Event called at the beginning of generating a copy operation.
             @param sdfg: The generated SDFG object.
             @param state: The generated SDFGState object.

@@ -15,18 +15,13 @@ nnz = dace.symbol('nnz')
 @dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz],
               dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
-    @dace.map(_[0:H])
+    @dace.mapscope(_[0:H])
     def compute_row(i):
-        rowptr = dace.define_local_scalar(dace.uint32)
-        rowend = dace.define_local_scalar(dace.uint32)
-        rowptr << A_row[i]
-        rowend << A_row[i + 1]
-
-        @dace.map(_[rowptr:rowend])
+        @dace.map(_[A_row[i]:A_row[i + 1]])
         def compute(j):
             a << A_val[j]
             in_x << x[A_col[j]]
-            out >> b(1, lambda x, y: x + y, 0)[i]
+            out >> b(1, lambda x, y: x + y)[i]
 
             out = a * in_x
 
@@ -78,7 +73,7 @@ if __name__ == "__main__":
     #########################
 
     x[:] = np.random.rand(W.get()).astype(dace.float32.type)
-    #b[:] = dace.float32(0)
+    b[:] = dace.float32(0)
 
     # Setup regression
     A_sparse = scipy.sparse.csr_matrix(

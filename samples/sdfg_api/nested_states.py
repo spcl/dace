@@ -55,17 +55,8 @@ state.add_memlet_path(
     nsdfg, mx, Aout, memlet=dace.Memlet.simple('A', 'k'), src_conn='sC')
 ###
 
-# Validate correctness of initial SDFG
+# Validate correctness of SDFG
 sdfg.validate()
-
-# The files will be output as nofusion.dot and nested_sub_nofusion.dot for the
-# nested SDFG.
-sdfg.draw_to_file('nofusion.dot')
-
-# Fuses redundant states and removes unnecessary transient arrays
-sdfg.apply_strict_transformations()
-
-sdfg.draw_to_file('withfusion.dot')
 
 ######################################
 if __name__ == '__main__':
