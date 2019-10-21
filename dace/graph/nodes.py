@@ -3,6 +3,7 @@
 
 import ast
 from copy import deepcopy as dcpy
+import dace
 import itertools
 from typing import Set
 from dace.graph import dot, graph
@@ -68,7 +69,7 @@ class Node(object):
 
     def add_in_connector(self, connector_name: str):
         """ Adds a new input connector to the node. The operation will fail if
-            a connector (either input or output) with the same name already 
+            a connector (either input or output) with the same name already
             exists in the node.
 
             @param connector_name: The name of the new connector.
@@ -85,7 +86,7 @@ class Node(object):
 
     def add_out_connector(self, connector_name: str):
         """ Adds a new output connector to the node. The operation will fail if
-            a connector (either input or output) with the same name already 
+            a connector (either input or output) with the same name already
             exists in the node.
 
             @param connector_name: The name of the new connector.
@@ -228,8 +229,8 @@ class AccessNode(Node):
 
 
 class CodeNode(Node):
-    """ A node that contains runnable code with acyclic external data 
-        dependencies. May either be a tasklet or a nested SDFG, and 
+    """ A node that contains runnable code with acyclic external data
+        dependencies. May either be a tasklet or a nested SDFG, and
         denoted by an octagonal shape. """
     pass
 
@@ -237,10 +238,10 @@ class CodeNode(Node):
 @make_properties
 class Tasklet(CodeNode):
     """ A node that contains a tasklet: a functional computation procedure
-        that can only access external data specified using connectors. 
-        
-        Tasklets may be implemented in Python, C++, or any supported 
-        language by the code generator. 
+        that can only access external data specified using connectors.
+
+        Tasklets may be implemented in Python, C++, or any supported
+        language by the code generator.
     """
 
     label = Property(dtype=str, desc="Name of the tasklet")
@@ -350,7 +351,7 @@ class NestedSDFG(CodeNode):
 
         It is encouraged to use nested SDFGs instead of coarse-grained tasklets
         since they are analyzable with respect to transformations.
-        
+
         @note: A nested SDFG cannot create recursion (one of its parent SDFGs).
     """
 
@@ -456,7 +457,7 @@ class ExitNode(Node):
 
 
 class MapEntry(EntryNode):
-    """ Node that opens a Map scope. 
+    """ Node that opens a Map scope.
         @see: Map
     """
 
@@ -541,9 +542,9 @@ class MapExit(ExitNode):
 @make_properties
 class Map(object):
     """ A Map is a two-node representation of parametric graphs, containing
-        an integer set by which the contents (nodes dominated by an entry 
+        an integer set by which the contents (nodes dominated by an entry
         node and post-dominated by an exit node) are replicated.
-        
+
         Maps contain a `schedule` property, which specifies how the scope
         should be scheduled (execution order). Code generators can use the
         schedule property to generate appropriate code, e.g., GPU kernels.
@@ -618,7 +619,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 
 
 class ConsumeEntry(EntryNode):
-    """ Node that opens a Consume scope. 
+    """ Node that opens a Consume scope.
         @see: Consume
     """
 
@@ -662,7 +663,7 @@ class ConsumeEntry(EntryNode):
 
 
 class ConsumeExit(ExitNode):
-    """ Node that closes a Consume scope. 
+    """ Node that closes a Consume scope.
         @see: Consume
     """
 
@@ -715,8 +716,8 @@ class ConsumeExit(ExitNode):
 
 @make_properties
 class Consume(object):
-    """ Consume is a scope, like `Map`, that is a part of the parametric 
-        graph extension of the SDFG. It creates a producer-consumer 
+    """ Consume is a scope, like `Map`, that is a part of the parametric
+        graph extension of the SDFG. It creates a producer-consumer
         relationship between the input stream and the scope subgraph. The
         subgraph is scheduled to a given number of processing elements
         for processing, and they will try to pop elements from the input
@@ -789,15 +790,15 @@ class Consume(object):
 
 
 # Redirect Consume properties to ConsumeEntry and ConsumeExit
-ConsumeEntry = indirect_properties(Consume,
-                                   lambda obj: obj.consume)(ConsumeEntry)
+ConsumeEntry = indirect_properties(
+    Consume, lambda obj: obj.consume)(ConsumeEntry)
 
 # ------------------------------------------------------------------------------
 
 
 @make_properties
 class Reduce(Node):
-    """ An SDFG node that reduces an N-dimensional array to an 
+    """ An SDFG node that reduces an N-dimensional array to an
         (N-k)-dimensional array, with a list of axes to reduce and
         a reduction binary function. """
 
@@ -862,3 +863,81 @@ class Reduce(Node):
 
         return 'Op: {op}\nAxes: {axes}'.format(
             axes=('all' if self.axes is None else str(self.axes)), op=wcrstr)
+
+
+# ------------------------------------------------------------------------------
+
+
+@make_properties
+class LibraryNode(Node):
+
+    implementation = Property(
+        dtype=str,
+        allow_none=True,
+        desc=("Which implementation this library node will expand into."
+              "Must match a key in the list of possible implementations."))
+
+    def __init__(self, *args, **kwargs):
+        if hasattr(type(self), "default_implementation"):
+            self.implementation = self.default_implementation
+        else:
+            self.implementation = None
+        super().__init__(*args, **kwargs)
+
+    def expand(self, sdfg):
+        """Shorthand to create and perform the expansion transformation
+           for this library node."""
+        implementation = self.implementation
+        if implementation is None:
+            implementation = self.default_implementation
+            if implementation is None:
+                raise ValueError("No implementation or default "
+                                 "implementation specified.")
+        Transformation = type(self).implementations[self.implementation][0]
+        states = sdfg.states_for_node(self)
+        if len(states) < 1:
+            raise ValueError("Node \"" + str(self) +
+                             "\" not found in SDFG \"" + str(sdfg) + "\".")
+        if len(states) > 1:
+            raise ValueError("Node \"" + str(self) +
+                             "\" found in multiple states: " + ", ".join(
+                                 str(s) for s in states))
+        state = states[0]
+        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        state_id = sdfg.nodes().index(state)
+        subgraph = {Transformation._node: state.node_id(self)}
+        transformation = Transformation(sdfg_id, state_id, subgraph, 0)
+        transformation.apply(sdfg)
+
+    def draw_node(self, sdfg, state):
+        return dot.draw_node(sdfg, state, self, shape="folder")
+
+    def validate(self, sdfg, state):
+        raise ValueError("Unexpanded library node of type " + str(type(self)) +
+                         ".")
+
+
+def static_connectors(clc):
+    """Decorator that removes methods to add/remove connectors from node.
+       This is useful for library nodes that enforce specific semantics for
+       input and output.
+    """
+
+    def add_in_connector(self, connector_name):
+        raise TypeError("Additional connectors not allowed for library node")
+
+    def add_out_connector(self, connector_name):
+        raise TypeError("Additional connectors not allowed for library node")
+
+    def remove_in_connector(self, connector_name):
+        raise TypeError("Cannot remove connector from library node")
+
+    def remove_out_connector(self, connector_name):
+        raise TypeError("Cannot remove connector from library node")
+
+    clc.add_in_connector = add_in_connector
+    clc.add_out_connector = add_out_connector
+    clc.remove_in_connector = remove_in_connector
+    clc.remove_out_connector = remove_out_connector
+
+    return clc

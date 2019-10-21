@@ -168,9 +168,16 @@ class SDFG(OrderedDiGraph):
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
-                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k is not None}, default=Property.json_dumper) if x is not None else "null",
-                        from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
+    _arrays = Property(
+        dtype=dict,
+        desc="Data descriptors for this SDFG",
+        to_json=lambda x: json.dumps(
+            {k: v
+             for k, v in x.items() if k is not None},
+            default=Property.json_dumper) if x is not None else "null",
+        from_json=lambda s, sdfg=None: Property.add_none_pair(
+            json.loads(s, object_hook=Property.json_loader))
+        if s != "null" else None)
 
     global_code = CodeProperty(
         desc=
@@ -960,7 +967,7 @@ subgraph cluster_state_{state} {{
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
-    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
+    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
             sdfg=json.dumps(self.toJSON()),
@@ -1283,7 +1290,7 @@ subgraph cluster_state_{state} {{
             increment_expr: str,
             loop_end_state=None,
     ):
-        """ Helper function that adds a looping state machine around a 
+        """ Helper function that adds a looping state machine around a
             given state (or sequence of states).
             @param before_state: The state after which the loop should
                                  begin, or None if the loop is the first
@@ -1291,7 +1298,7 @@ subgraph cluster_state_{state} {{
             @param loop_state: The state that begins the loop. See also
                                `loop_end_state` if the loop is multi-state.
             @param after_state: The state that should be invoked after
-                                the loop ends, or None if the program 
+                                the loop ends, or None if the program
                                 should terminate (creates an empty state).
             @param loop_var: A name of an inter-state variable to use
                              for the loop. If None, `initialize_expr`
@@ -1300,14 +1307,14 @@ subgraph cluster_state_{state} {{
                                     to `loop_var` before the loop begins.
                                     If None, does not define an expression.
             @param condition_expr: A string condition that occurs every
-                                   loop iteration. If None, loops forever 
+                                   loop iteration. If None, loops forever
                                    (undefined behavior).
             @param increment_expr: A string expression that is assigned to
                                    `loop_var` after every loop iteration.
                                     If None, does not define an expression.
             @param loop_end_state: If the loop wraps multiple states, the
                                    state where the loop iteration ends.
-                                   If None, sets the end state to 
+                                   If None, sets the end state to
                                    `loop_state` as well.
             @return: A 3-tuple of (`before_state`, generated loop guard state,
                                    `after_state`).
@@ -1346,8 +1353,8 @@ subgraph cluster_state_{state} {{
 
         # Loop incrementation
         incr = None if increment_expr is None else {loop_var: increment_expr}
-        self.add_edge(
-            loop_end_state, guard, ed.InterstateEdge(assignments=incr))
+        self.add_edge(loop_end_state, guard,
+                      ed.InterstateEdge(assignments=incr))
 
         return before_state, guard, after_state
 
@@ -1464,6 +1471,9 @@ subgraph cluster_state_{state} {{
         if optclass is not None:
             opt = optclass(sdfg)
             sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+
+        # Recursively expand library nodes that haven't been expanded yet
+        sdfg.expand_library_nodes()
 
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
@@ -1633,8 +1643,9 @@ subgraph cluster_state_{state} {{
         from dace.transformation.dataflow import RedundantArray
         from dace.transformation.interstate import StateFusion
 
-        self.apply_transformations(
-            [RedundantArray, StateFusion], validate=validate, strict=True)
+        self.apply_transformations([RedundantArray, StateFusion],
+                                   validate=validate,
+                                   strict=True)
 
     def apply_transformations(self,
                               patterns,
@@ -1687,6 +1698,28 @@ subgraph cluster_state_{state} {{
         self.apply_transformations(
             patterns, validate=validate, strict=strict, states=states)
 
+    def expand_library_nodes(self):
+        """ Recursively expand all unexpanded library nodes in the SDFG,
+            resulting in a "pure" SDFG that the code generator can handle.
+        """
+
+        states = list(self.states())
+        while len(states) > 0:
+            state = states.pop()
+            expanded_something = False
+            for node in list(state.nodes()):  # Make sure we have a copy
+                if isinstance(node, nd.NestedSDFG):
+                    node.sdfg.expand_library_nodes()  # Call recursively
+                elif isinstance(node, nd.LibraryNode):
+                    node.expand(self)
+                    print("Automatically expanded library node \"" +
+                          str(node) + "\".")
+                    # We made a copy of the original list of nodes, so we keep
+                    # iterating even though this list has now changed
+                    expanded_something = True
+            if expanded_something:
+                states.append(state)  # Nodes have changed. Check state again
+
     def generate_code(self, specialize=None):
         """ Generates code from this SDFG and returns it.
             @param specialize: If True, specializes all set symbols to their
@@ -1730,7 +1763,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
-    
+
             @note: Behavior is undefined when there is more than one path
                    involving this edge.
             @param edge: An edge within this state.
@@ -1747,8 +1780,9 @@ class MemletTrackingView(object):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
-        while not isinstance(curedge.src,
-                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+        while not isinstance(
+                curedge.src,
+            (nd.CodeNode, nd.AccessNode, nd.Reduce, nd.LibraryNode)):
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -1786,7 +1820,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a tree
             between its node source(s) and sink(s). Used for memlet tracking.
-    
+
             @param edge: An edge within this state.
             @return: A list of edges from source nodes to destination nodes
                      (in arbitrary order) that pass through the given edge.
@@ -3380,10 +3414,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if e.data.data is not None and e.data.allow_oob == False:
                 subset_node = (dst_node if isinstance(dst_node, nd.AccessNode)
                                and e.data.data == dst_node.data else src_node)
-                other_subset_node = (dst_node
-                                     if isinstance(dst_node, nd.AccessNode)
-                                     and e.data.data != dst_node.data else
-                                     src_node)
+                other_subset_node = (
+                    dst_node if isinstance(dst_node, nd.AccessNode)
+                    and e.data.data != dst_node.data else src_node)
 
                 if isinstance(subset_node, nd.AccessNode):
                     arr = sdfg.arrays[subset_node.data]
@@ -3462,7 +3495,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Memlet path scope lifetime checks
             # If scope(src) == scope(dst): OK
-            if scope[src_node] == scope[dst_node] or src_node == scope[dst_node]:
+            if scope[src_node] == scope[dst_node] or src_node == scope[
+                    dst_node]:
                 pass
             # If scope(src) contains scope(dst), then src must be a data node
             elif scope_contains_scope(scope, src_node, dst_node):
@@ -3772,8 +3806,8 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
         symbols = collections.OrderedDict()
     defined = set(sdfg.constants.keys())
     symbols.update(
-        obj.data_symbols(True)
-        if isinstance(obj, SDFG) else obj.data_symbols())
+        obj.data_symbols(True) if isinstance(obj, SDFG) else obj.data_symbols(
+        ))
     assigned, used = obj.interstate_symbols()
     defined |= assigned.keys()
     symbols.update(used)
