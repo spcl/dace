@@ -2528,13 +2528,29 @@ class ProgramVisitor(ExtNodeVisitor):
                         return True
 
     def visit_Call(self, node: ast.Call):
+        from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
+
         default_impl = Config.get('frontend', 'implementation')
         funcname = rname(node)
+        func = None
+
+        # Check if the function exists as an SDFG in a different module
+        modname = until(funcname, '.')
+        if ('.' in funcname and len(modname) > 0 and modname in self.globals
+                and dtypes.ismodule(self.globals[modname])):
+            func = getattr(self.globals[modname], funcname[len(modname) + 1:])
+
+            # Not an SDFG, ignore (might be a recognized function, see below)
+            if not isinstance(func, (SDFG, DaceProgram)):
+                func = None
+            else:
+                # An SDFG, replace dots in name with underscores
+                funcname = funcname.replace('.', '_')
 
         # If the function exists as a global SDFG or @dace.program, use it
-        if funcname in self.other_sdfgs:
-            from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
-            func = self.other_sdfgs[funcname]
+        if func or funcname in self.other_sdfgs:
+            if func is None:
+                func = self.other_sdfgs[funcname]
             if isinstance(func, SDFG):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
