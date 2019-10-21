@@ -18,7 +18,7 @@ import numpy as np
 
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
-        state machines, and uses a dispatcher to generate code for 
+        state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
 
     def __init__(self, *args, **kwargs):
@@ -154,14 +154,14 @@ DACE_EXPORTED void __program_%s(%s)
             """
 DACE_EXPORTED int __dace_init(%s)
 {
-    int result = 0;
+    int __result = 0;
 """ % params, sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    'result |= __dace_init_%s(%s);' % (target.target_name,
-                                                       paramnames), sdfg)
+                    '__result |= __dace_init_%s(%s);' % (target.target_name,
+                                                         paramnames), sdfg)
 
         callsite_stream.write(sdfg.init_code, sdfg)
 
@@ -169,7 +169,7 @@ DACE_EXPORTED int __dace_init(%s)
 
         callsite_stream.write(
             """
-    return result;
+    return __result;
 }
 
 DACE_EXPORTED void __dace_exit(%s)
@@ -686,9 +686,9 @@ DACE_EXPORTED void __dace_exit(%s)
 
                 # Build a set of all nodes in all cycles associated with this
                 # set of start and end node
-                internal_nodes = functools.reduce(
-                    lambda a, b: a | b, [set(c)
-                                         for c in cycles]) - {first_node}
+                internal_nodes = functools.reduce(lambda a, b: a | b,
+                                                  [set(c) for c in cycles
+                                                   ]) - {first_node}
 
                 exit_edge = [
                     e for e in sdfg.out_edges(first_node)
@@ -886,9 +886,9 @@ DACE_EXPORTED void __dace_exit(%s)
 
 
 def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
-    """ Sets default storage and schedule types throughout SDFG. 
+    """ Sets default storage and schedule types throughout SDFG.
         Replaces `ScheduleType.Default` and `StorageType.Default`
-        with the corresponding types according to the parent scope's 
+        with the corresponding types according to the parent scope's
         schedule. """
     for state in sdfg.nodes():
         scope_dict = state.scope_dict()
