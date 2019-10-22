@@ -15,6 +15,8 @@ diode_files = [
     for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
               glob.glob(diode_path + '**/*.css', recursive=True) +
               glob.glob(diode_path + '**/*.html', recursive=True) +
+              glob.glob(diode_path + '**/LICENSE', recursive=True) +
+              glob.glob(diode_path + 'client/external_lib/material/*') +
               glob.glob(diode_path + 'db_scripts/*', recursive=True))
 ]
 cub_files = [
@@ -47,7 +49,7 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.6',
-    packages=find_packages(),
+    packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
