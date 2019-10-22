@@ -6,7 +6,7 @@ import dace
 import math
 import numpy as np
 
-N = dace.symbol()
+N = dace.symbol("N")
 
 
 @dace.program
@@ -40,13 +40,13 @@ if __name__ == "__main__":
     out_AA[0] = dace.float64(0)
 
     cdot = dace.compile(dot, A, B, out_AB)
-    cdot(A, B, out_AB)
+    cdot(A=A, B=B, out=out_AB, N=N)
 
     # To allow reloading the SDFG code file with the same name
     del cdot
 
     cdot_self = dace.compile(dot, A, A, out_AA)
-    cdot_self(A, A, out_AA)
+    cdot_self(A=A, B=A, out=out_AA, N=N)
 
     diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
     diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(N.get())
