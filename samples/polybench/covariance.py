@@ -80,10 +80,6 @@ def covariance(data, cov, mean):
             covout >> cov(2)[:, :]
             covout[i, j] = cov_ij / (N - 1)
             covout[j, i] = cov_ij / (N - 1)
-            # covout_ij >> cov[i, j]
-            # covout_ji >> cov[j, i]
-            # covout_ij = cov_ij / (N - 1)
-            # covout_ji = cov_ij / (N - 1)
 
 
 if __name__ == '__main__':
