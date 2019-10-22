@@ -2197,11 +2197,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         state = self._add_state("assign_{l}_{c}".format(
             l=node.lineno, c=node.col_offset))
-        op1 = state.add_read(op_name)
-        op2 = state.add_write(target_name)
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
+                op1 = state.add_read(op_name)
+                op2 = state.add_write(target_name)
                 memlet = Memlet(target_name, target_subset.num_elements(),
                                 target_subset, 1)
                 memlet.other_subset = op_subset
@@ -2211,16 +2211,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet.simple(
-                    op2,
+                    target_name,
                     ','.join(['__i%d' % i for i in range(len(target_subset))]))
                 if op:
                     memlet.wcr = LambdaProperty.from_string(
                         'lambda x, y: x {} y'.format(op))
                 state.add_mapped_tasklet(
                     state.label, {
-                        '__i%d' % i: '%s:%s:%s' % (start, end, step)
+                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
-                    }, {'inp': Memlet.simple(op1, '%s' % op_subset[0][0])},
+                    }, {'inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
                     'out = inp', {'out': memlet},
                     external_edges=True)
         else:
@@ -2229,13 +2229,16 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, "Incompatible subsets %s and %s" %
                     (target_subset, op_subset))
             else:
+                op1 = state.add_read(op_name)
+                op2 = state.add_write(target_name)
                 tasklet = state.add_tasklet(
                     name=state.label,
                     inputs={'inp'},
                     outputs={'out'},
                     code='out = inp')
-                inp_memlet = Memlet.simple(op1, '%s' % op_subset[0][0])
-                out_memlet = Memlet.simple(op2, '%s' % target_subset[0][0])
+                inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                out_memlet = Memlet.simple(target_name,
+                                           '%s' % target_subset[0][0])
                 if op is not None:
                     out_memlet.wcr = LambdaProperty.from_string(
                         'lambda x, y: x {} y'.format(op))
