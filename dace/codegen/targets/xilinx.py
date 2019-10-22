@@ -953,9 +953,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 raise dace.codegen.codegen.CodegenError(
                     "Streams cannot be unbounded on FPGA")
 
-            buffer_length_dynamically_sized = (
-                isinstance(nodedesc.buffer_size, sp.Expr)
-                and len(nodedesc.free_symbols) > 0)
+            buffer_length_dynamically_sized = (dace.symbolic.issymbolic(
+                nodedesc.buffer_size, sdfg.constants))
 
             if buffer_length_dynamically_sized:
                 raise dace.codegen.codegen.CodegenError(
