@@ -22,6 +22,7 @@ def transpose(input, output):
 def bla(A, B, alpha):
     @dp.tasklet
     def something():
+        al << alpha
         a << A[0, 0]
         b >> B[0, 0]
         b = alpha * a
