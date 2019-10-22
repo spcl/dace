@@ -1164,20 +1164,26 @@ class TaskletTransformer(ExtNodeTransformer):
                 "Data type {} is not implemented".format(arr_type))
 
         self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+
+        inner_indices = set()
+        for n, r in reversed(list(enumerate(squeezed_rng))):
+            if r == rng[n]:
+                inner_indices.add(n)
+
         if access_type == 'r':
             if _subset_has_indirection(rng):
                 self.sdfg_inputs[var_name] = (dace.Memlet.from_array(
-                    parent_name, parent_array), set())
+                    parent_name, parent_array), inner_indices)
             else:
                 self.sdfg_inputs[var_name] = (dace.Memlet(
-                    parent_name, rng.num_elements(), rng, 1), set())
+                    parent_name,rng.num_elements(), rng, 1), inner_indices)
         else:
             if _subset_has_indirection(rng):
                 self.sdfg_outputs[var_name] = (dace.Memlet.from_array(
-                    parent_name, parent_array), set())
+                    parent_name, parent_array), inner_indices)
             else:
                 self.sdfg_outputs[var_name] = (dace.Memlet(
-                    parent_name, rng.num_elements(), rng, 1), set())
+                    parent_name, rng.num_elements(), rng, 1), inner_indices)
 
         return (var_name, squeezed_rng)
 
