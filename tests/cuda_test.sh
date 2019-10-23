@@ -134,7 +134,8 @@ runone() {
     runtestopt $1 cuda_grid2d_test.py $2 'GPUTransformMap$0'
     
     runtestopt $1 cuda_grid_test.py $2 'GPUTransformMap$0' 'Vectorization$0'
-    if [ $? -eq 0 ]; then # Check that output was vectorized
+    # Check that output was vectorized
+    if [ $? -eq 0 ] && [ "$DACE_optimizer_automatic_strict_transformations" -ne "0" ]; then 
         check_vectorization
         if [ $? -ne 0 ]; then bail "$1 cuda_grid_test.py ($2, wideload)"; fi
     fi
