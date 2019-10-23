@@ -1571,6 +1571,8 @@ subgraph cluster_state_{state} {{
             opt = optclass(sdfg)
             sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
 
+        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
 
