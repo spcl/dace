@@ -180,10 +180,6 @@ class SDFG(OrderedDiGraph):
     exit_code = CodeProperty(
         desc="Code generated in the `__dapp_exit` function.", default="")
 
-    # An internal per-process (per-kernel) variable for Jupyter to know for
-    # saving the header javascript in the notebook only once
-    _JUPYTER_SHOULD_WRITE_RENDERER = True
-
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
@@ -1024,30 +1020,8 @@ subgraph cluster_state_{state} {{
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
-        sdfv_deps = [
-            'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
-            'renderer_elements.js', 'sdfg_utils.js', 'renderer.js'
-        ]
-        result = ''
-
-        # Load dependencies
-        if SDFG._JUPYTER_SHOULD_WRITE_RENDERER:
-            root_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), '..', 'diode',
-                'client')
-            for dep in sdfv_deps:
-                file = os.path.join(root_path, dep)
-                with open(file, 'r') as fp:
-                    result += '<script>%s</script>\n' % fp.read()
-
-            # Rely on internet connection for Material icons
-            result += '<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">'
-
-            # Run this code once
-            SDFG._JUPYTER_SHOULD_WRITE_RENDERER = False
-
         # Create renderer canvas and load SDFG
-        result += """
+        result = """
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
