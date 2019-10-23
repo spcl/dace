@@ -230,7 +230,7 @@ class DaceProgram:
 
         modules = {
             k: v.__name__
-            for k, v in dace_func.__globals__.items() if dtypes.ismodule(v)
+            for k, v in global_vars.items() if dtypes.ismodule(v)
         }
         modules['builtins'] = ''
 
@@ -241,6 +241,7 @@ class DaceProgram:
         })
 
         # Allow SDFGs and DaceProgram objects
+        # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
         other_sdfgs = {
             k: v
             for k, v in dace_func.__globals__.items()
