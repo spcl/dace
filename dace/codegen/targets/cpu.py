@@ -51,6 +51,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # defining locals)
         self._ldepth = 0
 
+        # Keep nested SDFG schedule when descending into it
+        self._toplevel_schedule = None
+
         # FIXME: this allows other code generators to change the CPU
         # behavior to assume that arrays point to packed types, thus dividing
         # all addresess by the vector length.
@@ -609,7 +612,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             nc = True
             if memlet.wcr is not None:
-                nc = not is_write_conflicted(dfg, edge)
+                nc = not is_write_conflicted(
+                    dfg, edge, sdfg_schedule=self._toplevel_schedule)
             if nc:
                 stream.write(
                     """
@@ -734,7 +738,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_dfg = sdfg.nodes()[state_id]
 
                     if memlet.wcr is not None:
-                        nc = not is_write_conflicted(dfg, edge)
+                        nc = not is_write_conflicted(
+                            dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         result.write(
                             write_and_resolve_expr(
                                 sdfg, memlet, nc, out_local_name,
@@ -1354,16 +1359,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         inner_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
 
-        unparse_tasklet(
-            sdfg,
-            state_id,
-            dfg,
-            node,
-            function_stream,
-            inner_stream,
-            self._locals,
-            self._ldepth,
-        )
+        unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+                        inner_stream, self._locals, self._ldepth,
+                        self._toplevel_schedule)
 
         inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
 
@@ -1408,7 +1406,6 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream: CodeIOStream,
             callsite_stream: CodeIOStream,
     ):
-
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
@@ -1439,6 +1436,9 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
                               node)
 
+        old_schedule = self._toplevel_schedule
+        self._toplevel_schedule = node.schedule
+
         sdfg_label = "_%d_%d" % (state_id, dfg.node_id(node))
         # Generate code for internal SDFG
         global_code, local_code, used_targets = self._frame.generate_code(
@@ -1448,6 +1448,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # location info)
         function_stream.write(global_code)
         callsite_stream.write(local_code)
+
+        self._toplevel_schedule = old_schedule
 
         callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
                               node)
@@ -2279,7 +2281,7 @@ def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
     )
 
 
-def is_write_conflicted(dfg, edge, datanode=None):
+def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
         using atomics or critical sections. """
 
@@ -2318,6 +2320,11 @@ def is_write_conflicted(dfg, edge, datanode=None):
         if (isinstance(e.src, nodes.EntryNode)
                 and e.src.map.schedule != dtypes.ScheduleType.Sequential):
             return True
+
+    # If SDFG schedule is not None (top-level) or not sequential
+    if (sdfg_schedule is not None
+            and sdfg_schedule != dtypes.ScheduleType.Sequential):
+        return True
 
     return False
 
@@ -2365,7 +2372,7 @@ def unparse_cr(sdfg, wcr_ast):
 
 
 def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                    callsite_stream, locals, ldepth):
+                    callsite_stream, locals, ldepth, toplevel_schedule):
 
     if node.label is None or node.label == "":
         return ""
@@ -2428,7 +2435,8 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     for edge in state_dfg.all_edges(node):
         u, uconn, v, vconn, memlet = edge
         if u == node:
-            memlet_nc = not is_write_conflicted(dfg, edge)
+            memlet_nc = not is_write_conflicted(
+                dfg, edge, sdfg_schedule=toplevel_schedule)
             memlet_wcr = memlet.wcr
 
             memlets[uconn] = (memlet, memlet_nc, memlet_wcr)

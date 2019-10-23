@@ -1576,9 +1576,13 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
     def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
                              callsite_stream):
+        old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
+
         self._cpu_codegen._generate_NestedSDFG(
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
+
+        self._toplevel_schedule = old_schedule
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
