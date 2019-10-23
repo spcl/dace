@@ -593,7 +593,7 @@ DACE_EXPORTED void __dace_exit(%s)
         _set_default_schedule_and_storage_types(sdfg, schedule)
 
         # Generate preamble (if top-level)
-        if schedule is None:
+        if sdfg.parent is None:
             self.generate_header(sdfg, global_stream, callsite_stream)
 
         # Generate code
@@ -878,7 +878,7 @@ DACE_EXPORTED void __dace_exit(%s)
         ###########################
 
         # Generate footer (if top-level)
-        if schedule is None:
+        if sdfg.parent is None:
             self.generate_footer(sdfg, global_stream, callsite_stream)
 
         # Clear out all the annotated control flow
