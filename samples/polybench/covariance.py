@@ -61,9 +61,9 @@ def covariance(data, cov, mean):
         oud >> data[i, j]
         oud = ind - m
 
-    @dace.map
+    @dace.mapscope
     def comp_cov_row(i: _[0:M]):
-        @dace.map
+        @dace.mapscope
         def comp_cov_col(j: _[i:M]):
             @dace.map
             def comp_cov_k(k: _[0:N]):
@@ -72,7 +72,7 @@ def covariance(data, cov, mean):
                 cov_ij >> cov(1, lambda x, y: x + y, 0)[i, j]
                 cov_ij = (indi * indj)
 
-    @dace.map
+    @dace.mapscope
     def symmetrize(i: _[0:M]):
         @dace.map
         def symmetrize_col(j: _[i:M]):

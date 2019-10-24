@@ -8,7 +8,7 @@ import tempfile
 import traceback
 from six import StringIO
 
-from dace import types
+from dace import dtypes
 from dace.transformation import optimizer
 from dace.sdfg import SDFG
 from dace.frontend.python import parser
@@ -51,6 +51,7 @@ class DaceState:
         self.headless = headless
         self.dace_code = dace_code
         self.source_code = source_code
+        self.repetitions = None
         self.errors = [
         ]  # Any errors that arise from compilation are placed here to show
         # them once the sdfg is rendered
@@ -105,8 +106,14 @@ func({args})
                           if isinstance(obj, DaceProgram)]
             self.sdfgs += [(name, obj) for name, obj in gen_module.items()
                            if isinstance(obj, SDFG)]
-            # TODO: detecting parents is broken, just take the first one for now
-            self.sdfg = self.sdfgs[0][1]
+            try:
+                self.sdfg = self.sdfgs[0][1]
+            except IndexError:
+                if len(self.sdfgs) == 0:
+                    raise ValueError('No SDFGs found in file. SDFGs are only '
+                                     'recognized when @dace.programs or SDFG '
+                                     'objects are found in the global scope')
+                raise
             if len(self.sdfg) > 1:
                 self.has_multiple_eligible_sdfgs = True
 

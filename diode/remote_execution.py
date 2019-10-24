@@ -4,6 +4,7 @@ import stat
 import tempfile
 import traceback
 import subprocess
+import dace.dtypes
 from string import Template
 from dace.codegen.compiler import generate_program_folder
 from dace.config import Config
@@ -129,6 +130,7 @@ class Executor:
                         use_mpi,
                         fail_on_nonzero,
                         omp_num_threads=omp_thread_num,
+                        repetitions=dace_state.repetitions,
                         additional_options_dict=optdict)
 
                     if self.running_async:
@@ -136,8 +138,12 @@ class Executor:
                         self.async_host.notify("Done option threads=" +
                                                str(omp_thread_num))
             else:
-                self.remote_exec_dace(remote_workdir, remote_dace_file,
-                                      use_mpi, fail_on_nonzero)
+                self.remote_exec_dace(
+                    remote_workdir,
+                    remote_dace_file,
+                    use_mpi,
+                    fail_on_nonzero,
+                    repetitions=dace_state.repetitions)
 
             self.show_output("Execution Terminated\n")
 
@@ -265,19 +271,23 @@ class Executor:
                          use_mpi=True,
                          fail_on_nonzero=False,
                          omp_num_threads=None,
-                         additional_options_dict={}):
+                         additional_options_dict=None,
+                         repetitions=None):
+        additional_options_dict = additional_options_dict or {}
         run = "${command} "
         if use_mpi == True:
             run = self.config_get("execution", "mpi", "mpiexec")
             nprocs = self.config_get("execution", "mpi", "num_procs")
         else:
             nprocs = 1
-        repetitions = self.config_get("execution", "general", "repetitions")
+
+        repetitions = (repetitions or self.config_get("execution", "general",
+                                                      "repetitions"))
 
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
         perf_instrumentation_result_marker = ""
-        if (omp_num_threads is not None):
+        if omp_num_threads is not None:
             omp_num_threads_str = "export OMP_NUM_THREADS=" + str(
                 omp_num_threads) + "\n"
             omp_num_threads_unset_str = "unset OMP_NUM_THREADS\n"
@@ -292,7 +302,6 @@ class Executor:
             miscoptresetstring += "unset " + str(optkey) + "\n"
 
         # Create a startscript which exports necessary env-vars
-
         start_sh = "set -x\n" + \
                    "export DACE_compiler_use_cache=1\n" + \
                    "export DACE_optimizer_interface=''\n" + \

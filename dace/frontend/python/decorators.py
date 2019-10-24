@@ -1,32 +1,10 @@
 """ Python decorators for DaCe functions. """
 
 from __future__ import print_function
-from functools import wraps
 
-from dace import types
+from dace import dtypes
+from dace.dtypes import paramdec
 from dace.frontend.python import parser
-
-
-def paramdec(dec):
-    """ Parameterized decorator meta-decorator. Enables using `@decorator`,
-        `@decorator()`, and `@decorator(...)` with the same function. """
-
-    @wraps(dec)
-    def layer(*args, **kwargs):
-
-        # Allows the use of @decorator, @decorator(), and @decorator(...)
-        if len(kwargs) == 0 and len(args) == 1 and callable(
-                args[0]) and not isinstance(args[0], types.typeclass):
-            return dec(*args, **kwargs)
-
-        @wraps(dec)
-        def repl(f):
-            return dec(f, *args, **kwargs)
-
-        return repl
-
-    return layer
-
 
 #############################################
 
@@ -38,15 +16,6 @@ def program(f, *args, **kwargs):
     # Parses a python @dace.program function and returns an object that can
     # be translated
     return parser.DaceProgram(f, args, kwargs)
-
-
-#############################################
-
-
-@paramdec
-def external_function(f, **alternative_implementations):
-    """ External functions that may be called within a DaCe program. """
-    return types._external_function(f, alternative_implementations)
 
 
 # Internal DaCe decorators, these are not actually run, but rewritten

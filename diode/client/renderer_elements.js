@@ -415,7 +415,7 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
 
         
         
-        if (!node.data.state.attributes.is_collapsed/* && isBBoverlapped(curx, cury, curw, curh, layout)*/)
+        if (!node.data.state.attributes.is_collapsed && ng)
         {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
@@ -592,3 +592,8 @@ var SDFGElements = {SDFGElement: SDFGElement, State: State, Node: Node,Edge: Edg
                     ScopeNode: ScopeNode, EntryNode: EntryNode, ExitNode: ExitNode, MapEntry: MapEntry, MapExit: MapExit,
                     ConsumeEntry: ConsumeEntry, ConsumeExit: ConsumeExit, EmptyTasklet: EmptyTasklet, Tasklet: Tasklet, Reduce: Reduce,
                     NestedSDFG: NestedSDFG};
+                    
+// Save as globals
+Object.keys(SDFGElements).forEach(function(elem) {
+    window[elem] = SDFGElements[elem];
+});

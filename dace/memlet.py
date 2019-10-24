@@ -5,7 +5,7 @@ import copy as cp
 
 import json
 import dace
-from dace import data as dt, subsets, symbolic, types
+from dace import data as dt, subsets, symbolic, dtypes
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
@@ -51,7 +51,7 @@ class Memlet(object):
                         AccessNode.
             @param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
-                                 `dace.types.DYNAMIC` (-1),
+                                 `dace.dtypes.DYNAMIC` (-1),
                                  designates that the number of accesses is
                                  unknown at compile time.
             @param subset: The subset of `data` that is going to be accessed.
@@ -112,7 +112,7 @@ class Memlet(object):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Memlet("", dace.types.DYNAMIC, None, 1)
+        ret = Memlet("", dace.dtypes.DYNAMIC, None, 1)
         Property.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
@@ -154,7 +154,7 @@ class Memlet(object):
                                  information from the SDFG.
             @param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
-                                 `dace.types.DYNAMIC` (-1),
+                                 `dace.dtypes.DYNAMIC` (-1),
                                  designates that the number of accesses is
                                  unknown at compile time.
             @param debuginfo: Source-code information (e.g., line, file) 
@@ -273,7 +273,7 @@ class Memlet(object):
         if self.wcr is not None and str(self.wcr) != '':
             # Autodetect reduction type
             redtype = detect_reduction_type(self.wcr)
-            if redtype == types.ReductionType.Custom:
+            if redtype == dtypes.ReductionType.Custom:
                 wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
             else:
                 wcrstr = str(redtype)

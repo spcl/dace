@@ -13,7 +13,7 @@ Vout = dace.ndarray([N], dace.float64)
 @dace.program(dace.float64[N], dace.float64[N])
 def cudahello(V, Vout):
     # Transient variable
-    @dace.map(_[0:N:32])
+    @dace.mapscope(_[0:N:32])
     def multiplication(i):
         @dace.map(_[0:32])
         def mult_block(bi):

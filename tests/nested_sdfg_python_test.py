@@ -10,27 +10,22 @@ N = dp.symbol('N')
 
 @dp.program
 def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
-    @dp.map
+    @dp.mapscope
     def elements(i: _[0:N], j: _[0:N]):
-        input << A[i, j]
-        output >> B[i, j]
+        @dp.tasklet
+        def init():
+            inp << A[i, j]
+            out >> B[i, j]
+            out = inp
 
-        @dp.program
-        def sdfg_internal(input: dp.float32, output: dp.float32):
+        for k in range(4):
+
             @dp.tasklet
-            def init():
-                inp << input
-                out >> output
-                out = inp
-
-            for k in range(4):
-
-                @dp.tasklet
-                def do():
-                    inp << input
-                    oin << output
-                    out >> output
-                    out = oin * inp
+            def do():
+                inp << A[i, j]
+                oin << B[i, j]
+                out >> B[i, j]
+                out = oin * inp
 
 
 if __name__ == '__main__':
@@ -41,7 +36,8 @@ if __name__ == '__main__':
     input = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
     output = np.zeros((N.get(), N.get()), dp.float32.type)
 
-    sdfg_with_children(input, output)
+    sdfg = sdfg_with_children.to_sdfg()
+    sdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output - np.power(input, 5)) / dp.eval(N * N)
     print("Difference:", diff)

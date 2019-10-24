@@ -93,7 +93,7 @@ namespace dace
 	};
     };
 
-    // Mirror of dace.types.ReductionType
+    // Mirror of dace.dtypes.ReductionType
     enum class ReductionType {
         Custom = 0,
         Min = 1,

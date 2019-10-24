@@ -76,23 +76,23 @@ def make_nested_sdfg(parent):
         "outsize_buffer",
         dtype=dace.uint32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Registers)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     sdfg.add_array(
         "outsize_nested", [1],
         dtype=dace.uint32,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array(
         "A_device", [N],
         dtype=dace.float32,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array(
         "B_device", [N],
         dtype=dace.float32,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_scalar(
         "ratio_nested",
         dtype=dace.float32,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     set_zero = make_set_zero(sdfg)
     loop_entry = sdfg.add_state("loop_entry")
@@ -109,14 +109,14 @@ def make_nested_sdfg(parent):
         loop_body,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "i < N", language=dace.types.Language.Python)))
+                "i < N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry,
         write_out_size,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "i >= N", language=dace.types.Language.Python)))
+                "i >= N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_body,
@@ -194,24 +194,24 @@ def make_sdfg(specialize):
         "A_device", [N],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array("A", [N], dtype=dace.float32)
 
     sdfg.add_array(
         "B_device", [N],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array(
         "outsize_device", [1],
         dtype=dace.uint32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array("B", [N], dtype=dace.float32)
     sdfg.add_array("outsize", [1], dtype=dace.uint32)
     sdfg.add_scalar(
         "ratio",
-        storage=dace.types.StorageType.FPGA_Global,
+        storage=dace.dtypes.StorageType.FPGA_Global,
         dtype=dace.float32)
 
     copy_to_device_state = make_copy_to_device(sdfg)

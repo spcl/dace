@@ -1,0 +1,31 @@
+import dace
+import numpy as np
+import external_module
+
+W = external_module.W
+H = external_module.H
+
+
+@dace.program
+def extmodtest(A: dace.float32[W, H], result: dace.float32[1]):
+    tmp = np.ndarray([H, W], dace.float32)
+
+    external_module.transpose(A, tmp)
+
+    with dace.tasklet:
+        a << tmp[1, 2]
+        b >> result[0]
+
+        b = a
+
+
+if __name__ == '__main__':
+    W.set(12)
+    H.set(12)
+    A = np.random.rand(W.get(), H.get()).astype(np.float32)
+    res = np.zeros([1], np.float32)
+
+    extmodtest(A, res)
+
+    assert res[0] == A[2, 1]
+    print('TEST PASSED')

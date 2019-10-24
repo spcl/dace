@@ -13,14 +13,14 @@ import sys
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 from dace.graph.edges import InterstateEdge
-from dace.types import ScheduleType, StorageType, Language
+from dace.dtypes import ScheduleType, StorageType, Language
 from dace.properties import CodeProperty
 
 W = dace.symbol('W')
 H = dace.symbol('H')
 nnz = dace.symbol('nnz')
-itype = dace.types.uint32
-dtype = dace.types.float32
+itype = dace.dtypes.uint32
+dtype = dace.dtypes.float32
 
 
 def make_pre_state(sdfg):

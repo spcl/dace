@@ -156,6 +156,7 @@ sdaccel_timeline_*
 
 # NVIDIA
 *.nvprof
+out.sdfg
 
 # Miscellaneous
 *~
@@ -172,3 +173,5 @@ _dotgraphs/
 client_configs/
 
 perfdata-dir/
+
+rgf_dense_saved.sdfg

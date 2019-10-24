@@ -28,17 +28,17 @@ def make_sdfg(specialized):
         "A_device", [N, K],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     B_device = pre_state.add_array(
         "B_device", [K, M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     C_device = pre_state.add_array(
         "C_device", [N, M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     pre_state.add_edge(A_host, None, A_device, None,
                        dace.memlet.Memlet.simple(A_device, "0:N, 0:K"))
@@ -57,35 +57,35 @@ def make_sdfg(specialized):
         "A_device", [N, K],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     B = state.add_array(
         "B_device", [K, M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     C = state.add_array(
         "C_device", [N, M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     C_buffer_in = state.add_array(
         "C_buffer", [M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     C_buffer_out = state.add_array(
         "C_buffer", [M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     n_entry, n_exit = state.add_map(
-        "Map_N", {"n": "0:N"}, schedule=dace.types.ScheduleType.FPGA_Device)
+        "Map_N", {"n": "0:N"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
     k_entry, k_exit = state.add_map(
-        "Map_K", {"k": "0:K"}, schedule=dace.types.ScheduleType.FPGA_Device)
+        "Map_K", {"k": "0:K"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
     m_entry, m_exit = state.add_map(
-        "Map_M", {"m": "0:M"}, schedule=dace.types.ScheduleType.FPGA_Device)
+        "Map_M", {"m": "0:M"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
     state.add_nedge(n_entry, C_buffer_in, dace.memlet.EmptyMemlet())
 
@@ -103,13 +103,13 @@ def make_sdfg(specialized):
         then_state,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "k == 0", language=dace.types.Language.Python)))
+                "k == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state,
         else_state,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "k != 0", language=dace.types.Language.Python)))
+                "k != 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(then_state, end_state,
                          dace.graph.edges.InterstateEdge())
     nested_sdfg.add_edge(else_state, end_state,
@@ -123,20 +123,32 @@ def make_sdfg(specialized):
 
     # Add scalar I/O
     then_A_val = then_state.add_scalar(
-        "A_val", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "A_val",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Local)
     then_B_val = then_state.add_scalar(
-        "B_val", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "B_val",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Local)
     then_C_out = then_state.add_scalar(
-        "C_out", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "C_out",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     else_A_val = else_state.add_scalar(
-        "A_val", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "A_val",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Local)
     else_B_val = else_state.add_scalar(
-        "B_val", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "B_val",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Local)
     else_C_in = else_state.add_scalar(
-        "C_in", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "C_in", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
     else_C_out = else_state.add_scalar(
-        "C_out", dtype=dace.float32, storage=dace.types.StorageType.FPGA_Local)
+        "C_out",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     # Memlets
     then_a_val_memlet = dace.memlet.Memlet.simple(then_A_val, "0")
@@ -225,7 +237,7 @@ def make_sdfg(specialized):
         "C_device", [N, M],
         dtype=dace.float32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     C_host = post_state.add_array("C", [N, M], dtype=dace.float32)
 

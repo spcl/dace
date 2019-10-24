@@ -1,17 +1,14 @@
 dist: xenial
 language: python
 python:
-  - "3.5"
   - "3.6"
   - "3.7"  
 
-# DIODE dependencies
+# Dependencies
 before_install:
-  - sudo apt-get install libgtksourceviewmm-3.0-dev libyaml-dev
-  - sudo apt-get install python3-cairo python3-gi-cairo libgirepository1.0-dev xdot libwebkitgtk-dev libwebkitgtk-3.0-dev libwebkit2gtk-4.0-dev
+  - sudo apt-get install libyaml-dev cmake
 
 install:
-  - pip install pygobject  # DIODE Python dependencies
   - pip install .
 
-script: NOSTATUSBAR=1 xvfb-run ./test_all.sh
+script: NOSTATUSBAR=1 ./test_all.sh

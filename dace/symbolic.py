@@ -7,9 +7,9 @@ import sympy as functions
 from sympy.abc import _clash
 from sympy.printing.str import StrPrinter
 
-from dace import types
+from dace import dtypes
 
-DEFAULT_SYMBOL_TYPE = types.int32
+DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
 class symbol(sympy.Symbol):
@@ -24,9 +24,13 @@ class symbol(sympy.Symbol):
     @staticmethod
     def erase_symbols(symlist):
         for sym in symlist:
-            del symbol.s_values[sym]
-            del symbol.s_types[sym]
-            del symbol.s_constraints[sym]
+            symbol.erase(sym)
+
+    @staticmethod
+    def erase(sym):
+        del symbol.s_values[sym]
+        del symbol.s_types[sym]
+        del symbol.s_constraints[sym]
 
     @staticmethod
     def erase_all():
@@ -36,7 +40,11 @@ class symbol(sympy.Symbol):
         symbol.s_types = {}
         symbol.s_constraints = {}
 
-    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+    def __new__(cls,
+                name=None,
+                dtype=DEFAULT_SYMBOL_TYPE,
+                override_dtype=False,
+                **assumptions):
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
@@ -44,7 +52,7 @@ class symbol(sympy.Symbol):
         elif name.startswith('__DACE'):
             raise NameError('Symbols cannot start with __DACE')
 
-        if not isinstance(dtype, types.typeclass):
+        if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
         if 'integer' in assumptions or 'int' not in str(dtype):
@@ -57,7 +65,9 @@ class symbol(sympy.Symbol):
             symbol.s_constraints[name] = []
             symbol.s_types[name] = dtype
         else:
-            if dtype != DEFAULT_SYMBOL_TYPE and dtype != symbol.s_types[name]:
+            if override_dtype:
+                symbol.s_types[name] = dtype
+            elif dtype != DEFAULT_SYMBOL_TYPE and dtype != symbol.s_types[name]:
                 raise TypeError('Type mismatch for existing symbol "%s" (%s) '
                                 'and new type %s' %
                                 (name, str(symbol.s_types[name]), str(dtype)))
@@ -175,6 +185,10 @@ class SymExpr(object):
     def approx(self):
         return self._approx_expr
 
+    def subs(self, repldict):
+        return SymExpr(
+            self._main_expr.subs(repldict), self._approx_expr.subs(repldict))
+
     def __str__(self):
         if self.expr != self.approx:
             return str(self.expr) + " (~" + str(self.approx) + ")"
@@ -233,6 +247,13 @@ class SymExpr(object):
             return SymExpr(self.expr**other, self.approx**other)
         return self**pystr_to_symbolic(other)
 
+    def __eq__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr == other
+        if isinstance(other, SymExpr):
+            return self.expr == other.expr and self.approx == other.approx
+        return self == pystr_to_symbolic(other)
+
 
 def symvalue(val):
     """ Returns the symbol value if it is a symbol. """
@@ -263,9 +284,10 @@ def symtype(expr):
 def eval(expr,
          uninitialized_value=None,
          keep_uninitialized=False,
-         constants={}):
+         constants=None):
     """ Evaluates a complex expression with symbols, replacing all
         symbols with their values. """
+    constants = constants or {}
     if isinstance(expr, SymExpr):
         return eval(expr.expr, uninitialized_value, keep_uninitialized)
     if not isinstance(expr, sympy.Expr):
@@ -291,6 +313,8 @@ def eval(expr,
                 else:
                     result = result.replace(
                         atom, atom.get_or_return(uninitialized_value))
+
+    # TODO: Use symbol dtype here
 
     if isinstance(result, sympy.Integer):
         return int(sympy.N(result))
@@ -331,9 +355,10 @@ def symbols_in_sympy_expr(expr):
     return map(str, symbols)
 
 
-def issymbolic(value, constants={}):
+def issymbolic(value, constants=None):
     """ Returns True if an expression is symbolic with respect to its contents
         and a given dictionary of constant values. """
+    constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
     if isinstance(value, symbol) and value.name not in constants:
@@ -398,7 +423,7 @@ def symbols_in_ast(tree):
             to_visit += list(val.__dict__.items())
         if isinstance(val, list):
             to_visit += [(key, v) for v in val]
-    return types.deduplicate(symbols)
+    return dtypes.deduplicate(symbols)
 
 
 def getsymbols(compilation_args):
@@ -434,10 +459,11 @@ def symbol_name_or_value(val):
     return str(val)
 
 
-def sympy_to_dace(exprs, symbol_map={}):
+def sympy_to_dace(exprs, symbol_map=None):
     """ Convert all `sympy.Symbol`s to DaCe symbols, according to 
         `symbol_map`. """
     repl = {}
+    symbol_map = symbol_map or {}
 
     oneelem = False
     try:
@@ -445,6 +471,8 @@ def sympy_to_dace(exprs, symbol_map={}):
     except TypeError:
         oneelem = True
         exprs = [exprs]
+
+    exprs = list(exprs)
 
     for i, expr in enumerate(exprs):
         if isinstance(expr, sympy.Basic):
@@ -590,11 +618,12 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
-def pystr_to_symbolic(expr, symbol_map={}, simplify=None):
+def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     if isinstance(expr, SymExpr):
         return expr
 
+    symbol_map = symbol_map or {}
     locals = {'min': sympy.Min, 'max': sympy.Max}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -604,8 +633,16 @@ def pystr_to_symbolic(expr, symbol_map={}, simplify=None):
     if isinstance(expr, str) and 'not' in expr:
         expr = expr.replace('not', 'Not')
 
-    return sympy_to_dace(
-        sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+    # TODO: support SymExpr over-approximated expressions
+    try:
+        return sympy_to_dace(
+            sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+    except TypeError:  # Symbol object is not subscriptable
+        # Replace subscript expressions with function calls
+        expr = expr.replace('[', '(')
+        expr = expr.replace(']', ')')
+        return sympy_to_dace(
+            sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
 
 
 class DaceSympyPrinter(StrPrinter):
@@ -646,7 +683,7 @@ def symstr(sym):
 
         if isinstance(sym,
                       symbol) or isinstance(sym, sympy.Symbol) or isinstance(
-                          sym, sympy.Number) or types.isconstant(sym):
+                          sym, sympy.Number) or dtypes.isconstant(sym):
             return repstr(sstr)
         else:
             return '(' + repstr(sstr) + ')'

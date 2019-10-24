@@ -7,7 +7,7 @@ import numpy
 import itertools
 from collections import deque
 
-from dace import symbolic, types
+from dace import symbolic, dtypes
 
 ###########################################################
 # NDArray type
@@ -19,7 +19,7 @@ class ndarray(numpy.ndarray):
 
     def __new__(cls,
                 shape,
-                dtype=types.float32,
+                dtype=dtypes.float32,
                 materialize_func=None,
                 allow_conflicts=False,
                 *args,
@@ -48,8 +48,8 @@ class ndarray(numpy.ndarray):
         for _, sym in res._symlist.items():
             sym._arrays_to_update.append(res)
 
-        if not isinstance(dtype, types.typeclass):
-            dtype = types.typeclass(dtype.type)
+        if not isinstance(dtype, dtypes.typeclass):
+            dtype = dtypes.typeclass(dtype.type)
 
         res.descriptor = data.Array(
             dtype,
@@ -101,7 +101,7 @@ class ndarray(numpy.ndarray):
 
         # Create a new descriptor
         self.descriptor = data.Array(
-            types.typeclass(obj.dtype.type),
+            dtypes.typeclass(obj.dtype.type),
             obj.shape,
             materialize_func=None,
             transient=False,
@@ -156,27 +156,27 @@ class stream(object):
         return self.queue_array.__getslice__(*args)
 
 
-def scalar(dtype=types.float32, allow_conflicts=False):
+def scalar(dtype=dtypes.float32, allow_conflicts=False):
     """ Convenience function that defines a scalar (array of size 1). """
     return ndarray([1], dtype, allow_conflicts=allow_conflicts)
 
 
-def define_local(dimensions, dtype=types.float32, allow_conflicts=False):
+def define_local(dimensions, dtype=dtypes.float32, allow_conflicts=False):
     """ Defines a transient array in a DaCe program. """
     return transient(dimensions, dtype=dtype, allow_conflicts=allow_conflicts)
 
 
-def define_local_scalar(dtype=types.float32, allow_conflicts=False):
+def define_local_scalar(dtype=dtypes.float32, allow_conflicts=False):
     """ Defines a transient scalar (array of size 1) in a DaCe program. """
     return transient([1], dtype=dtype, allow_conflicts=allow_conflicts)
 
 
-def define_stream(dtype=types.float32, buffer_size=0):
+def define_stream(dtype=dtypes.float32, buffer_size=1):
     """ Defines a local stream in a DaCe program. """
     return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
 
 
-def define_streamarray(dimensions, dtype=types.float32, buffer_size=0):
+def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
     """ Defines a local stream array in a DaCe program. """
     return stream(dtype, dimensions)
 

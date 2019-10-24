@@ -102,7 +102,7 @@ class AST_ForLoop(AST_Node):
                     edge = dace.graph.edges.InterstateEdge(
                         condition=dace.properties.CodeProperty.from_string(
                             loop_guard_var + " <= " + loop_end_var,
-                            language=dace.types.Language.Python))
+                            language=dace.dtypes.Language.Python))
                     sdfg.add_edge(prev, newstate, edge)
                 prev = sdfg.nodes()[last_state]
 
@@ -119,7 +119,7 @@ class AST_ForLoop(AST_Node):
             for_exit = dace.graph.edges.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     loop_guard_var + " > " + loop_end_var,
-                    language=dace.types.Language.Python))
+                    language=dace.dtypes.Language.Python))
             sdfg.add_edge(s_guard, s_lexit, for_exit)
 
             return state
@@ -166,7 +166,7 @@ class AST_ForLoop(AST_Node):
         for_entry = dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 loop_guard_var + " < " + lend_val,
-                language=dace.types.Language.Python))
+                language=dace.dtypes.Language.Python))
         sdfg.add_edge(s_guard, s_getinit, for_entry)
 
         # Add state for each statement within the for loop
@@ -194,7 +194,7 @@ class AST_ForLoop(AST_Node):
         for_exit = dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 loop_guard_var + " >= " + lend_val,
-                language=dace.types.Language.Python))
+                language=dace.dtypes.Language.Python))
         sdfg.add_edge(s_guard, s_lexit, for_exit)
 
         return state

@@ -35,8 +35,7 @@ if __name__ == "__main__":
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)
     out_AA[0] = dace.float64(0)
 
-    cdot_self = dace.compile(dot, A, A, out_AA)
-    cdot_self(A, A, out_AA)
+    dot(A, A, out_AA)
 
     diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(N.get())
     print("Difference:", diff_aa)

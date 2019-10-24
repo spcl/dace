@@ -1,5 +1,6 @@
 """ SDFG visualizer that uses Flask, HTML5, and Javascript. """
 
+import json
 import sys
 import os
 
@@ -14,7 +15,7 @@ sdfg_json = None
 
 @app.route('/', methods=['GET'])
 def main():
-    return render_template('sdfv.html', sdfg=sdfg_json)
+    return render_template('sdfv.html', sdfg=json.dumps(sdfg_json))
 
 
 if __name__ == '__main__':

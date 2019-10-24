@@ -1,4 +1,4 @@
-from dace.types import InstrumentationType
+from dace.dtypes import InstrumentationType
 from .provider import InstrumentationProvider
 
 from .papi import PAPIInstrumentation

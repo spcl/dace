@@ -85,12 +85,12 @@ class AST_Constant(AST_Node):
         return [1]
 
     def get_basetype(self):
-        return dace.types.float64
+        return dace.dtypes.float64
 
     def generate_code(self, sdfg, state):
         dims = self.get_dims()
         name = self.get_name_in_sdfg(sdfg)
-        basetype = dace.types.float64
+        basetype = dace.dtypes.float64
         if name not in sdfg.arrays:
             sdfg.add_transient(name, dims, basetype, debuginfo=self.context)
         trans = sdfg.nodes()[state].add_access(name)

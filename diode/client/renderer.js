@@ -881,6 +881,8 @@ class SDFGRenderer {
                         return;
 
                     let ng = state.data.graph;
+                    if (!ng)
+                        return;
                     ng.nodes().forEach(node_id => {
                         let node = ng.node(node_id);
                         if (node.intersect(x, y, w, h)) {
@@ -1177,3 +1179,4 @@ class SDFGRenderer {
     }
 }
 
+window.SDFGRenderer = SDFGRenderer;

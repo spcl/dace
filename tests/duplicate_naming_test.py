@@ -7,7 +7,7 @@ W = dace.symbol()
 number = 42
 
 
-@dace.external_function
+@dace.program
 def f(A, number):
     @dace.map(_[0:W])
     def bla(i):
