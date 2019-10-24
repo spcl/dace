@@ -2219,9 +2219,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 memlet = Memlet(target_name, target_subset.num_elements(),
                                 target_subset, 1)
                 memlet.other_subset = op_subset
-                if op is not None:
-                    memlet.wcr = LambdaProperty.from_string(
-                        'lambda x, y: x {} y'.format(op))
                 state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet.simple(
@@ -2242,33 +2239,130 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, "Incompatible subsets %s and %s" %
                     (target_subset, op_subset))
-            elif op is None:
-                op1 = state.add_read(op_name)
-                op2 = state.add_write(target_name)
-                tasklet = state.add_tasklet(
-                    name=state.label,
-                    inputs={'inp'},
-                    outputs={'out'},
-                    code='out = inp')
-                inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
-                out_memlet = Memlet.simple(target_name,
-                                           '%s' % target_subset[0][0])
-                state.add_edge(op1, None, tasklet, 'inp', inp_memlet)
-                state.add_edge(tasklet, 'out', op2, None, out_memlet)
+            op1 = state.add_read(op_name)
+            op2 = state.add_write(target_name)
+            tasklet = state.add_tasklet(
+                name=state.label,
+                inputs={'inp'},
+                outputs={'out'},
+                code='out = inp')
+            inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+            out_memlet = Memlet.simple(target_name,
+                                        '%s' % target_subset[0][0])
+            state.add_edge(op1, None, tasklet, 'inp', inp_memlet)
+            state.add_edge(tasklet, 'out', op2, None, out_memlet)
+
+    def _add_aug_assignment(self,
+                            node: Union[ast.Assign, ast.AugAssign],
+                            rtarget: Union[str, Tuple[str, subsets.Range]],
+                            wtarget: Union[str, Tuple[str, subsets.Range]],
+                            operand: Union[str, Tuple[str, subsets.Range]],
+                            op: str):
+
+        if isinstance(rtarget, tuple):
+            rtarget_name, rtarget_subset = rtarget
+        else:
+            rtarget_name = rtarget
+            rtarget_array = self.sdfg.arrays[rtarget_name]
+            rtarget_subset = subsets.Range.from_array(rtarget_array)
+        if isinstance(wtarget, tuple):
+            wtarget_name, wtarget_subset = wtarget
+        else:
+            wtarget_name = wtarget
+            wtarget_array = self.sdfg.arrays[wtarget_name]
+            wtarget_subset = subsets.Range.from_array(wtarget_array)
+        if isinstance(operand, tuple):
+            op_name, op_subset = operand
+        else:
+            op_name = operand
+            op_array = self.sdfg.arrays[op_name]
+            op_subset = subsets.Range.from_array(op_array)
+
+        state = self._add_state("assign_{l}_{c}".format(
+            l=node.lineno, c=node.col_offset))
+
+        if wtarget_subset.num_elements() != 1:
+            if op_subset.num_elements() != 1:
+                if wtarget_subset.size() == op_subset.size():
+                    in1_subset = copy.deepcopy(rtarget_subset)
+                    in1_subset.offset(wtarget_subset, True)
+                    in1_memlet = Memlet.simple(
+                        rtarget_name,
+                        ','.join(['__i%d + %d' % (i, s)
+                                  for i, (s, _, _) in enumerate(in1_subset)]))
+                    in2_subset = copy.deepcopy(op_subset)
+                    in2_subset.offset(wtarget_subset, True)
+                    in2_memlet = Memlet.simple(
+                        op_name,
+                        ','.join(['__i%d + %d' % (i, s)
+                                  for i, (s, _, _) in enumerate(in2_subset)]))
+                    out_memlet = Memlet.simple(
+                        wtarget_name,
+                        ','.join(['__i%d' % i
+                                  for i in range(len(wtarget_subset))]))
+                    state.add_mapped_tasklet(
+                        state.label,
+                        {
+                            '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
+                            for i, (start, end, step) 
+                            in enumerate(wtarget_subset)
+                        },
+                        {'in1': in1_memlet, 'in2': in2_memlet},
+                        'out = in1 {op} in2'.format(op=op),
+                        {'out': out_memlet},
+                        external_edges=True)
+                else:
+                    op1 = state.add_read(op_name)
+                    op2 = state.add_write(wtarget_name)
+                    memlet = Memlet(wtarget_name,
+                                    wtarget_subset.num_elements(),
+                                    wtarget_subset, 1)
+                    memlet.other_subset = op_subset
+                    if op is not None:
+                        memlet.wcr = LambdaProperty.from_string(
+                            'lambda x, y: x {} y'.format(op))
+                    state.add_nedge(op1, op2, memlet)
             else:
-                op1 = state.add_read(target_name)
+                in1_subset = copy.deepcopy(rtarget_subset)
+                in1_subset.offset(wtarget_subset, True)
+                in1_memlet = Memlet.simple(
+                    rtarget_name,
+                    ','.join(['__i%d + %d' % (i, s)
+                              for i, (s, _, _) in enumerate(in1_subset)]))
+                in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                out_memlet = Memlet.simple(
+                    wtarget_name,
+                    ','.join([
+                        '__i%d' % i for i in range(len(wtarget_subset))]))
+                state.add_mapped_tasklet(
+                    state.label,
+                    {
+                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
+                        for i, (start, end, step) in enumerate(wtarget_subset)
+                    },
+                    {'in1': in1_memlet, 'in2': in2_memlet},
+                    'out = in1 {op} in2'.format(op=op),
+                    {'out': out_memlet},
+                    external_edges=True)
+        else:
+            if op_subset.num_elements() != 1:
+                raise DaceSyntaxError(
+                    self, node, "Incompatible subsets %s, %s and %s" %
+                    (rtarget_subset, op_subset, wtarget_subset))
+            else:
+                op1 = state.add_read(rtarget_name)
                 op2 = state.add_read(op_name)
-                op3 = state.add_write(target_name)
+                op3 = state.add_write(wtarget_name)
                 tasklet = state.add_tasklet(
                     name=state.label,
                     inputs={'in1', 'in2'},
                     outputs={'out'},
                     code='out = in1 {op} in2'.format(op=op))
-                in1_memlet = Memlet.simple(target_name,
-                                           '%s' % target_subset[0][0])
+                in1_memlet = Memlet.simple(rtarget_name,
+                                           '%s' % rtarget_subset[0][0])
                 in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
-                out_memlet = Memlet.simple(target_name,
-                                           '%s' % target_subset[0][0])
+                out_memlet = Memlet.simple(wtarget_name,
+                                           '%s' % wtarget_subset[0][0])
                 state.add_edge(op1, None, tasklet, 'in1', in1_memlet)
                 state.add_edge(op2, None, tasklet, 'in2', in2_memlet)
                 state.add_edge(tasklet, 'out', op3, None, out_memlet)
@@ -2295,8 +2389,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if new_name:
             var_name = new_name
         elif target:
-            var_name = "__tmp_{l}_{c}".format(
-                l=target.lineno, c=target.col_offset)
+            var_name = "__tmp_{l}_{c}_{a}".format(
+                l=target.lineno, c=target.col_offset, a=access_type)
         else:
             var_name = self.sdfg.temp_data_name()
 
@@ -2432,11 +2526,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 astutils.subscript_to_slice(true_target, defined_arrays)[1])
 
             if self.nested:  # Nested SDFG
-                self._add_assignment(node,
-                                     self._add_write_access(name, rng, target),
-                                     result, op)
+                if op:
+                    rtarget = self._add_read_access(name, rng, target)
+                    wtarget = self._add_write_access(name, rng, target)
+                    self._add_aug_assignment(node, rtarget, wtarget,
+                                             result, op)
+                else:
+                    wtarget = self._add_write_access(name, rng, target)
+                    self._add_assignment(node, wtarget, result)
             else:  # Top-level SDFG
-                self._add_assignment(node, (true_name, rng), result, op)
+                if op:
+                    self._add_aug_assignment(node, (true_name, rng),
+                                             (true_name, rng), result, op)
+                else:
+                    self._add_assignment(node, (true_name, rng), result)
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
