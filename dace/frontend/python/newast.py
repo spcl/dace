@@ -2263,7 +2263,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     name=state.label,
                     inputs={'in1', 'in2'},
                     outputs={'out'},
-                    code='out = in1 {op} in2'.format(op))
+                    code='out = in1 {op} in2'.format(op=op))
                 in1_memlet = Memlet.simple(target_name,
                                            '%s' % target_subset[0][0])
                 in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
