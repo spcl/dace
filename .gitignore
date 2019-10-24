@@ -175,3 +175,5 @@ client_configs/
 perfdata-dir/
 
 rgf_dense_saved.sdfg
+
+.ycm_extra_conf.py
