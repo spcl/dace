@@ -16,8 +16,8 @@ def run(compiled_sdfg):
     result = dace.ndarray([1], dtype=dtype)
 
     n.set(32)
-    x[:] = -3
-    y[:] = 8
+    x[:] = 2.5
+    y[:] = 2
 
     compiled_sdfg(x=x, y=y, result=result, n=n.get())
 
