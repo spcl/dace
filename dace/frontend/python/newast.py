@@ -1833,6 +1833,19 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return new_params, map_inputs
 
+    def _find_access(self, name: str, rng: subsets.Range, mode: str):
+        for n, r, m in self.accesses:
+            if n == name and m == mode:
+                if r == rng:
+                    return True
+                elif r.covers(rng):
+                    print("WARNING: New access {n}[{rng}] already covered by"
+                          " {n}[{r}]".format(n=name, rng=rng, r=r))
+                elif rng.covers(r):
+                    print("WARNING: New access {n}[{rng}] covers previous"
+                          " access {n}[{r}]".format(n=name, rng=rng, r=r))
+                return False
+
     def _add_dependencies(self,
                           state: SDFGState,
                           internal_node: nodes.CodeNode,
@@ -1969,7 +1982,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, entry_node,
                                                     True, arr)
-                    if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
+                    # if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
+                    if self._find_access(memlet.data, scope_memlet.subset, 'w'):
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         memlet = dace.Memlet.from_array(vname, self.sdfg.arrays[vname])
                     else:
@@ -2228,7 +2242,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, "Incompatible subsets %s and %s" %
                     (target_subset, op_subset))
-            else:
+            elif op is None:
                 op1 = state.add_read(op_name)
                 op2 = state.add_write(target_name)
                 tasklet = state.add_tasklet(
@@ -2239,11 +2253,25 @@ class ProgramVisitor(ExtNodeVisitor):
                 inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
                 out_memlet = Memlet.simple(target_name,
                                            '%s' % target_subset[0][0])
-                if op is not None:
-                    out_memlet.wcr = LambdaProperty.from_string(
-                        'lambda x, y: x {} y'.format(op))
                 state.add_edge(op1, None, tasklet, 'inp', inp_memlet)
                 state.add_edge(tasklet, 'out', op2, None, out_memlet)
+            else:
+                op1 = state.add_read(target_name)
+                op2 = state.add_read(op_name)
+                op3 = state.add_write(target_name)
+                tasklet = state.add_tasklet(
+                    name=state.label,
+                    inputs={'in1', 'in2'},
+                    outputs={'out'},
+                    code='out = in1 {op} in2'.format(op))
+                in1_memlet = Memlet.simple(target_name,
+                                           '%s' % target_subset[0][0])
+                in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                out_memlet = Memlet.simple(target_name,
+                                           '%s' % target_subset[0][0])
+                state.add_edge(op1, None, tasklet, 'in1', in1_memlet)
+                state.add_edge(op2, None, tasklet, 'in2', in2_memlet)
+                state.add_edge(tasklet, 'out', op3, None, out_memlet)
 
     def _get_variable_name(self, node, name):
         if name in self.variables:
