@@ -87,7 +87,9 @@ _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "float64": "(double)"}
 
-_py2c_typeconversion = {"int" : dace.types.typeclass(np.int32), "float": dace.types.typeclass(np.float32),"float64" : dace.types.typeclass(np.float64)}
+_py2c_typeconversion = {"uint": dace.types.typeclass(np.uint32), "int": dace.types.typeclass(np.int32),
+                        "float": dace.types.typeclass(np.float32), "float64" : dace.types.typeclass(np.float64)}
+
 
 def interleave(inter, f, seq):
     """Call f on each item in seq, calling inter() in between.

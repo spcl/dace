@@ -269,7 +269,7 @@ _CTYPES_RULES = {
 
     # Both operands are integers
     # C Integer promotion rules apply:
-    # - if the types are the same, that type is the common type
+    # - if the types are the same, return the type
     frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))): typeclass(numpy.uint8),
     frozenset((typeclass(numpy.uint16), typeclass(numpy.uint16))): typeclass(numpy.uint16),
     frozenset((typeclass(numpy.uint32), typeclass(numpy.uint32))): typeclass(numpy.uint32),
