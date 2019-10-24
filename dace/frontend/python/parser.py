@@ -129,6 +129,20 @@ def parse_from_function(function, *compilation_args, strict=None):
     return sdfg
 
 
+def _get_locals_and_globals():
+    """ Retrieves a list of local and global variables four steps up in the
+        stack. This is used to retrieve variables around and defined before
+        @dace.programs for adding symbols. """
+    frame = inspect.currentframe()
+    outer_frame = frame.f_back.f_back.f_back.f_back
+    result = {}
+    # Update globals, then locals
+    result.update(outer_frame.f_globals)
+    result.update(outer_frame.f_locals)
+
+    return result
+
+
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
@@ -139,9 +153,13 @@ class DaceProgram:
         self.kwargs = kwargs
         self._name = f.__name__
         self.argnames = _get_argnames(f)
+
+        # NOTE: Important to call this outside list/dict comprehensions
+        global_vars = _get_locals_and_globals()
+
         self.global_vars = {
             k: v
-            for k, v in f.__globals__.items() if dtypes.isallowed(v)
+            for k, v in global_vars.items() if dtypes.isallowed(v)
         }
         if self.argnames is None:
             self.argnames = []
