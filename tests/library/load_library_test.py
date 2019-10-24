@@ -2,10 +2,12 @@ import dace
 from dace.memlet import Memlet
 import dacelibs.blas as blas
 import numpy as np
+import sys
 
 dtype = dace.float32
 
 ###############################################################################
+
 
 def run(compiled_sdfg):
 
@@ -24,6 +26,7 @@ def run(compiled_sdfg):
         print("Unexpected result returned from dot product.")
         sys.exit(1)
 
+
 ###############################################################################
 
 n = dace.symbol("n")
@@ -39,14 +42,17 @@ x = state.add_read("x")
 y = state.add_read("y")
 result = state.add_write("result")
 
-dot_node = blas.nodes.Dot(dtype)
+dot_node = blas.nodes.Dot("dot", dtype)
 
 state.add_memlet_path(
-    x, dot_node, dst_conn="x", memlet=Memlet.simple(x, "0:n"))
+    x, dot_node, dst_conn="_x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
 state.add_memlet_path(
-    y, dot_node, dst_conn="y", memlet=Memlet.simple(y, "0:n"))
+    y, dot_node, dst_conn="_y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
 state.add_memlet_path(
-    dot_node, result, src_conn="result", memlet=Memlet.simple(result, "0"))
+    dot_node,
+    result,
+    src_conn="_result",
+    memlet=Memlet.simple(result, "0", num_accesses=1))
 
 sdot = sdfg.compile()
 

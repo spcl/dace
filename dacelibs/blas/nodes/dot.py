@@ -16,23 +16,16 @@ class Dot(nodes.LibraryNode):
     # Object fields
     dtype = properties.TypeClassProperty(allow_none=True)
 
-    def __init__(self, dtype=None, *args, **kwargs):
+    def __init__(self, name, dtype=None, *args, **kwargs):
         self.dtype = dtype
-        super().__init__(*args, **kwargs)
+        super().__init__(name, *args, **kwargs)
 
-
-@dace.library.transformation
-class ExpandDotPure(ExpandTransformation):
-
-    _node = Dot()
-
-    @staticmethod
-    def expand(node, state, sdfg):
-        in_edges = state.in_edges(node)
+    def validate(self, state, sdfg):
+        in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to dot product")
         in_memlets = [in_edges[0].data, in_edges[1].data]
-        out_edges = state.out_edges(node)
+        out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from dot product")
         out_memlet = out_edges[0].data
@@ -51,37 +44,44 @@ class ExpandDotPure(ExpandTransformation):
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):
             raise ValueError("WCR on dot product memlets not supported")
-        prefix = "_" + str(node) + "_"
-        iterator = prefix + "i"
-        in_memlets = [
-            Memlet.simple(m.data, iterator, veclen=veclen, num_accesses=1)
-            for m in in_memlets
-        ]
-        out_memlet = Memlet.simple(
-            out_memlet.data, "0", wcr_str="lambda a, b: a + b")
-        tasklet = nodes.Tasklet(
-            str(node), {prefix + "x", prefix + "y"}, [prefix + "result"],
-            "{prefix}result = {prefix}x + {prefix}y".format(prefix=prefix))
-        entry, exit = state.add_map(prefix + "map",
-                                    {iterator: "0:" + str(size[0])})
-        state.add_memlet_path(
-            in_edges[0].src,
-            entry,
-            tasklet,
-            memlet=in_memlets[0],
-            dst_conn=prefix + "x")
-        state.add_memlet_path(
-            in_edges[1].src,
-            entry,
-            tasklet,
-            memlet=in_memlets[1],
-            dst_conn=prefix + "y")
-        state.add_memlet_path(
-            tasklet,
-            exit,
-            out_edges[0].dst,
-            memlet=out_memlet,
-            src_conn=prefix + "result")
+
+
+@dace.library.transformation
+class ExpandDotPure(ExpandTransformation):
+
+    _node = Dot("__ExpandDotPure")
+
+    @staticmethod
+    def make_sdfg(dtype):
+
+        n = dace.symbol("n")
+
+        @dace.program
+        def dot(_x: dtype[n], _y: dtype[n], _result: dtype[1]):
+            @dace.map
+            def product(i: _[0:n]):
+                x_in << _x[i]
+                y_in << _y[i]
+                result_out >> _result(1, lambda a, b: a + b)
+                result_out = x_in * y_in
+
+        return dot.to_sdfg()
+
+    @staticmethod
+    def expand(node, state, sdfg):
+        node.validate(state, sdfg)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
+        dot_sdfg = ExpandDotPure.make_sdfg(node.dtype)
+        nested_sdfg = state.add_nested_sdfg(
+            dot_sdfg,
+            sdfg,
+            node.in_connectors,
+            node.out_connectors,
+            name=node.name)
+        dace.graph.nxutil.change_edge_dest(state, node, nested_sdfg)
+        dace.graph.nxutil.change_edge_src(state, node, nested_sdfg)
         state.remove_node(node)
 
 
@@ -92,7 +92,7 @@ Dot.implementations["pure"] = (ExpandDotPure, [])
 @dace.library.transformation
 class ExpandDotOpenBLAS(ExpandTransformation):
 
-    _node = Dot()
+    _node = Dot("__ExpandDotOpenBLAS")
 
     @staticmethod
     def expand(node, state, sdfg):

@@ -871,13 +871,15 @@ class Reduce(Node):
 @make_properties
 class LibraryNode(Node):
 
+    name = Property(dtype=str, desc="Name of node")
     implementation = Property(
         dtype=str,
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, name, *args, **kwargs):
+        self.name = name
         if hasattr(type(self), "default_implementation"):
             self.implementation = self.default_implementation
         else:
