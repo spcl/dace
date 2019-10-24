@@ -6,11 +6,63 @@ from dace.transformation.pattern_matching import ExpandTransformation
 from dace.graph import nxutil
 
 
+@dace.library.transformation
+class ExpandDotPure(ExpandTransformation):
+    @staticmethod
+    def make_sdfg(dtype):
+
+        n = dace.symbol("n")
+
+        @dace.program
+        def dot(_x: dtype[n], _y: dtype[n], _result: dtype[1]):
+            @dace.map
+            def product(i: _[0:n]):
+                x_in << _x[i]
+                y_in << _y[i]
+                result_out >> _result(1, lambda a, b: a + b)
+                result_out = x_in * y_in
+
+        return dot.to_sdfg()
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(state, sdfg)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
+        return ExpandDotPure.make_sdfg(node.dtype)
+
+
+@dace.library.transformation
+class ExpandDotOpenBLAS(ExpandTransformation):
+    @staticmethod
+    def expansion(node, state, sdfg):
+        dtype = node.dtype
+        if dtype == dace.float32:
+            func = "sdot"
+        elif dtype == dace.float64:
+            func = "ddot"
+        else:
+            raise ValueError("Unsupported type for OpenBLAS dot product: " +
+                             str(dtype))
+        code = "cblas_{}(n, _x, 1, _y, 1);".format(func)
+        tasklet = nodes.Tasklet(
+            node.name,
+            code,
+            inputs=node.in_connectors,
+            outputs=node.out_connectors,
+            language=dtypes.language.CPP)
+        return tasklet
+
+
 @dace.library.node
 class Dot(nodes.LibraryNode):
 
     # Global properties
-    implementations = {}  # Entries defined below to avoid cyclic dependency
+    implementations = {
+        "pure": (ExpandDotPure, []),
+        "OpenBLAS": (ExpandDotOpenBLAS, ["OpenBLAS"])
+    }
     default_implementation = "pure"
 
     # Object fields
@@ -44,68 +96,3 @@ class Dot(nodes.LibraryNode):
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):
             raise ValueError("WCR on dot product memlets not supported")
-
-
-@dace.library.transformation
-class ExpandDotPure(ExpandTransformation):
-
-    _node = Dot("__ExpandDotPure")
-
-    @staticmethod
-    def make_sdfg(dtype):
-
-        n = dace.symbol("n")
-
-        @dace.program
-        def dot(_x: dtype[n], _y: dtype[n], _result: dtype[1]):
-            @dace.map
-            def product(i: _[0:n]):
-                x_in << _x[i]
-                y_in << _y[i]
-                result_out >> _result(1, lambda a, b: a + b)
-                result_out = x_in * y_in
-
-        return dot.to_sdfg()
-
-    @staticmethod
-    def expand(node, state, sdfg):
-        node.validate(state, sdfg)
-        if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) +
-                             ".")
-        dot_sdfg = ExpandDotPure.make_sdfg(node.dtype)
-        nested_sdfg = state.add_nested_sdfg(
-            dot_sdfg,
-            sdfg,
-            node.in_connectors,
-            node.out_connectors,
-            name=node.name)
-        dace.graph.nxutil.change_edge_dest(state, node, nested_sdfg)
-        dace.graph.nxutil.change_edge_src(state, node, nested_sdfg)
-        state.remove_node(node)
-
-
-# Register implementation
-Dot.implementations["pure"] = (ExpandDotPure, [])
-
-
-@dace.library.transformation
-class ExpandDotOpenBLAS(ExpandTransformation):
-
-    _node = Dot("__ExpandDotOpenBLAS")
-
-    @staticmethod
-    def expand(node, state, sdfg):
-        dtype = node.dtype
-        if dtype == dace.float32:
-            func = "sdot"
-        elif dtype == dace.float64:
-            func = "ddot"
-        else:
-            raise ValueError("Unsupported type for OpenBLAS dot product: " +
-                             str(dtype))
-        raise NotImplementedError("NYI")
-
-
-# Register implementation
-Dot.implementations["OpenBLAS"] = (ExpandDotOpenBLAS, ["OpenBLAS"])

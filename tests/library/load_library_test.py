@@ -25,9 +25,15 @@ def test_dot(dtype):
     dot_node = blas.nodes.Dot("dot", dtype)
 
     state.add_memlet_path(
-        x, dot_node, dst_conn="_x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
+        x,
+        dot_node,
+        dst_conn="_x",
+        memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state.add_memlet_path(
-        y, dot_node, dst_conn="_y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
+        y,
+        dot_node,
+        dst_conn="_y",
+        memlet=Memlet.simple(y, "0:n", num_accesses=n))
     state.add_memlet_path(
         dot_node,
         result,
@@ -46,14 +52,17 @@ def test_dot(dtype):
 
     dot(x=x, y=y, result=result, n=n.get())
 
-    diff = abs(result[0] - 32 * 5)
-    if diff >= 1e-6 * 32 * 5:
+    ref = np.dot(x, y)
+
+    diff = abs(result[0] - ref)
+    if diff >= 1e-6 * ref:
         print("Unexpected result returned from dot product.")
         sys.exit(1)
 
 
 ###############################################################################
 
+test_dot(dace.float32)
 test_dot(dace.float64)
 
 ###############################################################################

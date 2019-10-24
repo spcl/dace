@@ -25,6 +25,10 @@ def node(n):
     if not hasattr(n, "default_implementation"):
         raise ValueError("Library node class \"" + type(n).__name__ +
                         "\" must define default_implementation (can be None).")
+    # Add the node type to all implementations for matching
+    for t in n.implementations.values():
+        Transformation = t[0]
+        Transformation._match_node = type(n)("__" + Transformation.__name__)
     return dace.properties.make_properties(n)
 
 # Use to decorate DaCe library transformations

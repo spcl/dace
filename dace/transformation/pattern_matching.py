@@ -236,11 +236,13 @@ class Transformation(object):
 class ExpandTransformation(Transformation):
     """Base class for transformations that simply expand a node into a
        subgraph, and thus needs only simple matching and replacement
-       functionality."""
+       functionality. Subclasses only need to implement the method
+       "expansion".
+    """
 
     @classmethod
     def expressions(clc):
-        return [nxutil.node_path_graph(clc._node)]
+        return [nxutil.node_path_graph(clc._match_node)]
 
     @staticmethod
     def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
@@ -254,13 +256,33 @@ class ExpandTransformation(Transformation):
     @classmethod
     def match_to_str(clc, graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
                      candidate: Dict[dace.graph.nodes.Node, int]):
-        node = graph.nodes()[candidate[clc._node]]
+        node = graph.nodes()[candidate[clc._match_node]]
         return str(node)
+
+    @staticmethod
+    def expansion(node):
+        raise NotImplementedError("Must be implemented by subclass")
 
     def apply(self, sdfg):
         state = sdfg.nodes()[self.state_id]
-        node = state.nodes()[self.subgraph[type(self)._node]]
-        type(self).expand(node, state, sdfg)
+        node = state.nodes()[self.subgraph[type(self)._match_node]]
+        expansion = type(self).expansion(node, state, sdfg)
+        if isinstance(expansion, dace.SDFG):
+            expansion = state.add_nested_sdfg(
+                expansion,
+                sdfg,
+                node.in_connectors,
+                node.out_connectors,
+                name=node.name)
+        elif isinstance(expansion, dace.graph.nodes.NestedSDFG):
+            pass
+        elif isinstance(expansion, dace.graph.nodes.CodeNode):
+            pass
+        else:
+            raise TypeError("Node expansion must be a CodeNode or an SDFG")
+        dace.graph.nxutil.change_edge_dest(state, node, expansion)
+        dace.graph.nxutil.change_edge_src(state, node, expansion)
+        state.remove_node(node)
 
 
 # Module functions ############################################################

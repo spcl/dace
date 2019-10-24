@@ -909,7 +909,7 @@ class LibraryNode(Node):
         state = states[0]
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         state_id = sdfg.nodes().index(state)
-        subgraph = {Transformation._node: state.node_id(self)}
+        subgraph = {Transformation._match_node: state.node_id(self)}
         transformation = Transformation(sdfg_id, state_id, subgraph, 0)
         transformation.apply(sdfg)
 
