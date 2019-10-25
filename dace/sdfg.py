@@ -1586,7 +1586,7 @@ subgraph cluster_state_{state} {{
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            self, program_objects, os.path.join(".dacecache", sdfg.name))
+            sdfg, program_objects, os.path.join(".dacecache", sdfg.name))
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder)
