@@ -50,7 +50,7 @@ endforeach()
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)
 include_directories(${DACE_RUNTIME_DIR}/include)
 
-# External dependencies 
+# Global DaCe external dependencies 
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -81,6 +81,68 @@ if(DACE_ENABLE_CUDA)
   endif()
 endif()
 
+# Function for performing deferred variable expansion
+function(expand_deferred_variables VAR_NAME)
+  string(REGEX MATCHALL "__DACE_CMAKE_EXPAND{(.+)}" EXPAND_VARS 
+         "${${VAR_NAME}}")
+  foreach(EXPAND_VAR ${EXPAND_VARS})
+      # Extract only the variable name
+      string(REGEX REPLACE "__DACE_CMAKE_EXPAND{(.+)}" "\\1"
+             EXPAND_VAR ${EXPAND_VAR})
+      # Now expand the variable and substitute it back into the original
+      # variable
+      string(REGEX REPLACE "__DACE_CMAKE_EXPAND{${EXPAND_VAR}}"
+             "${${EXPAND_VAR}}" ${VAR_NAME} ${${VAR_NAME}})
+  endforeach()
+  # Have to explicitly set parent scope, otherwise this will have no effect
+  set(${VAR_NAME} ${${VAR_NAME}} PARENT_SCOPE)
+endfunction()
+
+# Environment-specified external dependencies 
+if (${CMAKE_VERSION} VERSION_LESS ${DACE_ENV_MINIMUM_VERSION})
+  message(FATAL_ERROR "Packages require CMake version >= ${DACE_ENV_MINIMUM_VERSION}.")
+endif()
+# Include any CMake files specified
+foreach(CMAKE_FILE ${DACE_ENV_CMAKE_FILES})
+  include(${CMAKE_FILE})
+endforeach()
+# Hideous way of "zipping" keys and values passed separately. Couldn't find a
+# better way of doing this in CMake.
+list(LENGTH DACE_ENV_VAR_KEYS NUM_ENV_VARS)
+math(EXPR VARS_END "${NUM_ENV_VARS}-1")
+if(${NUM_ENV_VARS} GREATER 0)
+  foreach(i RANGE ${VARS_END})
+    list(GET DACE_ENV_VAR_KEYS ${i} KEY)
+    list(GET DACE_ENV_VAR_VALUES ${i} VAL)
+    expand_deferred_variables(VAL)
+    set(${KEY} ${VAL})
+  endforeach()
+endif()
+foreach(PACKAGE_NAME ${DACE_ENV_PACKAGES})
+  find_package(${PACKAGE_NAME} REQUIRED)
+endforeach()
+# Un-escape and expand environment arguments, now that packages have been found
+foreach(VAR_NAME DACE_ENV_INCLUDES DACE_ENV_LIBRARIES DACE_ENV_COMPILE_FLAGS
+                 DACE_ENV_LINK_FLAGS DACE_ENV_VAR_VALUES)
+    expand_deferred_variables(${VAR_NAME})
+endforeach()
+# Now evaluate variables again, in case some of them contained unexpanded
+# values depending on packages
+if(${NUM_ENV_VARS} GREATER 0)
+  foreach(i RANGE ${VARS_END})
+    list(GET DACE_ENV_VAR_KEYS ${i} KEY)
+    list(GET DACE_ENV_VAR_VALUES ${i} VAL)
+    set(${KEY} ${VAL})
+  endforeach()
+endif()
+# Configure specified include directories, libraries, and flags
+include_directories(${DACE_ENV_INCLUDES})
+set(DACE_LIBS ${DACE_LIBS} ${DACE_ENV_LIBRARIES})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${DACE_ENV_COMPILE_FLAGS}")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
+set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
+set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
 
 if(DACE_ENABLE_XILINX)
   set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
@@ -90,7 +152,6 @@ if(DACE_ENABLE_XILINX)
   include_directories(SYSTEM ${SDAccel_INCLUDE_DIRS} ${DACE_HLSLIB_DIR}/include)
   add_definitions(-DDACE_XILINX)
   set(DACE_LIBS ${DACE_LIBS} ${SDAccel_LIBRARIES})
-
 endif()
 
 # Create CUDA object files

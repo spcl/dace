@@ -23,18 +23,18 @@ class TargetCodeGenerator(object):
 
     @property
     def has_initializer(self):
-        """ Returns True if the target generates a `__dace_init_<TARGET>` 
+        """ Returns True if the target generates a `__dace_init_<TARGET>`
             function that should be called on initialization. """
         raise NotImplementedError('Abstract class')
 
     @property
     def has_finalizer(self):
-        """ Returns True if the target generates a `__dace_exit_<TARGET>` 
+        """ Returns True if the target generates a `__dace_exit_<TARGET>`
             function that should be called on finalization. """
         raise NotImplementedError('Abstract class')
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
-        """ Generates code for an SDFG state, outputting it to the given 
+        """ Generates code for an SDFG state, outputting it to the given
             code streams.
             @param sdfg: The SDFG to generate code from.
             @param state: The SDFGState to generate code from.
@@ -50,7 +50,7 @@ class TargetCodeGenerator(object):
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
                        callsite_stream):
         """ Generates code for an SDFG state scope (from a scope-entry node
-            to its corresponding scope-exit node), outputting it to the given 
+            to its corresponding scope-exit node), outputting it to the given
             code streams.
             @param sdfg: The SDFG to generate code from.
             @param dfg_scope: The `ScopeSubgraphView` to generate code from.
@@ -66,7 +66,7 @@ class TargetCodeGenerator(object):
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
-        """ Generates code for a single node, outputting it to the given 
+        """ Generates code for a single node, outputting it to the given
             code streams.
             @param sdfg: The SDFG to generate code from.
             @param dfg: The SDFG state to generate code from.
@@ -83,7 +83,7 @@ class TargetCodeGenerator(object):
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
-        """ Generates code for allocating an array, outputting to the given 
+        """ Generates code for allocating an array, outputting to the given
             code streams.
             @param sdfg: The SDFG to generate code from.
             @param dfg: The SDFG state to generate code from.
@@ -100,7 +100,7 @@ class TargetCodeGenerator(object):
 
     def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
-        """ Generates code for initializing an array, outputting to the given 
+        """ Generates code for initializing an array, outputting to the given
             code streams.
             @param sdfg: The SDFG to generate code from.
             @param dfg: The SDFG state to generate code from.
@@ -117,7 +117,7 @@ class TargetCodeGenerator(object):
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
-        """ Generates code for deallocating an array, outputting to the given 
+        """ Generates code for deallocating an array, outputting to the given
             code streams.
             @param sdfg: The SDFG to generate code from.
             @param dfg: The SDFG state to generate code from.
@@ -134,8 +134,8 @@ class TargetCodeGenerator(object):
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
-        """ Generates code for copying memory, either from a data access 
-            node (array/stream) to another, a code node (tasklet/nested 
+        """ Generates code for copying memory, either from a data access
+            node (array/stream) to another, a code node (tasklet/nested
             SDFG) to another, or a combination of the two.
             @param sdfg: The SDFG to generate code from.
             @param dfg: The SDFG state to generate code from.
@@ -231,6 +231,7 @@ class TargetDispatcher(object):
 
     def __init__(self):
         self._used_targets = set()
+        self._used_environments = set()
 
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
@@ -267,11 +268,17 @@ class TargetDispatcher(object):
             during generation. """
         return self._used_targets
 
+    @property
+    def used_environments(self):
+        """ Returns a list of environments required to build and run the code.
+        """
+        return self._used_environments
+
     def register_state_dispatcher(self, dispatcher, predicate=None):
         """ Registers a code generator that processes a single state, calling
             `generate_state`.
             @param dispatcher: The code generator to use.
-            @param predicate: A lambda function that accepts the SDFG and 
+            @param predicate: A lambda function that accepts the SDFG and
                               state, and triggers the code generator when True
                               is returned. If None, registers `dispatcher`
                               as the default state dispatcher.
@@ -299,7 +306,7 @@ class TargetDispatcher(object):
             `generate_node`.
             @param dispatcher: The code generator to use.
             @param predicate: A lambda function that accepts the SDFG, state,
-                              and node, and triggers the code generator when 
+                              and node, and triggers the code generator when
                               True is returned. If None, registers `dispatcher`
                               as the default node dispatcher.
             @see: TargetCodeGenerator
@@ -324,7 +331,7 @@ class TargetDispatcher(object):
         """ Registers a function that processes a scope, used when calling
             `dispatch_subgraph` and `dispatch_scope`.
             @param schedule_type: The scope schedule that triggers `func`.
-            @param func: A TargetCodeGenerator object that contains an 
+            @param func: A TargetCodeGenerator object that contains an
                          implementation of `generate_scope`.
             @see: TargetCodeGenerator
         """
@@ -341,11 +348,11 @@ class TargetDispatcher(object):
         self._map_dispatchers[schedule_type] = func
 
     def register_array_dispatcher(self, storage_type, func):
-        """ Registers a function that processes data allocation,   
+        """ Registers a function that processes data allocation,
             initialization, and deinitialization. Used when calling
             `dispatch_allocate/deallocate/initialize`.
             @param storage_type: The data storage type that triggers `func`.
-            @param func: A TargetCodeGenerator object that contains an 
+            @param func: A TargetCodeGenerator object that contains an
                          implementation of data memory management functions.
             @see: TargetCodeGenerator
         """
@@ -364,23 +371,23 @@ class TargetDispatcher(object):
                                  dst_schedule,
                                  func,
                                  predicate=None):
-        """ Registers code generation of data-to-data (or data from/to 
-            tasklet, if src/dst storage is StorageType.Register) copy 
-            functions. Can also be target-schedule specific, or 
+        """ Registers code generation of data-to-data (or data from/to
+            tasklet, if src/dst storage is StorageType.Register) copy
+            functions. Can also be target-schedule specific, or
             dst_schedule=None if the function will be invoked on any schedule.
-            @param src_storage: The source data storage type that triggers 
+            @param src_storage: The source data storage type that triggers
                                 `func`.
-            @param dst_storage: The destination data storage type that 
+            @param dst_storage: The destination data storage type that
                                 triggers `func`.
-            @param dst_schedule: An optional destination scope schedule type 
+            @param dst_schedule: An optional destination scope schedule type
                                  that triggers `func`.
-            @param func: A TargetCodeGenerator object that contains an 
+            @param func: A TargetCodeGenerator object that contains an
                          implementation of `copy_memory`.
             @param predicate: A lambda function that accepts the SDFG, state,
-                              and source and destination nodes, and triggers 
+                              and source and destination nodes, and triggers
                               the code generator when True is returned. If
                               None, always dispatches with this dispatcher.
-            @see: TargetCodeGenerator            
+            @see: TargetCodeGenerator
         """
 
         if not isinstance(src_storage, dtypes.StorageType): raise TypeError
@@ -432,7 +439,7 @@ class TargetDispatcher(object):
                           function_stream,
                           callsite_stream,
                           skip_entry_node=False):
-        """ Dispatches a code generator for a scope subgraph of an 
+        """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
         start_nodes = list(
@@ -471,6 +478,11 @@ class TargetDispatcher(object):
                       callsite_stream):
         """ Dispatches a code generator for a single node. """
 
+        # If this node depends on any environments, register this for
+        # generating header code later
+        if hasattr(node, "environments"):
+            self._used_environments |= node.environments
+
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
         satisfied_dispatchers = [
@@ -495,7 +507,7 @@ class TargetDispatcher(object):
 
     def dispatch_scope(self, map_schedule, sdfg, sub_dfg, state_id,
                        function_stream, callsite_stream):
-        """ Dispatches a code generator function for a scope in an SDFG 
+        """ Dispatches a code generator function for a scope in an SDFG
             state. """
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)

@@ -9,7 +9,7 @@ n = dace.symbol("n")
 ###############################################################################
 
 
-def test_dot(dtype):
+def test_dot(implementation, dtype):
 
     sdfg = dace.SDFG("dot_product")
     state = sdfg.add_state("dataflow")
@@ -23,6 +23,7 @@ def test_dot(dtype):
     result = state.add_write("result")
 
     dot_node = blas.nodes.Dot("dot", dtype)
+    dot_node.implementation = implementation
 
     state.add_memlet_path(
         x,
@@ -59,10 +60,15 @@ def test_dot(dtype):
         print("Unexpected result returned from dot product.")
         sys.exit(1)
 
+    print("Test ran successfully for implementation \"" + implementation +
+          "\" for " + str(dtype))
+
 
 ###############################################################################
 
-test_dot(dace.float32)
-test_dot(dace.float64)
+test_dot("pure", dace.float32)
+test_dot("pure", dace.float64)
+test_dot("MKL", dace.float32)
+test_dot("MKL", dace.float64)
 
 ###############################################################################

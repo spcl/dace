@@ -72,11 +72,15 @@ class DaCeCodeGenerator(object):
                 datatypes.add(arr.dtype)
 
         # Emit unique definitions
-        global_stream.write('\n')
+        wrote_something = False
         for typ in datatypes:
             if hasattr(typ, 'emit_definition'):
+                if not wrote_something:
+                    global_stream.write("", sdfg)
+                wrote_something = True
                 global_stream.write(typ.emit_definition(), sdfg)
-        global_stream.write('\n')
+        if wrote_something:
+            global_stream.write("", sdfg)
 
         #########################################################
         # Write constants
@@ -84,7 +88,8 @@ class DaCeCodeGenerator(object):
 
         global_stream.write(sdfg.global_code, sdfg)
 
-    def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
+    def generate_header(self, sdfg: SDFG, used_environments: Set[str],
+                        global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
             function for overriding purposes.
@@ -92,25 +97,34 @@ class DaCeCodeGenerator(object):
             @param global_stream: Stream to write to (global).
             @param callsite_stream: Stream to write to (at call site).
         """
-        fname = sdfg.name
-        params = sdfg.signature()
+
+        environments = [
+            dace.library.get_environment(env_name)
+            for env_name in used_environments
+        ]
 
         # Write frame code - header
         global_stream.write(
             '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' +
             '#include <dace/dace.h>\n', sdfg)
 
-        self.generate_fileheader(sdfg, callsite_stream)
+        # Write header required by environments
+        for env in environments:
+            if len(env.headers) > 0:
+                global_stream.write("\n".join(
+                    "#include <" + h + ">" for h in env.headers), sdfg)
 
-        callsite_stream.write(
-            'void __program_%s_internal(%s)\n{\n' % (fname, params), sdfg)
+        global_stream.write("\n", sdfg)
+
+        self.generate_fileheader(sdfg, global_stream)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
 
-    def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
+    def generate_footer(self, sdfg: SDFG, used_environments: Set[str],
+                        global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
             function for overriding purposes.
@@ -121,24 +135,24 @@ class DaCeCodeGenerator(object):
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
+        environments = [
+            dace.library.get_environment(env_name)
+            for env_name in used_environments
+        ]
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
-        # Write frame code - footer
-        callsite_stream.write('}\n', sdfg)
-
         # Write awkward footer to avoid 'extern "C"' issues
         callsite_stream.write(
             """
-void __program_%s_internal(%s);
 DACE_EXPORTED void __program_%s(%s)
 {
     __program_%s_internal(%s);
 }
-""" % (fname, params, fname, params, fname, paramnames), sdfg)
+""" % (fname, params, fname, paramnames), sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
@@ -162,6 +176,12 @@ DACE_EXPORTED int __dace_init(%s)
                 callsite_stream.write(
                     '__result |= __dace_init_%s(%s);' % (target.target_name,
                                                          paramnames), sdfg)
+        for env in environments:
+            if env.init_code:
+                callsite_stream.write("{  // Environment: " + env.__name__,
+                                      sdfg)
+                callsite_stream.write(env.init_code)
+                callsite_stream.write("}")
 
         callsite_stream.write(sdfg.init_code, sdfg)
 
@@ -185,6 +205,12 @@ DACE_EXPORTED void __dace_exit(%s)
                 callsite_stream.write(
                     '__dace_exit_%s(%s);' % (target.target_name, paramnames),
                     sdfg)
+        for env in environments:
+            if env.finalize_code:
+                callsite_stream.write("{  // Environment: " + env.__name__,
+                                      sdfg)
+                callsite_stream.write(env.init_code)
+                callsite_stream.write("}")
 
         callsite_stream.write('}\n', sdfg)
 
@@ -592,9 +618,7 @@ DACE_EXPORTED void __dace_exit(%s)
         # Set default storage/schedule types in SDFG
         _set_default_schedule_and_storage_types(sdfg, schedule)
 
-        # Generate preamble (if top-level)
-        if schedule is None:
-            self.generate_header(sdfg, global_stream, callsite_stream)
+        is_top_level = schedule is None
 
         # Generate code
         ###########################
@@ -848,10 +872,17 @@ DACE_EXPORTED void __dace_exit(%s)
         #######################################################################
         # State transition generation
 
+        if is_top_level:
+            callsite_stream.write(
+                'void __program_%s_internal(%s)\n{\n' % (sdfg.name,
+                                                         sdfg.signature()),
+                sdfg)
         states_generated = set()  # For sanity check
         self.generate_states(sdfg, "sdfg", control_flow,
                              global_stream, callsite_stream,
                              set(states_topological), states_generated)
+        if is_top_level:
+            callsite_stream.write("}", sdfg)
 
         #############################
         # End of code generation
@@ -877,15 +908,19 @@ DACE_EXPORTED void __dace_exit(%s)
 
         ###########################
 
-        # Generate footer (if top-level)
-        if schedule is None:
-            self.generate_footer(sdfg, global_stream, callsite_stream)
+        header_stream = CodeIOStream()
+        if is_top_level:
+            self.generate_header(sdfg, self._dispatcher.used_environments,
+                                 header_stream, callsite_stream)
 
-        # Clear out all the annotated control flow
+        if is_top_level:
+            self.generate_footer(sdfg, self._dispatcher.used_environments,
+                                 global_stream, callsite_stream)
 
         # Return the generated global and local code strings
-        return (global_stream.getvalue(), callsite_stream.getvalue(),
-                self._dispatcher.used_targets)
+        return (header_stream.getvalue() + global_stream.getvalue(),
+                callsite_stream.getvalue(), self._dispatcher.used_targets,
+                self._dispatcher.used_environments)
 
 
 def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):

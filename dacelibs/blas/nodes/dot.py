@@ -1,13 +1,15 @@
 import dace.library
 import dace.properties as properties
 import dace.graph.nodes as nodes
-from dace.memlet import Memlet
 from dace.transformation.pattern_matching import ExpandTransformation
-from dace.graph import nxutil
+from .. import environments
 
 
-@dace.library.transformation
+@dace.library.expansion
 class ExpandDotPure(ExpandTransformation):
+
+    environments = []
+
     @staticmethod
     def make_sdfg(dtype):
 
@@ -33,10 +35,14 @@ class ExpandDotPure(ExpandTransformation):
         return ExpandDotPure.make_sdfg(node.dtype)
 
 
-@dace.library.transformation
+@dace.library.expansion
 class ExpandDotOpenBLAS(ExpandTransformation):
+
+    environments = [environments.OpenBLAS]
+
     @staticmethod
     def expansion(node, state, sdfg):
+        node.validate(state, sdfg)
         dtype = node.dtype
         if dtype == dace.float32:
             func = "sdot"
@@ -45,14 +51,24 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for OpenBLAS dot product: " +
                              str(dtype))
-        code = "cblas_{}(n, _x, 1, _y, 1);".format(func)
+        code = "_result = cblas_{}(n, _x, 1, _y, 1);".format(func)
         tasklet = nodes.Tasklet(
             node.name,
+            node.in_connectors,
+            node.out_connectors,
             code,
-            inputs=node.in_connectors,
-            outputs=node.out_connectors,
-            language=dtypes.language.CPP)
+            language=dace.dtypes.Language.CPP)
         return tasklet
+
+
+@dace.library.expansion
+class ExpandDotMKL(ExpandTransformation):
+
+    environments = [environments.IntelMKL]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        return ExpandDotOpenBLAS.expansion(node, state, sdfg)
 
 
 @dace.library.node
@@ -60,8 +76,9 @@ class Dot(nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "pure": (ExpandDotPure, []),
-        "OpenBLAS": (ExpandDotOpenBLAS, ["OpenBLAS"])
+        "pure": ExpandDotPure,
+        "OpenBLAS": ExpandDotOpenBLAS,
+        "MKL": ExpandDotMKL
     }
     default_implementation = "pure"
 
@@ -69,8 +86,8 @@ class Dot(nodes.LibraryNode):
     dtype = properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, *args, **kwargs):
-        self.dtype = dtype
         super().__init__(name, *args, **kwargs)
+        self.dtype = dtype
 
     def validate(self, state, sdfg):
         in_edges = state.in_edges(self)

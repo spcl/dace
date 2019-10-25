@@ -1,4 +1,4 @@
-from dace.properties import Property, make_properties
+from dace.properties import Property, SetProperty, make_properties
 
 
 @make_properties
@@ -18,6 +18,10 @@ class CodeObject(object):
     linkable = Property(
         dtype=bool, desc='Should this file participate in '
         'overall linkage?')
+    environments = SetProperty(
+        str,
+        desc="Environments required by CMake to build and run this code node.",
+        default=set())
 
     def __init__(self,
                  name,
@@ -26,7 +30,8 @@ class CodeObject(object):
                  target,
                  title,
                  additional_compiler_kwargs=None,
-                 linkable=True):
+                 linkable=True,
+                 environments=set()):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -36,3 +41,4 @@ class CodeObject(object):
         self.title = title
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
+        self.environments = environments

@@ -230,11 +230,16 @@ class AccessNode(Node):
 # ------------------------------------------------------------------------------
 
 
+@make_properties
 class CodeNode(Node):
     """ A node that contains runnable code with acyclic external data
         dependencies. May either be a tasklet or a nested SDFG, and
         denoted by an octagonal shape. """
-    pass
+
+    environments = SetProperty(
+        str,
+        desc="Environments required by CMake to build and run this code node.",
+        default=set())
 
 
 @make_properties
@@ -881,12 +886,12 @@ class LibraryNode(Node):
               "Must match a key in the list of possible implementations."))
 
     def __init__(self, name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.name = name
         if hasattr(type(self), "default_implementation"):
             self.implementation = self.default_implementation
         else:
             self.implementation = None
-        super().__init__(*args, **kwargs)
 
     def expand(self, sdfg):
         """Shorthand to create and perform the expansion transformation
@@ -897,7 +902,7 @@ class LibraryNode(Node):
             if implementation is None:
                 raise ValueError("No implementation or default "
                                  "implementation specified.")
-        Transformation = type(self).implementations[self.implementation][0]
+        Transformation = type(self).implementations[self.implementation]
         states = sdfg.states_for_node(self)
         if len(states) < 1:
             raise ValueError("Node \"" + str(self) +

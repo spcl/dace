@@ -49,7 +49,7 @@ class ReloadableDLL(object):
         bypasses Python's dynamic library reloading issues. """
 
     def __init__(self, library_filename, program_name):
-        """ Creates a new reloadable shared object. 
+        """ Creates a new reloadable shared object.
             @param library_filename: Path to library file.
             @param program_name: Name of the DaCe program (for use in finding
                                  the stub library loader).
@@ -158,8 +158,8 @@ class CompiledSDFG(object):
 
     def _construct_args(self, **kwargs):
         """ Main function that controls argument construction for calling
-            the C prototype of the SDFG. 
-            
+            the C prototype of the SDFG.
+
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """
@@ -342,6 +342,15 @@ def generate_program_folder(sdfg,
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
         filelist_file.write("\n".join(filelist))
 
+    # Build a list of environments used
+    environments = set()
+    for obj in code_objects:
+        environments |= obj.environments
+
+    # Write list of environments
+    with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
+        env_file.write("\n".join(environments))
+
     # Copy snapshot of configuration script
     if config is not None:
         config.save(os.path.join(out_path, "dace.conf"))
@@ -403,6 +412,72 @@ def configure_and_compile(program_folder, program_name=None):
         "-DDACE_PROGRAM_NAME={}".format(program_name),
     ]
 
+    # Get required environments are retrieve the CMake information
+    environments = set(l.strip() for l in open(
+        os.path.join(program_folder, "dace_environments.csv"), "r"))
+    cmake_minimum_version = [0]
+    cmake_variables = dict()
+    cmake_packages = set()
+    cmake_includes = set()
+    cmake_libraries = set()
+    cmake_compile_flags = set()
+    cmake_link_flags = set()
+    cmake_files = set()
+    cmake_module_paths = set()
+    for env_name in environments:
+        env = dace.library.get_environment(env_name)
+        if (env.cmake_minimum_version is not None
+                and len(env.cmake_minimum_version) > 0):
+            version_list = list(map(int, env.cmake_minimum_version.split(".")))
+            for i in range(max(len(version_list), len(cmake_minimum_version))):
+                if i >= len(version_list):
+                    break
+                if i >= len(cmake_minimum_version):
+                    cmake_minimum_version = version_list
+                    break
+                if version_list[i] > cmake_minimum_version[i]:
+                    cmake_minimum_version = version_list
+                    break
+                # Otherwise keep iterating
+        for var in env.cmake_variables:
+            if (var in cmake_variables
+                    and cmake_variables[var] != env.cmake_variables[var]):
+                raise KeyError(
+                    "CMake variable {} was redefined from {} to {}.".format(
+                        var, cmake_variables[var], env.cmake_variables[var]))
+            cmake_variables[var] = env.cmake_variables[var]
+        cmake_packages |= set(env.cmake_packages)
+        cmake_includes |= set(env.cmake_includes)
+        cmake_libraries |= set(env.cmake_libraries)
+        cmake_compile_flags |= set(env.cmake_compile_flags)
+        cmake_link_flags |= set(env.cmake_link_flags)
+        # Make path absolute
+        env_dir = os.path.dirname(env.__dace_file_path)
+        cmake_files |= set(
+            (f if os.path.isabs(f) else os.path.join(env_dir, f)) +
+            (".cmake" if not f.endswith(".cmake") else "")
+            for f in env.cmake_files)
+    environment_flags = [
+        "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(
+            map(str, cmake_minimum_version))),
+        # Make CMake list of key-value pairs
+        "-DDACE_ENV_VAR_KEYS=\"{}\"".format(";".join(cmake_variables.keys())),
+        "-DDACE_ENV_VAR_VALUES=\"{}\"".format(";".join(
+            cmake_variables.values())),
+        "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(cmake_packages)),
+        "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(cmake_includes)),
+        "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(cmake_libraries)),
+        "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(
+            " ".join(cmake_compile_flags)),
+        # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
+        "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(cmake_files)),
+    ]
+    # Escape variable expansions to defer their evaluation
+    environment_flags = [
+        cmd.replace("$", "__DACE_CMAKE_EXPAND") for cmd in environment_flags
+    ]
+    cmake_command += environment_flags
+
     # Replace backslashes with forward slashes
     cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
 
@@ -424,7 +499,8 @@ def configure_and_compile(program_folder, program_name=None):
             make_absolute(Config.get('compiler', 'linker', 'executable'))),
         "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
             Config.get('compiler', 'linker', 'args') +
-            Config.get('compiler', 'linker', 'additional_args')),
+            Config.get('compiler', 'linker', 'additional_args') +
+            " ".join(cmake_link_flags)),
     ]
 
     ##############################################

@@ -1,9 +1,14 @@
 import dace
+import inspect
 from dace.graph.nodes import LibraryNode
 from dace.transformation.pattern_matching import ExpandTransformation
 
+
 # Use to decorate DaCe libraries
 def library(lib):
+    lib = dace.properties.make_properties(lib)
+    if lib.__name__ in _DACE_REGISTERED_LIBRARIES:
+        raise ValueError("Duplicate library found: " + lib.__name__)
     if not hasattr(lib, "nodes"):
         raise ValueError("DaCe library class must expose the field a "
                          "list of library nodes in the field \"nodes\".")
@@ -11,31 +16,94 @@ def library(lib):
         raise ValueError(
             "DaCe library class must expose the field a "
             "list of transformations in the field \"transformations\".")
-    _DACE_REGISTERED_LIBRARIES.append(lib)
+    # Go into every node and expansion associated with this library, and mark
+    # them as belonging to this library, such that we can keep track of when a
+    # library becomes a real dependency
+    for node in lib.nodes:
+        if not hasattr(node, "__dace_library_node"):
+            raise ValueError(str(node) + " is not a DaCe library node.")
+        node.__dace_library_name = lib.__name__
+    for trans in lib.transformations:
+        if not hasattr(trans, "__dace_library_expansion"):
+            raise ValueError(str(trans) + " is not a DaCe library expansion.")
+        trans.__dace_library_name = lib.__name__
+    lib.__dace_library = True
+    _DACE_REGISTERED_LIBRARIES[lib.__name__] = lib
     return lib
+
 
 # Use to decorate DaCe library nodes
 def node(n):
-    if not (n, LibraryNode):
-        raise TypeError("Library node class \"" + type(n).__name__ +
+    n = dace.properties.make_properties(n)
+    if not issubclass(n, LibraryNode):
+        raise TypeError("Library node class \"" + n.__name__ +
                         "\" must derive from dace.graph.nodes.LibraryNode")
     if not hasattr(n, "implementations"):
-        raise ValueError("Library node class \"" + type(n).__name__ +
-                        "\" must define implementations.")
+        raise ValueError("Library node class \"" + n.__name__ +
+                         "\" must define implementations.")
     if not hasattr(n, "default_implementation"):
-        raise ValueError("Library node class \"" + type(n).__name__ +
-                        "\" must define default_implementation (can be None).")
+        raise ValueError(
+            "Library node class \"" + n.__name__ +
+            "\" must define default_implementation (can be None).")
     # Add the node type to all implementations for matching
-    for t in n.implementations.values():
-        Transformation = t[0]
-        Transformation._match_node = type(n)("__" + Transformation.__name__)
-    return dace.properties.make_properties(n)
+    for Transformation in n.implementations.values():
+        Transformation._match_node = n("__" + Transformation.__name__)
+    n.__dace_library_node = True
+    return n
 
-# Use to decorate DaCe library transformations
-def transformation(t):
-    if not issubclass(t, ExpandTransformation):
-        raise TypeError("Library node \"" + type(n).__name__ +
-                        "\"must derive from dace.graph.nodes.LibraryNode")
-    return dace.properties.make_properties(t)
 
-_DACE_REGISTERED_LIBRARIES = []
+# Use to decorate DaCe library expansions
+def expansion(exp):
+    exp = dace.properties.make_properties(exp)
+    if not issubclass(exp, ExpandTransformation):
+        raise TypeError("Library node expansion \"" + type(n).__name__ +
+                        "\"must derive from ExpandTransformation")
+    if not hasattr(exp, "environments"):
+        raise ValueError("Library node expansion must define environments "
+                         "(can be an empty list).")
+    for dep in exp.environments:
+        if not hasattr(dep, "__dace_library_environment"):
+            raise ValueError(str(dep) + " is not a DaCe library environment.")
+    exp.__dace_library_expansion = True
+    return exp
+
+
+def environment(env):
+    env = dace.properties.make_properties(env)
+    if env.__name__ in _DACE_REGISTERED_ENVIRONMENTS:
+        raise ValueError("Duplicate environment specification: " + env.__name__)
+    for field in [
+            "cmake_minimum_version",
+            "cmake_packages",
+            "cmake_variables",
+            "cmake_includes",
+            "cmake_libraries",
+            "cmake_compile_flags",
+            "cmake_link_flags",
+            "cmake_files",
+            "headers",
+            "init_code",
+            "finalize_code",
+    ]:
+        if not hasattr(env, field):
+            raise ValueError(
+                "DaCe environment specification must implement the field \"" +
+                field + "\".")
+    env.__dace_library_environment = True
+    # Retrieve which file this was called from
+    caller_file = inspect.stack()[1].filename
+    env.__dace_file_path = caller_file
+    _DACE_REGISTERED_ENVIRONMENTS[env.__name__] = env
+    return env
+
+
+def get_environment(env_name):
+    try:
+        env = dace.library._DACE_REGISTERED_ENVIRONMENTS[env_name]
+    except KeyError:
+        raise KeyError("Undefined DaCe environment {}.".format(env_name))
+    return env
+
+
+_DACE_REGISTERED_LIBRARIES = {}
+_DACE_REGISTERED_ENVIRONMENTS = {}
