@@ -629,6 +629,13 @@ DACE_EXPORTED void __dace_exit(%s)
         else:
             symbols_available = sdfg.constants
 
+        # Open program function
+        if is_top_level:
+            callsite_stream.write(
+                'void __program_%s_internal(%s)\n{\n' % (sdfg.name,
+                                                         sdfg.signature()),
+                sdfg)
+
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
         allocated = set()
@@ -872,17 +879,10 @@ DACE_EXPORTED void __dace_exit(%s)
         #######################################################################
         # State transition generation
 
-        if is_top_level:
-            callsite_stream.write(
-                'void __program_%s_internal(%s)\n{\n' % (sdfg.name,
-                                                         sdfg.signature()),
-                sdfg)
         states_generated = set()  # For sanity check
         self.generate_states(sdfg, "sdfg", control_flow,
                              global_stream, callsite_stream,
                              set(states_topological), states_generated)
-        if is_top_level:
-            callsite_stream.write("}", sdfg)
 
         #############################
         # End of code generation
@@ -905,6 +905,10 @@ DACE_EXPORTED void __dace_exit(%s)
                         sdfg, state, None, node, global_stream,
                         callsite_stream)
                     deallocated.add(node.data)
+
+        # Close program function
+        if is_top_level:
+            callsite_stream.write("}", sdfg)
 
         ###########################
 
