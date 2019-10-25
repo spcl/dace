@@ -718,10 +718,6 @@ class CPUCodeGen(TargetCodeGenerator):
                         "Cannot copy memlet without a local connector: {} to {}".
                         format(str(edge.src), str(edge.dst)))
 
-                var_type = self._dispatcher.defined_vars.get(uconn)
-                if var_type != DefinedType.Scalar:
-                    return
-
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
                 except TypeError:
