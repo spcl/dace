@@ -775,7 +775,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if def_type == DefinedType.Pointer:
             memlet_expr = memlet_name  # Common case
-        elif def_type == DefinedType.Scalar or def_type == DefinedType.ScalarView:
+        elif def_type == DefinedType.Scalar:
             memlet_expr = "&" + memlet_name
         elif def_type == DefinedType.ArrayView:
             memlet_expr = memlet_name + ".ptr()"
@@ -959,7 +959,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         local_name,
                         DefinedType.Pointer,
                         allow_shadowing=allow_shadowing)
-        elif var_type == DefinedType.Stream or var_type == DefinedType.StreamArray:
+        elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if memlet.num_accesses == 1:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
@@ -975,7 +975,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 result += "auto &{} = __{};".format(local_name, local_name)
                 self._dispatcher.defined_vars.add(
                     local_name,
-                    DefinedType.Stream,
+                    DefinedType.StreamView,
                     allow_shadowing=allow_shadowing)
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
@@ -995,12 +995,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         def_type = self._dispatcher.defined_vars.get(memlet.data)
 
-        if def_type == DefinedType.Stream or def_type == DefinedType.StreamArray:
+        if def_type in [DefinedType.Stream, DefinedType.StreamArray]:
             return self.memlet_stream_ctor(sdfg, memlet)
 
-        elif (def_type == DefinedType.Pointer or def_type == DefinedType.Scalar
-              or def_type == DefinedType.ScalarView
-              or def_type == DefinedType.ArrayView):
+        elif def_type in [
+                DefinedType.Pointer, DefinedType.Scalar, DefinedType.ArrayView
+        ]:
             return self.memlet_view_ctor(sdfg, memlet, is_output)
 
         else:
@@ -1060,16 +1060,14 @@ class CPUCodeGen(TargetCodeGenerator):
         elif def_type == DefinedType.StreamArray:
             return "{}[{}]".format(expr, offset_cppstr)
 
-        elif (def_type == DefinedType.Scalar
-              or def_type == DefinedType.ScalarView
-              or def_type == DefinedType.Stream):
+        elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
 
             if add_offset:
                 raise TypeError(
                     "Tried to offset address of scalar {}: {}".format(
                         dataname, offset_cppstr))
 
-            if def_type == DefinedType.Scalar or def_type == DefinedType.ScalarView:
+            if def_type == DefinedType.Scalar:
                 return "{}&{}".format(dt, expr)
             else:
                 return dataname
@@ -1447,21 +1445,28 @@ class CPUCodeGen(TargetCodeGenerator):
             if vconn in inout or in_memlet.data is None:
                 continue
             callsite_stream.write(
-                self._emit_memlet_reference(sdfg, in_memlet, vconn), sdfg,
-                state_id, node)
-            self._dispatcher.defined_vars.add(
-                vconn,
-                self._dispatcher.defined_vars.get(in_memlet.data),
-                allow_shadowing=True)
+                self.memlet_definition(
+                    sdfg, in_memlet, False, vconn, allow_shadowing=True),
+                sdfg,
+                #self._emit_memlet_reference(sdfg, in_memlet, vconn), sdfg,
+                state_id,
+                node)
+            #self._dispatcher.defined_vars.add(
+            #    vconn,
+            #    self._dispatcher.defined_vars.get(in_memlet.data),
+            #    allow_shadowing=True)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
                 callsite_stream.write(
-                    self._emit_memlet_reference(sdfg, out_memlet, uconn), sdfg,
-                    state_id, node)
-                self._dispatcher.defined_vars.add(
-                    uconn,
-                    self._dispatcher.defined_vars.get(out_memlet.data),
-                    allow_shadowing=True)
+                    self.memlet_definition(
+                        sdfg, out_memlet, True, uconn, allow_shadowing=True),
+                    sdfg, state_id, node)
+                #self._emit_memlet_reference(sdfg, out_memlet, uconn), sdfg,
+                #    state_id, node)
+                #self._dispatcher.defined_vars.add(
+                #    uconn,
+                #    self._dispatcher.defined_vars.get(out_memlet.data),
+                #    allow_shadowing=True)
 
         callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
                               node)

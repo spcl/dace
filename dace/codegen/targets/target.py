@@ -170,11 +170,11 @@ class DefinedType(dace.dtypes.AutoNumber):
         @see: DefinedMemlets
     """
     Pointer = ()
-    ArrayView = ()
     Scalar = ()
-    ScalarView = ()
+    ArrayView = ()
     Stream = ()
     StreamArray = ()
+    StreamView = ()
 
 
 class DefinedMemlets:
