@@ -718,6 +718,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         "Cannot copy memlet without a local connector: {} to {}".
                         format(str(edge.src), str(edge.dst)))
 
+                var_type = self._dispatcher.defined_vars.get(uconn)
+                if var_type != DefinedType.Scalar:
+                    return
+
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
                 except TypeError:
@@ -959,7 +963,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         local_name,
                         DefinedType.Pointer,
                         allow_shadowing=allow_shadowing)
-        elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
+        elif var_type in [
+                DefinedType.Stream, DefinedType.StreamArray,
+                DefinedType.StreamView
+        ]:
             if memlet.num_accesses == 1:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
@@ -983,19 +990,27 @@ class CPUCodeGen(TargetCodeGenerator):
         return result
 
     def memlet_stream_ctor(self, sdfg, memlet):
+        def_type = self._dispatcher.defined_vars.get(memlet.data)
+
         stream = sdfg.arrays[memlet.data]
-        dtype = "dace::vec<{}, {}>".format(stream.dtype.ctype,
-                                           symbolic.symstr(memlet.veclen))
-        return "dace::make_streamview({})".format(memlet.data + (
-            "[{}]".format(cpp_offset_expr(stream, memlet.subset))
-            if isinstance(stream, dace.data.Stream)
-            and stream.is_stream_array() else ""))
+        expr = memlet.data + ("[{}]".format(
+            cpp_offset_expr(stream, memlet.subset))
+                              if isinstance(stream, dace.data.Stream)
+                              and stream.is_stream_array() else "")
+
+        if def_type == DefinedType.StreamView:
+            return expr
+
+        return "dace::make_streamview({})".format(expr)
 
     def memlet_ctor(self, sdfg, memlet, is_output):
 
         def_type = self._dispatcher.defined_vars.get(memlet.data)
 
-        if def_type in [DefinedType.Stream, DefinedType.StreamArray]:
+        if def_type in [
+                DefinedType.Stream, DefinedType.StreamArray,
+                DefinedType.StreamView
+        ]:
             return self.memlet_stream_ctor(sdfg, memlet)
 
         elif def_type in [
@@ -1060,7 +1075,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif def_type == DefinedType.StreamArray:
             return "{}[{}]".format(expr, offset_cppstr)
 
-        elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
+        elif def_type in [
+                DefinedType.Scalar, DefinedType.Stream, DefinedType.StreamView
+        ]:
 
             if add_offset:
                 raise TypeError(
@@ -1488,6 +1505,18 @@ class CPUCodeGen(TargetCodeGenerator):
 
         callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
                               node)
+
+        # Process outgoing memlets with the internal SDFG
+        self.process_out_memlets(
+            sdfg,
+            state_id,
+            node,
+            state_dfg,
+            self._dispatcher,
+            callsite_stream,
+            True,
+            function_stream,
+        )
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
 

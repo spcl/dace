@@ -1226,7 +1226,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             src_def_type = self._dispatcher.defined_vars.get(src_node.data)
             dst_def_type = self._dispatcher.defined_vars.get(dst_node.data)
 
-            if src_def_type == DefinedType.Stream:
+            if src_def_type in [DefinedType.Stream, DefinedType.StreamView]:
                 read_expr = src_expr
             elif src_def_type == DefinedType.Scalar:
                 read_expr = src_node.label
@@ -1234,7 +1234,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 read_expr = "dace::Read<{}, {}>({}{})".format(
                     ctype, memlet.veclen, src_expr, src_index)
 
-            if dst_def_type == DefinedType.Stream:
+            if dst_def_type in [DefinedType.Stream, DefinedType.StreamView]:
                 callsite_stream.write("{}.push({});".format(
                     dst_expr, read_expr))
             else:
