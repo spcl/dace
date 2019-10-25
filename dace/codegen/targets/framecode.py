@@ -877,16 +877,16 @@ DACE_EXPORTED void __dace_exit(%s)
                         dace.graph.edges.IfExit(else_scope, left_exit))
 
         #######################################################################
-        # State transition generation
+        # Generate actual program body
 
         states_generated = set()  # For sanity check
         self.generate_states(sdfg, "sdfg", control_flow,
                              global_stream, callsite_stream,
                              set(states_topological), states_generated)
 
-        #############################
-        # End of code generation
+        #######################################################################
 
+        # Sanity check
         if len(states_generated) != len(sdfg.nodes()):
             raise RuntimeError(
                 "Not all states were generated in SDFG {}!"
@@ -910,14 +910,12 @@ DACE_EXPORTED void __dace_exit(%s)
         if is_top_level:
             callsite_stream.write("}", sdfg)
 
-        ###########################
-
+        # Now that we have all the information about dependencies, generate
+        # header and footer
         header_stream = CodeIOStream()
         if is_top_level:
             self.generate_header(sdfg, self._dispatcher.used_environments,
                                  header_stream, callsite_stream)
-
-        if is_top_level:
             self.generate_footer(sdfg, self._dispatcher.used_environments,
                                  global_stream, callsite_stream)
 
