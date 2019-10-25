@@ -1321,6 +1321,8 @@ class TaskletTransformer(ExtNodeTransformer):
                                                       self.sdfg.arrays)
                     if self.nested and name in self.sdfg_outputs:
                         out_memlet = self.sdfg_outputs[name][0]
+                        out_memlet.num_accesses = memlet.num_accesses
+                        out_memlet.veclen = memlet.veclen
                         out_memlet.wcr = memlet.wcr
                         out_memlet.wcr_identity = memlet.wcr_identity
                         out_memlet.wcr_conflict = memlet.wcr_conflict
@@ -1985,6 +1987,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                outer_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, entry_node,
@@ -1994,8 +1997,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                          'w'):
                         vname = self.accesses[(memlet.data,
                                                scope_memlet.subset, 'w')][0]
-                        memlet = dace.Memlet.from_array(
+                        outer_memlet = dace.Memlet.from_array(
                             vname, self.sdfg.arrays[vname])
+                        outer_memlet.num_accesses = memlet.num_accesses
+                        outer_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
                         irng = memlet.subset
@@ -2041,7 +2046,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 vname, shape, dtype, strides=strides)
                         self.outputs[vname] = (scope_memlet, inner_indices)
                         # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
-                        memlet.data = vname
+                        outer_memlet.data = vname
                         # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
@@ -2051,12 +2056,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         internal_node,
                         exit_node,
                         write_node,
-                        memlet=memlet,
+                        memlet=outer_memlet,
                         src_conn=conn,
                         dst_conn=None)
                 else:
                     state.add_edge(internal_node, conn, write_node, None,
-                                   memlet)
+                                   outer_memlet)
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
