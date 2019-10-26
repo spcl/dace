@@ -1331,6 +1331,7 @@ subgraph cluster_state_{state} {{
         while name in self._arrays:
             self._temp_transients += 1
             name = '__tmp%d' % self._temp_transients
+        self._temp_transients += 1
 
         return name
 
