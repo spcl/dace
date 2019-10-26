@@ -8,11 +8,31 @@ M, N = (dace.symbol(name) for name in ['M', 'N'])
 @dace.program
 def overlap(A: dace.float64[M], x: dace.int32[N]):
 
-    for i in dace.map[0:M]:
-        A[i] = 1.0
-    for j in dace.map[1:N]:
+    A[:] = 1.0
+    for j in range(1, N):
         A[x[j]] += A[x[j-1]]
 
 
 if __name__ == '__main__':
-    overlap.compile()
+    M.set(100)
+    N.set(100)
+
+    x = np.ndarray((N.get(), ), dtype=np.int32)
+    for i in range(N.get()):
+        x[i] = N.get() - 1 - i
+    A = np.ndarray((M.get(), ), dtype=np.float64)
+
+    overlap(A, x)
+
+    npA = np.ndarray((M.get(), ), dtype=np.float64)
+    npA[:] = 1.0
+    for j in range(1, N.get()):
+        npA[x[j]] += npA[x[j-1]]
+    
+    rel_norm = np.linalg.norm(npA - A) / np.linalg.norm(npA)
+
+    print(rel_norm)
+    if rel_norm < 1e-12:
+        exit(0)
+    else:
+        exit(1)

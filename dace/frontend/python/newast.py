@@ -2603,38 +2603,39 @@ class ProgramVisitor(ExtNodeVisitor):
                     wtarget = self._add_write_access(name, rng, target)
                     self._add_assignment(node, wtarget, result)
             else:  # Top-level SDFG
+                output_indirection = None
                 if _subset_has_indirection(rng):
-                    self._add_state('slice_%s_%d' % (true_name, node.lineno))
-                    rnode = self.last_state.add_read(true_name)
+                    output_indirection = self.sdfg.add_state(
+                        'slice_%s_%d' % (true_name, node.lineno))
+                    wnode = output_indirection.add_write(true_name)
                     memlet = Memlet.simple(true_name, str(rng))
                     tmp = self.sdfg.temp_data_name()
-                    rtarget = add_indirection_subgraph(
-                        self.sdfg, self.last_state, rnode,
-                        None, memlet, tmp, self)
+                    wtarget = add_indirection_subgraph(
+                        self.sdfg, output_indirection, None,
+                        wnode, memlet, tmp, self, True)
                 else:
-                    rtarget = (true_name, rng)
+                    wtarget = (true_name, rng)
                 if op:
-                    output_indirection = None
                     if _subset_has_indirection(rng):
-                        output_indirection = self.sdfg.add_state(
-                            'slice_%s_%d' % (true_name, node.lineno))
-                        wnode = output_indirection.add_write(true_name)
+                        self._add_state('slice_%s_%d' % (true_name,
+                                                         node.lineno))
+                        rnode = self.last_state.add_read(true_name)
                         memlet = Memlet.simple(true_name, str(rng))
                         tmp = self.sdfg.temp_data_name()
-                        wtarget = add_indirection_subgraph(
-                            self.sdfg, output_indirection, None,
-                            wnode, memlet, tmp, self, True)
+                        rtarget = add_indirection_subgraph(
+                            self.sdfg, self.last_state, rnode,
+                            None, memlet, tmp, self)
                     else:
-                        wtarget = (true_name, rng)
+                        rtarget = (true_name, rng)
                     self._add_aug_assignment(node, rtarget, wtarget, 
                                              result, op)
-                    if output_indirection:
-                        self.sdfg.add_edge(self.last_state, output_indirection,
-                                           dace.graph.edges.InterstateEdge())
-                        self.last_state = output_indirection
-
                 else:
-                    self._add_assignment(node, rtarget, result)
+                    self._add_assignment(node, wtarget, result)
+                
+                if output_indirection:
+                    self.sdfg.add_edge(self.last_state, output_indirection,
+                                       dace.graph.edges.InterstateEdge())
+                    self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
