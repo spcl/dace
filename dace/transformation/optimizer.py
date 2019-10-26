@@ -9,6 +9,7 @@ import time
 import dace
 from dace.config import Config
 from dace.graph import labeling
+from dace.graph.graph import SubgraphView
 from dace.transformation import pattern_matching
 
 # This import is necessary since it registers all the patterns
@@ -185,6 +186,44 @@ class SDFGOptimizer(object):
                             (pattern_counter, type(pattern_match).__name__))
 
         return self.sdfg
+
+    def optimization_space(self):
+        """ Returns the optimization space of the current SDFG """
+
+        def get_actions(actions, graph, match):
+            subgraph_node_ids = match.subgraph.values()
+            subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
+            for node in subgraph_nodes:
+                version = 0
+                while (node, match, match.expr_index, version) in actions:
+                    version += 1
+                actions.add((node, match, match.expr_index, version))
+            subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
+            subgraph = SubgraphView(graph, subgraph_nodes)
+            for edge in subgraph.edges():
+                version = 0
+                while (edge, match, match.expr_index, version) in actions:
+                    version += 1
+                actions.add((edge, match, match.expr_index, version))
+            return actions
+
+        def get_dataflow_actions(actions, sdfg, match):
+            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
+            return get_actions(actions, graph, match)
+        
+        def get_stateflow_actions(actions, sdfg, match):
+            graph = sdfg.sdfg_list[match.sdfg_id]
+            return get_actions(actions, graph, match)
+
+        actions = set()
+
+        for match in self.get_pattern_matches():
+            if match.state_id >= 0:
+                actions = get_dataflow_actions(actions, self.sdfg, match)
+            else:
+                actions = get_stateflow_actions(actions, self.sdfg, match)
+        
+        return actions           
 
 
 def _parse_cli_input(line):
