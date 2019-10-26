@@ -657,22 +657,23 @@ class CPUCodeGen(TargetCodeGenerator):
     ###########################################################################
     # Memlet handling
 
-    def process_out_memlets(
-            self,
-            sdfg,
-            state_id,
-            node,
-            dfg,
-            dispatcher,
-            result,
-            locals_defined,
-            function_stream,
-    ):
+    def process_out_memlets(self,
+                            sdfg,
+                            state_id,
+                            node,
+                            dfg,
+                            dispatcher,
+                            result,
+                            locals_defined,
+                            function_stream,
+                            skip_wcr=False):
 
         scope_dict = sdfg.nodes()[state_id].scope_dict()
 
         for edge in dfg.out_edges(node):
             _, uconn, v, _, memlet = edge
+            if skip_wcr and memlet.wcr is not None:
+                continue
             dst_node = dfg.memlet_path(edge)[-1].dst
 
             # Target is neither a data nor a tasklet node
@@ -1428,6 +1429,11 @@ class CPUCodeGen(TargetCodeGenerator):
             offset_expr = ''
         else:
             typedef += '&'
+            defined_type = DefinedType.Pointer
+
+        # Register defined variable
+        self._dispatcher.defined_vars.add(
+            pointer_name, defined_type, allow_shadowing=True)
 
         return '%s %s = %s%s;' % (typedef, pointer_name, datadef, offset_expr)
 
@@ -1459,27 +1465,18 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             callsite_stream.write(
                 self.memlet_definition(
-                    sdfg, in_memlet, False, vconn, allow_shadowing=True),
-                sdfg,
-                #self._emit_memlet_reference(sdfg, in_memlet, vconn), sdfg,
-                state_id,
-                node)
-            #self._dispatcher.defined_vars.add(
-            #    vconn,
-            #    self._dispatcher.defined_vars.get(in_memlet.data),
-            #    allow_shadowing=True)
+                    sdfg, in_memlet, False, vconn, allow_shadowing=True), sdfg,
+                state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
-                callsite_stream.write(
-                    self.memlet_definition(
-                        sdfg, out_memlet, True, uconn, allow_shadowing=True),
-                    sdfg, state_id, node)
-                #self._emit_memlet_reference(sdfg, out_memlet, uconn), sdfg,
-                #    state_id, node)
-                #self._dispatcher.defined_vars.add(
-                #    uconn,
-                #    self._dispatcher.defined_vars.get(out_memlet.data),
-                #    allow_shadowing=True)
+                if out_memlet.wcr is not None:
+                    out_code = self._emit_memlet_reference(
+                        sdfg, out_memlet, uconn)
+                else:
+                    out_code = self.memlet_definition(
+                        sdfg, out_memlet, True, uconn, allow_shadowing=True)
+
+                callsite_stream.write(out_code, sdfg, state_id, node)
 
         callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
                               node)
@@ -1512,7 +1509,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream,
             True,
             function_stream,
-        )
+            skip_wcr=True)
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
