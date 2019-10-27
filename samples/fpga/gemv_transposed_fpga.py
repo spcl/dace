@@ -119,7 +119,8 @@ def make_compute_state(sdfg):
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Local)
 
-    cols_entry, cols_exit = state.add_map("cols", {"m": "0:M"})
+    cols_entry, cols_exit = state.add_map(
+        "cols", {"m": "0:M"}, schedule=dace.ScheduleType.Sequential)
     rows_entry, rows_exit = state.add_map("rows", {"n": "0:N"})
 
     tasklet = state.add_tasklet("update", {"a", "x_in"}, {"update"},

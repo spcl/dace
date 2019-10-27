@@ -105,8 +105,8 @@ class SDFGOptimizer(object):
         SAVE_DOTS = Config.get_bool('optimizer', 'savedots')
 
         if SAVE_DOTS:
-            with open('before.dot', 'w') as dot_file:
-                dot_file.write(self.sdfg.draw())
+            self.sdfg.draw_to_file('before.dot')
+            self.sdfg.save(os.path.join('_dotgraphs', 'before.sdfg'))
             if VISUALIZE:
                 os.system('xdot before.dot&')
 
@@ -166,9 +166,10 @@ class SDFGOptimizer(object):
             self.applied_patterns.add(type(pattern_match))
 
             if SAVE_DOTS:
-                self.sdfg.draw_to_file(
-                    'after_%d_%s_b4lprop.dot' % (pattern_counter + 1,
-                                                 type(pattern_match).__name__))
+                filename = 'after_%d_%s_b4lprop' % (
+                    pattern_counter + 1, type(pattern_match).__name__)
+                self.sdfg.draw_to_file(filename + '.dot')
+                self.sdfg.save(os.path.join('_dotgraphs', filename + '.sdfg'))
 
             if not pattern_match.annotates_memlets():
                 labeling.propagate_labels_sdfg(self.sdfg)
@@ -176,9 +177,12 @@ class SDFGOptimizer(object):
             if True:
                 pattern_counter += 1
                 if SAVE_DOTS:
-                    self.sdfg.draw_to_file(
-                        'after_%d_%s.dot' % (pattern_counter,
-                                             type(pattern_match).__name__))
+                    filename = 'after_%d_%s' % (pattern_counter,
+                                                type(pattern_match).__name__)
+                    self.sdfg.draw_to_file(filename + '.dot')
+                    self.sdfg.save(
+                        os.path.join('_dotgraphs', filename + '.sdfg'))
+
                     if VISUALIZE:
                         time.sleep(0.7)
                         os.system(

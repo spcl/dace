@@ -49,7 +49,8 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.6',
-    packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
+    packages=find_packages(
+        exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
