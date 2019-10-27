@@ -61,6 +61,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'scipy', 'pyyaml',
-        'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask'
+        'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
+        'scikit-build', 'cmake'
     ],
     scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
