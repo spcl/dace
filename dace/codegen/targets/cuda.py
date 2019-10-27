@@ -1066,14 +1066,16 @@ void __dace_runkernel_{fname}({fargs})
         for node in dfg_scope.nodes():
             if isinstance(node, nodes.AccessNode):
                 arr = sdfg.arrays[node.data]
-                if arr.storage == dtypes.StorageType.GPU_Shared:
+                if (arr.storage == dtypes.StorageType.GPU_Shared
+                        and arr.transient):
                     numel = functools.reduce(lambda a, b: a * b, arr.shape)
                     if symbolic.issymbolic(numel, sdfg.constants):
                         dynsmem_size += numel
             elif isinstance(node, nodes.NestedSDFG):
                 for sdfg_internal, _, arr in node.sdfg.arrays_recursive():
                     if (arr is not None
-                            and arr.storage == dtypes.StorageType.GPU_Shared):
+                            and arr.storage == dtypes.StorageType.GPU_Shared
+                            and arr.transient):
                         numel = functools.reduce(lambda a, b: a * b, arr.shape)
                         if symbolic.issymbolic(numel, sdfg_internal.constants):
                             dynsmem_size += numel
