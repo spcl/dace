@@ -195,16 +195,19 @@ class SDFGOptimizer(object):
             subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
             for node in subgraph_nodes:
                 version = 0
-                while (node, match, match.expr_index, version) in actions:
+                while (node, type(match).__name__,
+                       match.expr_index, version) in actions.keys():
                     version += 1
-                actions.add((node, match, match.expr_index, version))
-            subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
+                actions[(node, type(match).__name__,
+                         match.expr_index, version)] = match
             subgraph = SubgraphView(graph, subgraph_nodes)
             for edge in subgraph.edges():
                 version = 0
-                while (edge, match, match.expr_index, version) in actions:
+                while (edge, type(match).__name__,
+                       match.expr_index, version) in actions.keys():
                     version += 1
-                actions.add((edge, match, match.expr_index, version))
+                actions[(edge, type(match).__name__,
+                         match.expr_index, version)] = match
             return actions
 
         def get_dataflow_actions(actions, sdfg, match):
@@ -215,7 +218,7 @@ class SDFGOptimizer(object):
             graph = sdfg.sdfg_list[match.sdfg_id]
             return get_actions(actions, graph, match)
 
-        actions = set()
+        actions = dict()
 
         for match in self.get_pattern_matches():
             if match.state_id >= 0:
