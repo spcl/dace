@@ -357,9 +357,13 @@ class Property:
     def set_properties_from_json(object_with_properties,
                                  json_obj,
                                  context=None):
+
+        if isinstance(json_obj, str):
+            json_obj = json.loads(json_obj)
+
         try:
             attrs = json_obj['attributes']
-        except:
+        except KeyError:
             attrs = json_obj
 
         # Apply properties
@@ -368,8 +372,10 @@ class Property:
             pname = tmp
             try:
                 val = attrs[pname]
-            except:
-                continue
+            except KeyError:
+                raise KeyError("Missing property for object of type " +
+                               type(object_with_propertes).__name__ + ":" +
+                               pname)
 
             # Some properties only work when converted back from string.
             try:
@@ -481,7 +487,7 @@ def _property_generator(instance):
 
 
 def make_properties(cls):
-    """ A decorator for objects that adds support and checks for strongly-typed 
+    """ A decorator for objects that adds support and checks for strongly-typed
         properties (which use the Property class).
     """
 
@@ -648,7 +654,9 @@ class ListProperty(Property):
     def to_json(self, l):
         if l is None:
             return json.dumps(l)
-
+        # If element knows how to convert itself, let it
+        if hasattr(self.element_type, "to_json"):
+            return json.dumps([elem.to_json() for elem in l])
         # If elements are one of the JSON basic types, use directly
         if self.element_type in (int, float, list, tuple, dict):
             return json.dumps(l, default=Property.json_dumper)
@@ -665,7 +673,9 @@ class ListProperty(Property):
             return data
         if not isinstance(data, list):
             raise TypeError('ListProperty expects a list input, got %s' % data)
-
+        # If element knows how to convert itself, let it
+        if hasattr(self.element_type, "from_json"):
+            return [self.element_type.from_json(elem) for elem in data]
         # Type-checks (casts) to the element type
         return list(map(self.element_type, data))
 
@@ -962,7 +972,7 @@ class SubgraphProperty(Property):
 
 
 class CodeBlock(list):
-    """ Helper class that represents AST code blocks for `CodeProperty`, 
+    """ Helper class that represents AST code blocks for `CodeProperty`,
         implemented as a list with an extra _as_string property. The object
         also stores the original string, allowing us to preserve comments and
         formatting from user input.
@@ -1335,7 +1345,7 @@ class ShapeProperty(Property):
 
 
 class TypeProperty(Property):
-    """ Custom Property type that finds a type according to the input string. 
+    """ Custom Property type that finds a type according to the input string.
     """
 
     @property
