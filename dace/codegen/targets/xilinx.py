@@ -953,9 +953,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 raise dace.codegen.codegen.CodegenError(
                     "Streams cannot be unbounded on FPGA")
 
-            buffer_length_dynamically_sized = (
-                isinstance(nodedesc.buffer_size, sp.Expr)
-                and len(nodedesc.free_symbols) > 0)
+            buffer_length_dynamically_sized = (dace.symbolic.issymbolic(
+                nodedesc.buffer_size, sdfg.constants))
 
             if buffer_length_dynamically_sized:
                 raise dace.codegen.codegen.CodegenError(
@@ -1227,7 +1226,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             src_def_type = self._dispatcher.defined_vars.get(src_node.data)
             dst_def_type = self._dispatcher.defined_vars.get(dst_node.data)
 
-            if src_def_type == DefinedType.Stream:
+            if src_def_type in [DefinedType.Stream, DefinedType.StreamView]:
                 read_expr = src_expr
             elif src_def_type == DefinedType.Scalar:
                 read_expr = src_node.label
@@ -1235,7 +1234,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 read_expr = "dace::Read<{}, {}>({}{})".format(
                     ctype, memlet.veclen, src_expr, src_index)
 
-            if dst_def_type == DefinedType.Stream:
+            if dst_def_type in [DefinedType.Stream, DefinedType.StreamView]:
                 callsite_stream.write("{}.push({});".format(
                     dst_expr, read_expr))
             else:
@@ -1659,7 +1658,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         cpu.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                             callsite_stream, self._cpu_codegen._locals,
-                            self._cpu_codegen._ldepth)
+                            self._cpu_codegen._ldepth,
+                            self._cpu_codegen._toplevel_schedule)
 
         callsite_stream.write('    ///////////////////\n\n', sdfg, state_id,
                               node)

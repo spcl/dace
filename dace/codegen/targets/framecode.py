@@ -720,9 +720,9 @@ DACE_EXPORTED void __dace_exit(%s)
 
                 # Build a set of all nodes in all cycles associated with this
                 # set of start and end node
-                internal_nodes = functools.reduce(lambda a, b: a | b,
-                                                  [set(c) for c in cycles
-                                                   ]) - {first_node}
+                internal_nodes = functools.reduce(
+                    lambda a, b: a | b, [set(c)
+                                         for c in cycles]) - {first_node}
 
                 exit_edge = [
                     e for e in sdfg.out_edges(first_node)
@@ -956,8 +956,7 @@ def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
                     set_default_in_scope(node)
                 elif getattr(node, 'schedule', False):
                     if node.schedule == dtypes.ScheduleType.Default:
-                        node._schedule = \
-                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                        node._schedule = parent_schedule
 
         ## End of recursive function
 

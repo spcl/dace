@@ -1581,6 +1581,8 @@ subgraph cluster_state_{state} {{
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
 
+        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
 
@@ -2608,7 +2610,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise ValueError('SDFG "{}" already has a parent'.format(
                 sdfg.label))
         sdfg.parent = self
-        sdfg._parent_sdfg = parent
+        if parent is not None:
+            sdfg._parent_sdfg = parent
+        else:
+            sdfg._parent_sdfg = self.parent
+
         sdfg.update_sdfg_list([])
 
         s = nd.NestedSDFG(

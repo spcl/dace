@@ -49,7 +49,8 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.6',
-    packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
+    packages=find_packages(
+        exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
@@ -60,6 +61,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'scipy', 'pyyaml',
-        'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask'
+        'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
+        'scikit-build', 'cmake'
     ],
     scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
