@@ -168,11 +168,11 @@ def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str,
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr1.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(
                  op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
          },
-        'out = in1', {'out': write_memlet},
+        '__out = __in1', {'__out': write_memlet},
         external_edges=True)
     return name
 
@@ -186,12 +186,12 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr1.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(
                  op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
          },
-        'out = %s in1' % opcode, {
-            'out':
+        '__out = %s __in1' % opcode, {
+            '__out':
             Memlet.simple(
                 name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
         },
@@ -213,15 +213,15 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr1.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(
                  op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))])),
-             'in2':
+             '__in2':
              Memlet.simple(
                  op2, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
          },
-        'out = in1 %s in2' % opcode, {
-            'out':
+        '__out = __in1 %s __in2' % opcode, {
+            '__out':
             Memlet.simple(
                 name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
         },
@@ -246,17 +246,17 @@ def _scalarbinop(sdfg: SDFG,
         "_SA%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(scalop, '0'),
-             'in2':
+             '__in2':
              Memlet.simple(
                  arrop, ','.join(['__i%d' % i
                                   for i in range(len(arr.shape))])),
          },
-        'out = %s %s %s' % ('in2' if reverse else 'in1', opcode, 'in1'
-                            if reverse else 'in2'),
+        '__out = %s %s %s' % ('__in2' if reverse else '__in1', opcode, '__in1'
+                            if reverse else '__in2'),
         {
-            'out':
+            '__out':
             Memlet.simple(
                 name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
         },
@@ -444,11 +444,11 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
             for i, s in enumerate(
                 [arr1.shape[0], arr2.shape[1], arr1.shape[1]])
         }, {
-            'a': Memlet.simple(op1, '__i0, __i2'),
-            'b': Memlet.simple(op2, '__i2, __i1')
+            '__a': Memlet.simple(op1, '__i0, __i2'),
+            '__b': Memlet.simple(op2, '__i2, __i1')
         },
-        'c = a * b', {
-            'c':
+        '__c = __a * __b', {
+            '__c':
             Memlet.simple(
                 op3,
                 '__i0, __i1',
@@ -857,7 +857,7 @@ def _subset_has_indirection(subset):
 
 def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
                              dst: nodes.Node, memlet: Memlet, local_name: str,
-                             PVisitor):
+                             PVisitor, output: bool = False):
     """ Replaces the specified edge in the specified graph with a subgraph that
         implements indirection without nested memlet subsets. """
 
@@ -911,14 +911,33 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
                         # newsubset[dimidx][i] = r.subs(expr, toreplace)
     #########################
     # Step 2
-    ind_inputs = {'__ind_' + local_name}
-    ind_outputs = {'lookup'}
+    if output:
+        ind_inputs = {'lookup'}
+        ind_outputs = {'__ind_' + local_name}
+    else:
+        ind_inputs = {'__ind_' + local_name}
+        ind_outputs = {'lookup'}
     # Add accesses to inputs
     for arrname, arr_accesses in accesses.items():
         for i in range(len(arr_accesses)):
             ind_inputs.add('index_%s_%d' % (arrname, i))
 
     tasklet = nodes.Tasklet("Indirection", ind_inputs, ind_outputs)
+
+    # Create map if indirected subset is a range
+    ind_entry = None
+    ind_exit = None
+    inp_base_path = [tasklet]
+    out_base_path = [tasklet]
+    if (isinstance(memlet.subset, subsets.Range) and
+            memlet.subset.num_elements() != 1):
+        rng = copy.deepcopy(memlet.subset)
+        nonsqz_dims = rng.squeeze()
+        ind_entry, ind_exit = graph.add_map(
+            'indirection', {'__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                            for i, (s, e, t) in enumerate(rng)})
+        inp_base_path.insert(0, ind_entry)
+        out_base_path.append(ind_exit)
 
     input_index_memlets = []
     for arrname, arr_accesses in accesses.items():
@@ -933,10 +952,12 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
             conn = None
             if PVisitor.nested:
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
-                # arrname, _ = PVisitor._add_read_access(
-                #     arr_name, arr_rng, target=None)
-                arrname = PVisitor._add_read_access(
-                    arr_name, arr_rng, target=None)
+                if output:
+                    arrname = PVisitor._add_write_access(arr_name, arr_rng,
+                                                         target=None)
+                else:
+                    arrname = PVisitor._add_read_access(arr_name, arr_rng,
+                                                        target=None)
                 access = [0] * len(access)
                 conn = 'index_%s_%d' % (arr_name, i)
             arr = sdfg.arrays[arrname]
@@ -944,10 +965,24 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
             indexMemlet = Memlet(arrname, 1, subsets.Indices(access), 1)
             input_index_memlets.append(indexMemlet)
             read_node = graph.add_read(arrname)
-            if PVisitor.nested:
-                path = [read_node, tasklet]
+            if PVisitor.nested or not isinstance(src, nodes.EntryNode):
+                path = [read_node] + inp_base_path
             else:
-                path = [read_node, src, tasklet]
+                if output:
+                    # TODO: This only works for Maps. Perhaps it should be
+                    # generalized for other pairs of entry/exit nodes.
+                    entry = None
+                    if isinstance(dst, nodes.MapExit):
+                        for node in graph.nodes():
+                            if (isinstance(node, nodes.MapEntry)
+                                    and node.map is dst.map):
+                                entry = node
+                                break
+                    else:
+                        raise NotImplementedError
+                else:
+                    entry = src
+                path = [read_node, entry] + inp_base_path
             graph.add_memlet_path(
                 *path,
                 dst_conn="index_%s_%d" % (arr_name, i),
@@ -956,42 +991,89 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     #########################
     # Step 3
     # Create new tasklet that will perform the indirection
-    tasklet.code = "lookup = {arr}[{index}]".format(
+    if output:
+        code = "{arr}[{index}] = lookup"
+    else:
+        code = "lookup = {arr}[{index}]"
+
+    newsubset = [r[0] if isinstance(r, tuple) else r for r in newsubset]
+    if ind_entry: # Amend newsubset when a range is indirected
+        for i, idx in enumerate(nonsqz_dims):
+            newsubset[idx] = '__i%d' % i
+
+    tasklet.code = code.format(
         arr='__ind_' + local_name,
         index=', '.join([symbolic.symstr(s) for s in newsubset]))
 
     # Create transient variable to trigger the indirect load
-    if memlet.num_accesses == 1:
-        storage = sdfg.add_scalar(
-            '__' + local_name + '_value', array.dtype, transient=True)
+    tmp_name = '__' + local_name + '_value'
+    start_src = None
+    end_dst = None
+    if memlet.num_accesses == 1 and dst is not None:
+        storage = sdfg.add_scalar(tmp_name, array.dtype, transient=True)
     else:
+        rng = copy.deepcopy(memlet.subset)
+        if isinstance(rng, subsets.Range):
+            rng.squeeze()
         storage = sdfg.add_array(
-            '__' + local_name + '_value',
-            memlet.bounding_box_size(),
+            tmp_name,
+            rng.bounding_box_size(),
             array.dtype,
             storage=dtypes.StorageType.Default,
             transient=True)
-    indirectRange = subsets.Range([(0, s - 1, 1) for s in storage.shape])
-    # dataNode = nodes.AccessNode('__' + local_name + '_value')
+        # Force creation of transients for range indirection
+        if output:
+            if src:
+                start_src = src
+                src = None
+        else:
+            if dst:
+                end_dst = dst
+                dst = None
+    
+    # Create transients when implementing indirection
+    # through slicing or when indirecting a range.
+    if src is None:
+        if start_src:
+            src = graph.add_access(tmp_name)
+        else:
+            src = graph.add_read(tmp_name)
+    elif dst is None:
+        if end_dst:
+            dst = graph.add_access(tmp_name)
+        else:
+            dst = graph.add_write(tmp_name)
+
+    tmp_shape = storage.shape
+    indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
+    if ind_entry: # Amend indirected range
+        indirectRange = ','.join([ind for ind in ind_entry.map.params])
 
     # Create memlet that depends on the full array that we look up in
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
     fullMemlet = Memlet(memlet.data, memlet.num_accesses, fullRange,
                         memlet.veclen)
 
-    if isinstance(src, nodes.EntryNode):
-        full_read_node = graph.add_read(memlet.data)
-        graph.add_memlet_path(
-            full_read_node,
-            src,
-            tasklet,
-            dst_conn='__ind_' + local_name,
-            memlet=fullMemlet)
-    elif isinstance(src, nodes.AccessNode):
-        graph.add_memlet_path(
-            src, tasklet, dst_conn='__ind_' + local_name, memlet=fullMemlet)
+    if output:
+        if isinstance(dst, nodes.ExitNode):
+            full_write_node = graph.add_write(memlet.data)
+            path = out_base_path + [dst, full_write_node]
+        elif isinstance(dst, nodes.AccessNode):
+            path = out_base_path + [dst]
+        else:
+            raise Exception("Src node type for indirection is invalid.")
+        graph.add_memlet_path(*path, src_conn='__ind_' + local_name,
+                              memlet=fullMemlet)
     else:
-        raise Exception("Src node type for indirection is invalid.")
+        if isinstance(src, nodes.EntryNode):
+            full_read_node = graph.add_read(memlet.data)
+            path = [full_read_node, src] + inp_base_path
+        elif isinstance(src, nodes.AccessNode):
+            path = [src] + inp_base_path
+        else:
+            raise Exception("Src node type for indirection is invalid.")
+        graph.add_memlet_path(*path, dst_conn='__ind_' + local_name,
+                              memlet=fullMemlet)
 
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
@@ -999,9 +1081,42 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     #                         indirectRange, memlet.veclen)
     # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
-    valueMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
+    valueMemlet = Memlet(tmp_name, 1,  # memlet.num_accesses,
                          indirectRange, memlet.veclen)
-    graph.add_edge(tasklet, 'lookup', dst, local_name, valueMemlet)
+    if output:
+        path = [src] + inp_base_path
+        if isinstance(src, nodes.AccessNode):
+            src_conn = None
+        else:
+            src_conn = local_name
+        graph.add_memlet_path(*path, src_conn=src_conn,
+                              dst_conn='lookup', memlet=valueMemlet)
+        # Connect original source to the indirected-range-transient
+        if start_src:
+            if isinstance(start_src, nodes.AccessNode):
+                src_conn = None
+            else:
+                src_conn = local_name
+            graph.add_edge(start_src, src_conn, src, None,
+                           Memlet.from_array(tmp_name, storage))
+    else:
+        path = out_base_path + [dst]
+        if isinstance(dst, nodes.AccessNode):
+            dst_conn = None
+        else:
+            dst_conn = local_name
+        graph.add_memlet_path(*path, src_conn='lookup',
+                              dst_conn=dst_conn, memlet=valueMemlet)
+        # Connect original destination to the indirected-range-transient
+        if end_dst:
+            if isinstance(end_dst, nodes.AccessNode):
+                dst_conn = None
+            else:
+                dst_conn = local_name
+            graph.add_edge(dst, None, end_dst, dst_conn,
+                           Memlet.from_array(tmp_name, storage))
+    
+    return tmp_name
 
 
 class GlobalResolver(ast.NodeTransformer):
@@ -1319,6 +1434,9 @@ class TaskletTransformer(ExtNodeTransformer):
                     connector, memlet = _parse_memlet(self, node.value.left,
                                                       node.value.right,
                                                       self.sdfg.arrays)
+                    if self.nested and _subset_has_indirection(rng):
+                        memlet = dace.Memlet(memlet.data, rng.num_elements(),
+                                             rng, 1)
                     if self.nested and name in self.sdfg_outputs:
                         out_memlet = self.sdfg_outputs[name][0]
                         out_memlet.num_accesses = memlet.num_accesses
@@ -1987,6 +2105,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                if _subset_has_indirection(memlet.subset):
+                    write_node = exit_node
+                    if exit_node is None:
+                        write_node = state.add_write(memlet.data)
+                    add_indirection_subgraph(self.sdfg, state, internal_node,
+                                             exit_node, memlet, conn, self, True)
+                    continue
                 outer_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
@@ -2551,11 +2676,39 @@ class ProgramVisitor(ExtNodeVisitor):
                     wtarget = self._add_write_access(name, rng, target)
                     self._add_assignment(node, wtarget, result)
             else:  # Top-level SDFG
-                if op:
-                    self._add_aug_assignment(node, (true_name, rng),
-                                             (true_name, rng), result, op)
+                output_indirection = None
+                if _subset_has_indirection(rng):
+                    output_indirection = self.sdfg.add_state(
+                        'slice_%s_%d' % (true_name, node.lineno))
+                    wnode = output_indirection.add_write(true_name)
+                    memlet = Memlet.simple(true_name, str(rng))
+                    tmp = self.sdfg.temp_data_name()
+                    wtarget = add_indirection_subgraph(
+                        self.sdfg, output_indirection, None,
+                        wnode, memlet, tmp, self, True)
                 else:
-                    self._add_assignment(node, (true_name, rng), result)
+                    wtarget = (true_name, rng)
+                if op:
+                    if _subset_has_indirection(rng):
+                        self._add_state('slice_%s_%d' % (true_name,
+                                                         node.lineno))
+                        rnode = self.last_state.add_read(true_name)
+                        memlet = Memlet.simple(true_name, str(rng))
+                        tmp = self.sdfg.temp_data_name()
+                        rtarget = add_indirection_subgraph(
+                            self.sdfg, self.last_state, rnode,
+                            None, memlet, tmp, self)
+                    else:
+                        rtarget = (true_name, rng)
+                    self._add_aug_assignment(node, rtarget, wtarget, 
+                                             result, op)
+                else:
+                    self._add_assignment(node, wtarget, result)
+                
+                if output_indirection:
+                    self.sdfg.add_edge(self.last_state, output_indirection,
+                                       dace.graph.edges.InterstateEdge())
+                    self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):
 
@@ -3095,16 +3248,23 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add slicing state
             self._add_state('slice_%s_%d' % (array, node.lineno))
-            other_subset = copy.deepcopy(expr.subset)
-            other_subset.squeeze()
-            tmp, tmparr = self.sdfg.add_temp_transient(
-                other_subset.size(), arrobj.dtype, arrobj.storage)
             rnode = self.last_state.add_read(array)
-            wnode = self.last_state.add_write(tmp)
-            self.last_state.add_nedge(
-                rnode, wnode,
-                Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                       expr.wcr_identity, other_subset))
-            return tmp
+            if _subset_has_indirection(expr.subset):
+                memlet = Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
+                                expr.wcr_identity)
+                tmp = self.sdfg.temp_data_name()
+                return add_indirection_subgraph(self.sdfg, self.last_state,
+                                                rnode, None, memlet, tmp, self)
+            else:
+                other_subset = copy.deepcopy(expr.subset)
+                other_subset.squeeze()
+                tmp, tmparr = self.sdfg.add_temp_transient(
+                    other_subset.size(), arrobj.dtype, arrobj.storage)
+                wnode = self.last_state.add_write(tmp)
+                self.last_state.add_nedge(
+                    rnode, wnode,
+                    Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
+                        expr.wcr_identity, other_subset))
+                return tmp
 
     ##################################
