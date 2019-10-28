@@ -168,11 +168,11 @@ def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str,
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr1.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(
                  op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
          },
-        'out = in1', {'out': write_memlet},
+        '__out = __in1', {'__out': write_memlet},
         external_edges=True)
     return name
 
@@ -186,12 +186,12 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr1.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(
                  op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
          },
-        'out = %s in1' % opcode, {
-            'out':
+        '__out = %s __in1' % opcode, {
+            '__out':
             Memlet.simple(
                 name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
         },
@@ -213,15 +213,15 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr1.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(
                  op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))])),
-             'in2':
+             '__in2':
              Memlet.simple(
                  op2, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
          },
-        'out = in1 %s in2' % opcode, {
-            'out':
+        '__out = __in1 %s __in2' % opcode, {
+            '__out':
             Memlet.simple(
                 name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
         },
@@ -246,17 +246,17 @@ def _scalarbinop(sdfg: SDFG,
         "_SA%s_" % opname,
         {'__i%d' % i: '0:%s' % s
          for i, s in enumerate(arr.shape)}, {
-             'in1':
+             '__in1':
              Memlet.simple(scalop, '0'),
-             'in2':
+             '__in2':
              Memlet.simple(
                  arrop, ','.join(['__i%d' % i
                                   for i in range(len(arr.shape))])),
          },
-        'out = %s %s %s' % ('in2' if reverse else 'in1', opcode, 'in1'
-                            if reverse else 'in2'),
+        '__out = %s %s %s' % ('__in2' if reverse else '__in1', opcode, '__in1'
+                            if reverse else '__in2'),
         {
-            'out':
+            '__out':
             Memlet.simple(
                 name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
         },
@@ -444,11 +444,11 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
             for i, s in enumerate(
                 [arr1.shape[0], arr2.shape[1], arr1.shape[1]])
         }, {
-            'a': Memlet.simple(op1, '__i0, __i2'),
-            'b': Memlet.simple(op2, '__i2, __i1')
+            '__a': Memlet.simple(op1, '__i0, __i2'),
+            '__b': Memlet.simple(op2, '__i2, __i1')
         },
-        'c = a * b', {
-            'c':
+        '__c = __a * __b', {
+            '__c':
             Memlet.simple(
                 op3,
                 '__i0, __i1',
@@ -923,6 +923,14 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
             ind_inputs.add('index_%s_%d' % (arrname, i))
 
     tasklet = nodes.Tasklet("Indirection", ind_inputs, ind_outputs)
+    ind_entry = None
+    ind_exit = None
+    rng = copy.deepcopy(memlet.subset)
+    if isinstance(rng, subsets.Range) and rng.num_elements() != 1:
+        nonsqz_dims = rng.squeeze()
+        ind_entry, ind_exit = graph.add_map('ind',
+                                            {'__i%d' % i: '%s:%s+1' % (s, e)
+                                            for i, (s, e, t) in enumerate(rng)})
 
     input_index_memlets = []
     for arrname, arr_accesses in accesses.items():
@@ -953,7 +961,10 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
             input_index_memlets.append(indexMemlet)
             read_node = graph.add_read(arrname)
             if PVisitor.nested or not isinstance(src, nodes.EntryNode):
-                path = [read_node, tasklet]
+                if ind_entry:
+                    path = [read_node, ind_entry, tasklet]
+                else:
+                    path = [read_node, tasklet]
             else:
                 if output:
                     # This is temporary, must be generalized
@@ -968,7 +979,10 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
                         raise NotImplementedError
                 else:
                     entry = src
-                path = [read_node, entry, tasklet]
+                if ind_entry:
+                    path = [read_node, entry, ind_entry, tasklet]
+                else:
+                    path = [read_node, entry, tasklet]
             graph.add_memlet_path(
                 *path,
                 dst_conn="index_%s_%d" % (arr_name, i),
@@ -981,27 +995,52 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
         code = "{arr}[{index}] = lookup"
     else:
         code = "lookup = {arr}[{index}]"
+    newsubset = [r[0] if isinstance(r, tuple) else r for r in newsubset]
+    if ind_entry:
+        for i, idx in enumerate(nonsqz_dims):
+            newsubset[idx] = '__i%d' % i
     tasklet.code = code.format(
         arr='__ind_' + local_name,
         index=', '.join([symbolic.symstr(s) for s in newsubset]))
 
     # Create transient variable to trigger the indirect load
     tmp_name = '__' + local_name + '_value'
+    start_src = None
+    end_dst = None
     if memlet.num_accesses == 1 and dst is not None:
         storage = sdfg.add_scalar(tmp_name, array.dtype, transient=True)
     else:
+        rng = copy.deepcopy(memlet.subset)
+        if isinstance(rng, subsets.Range):
+            rng.squeeze()
         storage = sdfg.add_array(
             tmp_name,
-            memlet.bounding_box_size(),
+            rng.bounding_box_size(),  # memlet.bounding_box_size(),
             array.dtype,
             storage=dtypes.StorageType.Default,
             transient=True)
+        if output:
+            if src:
+                start_src = src
+                src = None
+        else:
+            if dst:
+                end_dst = dst
+                dst = None
     if src is None:
-        src = graph.add_read(tmp_name)
+        if start_src:
+            src = graph.add_access(tmp_name)
+        else:
+            src = graph.add_read(tmp_name)
     elif dst is None:
-        dst = graph.add_write(tmp_name)
+        if end_dst:
+            dst = graph.add_access(tmp_name)
+        else:
+            dst = graph.add_write(tmp_name)
     tmp_shape = storage.shape
     indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
+    if ind_entry:
+        indirectRange = ','.join([ind for ind in ind_entry.map.params])
     # dataNode = nodes.AccessNode('__' + local_name + '_value')
 
     # Create memlet that depends on the full array that we look up in
@@ -1012,31 +1051,35 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     if output:
         if isinstance(dst, nodes.ExitNode):
             full_write_node = graph.add_write(memlet.data)
-            graph.add_memlet_path(
-                tasklet,
-                dst,
-                full_write_node,
-                src_conn='__ind_' + local_name,
-                memlet=fullMemlet)
+            if ind_exit:
+                path = [tasklet, ind_exit, dst, full_write_node]
+            else:
+                path = [tasklet, dst, full_write_node]
         elif isinstance(dst, nodes.AccessNode):
-            graph.add_memlet_path(
-                tasklet, dst, src_conn='__ind_' + local_name, memlet=fullMemlet)
+            if ind_exit:
+                path = [tasklet, ind_exit, dst]
+            else:
+                path = [tasklet, dst]
         else:
             raise Exception("Src node type for indirection is invalid.")
+        graph.add_memlet_path(*path, src_conn='__ind_' + local_name,
+                              memlet=fullMemlet)
     else:
         if isinstance(src, nodes.EntryNode):
             full_read_node = graph.add_read(memlet.data)
-            graph.add_memlet_path(
-                full_read_node,
-                src,
-                tasklet,
-                dst_conn='__ind_' + local_name,
-                memlet=fullMemlet)
+            if ind_entry:
+                path = [full_read_node, src, ind_entry, tasklet]
+            else:
+                path = [full_read_node, src, tasklet]
         elif isinstance(src, nodes.AccessNode):
-            graph.add_memlet_path(src, tasklet, dst_conn='__ind_' + local_name,
-                                  memlet=fullMemlet)
+            if ind_entry:
+                path = [src, ind_entry, tasklet]
+            else:
+                path = [src, tasklet]
         else:
             raise Exception("Src node type for indirection is invalid.")
+        graph.add_memlet_path(*path, dst_conn='__ind_' + local_name,
+                              memlet=fullMemlet)
 
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
@@ -1044,20 +1087,45 @@ def add_indirection_subgraph(sdfg: SDFG, graph: SDFGState, src: nodes.Node,
     #                         indirectRange, memlet.veclen)
     # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
-    valueMemlet = Memlet(tmp_name, memlet.num_accesses,
+    valueMemlet = Memlet(tmp_name, 1,  # memlet.num_accesses,
                          indirectRange, memlet.veclen)
     if output:
+        if ind_entry:
+            path = [src, ind_entry, tasklet]
+        else:
+            path = [src, tasklet]
         if isinstance(src, nodes.AccessNode):
             src_conn = None
         else:
             src_conn = local_name
-        graph.add_edge(src, src_conn, tasklet, 'lookup', valueMemlet)
+        graph.add_memlet_path(*path, src_conn=src_conn, dst_conn='lookup', memlet=valueMemlet)
+        # graph.add_edge(src, src_conn, tasklet, 'lookup', valueMemlet)
+        if start_src:
+            if isinstance(start_src, nodes.AccessNode):
+                src_conn = None
+            else:
+                src_conn = local_name
+            graph.add_edge(start_src, src_conn, src, None,
+                           Memlet.from_array(tmp_name, storage))
+
     else:
+        if ind_exit:
+            path = [tasklet, ind_exit, dst]
+        else:
+            path = [tasklet, dst]
         if isinstance(dst, nodes.AccessNode):
             dst_conn = None
         else:
             dst_conn = local_name
-        graph.add_edge(tasklet, 'lookup', dst, dst_conn, valueMemlet)
+        graph.add_memlet_path(*path, src_conn='lookup', dst_conn=dst_conn, memlet=valueMemlet)
+        # graph.add_edge(tasklet, 'lookup', dst, dst_conn, valueMemlet)
+        if end_dst:
+            if isinstance(end_dst, nodes.AccessNode):
+                dst_conn = None
+            else:
+                dst_conn = local_name
+            graph.add_edge(dst, None, end_dst, dst_conn,
+                           Memlet.from_array(tmp_name, storage))
     
     return tmp_name
 
