@@ -212,7 +212,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if defined_type == DefinedType.Stream:
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
-            return "read_channel_intel({}[{}])".format(expr, index)
+            # TODO not sure about this: expr already arrives with an index and this will produce
+            # something like "pipe[0][0]"
+            expr=expr.replace("[0]", "")
+            return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
             return "*({}{})".format(expr, " + " + index if index else "")
         elif defined_type == DefinedType.Scalar:
@@ -232,8 +235,15 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if defined_type == DefinedType.Stream:
             return "write_channel_intel({}, {});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
-            return "write_channel_intel({}[{}], {});".format(
-                write_expr, index, read_expr)
+            # TODO: check this out. The index is defined in the "#define"
+            if index != "0":
+                return "write_channel_intel({}[{}], {});".format(
+                    write_expr, index, read_expr)
+            else:
+                # TODO: remove [0] index
+                write_expr = write_expr.replace("[0]", "")
+                return "write_channel_intel({}, {});".format(
+                    write_expr, read_expr)
         elif defined_type == DefinedType.Pointer:
             if wcr is not None:
                 if redtype != dace.types.ReductionType.Min and redtype != dace.types.ReductionType.Max:
@@ -443,18 +453,43 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if len(top_scopes) == 1:
             scope = top_scopes[0]
             if scope.unroll:
-                raise NotImplementedError(
-                    "Unrolling of PEs not yet implemented for Intel FPGA.")
+                #Unrolled processing elements
+                self._unrolled_pes.add(scope.map)
+                kernel_args_opencl += ["const int " + p for p in scope.params] # PE id will be a macro defined constant
+                kernel_args_call += [p for p in scope.params]
+                unrolled_loops += 1
 
         # Add kernel definition to host function
         # host_header_stream.write("DACE_EXPORTED void {}({});\n\n".format(
         #     module_function_name, ", ".join(kernel_args_host)))
 
         # Add kernel call host function
-        host_body_stream.write(
-            "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".format(
-                module_function_name, ", ".join([""] + kernel_args_call)
-                if len(kernel_args_call) > 0 else ""), sdfg, state_id)
+        if unrolled_loops == 0:
+            host_body_stream.write(
+                "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".format(
+                    module_function_name, ", ".join([""] + kernel_args_call)
+                    if len(kernel_args_call) > 0 else ""), sdfg, state_id)
+        else:
+            # We will generate a separate kernel for each PE. Adds host call
+            for ul in self._unrolled_pes:
+                start, stop, skip = ul.range.ranges[0]
+                start_idx = dace.symbolic.eval(start)
+                stop_idx = dace.symbolic.eval(stop)
+                skip_idx = dace.symbolic.eval(skip)
+                # Due to restrictions on channel indexing, PE IDs must start from zero
+                # and skip index must be 1
+                if start_idx != 0 or skip_idx !=1:
+                    raise dace.codegen.codegen.CodegenError(
+                    "Unrolled Map in {} should start from 0 and have skip equal to 1".format(
+                        sdfg.name))
+                for p in range(start_idx,stop_idx+1,skip_idx):
+                    # last element in list kernel_args_call is the PE ID, but this is
+                    # already written in stone in the OpenCL generated code
+                    host_body_stream.write(
+                        "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));".format(
+                            module_function_name, p, ", ".join([""] + kernel_args_call[:-1])
+                            if len(kernel_args_call) > 1 else ""), sdfg, state_id)
+
 
         # ----------------------------------------------------------------------
         # Generate kernel code
@@ -464,10 +499,20 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         module_body_stream = CodeIOStream()
 
-        module_body_stream.write(
-            "__kernel void {}({}) {{".format(module_function_name,
-                                             ", ".join(kernel_args_opencl)),
-            sdfg, state_id)
+        if unrolled_loops == 0:
+            module_body_stream.write(
+                "__kernel void {}({}) {{".format(module_function_name,
+                                                 ", ".join(kernel_args_opencl)),
+                sdfg, state_id)
+        else:
+            # Unrolled PEs: we have to generate a kernel for each PE. We will generate
+            # a function that will be used create a kernel multiple times
+            # import pdb
+            # pdb.set_trace()
+            module_body_stream.write(
+                "inline void {}_func({}) {{".format(name,
+                                                 ", ".join(kernel_args_opencl)),
+                sdfg, state_id)
 
         # Allocate local transients
         data_to_allocate = (set(subgraph.top_level_transients()) - set(
@@ -495,6 +540,32 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         module_stream.write(module_body_stream.getvalue(), sdfg, state_id)
         module_stream.write("}\n\n")
 
+        if unrolled_loops > 0:
+            # Unrolled PEs: create as many kernel as the number of PEs
+            # To avoid long and duplicated code, do it with define (gosh)
+            # Since OpenCL is "funny", it does not support variadic macros
+            # One of the argument if for sure the PE_ID, which is also the last one in kernel_args lists:
+            # it will be not passed by the host but code-generated
+            module_stream.write("""#define PEkern(PE_ID{}{}) \\
+__kernel void \\
+{}_##PE_ID({}) \\
+{{ \\
+  {}_func({}{}PE_ID); \\
+}}\\\n\n""".format(", " if len(kernel_args_call) >1 else "", ",".join(kernel_args_call[:-1]), module_function_name,
+                   ", ".join(kernel_args_opencl[:-1]), name,", ".join(kernel_args_call[:-1]),
+                   ", " if len(kernel_args_call)>1 else ""))
+
+        # TODO proper argument passing
+        for ul in self._unrolled_pes:
+            start, stop, skip = ul.range.ranges[0]
+            start_idx = dace.symbolic.eval(start)
+            stop_idx = dace.symbolic.eval(stop)
+            skip_idx = dace.symbolic.eval(skip)
+            # First macro argument is the processing element id
+            for p in range(start_idx, stop_idx + 1, skip_idx):
+                module_stream.write("PEkern({}{}{})\n".format(p, ", " if len(kernel_args_call)>1 else "",
+                                                                 ", ".join(kernel_args_call[:-1])))
+            module_stream.write("#undef kern")
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
     def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
@@ -729,8 +800,40 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                                   DefinedType.Scalar)
             else:
                 # Must happen directly in the code
-                result += "#define {} {} // God save us".format(
-                    connector, data_name)
+                # Here we create a macro which take the proper channel
+                channel_idx = cpu.cpp_offset_expr(sdfg.arrays[data_name], memlet.subset)
+                # TODO: check this: trying to read from channel
+
+                # qui il problema e' che tutti sono stream array, non si riesce a capire se siamo al secondo livello
+                # di creazione canali. Bisognerebbe tenerne traccia?
+                if is_output:
+                    if sdfg.parent is None:
+                        result += "#define {} {}[{}] // God save us".format(
+                            connector, data_name, channel_idx)
+                    else:
+                        # This is a nested SDFG: data_name has been already defined at the
+                        # parent. Here we can not define the channel name with an array
+                        # subscript
+                        result += "#define {} {} // God save us".format(
+                            connector, data_name)
+                else: #not isinstance(edge.dst, dace.graph.nodes.Tasklet):
+                    if sdfg.parent is None:
+                        result += "#define {} {}[{}] // God save us".format(
+                            connector, data_name, channel_idx)
+                    else:
+                        result += "#define {} {} // God save us".format(
+                            connector, data_name)
+
+                # else:
+                #     # This is an input memlet whose target is a Tasklet: we have to read
+                #     result += "{} {} = read_channel_intel({});".format(
+                #         memlet_type, connector, data_name)
+
+
+
+                # else:
+                #     result += "{} {} = read_channel_intel({}[{}]);".format(
+                #         memlet_type, connector, data_name, offset)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.StreamArray)
         else:
@@ -809,7 +912,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             elif edge.dst == node:
                 memlet_name = edge.dst_conn
             if (isinstance(data_desc, dace.data.Stream)
-                    and memlet.num_accesses != 1):
+                    and memlet.num_accesses != 1 and ( isinstance(edge.src, dace.graph.nodes.CodeNode)
+                                                       or not isinstance(edge.dst, dace.graph.nodes.Tasklet))):
                 callsite_stream.write("#undef {}".format(memlet_name), sdfg,
                                       sdfg.node_id(dfg), node)
 
@@ -953,6 +1057,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
+
         if target not in self.memlets:
             return self.generic_visit(node)
 
@@ -960,12 +1065,14 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
         value = self.visit(node.value)
 
+
         defined_type = self.defined_vars.get(memlet.data)
         updated = node
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
+
             if isinstance(node.targets[0], ast.Subscript):
                 slice = self.visit(node.targets[0].slice)
                 if isinstance(slice.value, ast.Tuple):
@@ -981,14 +1088,15 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     target_str = "{}[{}]".format(target, subscript)
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
+            else: # target has no subscript #TODO: jacobi FPGA systolic example falls here, not clear why
+                updated = ast.Name (id="{} = {};".format(target, unparse(value)))
 
-        elif defined_type == DefinedType.Stream and memlet.num_accesses != 1:
+        elif (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
+                and memlet.num_accesses != 1:
             updated = ast.Name(id="write_channel_intel({}, {});".format(
                 target, cppunparse.cppunparse(value, expr_semicolon=False)))
-        elif (defined_type == DefinedType.StreamArray
-              and memlet.num_accesses != 1):
-            raise NotImplementedError(
-                "Stream array indexing not implemented for Intel FPGA.")
+            #raise NotImplementedError(
+            #    "Stream array indexing not implemented for Intel FPGA.")
             # updated = ast.Name(id="write_channel_intel({}[{}], {});".format(
             #     target, subscript, cppunparse.cppunparse(value, expr_semicolon=False)))
         elif memlet is not None and memlet.num_accesses != 1:
@@ -997,6 +1105,29 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
             return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)
+
+    # TODO: va fatta la lettura da stream: o in fase di creazione della variabile (come avviene in xilinx) o qui in
+    # fase di produzione del codice
+
+    def visit_Name(self, node):
+        # In the case of input memlet we need to check if this is referred to a stream: in that case, we read from channel
+        if node.id not in self.memlets:
+            return self.generic_visit(node)
+
+        memlet, nc, wcr = self.memlets[node.id]
+        defined_type = self.defined_vars.get(memlet.data)
+        updated = node
+
+        if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
+                and memlet.num_accesses != 1:
+            updated = ast.Name(id="read_channel_intel({})".format(node.id))
+
+        return ast.copy_location(updated, node)
+
+    def visit_Expr(self, node):
+        import pdb
+        pdb.set_trace()
+
 
     # Replace default modules (e.g., math) with OpenCL Compliant (e.g. "dace::math::"->"")
     def visit_Attribute(self, node):
