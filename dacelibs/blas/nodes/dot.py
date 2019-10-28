@@ -1,6 +1,6 @@
 import dace.library
-import dace.properties as properties
-import dace.graph.nodes as nodes
+import dace.properties
+import dace.graph.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from .. import environments
 
@@ -38,7 +38,7 @@ class ExpandDotPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandDotOpenBLAS(ExpandTransformation):
 
-    environments = [environments.OpenBLAS]
+    environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, state, sdfg):
@@ -49,10 +49,10 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         elif dtype == dace.float64:
             func = "ddot"
         else:
-            raise ValueError("Unsupported type for OpenBLAS dot product: " +
+            raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
         code = "_result = cblas_{}(n, _x, 1, _y, 1);".format(func)
-        tasklet = nodes.Tasklet(
+        tasklet = dace.graph.nodes.Tasklet(
             node.name,
             node.in_connectors,
             node.out_connectors,
@@ -64,26 +64,54 @@ class ExpandDotOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandDotMKL(ExpandTransformation):
 
-    environments = [environments.IntelMKL]
+    environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, state, sdfg):
         return ExpandDotOpenBLAS.expansion(node, state, sdfg)
 
 
+@dace.library.expansion
+class ExpandDotCuBLAS(ExpandTransformation):
+
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(state, sdfg)
+        dtype = node.dtype
+        if dtype == dace.float32:
+            func = "Sdot"
+        elif dtype == dace.float64:
+            func = "Ddot"
+        else:
+            raise ValueError("Unsupported type for cuBLAS dot product: " +
+                             str(dtype))
+        code = "_result = cublas{}(__dace_cublas_handle, _x, 1, _y, 1);".format(
+            func)
+        tasklet = dace.graph.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
 @dace.library.node
-class Dot(nodes.LibraryNode):
+class Dot(dace.graph.nodes.LibraryNode):
 
     # Global properties
     implementations = {
         "pure": ExpandDotPure,
         "OpenBLAS": ExpandDotOpenBLAS,
-        "MKL": ExpandDotMKL
+        "MKL": ExpandDotMKL,
+        "cuBLAS": ExpandDotCuBLAS,
     }
     default_implementation = "pure"
 
     # Object fields
-    dtype = properties.TypeClassProperty(allow_none=True)
+    dtype = dace.properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, *args, **kwargs):
         super().__init__(name, *args, **kwargs)

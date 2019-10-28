@@ -1,8 +1,8 @@
-from dace.library import library
-from .nodes.dot import Dot, ExpandDotOpenBLAS
+import dace.library
+from .nodes.dot import Dot
 
-@library
+@dace.library.library
 class BLAS:
 
    nodes = [Dot]
-   transformations = [ExpandDotOpenBLAS]
+   transformations = []

@@ -22,7 +22,7 @@ def test_dot(implementation, dtype):
     y = state.add_read("y")
     result = state.add_write("result")
 
-    dot_node = blas.nodes.Dot("dot", dtype)
+    dot_node = blas.nodes.dot.Dot("dot", dtype)
     dot_node.implementation = implementation
 
     state.add_memlet_path(
@@ -66,6 +66,8 @@ def test_dot(implementation, dtype):
 
 ###############################################################################
 
+# test_dot("cuBLAS", dace.float32)
+# test_dot("cuBLAS", dace.float64)
 test_dot("pure", dace.float32)
 test_dot("pure", dace.float64)
 test_dot("MKL", dace.float32)

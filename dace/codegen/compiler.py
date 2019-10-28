@@ -457,6 +457,17 @@ def configure_and_compile(program_folder, program_name=None):
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) +
             (".cmake" if not f.endswith(".cmake") else "")
             for f in env.cmake_files)
+        for header in env.headers:
+            if os.path.isabs(header):
+                # Giving an absolute path is not good practice, but allow it
+                # for emergency overriding
+                cmake_includes.add(os.path.dirname(header))
+            abs_path = os.path.join(env_dir, header)
+            if os.path.isfile(abs_path):
+                # Allow includes stored with the dacelib, specified with a
+                # relative path
+                cmake_includes.add(env_dir)
+                break
     environment_flags = [
         "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(
             map(str, cmake_minimum_version))),

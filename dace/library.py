@@ -14,7 +14,7 @@ def library(lib):
                          "list of library nodes in the field \"nodes\".")
     if not hasattr(lib, "transformations"):
         raise ValueError(
-            "DaCe library class must expose the field a "
+            "DaCe library class must expose a "
             "list of transformations in the field \"transformations\".")
     # Go into every node and expansion associated with this library, and mark
     # them as belonging to this library, such that we can keep track of when a
@@ -23,10 +23,11 @@ def library(lib):
         if not hasattr(node, "__dace_library_node"):
             raise ValueError(str(node) + " is not a DaCe library node.")
         node.__dace_library_name = lib.__name__
-    for trans in lib.transformations:
-        if not hasattr(trans, "__dace_library_expansion"):
-            raise ValueError(str(trans) + " is not a DaCe library expansion.")
-        trans.__dace_library_name = lib.__name__
+        for trans in node.transformations:
+            if not hasattr(trans, "__dace_library_expansion"):
+                raise ValueError(
+                    str(trans) + " is not a DaCe library expansion.")
+            trans.__dace_library_name = lib.__name__
     lib.__dace_library = True
     _DACE_REGISTERED_LIBRARIES[lib.__name__] = lib
     return lib
