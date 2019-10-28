@@ -6,7 +6,7 @@ M, N = (dace.symbol(name) for name in ['M', 'N'])
 
 
 @dace.program
-def overlap(A: dace.float64[M], x: dace.int32[N]):
+def indirection(A: dace.float64[M], x: dace.int32[N]):
 
     A[:] = 1.0
     for j in range(1, N):
@@ -22,7 +22,7 @@ if __name__ == '__main__':
         x[i] = N.get() - 1 - i
     A = np.ndarray((M.get(), ), dtype=np.float64)
 
-    overlap(A, x)
+    indirection(A, x)
 
     npA = np.ndarray((M.get(), ), dtype=np.float64)
     npA[:] = 1.0
