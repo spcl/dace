@@ -23,7 +23,7 @@ def library(lib):
         if not hasattr(node, "__dace_library_node"):
             raise ValueError(str(node) + " is not a DaCe library node.")
         node.__dace_library_name = lib.__name__
-        for trans in node.transformations:
+        for trans in node.implementations.values():
             if not hasattr(trans, "__dace_library_expansion"):
                 raise ValueError(
                     str(trans) + " is not a DaCe library expansion.")
