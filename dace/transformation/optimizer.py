@@ -9,6 +9,7 @@ import time
 import dace
 from dace.config import Config
 from dace.graph import labeling
+from dace.graph.graph import SubgraphView
 from dace.transformation import pattern_matching
 
 # This import is necessary since it registers all the patterns
@@ -104,8 +105,8 @@ class SDFGOptimizer(object):
         SAVE_DOTS = Config.get_bool('optimizer', 'savedots')
 
         if SAVE_DOTS:
-            with open('before.dot', 'w') as dot_file:
-                dot_file.write(self.sdfg.draw())
+            self.sdfg.draw_to_file('before.dot')
+            self.sdfg.save(os.path.join('_dotgraphs', 'before.sdfg'))
             if VISUALIZE:
                 os.system('xdot before.dot&')
 
@@ -165,9 +166,10 @@ class SDFGOptimizer(object):
             self.applied_patterns.add(type(pattern_match))
 
             if SAVE_DOTS:
-                self.sdfg.draw_to_file(
-                    'after_%d_%s_b4lprop.dot' % (pattern_counter + 1,
-                                                 type(pattern_match).__name__))
+                filename = 'after_%d_%s_b4lprop' % (
+                    pattern_counter + 1, type(pattern_match).__name__)
+                self.sdfg.draw_to_file(filename + '.dot')
+                self.sdfg.save(os.path.join('_dotgraphs', filename + '.sdfg'))
 
             if not pattern_match.annotates_memlets():
                 labeling.propagate_labels_sdfg(self.sdfg)
@@ -175,9 +177,12 @@ class SDFGOptimizer(object):
             if True:
                 pattern_counter += 1
                 if SAVE_DOTS:
-                    self.sdfg.draw_to_file(
-                        'after_%d_%s.dot' % (pattern_counter,
-                                             type(pattern_match).__name__))
+                    filename = 'after_%d_%s' % (pattern_counter,
+                                                type(pattern_match).__name__)
+                    self.sdfg.draw_to_file(filename + '.dot')
+                    self.sdfg.save(
+                        os.path.join('_dotgraphs', filename + '.sdfg'))
+
                     if VISUALIZE:
                         time.sleep(0.7)
                         os.system(
@@ -185,6 +190,47 @@ class SDFGOptimizer(object):
                             (pattern_counter, type(pattern_match).__name__))
 
         return self.sdfg
+
+    def optimization_space(self):
+        """ Returns the optimization space of the current SDFG """
+
+        def get_actions(actions, graph, match):
+            subgraph_node_ids = match.subgraph.values()
+            subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
+            for node in subgraph_nodes:
+                version = 0
+                while (node, type(match).__name__,
+                       match.expr_index, version) in actions.keys():
+                    version += 1
+                actions[(node, type(match).__name__,
+                         match.expr_index, version)] = match
+            subgraph = SubgraphView(graph, subgraph_nodes)
+            for edge in subgraph.edges():
+                version = 0
+                while (edge, type(match).__name__,
+                       match.expr_index, version) in actions.keys():
+                    version += 1
+                actions[(edge, type(match).__name__,
+                         match.expr_index, version)] = match
+            return actions
+
+        def get_dataflow_actions(actions, sdfg, match):
+            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
+            return get_actions(actions, graph, match)
+        
+        def get_stateflow_actions(actions, sdfg, match):
+            graph = sdfg.sdfg_list[match.sdfg_id]
+            return get_actions(actions, graph, match)
+
+        actions = dict()
+
+        for match in self.get_pattern_matches():
+            if match.state_id >= 0:
+                actions = get_dataflow_actions(actions, self.sdfg, match)
+            else:
+                actions = get_stateflow_actions(actions, self.sdfg, match)
+        
+        return actions           
 
 
 def _parse_cli_input(line):

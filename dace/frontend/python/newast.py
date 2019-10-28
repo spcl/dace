@@ -1291,7 +1291,7 @@ class TaskletTransformer(ExtNodeTransformer):
                     parent_name, parent_array), inner_indices)
             else:
                 self.sdfg_inputs[var_name] = (dace.Memlet(
-                    parent_name,rng.num_elements(), rng, 1), inner_indices)
+                    parent_name, rng.num_elements(), rng, 1), inner_indices)
         else:
             if _subset_has_indirection(rng):
                 self.sdfg_outputs[var_name] = (dace.Memlet.from_array(
@@ -1439,6 +1439,8 @@ class TaskletTransformer(ExtNodeTransformer):
                                              rng, 1)
                     if self.nested and name in self.sdfg_outputs:
                         out_memlet = self.sdfg_outputs[name][0]
+                        out_memlet.num_accesses = memlet.num_accesses
+                        out_memlet.veclen = memlet.veclen
                         out_memlet.wcr = memlet.wcr
                         out_memlet.wcr_identity = memlet.wcr_identity
                         out_memlet.wcr_conflict = memlet.wcr_conflict
@@ -2009,12 +2011,18 @@ class ProgramVisitor(ExtNodeVisitor):
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, entry_node,
                                                     True, arr)
-                    if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
-                        memlet = dace.Memlet.from_array(vname, self.sdfg.arrays[vname])
-                    elif (memlet.data, scope_memlet.subset, 'r') in self.accesses:
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'r')][0]
-                        memlet = dace.Memlet.from_array(vname, self.sdfg.arrays[vname])
+                    if (memlet.data, scope_memlet.subset,
+                            'w') in self.accesses:
+                        vname = self.accesses[(memlet.data,
+                                               scope_memlet.subset, 'w')][0]
+                        memlet = dace.Memlet.from_array(
+                            vname, self.sdfg.arrays[vname])
+                    elif (memlet.data, scope_memlet.subset,
+                          'r') in self.accesses:
+                        vname = self.accesses[(memlet.data,
+                                               scope_memlet.subset, 'r')][0]
+                        memlet = dace.Memlet.from_array(
+                            vname, self.sdfg.arrays[vname])
                     else:
                         name = memlet.data
                         irng = memlet.subset
@@ -2035,7 +2043,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             c=conn,
                             s=self.sdfg.nodes().index(state),
                             n=state.node_id(entry_node))
-                        self.accesses[(name, scope_memlet.subset, 'r')] = (vname, None)
+                        self.accesses[(name, scope_memlet.subset,
+                                       'r')] = (vname, None)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
                         strides = [
@@ -2103,14 +2112,20 @@ class ProgramVisitor(ExtNodeVisitor):
                     add_indirection_subgraph(self.sdfg, state, internal_node,
                                              exit_node, memlet, conn, self, True)
                     continue
+                outer_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
                     scope_memlet = propagate_memlet(state, memlet, entry_node,
                                                     True, arr)
                     # if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
-                    if self._find_access(memlet.data, scope_memlet.subset, 'w'):
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
-                        memlet = dace.Memlet.from_array(vname, self.sdfg.arrays[vname])
+                    if self._find_access(memlet.data, scope_memlet.subset,
+                                         'w'):
+                        vname = self.accesses[(memlet.data,
+                                               scope_memlet.subset, 'w')][0]
+                        outer_memlet = dace.Memlet.from_array(
+                            vname, self.sdfg.arrays[vname])
+                        outer_memlet.num_accesses = memlet.num_accesses
+                        outer_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
                         irng = memlet.subset
@@ -2131,7 +2146,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             c=conn,
                             s=self.sdfg.nodes().index(state),
                             n=state.node_id(exit_node))
-                        self.accesses[(name, scope_memlet.subset, 'w')] = (vname, None)
+                        self.accesses[(name, scope_memlet.subset,
+                                       'w')] = (vname, None)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
                         strides = [
@@ -2155,7 +2171,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 vname, shape, dtype, strides=strides)
                         self.outputs[vname] = (scope_memlet, inner_indices)
                         # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
-                        memlet.data = vname
+                        outer_memlet.data = vname
                         # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
@@ -2165,12 +2181,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         internal_node,
                         exit_node,
                         write_node,
-                        memlet=memlet,
+                        memlet=outer_memlet,
                         src_conn=conn,
                         dst_conn=None)
                 else:
                     state.add_edge(internal_node, conn, write_node, None,
-                                   memlet)
+                                   outer_memlet)
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
@@ -2372,13 +2388,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 outputs={'out'},
                 code='out = inp')
             inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
-            out_memlet = Memlet.simple(target_name,
-                                        '%s' % target_subset[0][0])
+            out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
             state.add_edge(op1, None, tasklet, 'inp', inp_memlet)
             state.add_edge(tasklet, 'out', op2, None, out_memlet)
 
-    def _add_aug_assignment(self,
-                            node: Union[ast.Assign, ast.AugAssign],
+    def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
                             rtarget: Union[str, Tuple[str, subsets.Range]],
                             wtarget: Union[str, Tuple[str, subsets.Range]],
                             operand: Union[str, Tuple[str, subsets.Range]],
@@ -2412,27 +2426,29 @@ class ProgramVisitor(ExtNodeVisitor):
                     in1_subset = copy.deepcopy(rtarget_subset)
                     in1_subset.offset(wtarget_subset, True)
                     in1_memlet = Memlet.simple(
-                        rtarget_name,
-                        ','.join(['__i%d + %d' % (i, s)
-                                  for i, (s, _, _) in enumerate(in1_subset)]))
+                        rtarget_name, ','.join([
+                            '__i%d + %d' % (i, s)
+                            for i, (s, _, _) in enumerate(in1_subset)
+                        ]))
                     in2_subset = copy.deepcopy(op_subset)
                     in2_subset.offset(wtarget_subset, True)
                     in2_memlet = Memlet.simple(
-                        op_name,
-                        ','.join(['__i%d + %d' % (i, s)
-                                  for i, (s, _, _) in enumerate(in2_subset)]))
+                        op_name, ','.join([
+                            '__i%d + %d' % (i, s)
+                            for i, (s, _, _) in enumerate(in2_subset)
+                        ]))
                     out_memlet = Memlet.simple(
-                        wtarget_name,
-                        ','.join(['__i%d' % i
-                                  for i in range(len(wtarget_subset))]))
+                        wtarget_name, ','.join(
+                            ['__i%d' % i for i in range(len(wtarget_subset))]))
                     state.add_mapped_tasklet(
-                        state.label,
-                        {
+                        state.label, {
                             '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                            for i, (start, end, step) 
-                            in enumerate(wtarget_subset)
+                            for i, (start, end,
+                                    step) in enumerate(wtarget_subset)
+                        }, {
+                            'in1': in1_memlet,
+                            'in2': in2_memlet
                         },
-                        {'in1': in1_memlet, 'in2': in2_memlet},
                         'out = in1 {op} in2'.format(op=op),
                         {'out': out_memlet},
                         external_edges=True)
@@ -2451,23 +2467,23 @@ class ProgramVisitor(ExtNodeVisitor):
                 in1_subset = copy.deepcopy(rtarget_subset)
                 in1_subset.offset(wtarget_subset, True)
                 in1_memlet = Memlet.simple(
-                    rtarget_name,
-                    ','.join(['__i%d + %d' % (i, s)
-                              for i, (s, _, _) in enumerate(in1_subset)]))
+                    rtarget_name, ','.join([
+                        '__i%d + %d' % (i, s)
+                        for i, (s, _, _) in enumerate(in1_subset)
+                    ]))
                 in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
                 out_memlet = Memlet.simple(
-                    wtarget_name,
-                    ','.join([
-                        '__i%d' % i for i in range(len(wtarget_subset))]))
+                    wtarget_name, ','.join(
+                        ['__i%d' % i for i in range(len(wtarget_subset))]))
                 state.add_mapped_tasklet(
-                    state.label,
-                    {
+                    state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(wtarget_subset)
+                    }, {
+                        'in1': in1_memlet,
+                        'in2': in2_memlet
                     },
-                    {'in1': in1_memlet, 'in2': in2_memlet},
-                    'out = in1 {op} in2'.format(op=op),
-                    {'out': out_memlet},
+                    'out = in1 {op} in2'.format(op=op), {'out': out_memlet},
                     external_edges=True)
         else:
             if op_subset.num_elements() != 1:
@@ -2654,8 +2670,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if op:
                     rtarget = self._add_read_access(name, rng, target)
                     wtarget = self._add_write_access(name, rng, target)
-                    self._add_aug_assignment(node, rtarget, wtarget,
-                                             result, op)
+                    self._add_aug_assignment(node, rtarget, wtarget, result,
+                                             op)
                 else:
                     wtarget = self._add_write_access(name, rng, target)
                     self._add_assignment(node, wtarget, result)
