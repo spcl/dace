@@ -88,7 +88,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     if 'CI_CONCURRENT_ID' in os.environ:
-        args.port = 6000 + os.environ['CI_CONCURRENT_ID']
+        args.port = 6000 + int(os.environ['CI_CONCURRENT_ID'])
 
     path = args.file
     with open(path) as f:
