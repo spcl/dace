@@ -144,6 +144,38 @@ def _reduce(sdfg: SDFG,
         return []
 
 
+@oprepo.replaces('exp')
+@oprepo.replaces('dace.exp')
+@oprepo.replaces('numpy.exp')
+def _exp(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    inpname = until(input, '[')
+    input_subset = _parse_memlet_subset(sdfg.arrays[inpname],
+                                        ast.parse(input).body[0].value, {})
+    input_memlet = Memlet(inpname, input_subset.num_elements(), input_subset, 1)
+    output_shape = input_subset.size()
+    outname, outarr = sdfg.add_temp_transient(
+        output_shape, sdfg.arrays[inpname].dtype, sdfg.arrays[inpname].storage)
+    output_memlet = Memlet.from_array(outname, outarr)
+    state.add_mapped_tasklet(
+        name='exp',
+        map_ranges={'__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                    for i, (s, e, t) in enumerate(input_subset)},
+        inputs={'__inp': Memlet.simple(
+            inpname, ','.join(['__i%d' % i
+                               for i in range(len(input_subset))]))},
+        code='__out = exp(__inp)',
+        outputs={'__out': Memlet.simple(
+            outname, ','.join(['__i%d - %s' % (i, s)
+                               for i, (s, _, _) in enumerate(input_subset)])
+        )},
+        external_edges=True
+    )
+    
+    return outname
+
+
 ##############################################################################
 # Python operation replacements ##############################################
 ##############################################################################
