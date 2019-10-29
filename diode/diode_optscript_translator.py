@@ -1,9 +1,9 @@
 # Translates DIODE1 optscripts to equivalent diode_client commands
-import argparse, sys
+import argparse, sys, os
 
 class diode_optscript_parser:
 
-    def __init__(self, outputfile, diode_client_path="./"):
+    def __init__(self, outputfile, diode_client_path="./", port=5000):
         self._diode_client_path = diode_client_path
         if outputfile != "":
             self._of = open(outputfile, "w")
@@ -12,6 +12,7 @@ class diode_optscript_parser:
 
         self._chain_ended = False
         self._chain = []
+        self._scriptfile = 'diode_client.py --port ' + str(port)
         
     def close(self):
         if self._of != sys.stdout:
@@ -31,7 +32,7 @@ class diode_optscript_parser:
     def OpenPythonFile(self, filepath):
         # Open as dace file and compile
         if self._chain_ended: self._of.write(" && ")
-        self._of.write("cat {fpath} | python3 {cpath}diode_client.py --code --compile --extract sdfg txform_detail runnercode".format(fpath=filepath, cpath=self._diode_client_path))
+        self._of.write("cat {fpath} | python3 {cpath}{scr} --code --compile --extract sdfg txform_detail runnercode".format(fpath=filepath, cpath=self._diode_client_path, scr=self._scriptfile))
 
         # Build the chain to recreate when necessary
         self._chain.append(lambda: self.OpenPythonFile(filepath))
@@ -40,14 +41,14 @@ class diode_optscript_parser:
     def Run(self):
         # Run
         self.rebuild_chain()
-        self._of.write(" | python3 {cpath}diode_client.py --run".format(cpath=self._diode_client_path))
+        self._of.write(" | python3 {cpath}{scr} --run".format(cpath=self._diode_client_path, scr=self._scriptfile))
 
         #self._chain.append(lambda: self.Run())
         self._chain_ended = True
 
     def ShowOutcode(self):
         self.rebuild_chain()
-        self._of.write(" | python3 {cpath}diode_client.py --compile --extract outcode".format(cpath=self._diode_client_path))
+        self._of.write(" | python3 {cpath}{scr} --compile --extract outcode".format(cpath=self._diode_client_path, scr=self._scriptfile))
         self._chain_ended = True
 
     def ExpandNode(self, nodename):
@@ -63,7 +64,7 @@ class diode_optscript_parser:
 
         self.rebuild_chain()
 
-        self._of.write(" | python3 {cpath}diode_client.py --compile --transform {name} --extract sdfg txform_detail runnercode".format(cpath=self._diode_client_path, name=nodename))
+        self._of.write(" | python3 {cpath}{scr} --compile --transform {name} --extract sdfg txform_detail runnercode".format(cpath=self._diode_client_path, name=nodename, scr=self._scriptfile))
         self._chain.append(lambda: self.ExpandNode(nodename))
 
     def ActivateNode(self, nodename):
@@ -82,10 +83,16 @@ if __name__ == '__main__':
     parser.add_argument("-d2p", "--diode_client_path", default="./",
                     help="Path of the diode_client.py")
 
+    parser.add_argument("-p", "--port", default=5000, help="Port for DIODE")
+
     args = parser.parse_args()
+    
+    if 'CI_CONCURRENT_ID' in os.environ:
+        args.port = 6000 + os.environ['CI_CONCURRENT_ID']
 
     path = args.file
     with open(path) as f:
-        tr = diode_optscript_parser(args.outfile, args.diode_client_path)
+        tr = diode_optscript_parser(args.outfile, args.diode_client_path,
+                                    args.port)
         exec(f.read(), globals(), {'diode': tr})
         tr.close()

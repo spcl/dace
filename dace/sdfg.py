@@ -375,8 +375,11 @@ class SDFG(OrderedDiGraph):
     @property
     def start_state(self):
         """ Returns the starting state of this SDFG. """
+        source_nodes = self.source_nodes()
+        if len(source_nodes) == 1:
+            return source_nodes[0]
         if self._start_state is None:
-            return self.source_nodes()[0]
+            raise ValueError('Ambiguous or undefined starting state for SDFG')
 
         return self.node(self._start_state)
 
