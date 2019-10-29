@@ -186,13 +186,13 @@ def _simple_call(sdfg: SDFG,
     return outname
 
 
-def _cmplx_to_scalar(cmplx_type: dace.typeclass):
-    if cmplx_type is dace.complex64:
+def _complex_to_scalar(complex_type: dace.typeclass):
+    if complex_type is dace.complex64:
         return dace.float32
-    elif cmplx_type is dace.complex128:
+    elif complex_type is dace.complex128:
         return dace.float64
     else:
-        return cmplx_type
+        return complex_type
 
 
 
@@ -258,7 +258,7 @@ def _real(sdfg: SDFG,
          input: str):
     inpname = until(input, '[')
     inptype = sdfg.arrays[inpname].dtype
-    return _simple_call(sdfg, state, input, 'real', _cmplx_to_scalar(inptype))
+    return _simple_call(sdfg, state, input, 'real', _complex_to_scalar(inptype))
 
 
 @oprepo.replaces('imag')
@@ -269,7 +269,7 @@ def _imag(sdfg: SDFG,
          input: str):
     inpname = until(input, '[')
     inptype = sdfg.arrays[inpname].dtype
-    return _simple_call(sdfg, state, input, 'imag', _cmplx_to_scalar(inptype))
+    return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
 
 ##############################################################################
