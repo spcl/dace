@@ -2044,7 +2044,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             s=self.sdfg.nodes().index(state),
                             n=state.node_id(entry_node))
                         self.accesses[(name, scope_memlet.subset,
-                                       'r')] = (vname, None)
+                                       'r')] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
                         strides = [
@@ -2147,7 +2147,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             s=self.sdfg.nodes().index(state),
                             n=state.node_id(exit_node))
                         self.accesses[(name, scope_memlet.subset,
-                                       'w')] = (vname, None)
+                                       'w')] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
                         strides = [
