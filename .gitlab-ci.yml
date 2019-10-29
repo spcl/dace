@@ -3,6 +3,7 @@ image: python:3-stretch
 
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
+  GIT_CLONE_PATH: $CI_BUILDS_DIR/$CI_CONCURRENT_ID/$CI_PROJECT_PATH
    
 setup_dace:
   stage: build
