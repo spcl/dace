@@ -5,28 +5,56 @@ M, N = 24, 24
 
 
 @dace.program
-def exponentf(A: dace.float32[M, N], B: dace.float32[M, N]):
+def exponent(A: dace.complex64[M, N], B: dace.complex64[M, N]):
     B[:] = exp(A)
 
 @dace.program
-def exponentc(A: dace.complex64[M, N], B: dace.complex64[M, N]):
-    B[:] = exp(A)
+def sine(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    B[:] = sin(A)
+
+@dace.program
+def cosine(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    B[:] = cos(A)
+
+@dace.program
+def square_root(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    B[:] = sqrt(A)
+
+@dace.program
+def logarithm(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    B[:] = log(A)
+
+@dace.program
+def conjugate(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    B[:] = conj(A)
+
+@dace.program
+def real_part(A: dace.complex64[M, N], B: dace.float32[M, N]):
+    B[:] = real(A)
+
+@dace.program
+def imag_part(A: dace.complex64[M, N], B: dace.float32[M, N]):
+    B[:] = imag(A)
 
 
 if __name__ == '__main__':
-
-    A = np.random.rand(M, N).astype(np.float32)
-    daceB = np.zeros([M, N], dtype=np.float32)
-    exponentf(A, daceB)
-    numpyB = np.exp(A)
-    relerr = np.linalg.norm(numpyB - daceB) / np.linalg.norm(numpyB)
-    print('Relative error:', relerr)
-    assert relerr < 1e-5
-
     A = np.random.rand(M, N).astype(np.float32) + 1j*np.random.rand(M, N).astype(np.float32)
-    daceB = np.zeros([M, N], dtype=np.complex64)
-    exponentc(A, daceB)
-    numpyB = np.exp(A)
-    relerr = np.linalg.norm(numpyB - daceB) / np.linalg.norm(numpyB)
-    print('Relative error:', relerr)
-    assert relerr < 1e-5
+
+    def validate(program, func, op, restype=None):
+        if restype is None:
+            restype = op.dtype       
+        daceB = np.zeros([M, N], dtype=restype)
+        exec('{p}(op, daceB)'.format(p=program))
+        numpyB = daceB.copy()
+        exec('numpyB[:] = np.{f}(op)'.format(f=func))
+        relerr = np.linalg.norm(numpyB - daceB) / np.linalg.norm(numpyB)
+        print('Relative error:', relerr)
+        assert relerr < 1e-5
+    
+    for p, f in {('exponent', 'exp'), ('sine', 'sin'), ('cosine', 'cos'),
+                 ('square_root', 'sqrt'), ('logarithm', 'log'),
+                 ('conjugate', 'conj')}:
+        validate(p, f, A)
+    
+    for p, f in {('real_part', 'real'), ('imag_part', 'imag')}:
+        validate(p, f, A, restype=np.float32)

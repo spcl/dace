@@ -144,19 +144,21 @@ def _reduce(sdfg: SDFG,
         return []
 
 
-@oprepo.replaces('exp')
-@oprepo.replaces('dace.exp')
-@oprepo.replaces('numpy.exp')
-def _exp(sdfg: SDFG,
-         state: SDFGState,
-         input: str):
+def _simple_call(sdfg: SDFG,
+                 state: SDFGState,
+                 input: str,
+                 func: str,
+                 restype: dace.typeclass = None):
+    """ Implements a simple call of the form `out = func(inp)`. """
     inpname = until(input, '[')
     input_subset = _parse_memlet_subset(sdfg.arrays[inpname],
                                         ast.parse(input).body[0].value, {})
     input_memlet = Memlet(inpname, input_subset.num_elements(), input_subset, 1)
     output_shape = input_subset.size()
-    outname, outarr = sdfg.add_temp_transient(
-        output_shape, sdfg.arrays[inpname].dtype, sdfg.arrays[inpname].storage)
+    if restype is None:
+        restype = sdfg.arrays[inpname].dtype
+    outname, outarr = sdfg.add_temp_transient(output_shape, restype,
+                                              sdfg.arrays[inpname].storage)
     output_memlet = Memlet.from_array(outname, outarr)
     state.add_mapped_tasklet(
         name='exp',
@@ -165,7 +167,7 @@ def _exp(sdfg: SDFG,
         inputs={'__inp': Memlet.simple(
             inpname, ','.join(['__i%d' % i
                                for i in range(len(input_subset))]))},
-        code='__out = exp(__inp)',
+        code='__out = {f}(__inp)'.format(f=func),
         outputs={'__out': Memlet.simple(
             outname, ','.join(['__i%d - %s' % (i, s)
                                for i, (s, _, _) in enumerate(input_subset)])
@@ -174,6 +176,92 @@ def _exp(sdfg: SDFG,
     )
     
     return outname
+
+
+def _cmplx_to_scalar(cmplx_type: dace.typeclass):
+    if cmplx_type is dace.complex64:
+        return dace.float32
+    elif cmplx_type is dace.complex128:
+        return dace.float64
+    else:
+        return cmplx_type
+
+
+
+@oprepo.replaces('exp')
+@oprepo.replaces('dace.exp')
+@oprepo.replaces('numpy.exp')
+def _exp(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    return _simple_call(sdfg, state, input, 'exp')
+
+
+@oprepo.replaces('sin')
+@oprepo.replaces('dace.sin')
+@oprepo.replaces('numpy.sin')
+def _sin(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    return _simple_call(sdfg, state, input, 'sin')
+
+
+@oprepo.replaces('cos')
+@oprepo.replaces('dace.cos')
+@oprepo.replaces('numpy.cos')
+def _cos(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    return _simple_call(sdfg, state, input, 'cos')
+
+
+@oprepo.replaces('sqrt')
+@oprepo.replaces('dace.sqrt')
+@oprepo.replaces('numpy.sqrt')
+def _sqrt(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    return _simple_call(sdfg, state, input, 'sqrt')
+
+
+@oprepo.replaces('log')
+@oprepo.replaces('dace.log')
+@oprepo.replaces('numpy.log')
+def _log(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    return _simple_call(sdfg, state, input, 'log')
+
+
+@oprepo.replaces('conj')
+@oprepo.replaces('dace.conj')
+@oprepo.replaces('numpy.conj')
+def _conj(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    return _simple_call(sdfg, state, input, 'conj')
+
+
+@oprepo.replaces('real')
+@oprepo.replaces('dace.real')
+@oprepo.replaces('numpy.real')
+def _real(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    inpname = until(input, '[')
+    inptype = sdfg.arrays[inpname].dtype
+    return _simple_call(sdfg, state, input, 'real', _cmplx_to_scalar(inptype))
+
+
+@oprepo.replaces('imag')
+@oprepo.replaces('dace.imag')
+@oprepo.replaces('numpy.imag')
+def _imag(sdfg: SDFG,
+         state: SDFGState,
+         input: str):
+    inpname = until(input, '[')
+    inptype = sdfg.arrays[inpname].dtype
+    return _simple_call(sdfg, state, input, 'imag', _cmplx_to_scalar(inptype))
 
 
 ##############################################################################
