@@ -212,8 +212,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if defined_type == DefinedType.Stream:
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
-            # TODO not sure about this: expr already arrives with an index and this will produce
-            # something like "pipe[0][0]"
+            # remove "[0]" index as this is not allowed if the subscripted value is not an array
             expr=expr.replace("[0]", "")
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
@@ -235,12 +234,11 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if defined_type == DefinedType.Stream:
             return "write_channel_intel({}, {});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
-            # TODO: check this out. The index is defined in the "#define"
             if index != "0":
                 return "write_channel_intel({}[{}], {});".format(
                     write_expr, index, read_expr)
             else:
-                # TODO: remove [0] index
+                # remove "[0]" index as this is not allowed if the subscripted values is not an array
                 write_expr = write_expr.replace("[0]", "")
                 return "write_channel_intel({}, {});".format(
                     write_expr, read_expr)
@@ -541,10 +539,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         module_stream.write("}\n\n")
 
         if unrolled_loops > 0:
-            # Unrolled PEs: create as many kernel as the number of PEs
+            # Unrolled PEs: create as many kernels as the number of PEs
             # To avoid long and duplicated code, do it with define (gosh)
             # Since OpenCL is "funny", it does not support variadic macros
-            # One of the argument if for sure the PE_ID, which is also the last one in kernel_args lists:
+            # One of the argument is for sure the PE_ID, which is also the last one in kernel_args lists:
             # it will be not passed by the host but code-generated
             module_stream.write("""#define PEkern(PE_ID{}{}) \\
 __kernel void \\
@@ -555,8 +553,8 @@ __kernel void \\
                    ", ".join(kernel_args_opencl[:-1]), name,", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call)>1 else ""))
 
-        # TODO proper argument passing
         for ul in self._unrolled_pes:
+            # create PE kernels by using the previously defined macro
             start, stop, skip = ul.range.ranges[0]
             start_idx = dace.symbolic.eval(start)
             stop_idx = dace.symbolic.eval(stop)
@@ -564,7 +562,7 @@ __kernel void \\
             # First macro argument is the processing element id
             for p in range(start_idx, stop_idx + 1, skip_idx):
                 module_stream.write("PEkern({}{}{})\n".format(p, ", " if len(kernel_args_call)>1 else "",
-                                                                 ", ".join(kernel_args_call[:-1])))
+                                                              ", ".join(kernel_args_call[:-1])))
             module_stream.write("#undef kern")
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
@@ -794,46 +792,28 @@ __kernel void \\
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-                    result += "{} {} = read_channel_intel({}[{}]);".format(
-                        memlet_type, connector, data_name, offset)
+                    if offset == 0:
+                        result += "{} {} = read_channel_intel({}[{}]);".format(
+                            memlet_type, connector, data_name, offset)
+                    else:
+                        result += "{} {} = read_channel_intel({});".format(
+                            memlet_type, connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
             else:
                 # Must happen directly in the code
                 # Here we create a macro which take the proper channel
                 channel_idx = cpu.cpp_offset_expr(sdfg.arrays[data_name], memlet.subset)
-                # TODO: check this: trying to read from channel
 
-                # qui il problema e' che tutti sono stream array, non si riesce a capire se siamo al secondo livello
-                # di creazione canali. Bisognerebbe tenerne traccia?
-                if is_output:
-                    if sdfg.parent is None:
-                        result += "#define {} {}[{}] // God save us".format(
-                            connector, data_name, channel_idx)
-                    else:
-                        # This is a nested SDFG: data_name has been already defined at the
-                        # parent. Here we can not define the channel name with an array
-                        # subscript
-                        result += "#define {} {} // God save us".format(
-                            connector, data_name)
-                else: #not isinstance(edge.dst, dace.graph.nodes.Tasklet):
-                    if sdfg.parent is None:
-                        result += "#define {} {}[{}] // God save us".format(
-                            connector, data_name, channel_idx)
-                    else:
-                        result += "#define {} {} // God save us".format(
-                            connector, data_name)
+                if sdfg.parent is None:
+                    result += "#define {} {}[{}] // God save us".format(
+                        connector, data_name, channel_idx)
+                else:
+                    # This is a nested SDFG: `data_name` channel has been already defined at the
+                    # parent. Here we can not define the channel name with an array subscript
+                    result += "#define {} {} // God save us".format(
+                        connector, data_name)
 
-                # else:
-                #     # This is an input memlet whose target is a Tasklet: we have to read
-                #     result += "{} {} = read_channel_intel({});".format(
-                #         memlet_type, connector, data_name)
-
-
-
-                # else:
-                #     result += "{} {} = read_channel_intel({}[{}]);".format(
-                #         memlet_type, connector, data_name, offset)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.StreamArray)
         else:
@@ -912,8 +892,8 @@ __kernel void \\
             elif edge.dst == node:
                 memlet_name = edge.dst_conn
             if (isinstance(data_desc, dace.data.Stream)
-                    and memlet.num_accesses != 1 and ( isinstance(edge.src, dace.graph.nodes.CodeNode)
-                                                       or not isinstance(edge.dst, dace.graph.nodes.Tasklet))):
+                    and memlet.num_accesses != 1):# and ( isinstance(edge.src, dace.graph.nodes.CodeNode)
+                                                   #    or not isinstance(edge.dst, dace.graph.nodes.Tasklet))):
                 callsite_stream.write("#undef {}".format(memlet_name), sdfg,
                                       sdfg.node_id(dfg), node)
 
@@ -983,18 +963,28 @@ __kernel void \\
         # Add connectors
         # symbols_ctypes.update({connector: sdfg.arrays[memlet.data].dtype
         #                for connector, (memlet,_,_) in memlets.items()})
-
+        used_streams=[]
         for stmt in body:  # for each statement in tasklet body
+
             if isinstance(stmt, ast.Expr):
-                rk = OpenCLDaceKeywordRemover(
-                    sdfg, memlets, sdfg.constants).visit_TopLevelExpr(stmt)
+                ocl_visitor = OpenCLDaceKeywordRemover(sdfg, memlets, sdfg.constants)
+                rk = ocl_visitor.visit_TopLevelExpr(stmt)
             else:
-                rk = OpenCLDaceKeywordRemover(sdfg, self._dispatcher.defined_vars,
-                                              memlets, sdfg.constants).visit(stmt)
+                ocl_visitor = OpenCLDaceKeywordRemover(sdfg, self._dispatcher.defined_vars, memlets, sdfg.constants)
+                rk = ocl_visitor.visit(stmt)
+            used_streams.extend(ocl_visitor.used_streams)
             if rk is not None:
                 result = StringIO()
-                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols, do_type_inference=True)
+                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols,
+                                       do_type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
+
+        # In Intel OpenCL is not possible to have multiple access points to the same channel
+        for s in used_streams:
+            if used_streams.count(s) > 1:
+                raise dace.codegen.codegen.CodegenError(
+                    "Multiple access points for stream are forbidden in IntelFPGA (stream \"{}\" "
+                    "in tasklet \"{}\")".format(s, node.name))
 
     def generate_constants(self, sdfg, callsite_stream):
         # Write constants
@@ -1029,6 +1019,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
                         'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
                         'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double']
+        self.used_streams = [] # keep track of the different streams used in a tasklet
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
@@ -1058,6 +1049,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def visit_Assign(self, node):
         target = rname(node.targets[0])
 
+
         if target not in self.memlets:
             return self.generic_visit(node)
 
@@ -1065,14 +1057,12 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
         value = self.visit(node.value)
 
-
         defined_type = self.defined_vars.get(memlet.data)
         updated = node
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
-
             if isinstance(node.targets[0], ast.Subscript):
                 slice = self.visit(node.targets[0].slice)
                 if isinstance(slice.value, ast.Tuple):
@@ -1088,17 +1078,19 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     target_str = "{}[{}]".format(target, subscript)
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
-            else: # target has no subscript #TODO: jacobi FPGA systolic example falls here, not clear why
+            else: # target has no subscript
                 updated = ast.Name (id="{} = {};".format(target, unparse(value)))
 
-        elif (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
-                and memlet.num_accesses != 1:
-            updated = ast.Name(id="write_channel_intel({}, {});".format(
-                target, cppunparse.cppunparse(value, expr_semicolon=False)))
-            #raise NotImplementedError(
-            #    "Stream array indexing not implemented for Intel FPGA.")
-            # updated = ast.Name(id="write_channel_intel({}[{}], {});".format(
-            #     target, subscript, cppunparse.cppunparse(value, expr_semicolon=False)))
+        elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
+            if memlet.num_accesses != 1:
+                updated = ast.Name(id="write_channel_intel({}, {});".format(
+                    target, cppunparse.cppunparse(value, expr_semicolon=False)))
+                self.used_streams.append(target)
+            else:
+                # in this case for an output stream we have
+                # previously defined an output local var: we use that one instead of directly writing to channel
+                updated = ast.Name(id="{} = {};".format(
+                    target, cppunparse.cppunparse(value, expr_semicolon=False)))
         elif memlet is not None and memlet.num_accesses != 1:
             newnode = ast.Name(id="*{} = {}; ".format(
                 target, cppunparse.cppunparse(value, expr_semicolon=False)))
@@ -1106,11 +1098,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
         return ast.copy_location(updated, node)
 
-    # TODO: va fatta la lettura da stream: o in fase di creazione della variabile (come avviene in xilinx) o qui in
-    # fase di produzione del codice
-
     def visit_Name(self, node):
-        # In the case of input memlet we need to check if this is referred to a stream: in that case, we read from channel
         if node.id not in self.memlets:
             return self.generic_visit(node)
 
@@ -1120,7 +1108,22 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
                 and memlet.num_accesses != 1:
+            # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
+            self.used_streams.append(node.id)
+        elif defined_type == DefinedType.Pointer and memlet.num_accesses !=1:
+            # if this has a variable number of access, it has been declared
+            # as a pointer. We need to deference it
+            if isinstance(node.id, ast.Subscript):
+                slice = self.visit(node.id.slice)
+                if isinstance(slice.value, ast.Tuple):
+                    subscript = unparse(slice)[1:-1]
+                else:
+                    subscript = unparse(slice)
+                updated = ast.Name(id="{}[{}]".format(node.id,subscript))
+            else: # no subscript
+                updated = ast.Name (id="*{}".format(node.id))
+
 
         return ast.copy_location(updated, node)
 

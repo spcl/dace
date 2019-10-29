@@ -101,6 +101,12 @@ run_all() {
     run_sample intel_fpga/type_inference type_inference "1\n"
 
 
+    # #### SYSTOLIC ARRAY ###
+    run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
+    run_sample intel_fpga/gemm_systolic_array gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
+
+
+
     # #### MISCELLANEA ####
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
