@@ -107,7 +107,7 @@ class InterstateEdge(object):
             return astutils.unparse(self.condition)
 
         # Edges with assigments and conditions
-        return assignments + '; ' + astutils.unparse(self.condition)
+        return astutils.unparse(self.condition) + '; ' + assignments
 
     @property
     def dotOpts(self):
