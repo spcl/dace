@@ -8,11 +8,11 @@ SERVPORT=`expr 6000 + ${CI_CONCURRENT_ID:-0}`
 # Remove old config files if they exist
 rm ./client_configs/default.conf
 # Start the REST server
-python3 $DIODEBASEPATH/diode_rest.py --localhost --localdace &
+python3 $DIODEBASEPATH/diode_rest.py --localhost --localdace --port $SERVPORT &
 SERVPID=$!
 RETVAL=0
 
-echo "server pid is: $SERVPID"
+echo "server pid is: $SERVPID, port: $SERVPORT"
 
 
 # Wait 10 seconds for the server to come online
