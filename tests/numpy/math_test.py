@@ -36,6 +36,16 @@ def real_part(A: dace.complex64[M, N], B: dace.float32[M, N]):
 def imag_part(A: dace.complex64[M, N], B: dace.float32[M, N]):
     B[:] = imag(A)
 
+@dace.program
+def exponent_m(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    for i in dace.map[0:M]:
+        B[i] = exp(A[i])
+
+@dace.program
+def exponent_t(A: dace.complex64[M, N], B: dace.complex64[M, N]):
+    for i, j in dace.map[0:M, 0:N]:
+        B[i, j] = exp(A[i, j])
+
 
 if __name__ == '__main__':
     A = np.random.rand(M, N).astype(np.float32) + 1j*np.random.rand(M, N).astype(np.float32)
@@ -58,3 +68,6 @@ if __name__ == '__main__':
     
     for p, f in {('real_part', 'real'), ('imag_part', 'imag')}:
         validate(p, f, A, restype=np.float32)
+    
+    validate('exponent_m', 'exp', A)
+    validate('exponent_t', 'exp', A)
