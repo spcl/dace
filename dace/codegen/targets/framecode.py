@@ -618,7 +618,7 @@ DACE_EXPORTED void __dace_exit(%s)
         # Set default storage/schedule types in SDFG
         _set_default_schedule_and_storage_types(sdfg, schedule)
 
-        is_top_level = schedule is None
+        is_top_level = sdfg.parent is None
 
         # Generate code
         ###########################
