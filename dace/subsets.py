@@ -62,7 +62,7 @@ class Range(Subset):
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
-    def toJSON(self):
+    def to_json(self):
         import json
         ret = []
 
@@ -88,10 +88,10 @@ class Range(Subset):
         import json
         obj = json.loads(obj)
 
-        return Range.fromJSON_object(obj, context)
+        return Range.from_json(obj, context)
 
     @staticmethod
-    def fromJSON_object(obj, context=None):
+    def from_json(obj, context=None):
         if obj['type'] != 'subsets.Range':
             raise TypeError(
                 "fromJSON of class `Range` called on json with type %s (expected 'subsets.Range')"
@@ -542,7 +542,7 @@ class Indices(Subset):
             self.indices = symbolic.pystr_to_symbolic(indices)
         self.tile_sizes = [1]
 
-    def toJSON(self):
+    def to_json(self):
         import json
 
         def a2s(obj):
@@ -561,10 +561,10 @@ class Indices(Subset):
         import json
         obj = json.loads(obj)
 
-        return Indices.fromJSON_object(obj, context)
+        return Indices.from_json(obj, context)
 
     @staticmethod
-    def fromJSON_object(obj, context=None):
+    def from_json(obj, context=None):
         if obj['type'] != 'subsets.Indices':
             raise TypeError(
                 "fromJSON of class `Indices` called on json with type %s (expected 'subsets.Indices')"

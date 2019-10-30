@@ -231,12 +231,12 @@ class SDFG(OrderedDiGraph):
         self._orig_name = name
         self._num = 0
 
-    def toJSON(self):
+    def to_json(self):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
         import json
-        tmp = super(SDFG, self).toJSON()
+        tmp = super(SDFG, self).to_json()
         tmp = json.loads(tmp)
 
         # Inject the undefined symbols
@@ -249,7 +249,7 @@ class SDFG(OrderedDiGraph):
         return json.dumps(tmp, default=Property.json_dumper)
 
     @classmethod
-    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context_info={'sdfg': None}):
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -277,7 +277,7 @@ class SDFG(OrderedDiGraph):
             nci = copy.deepcopy(context_info)
             nci['sdfg'] = ret
 
-            state = SDFGState.fromJSON_object(n, nci)
+            state = SDFGState.from_json(n, nci)
             ret.add_node(state)
 
         for e in edges:
@@ -286,11 +286,11 @@ class SDFG(OrderedDiGraph):
 
         # Redefine symbols
         for k, v in json_obj['undefined_symbols'].items():
-            v = Property.known_types()[v['type']].fromJSON_object(v)
+            v = Property.known_types()[v['type']].from_json(v)
             symbolic.symbol(k, v.dtype)
 
         for k, v in json_obj['scalar_parameters']:
-            v = Property.known_types()[v['type']].fromJSON_object(v)
+            v = Property.known_types()[v['type']].from_json(v)
             ret.add_symbol(k, v.dtype)
 
         ret.validate()
@@ -1031,7 +1031,7 @@ subgraph cluster_state_{state} {{
     var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=json.dumps(self.toJSON()),
+            sdfg=json.dumps(self.to_json()),
             uid=random.randint(0, sys.maxsize - 1))
 
         return result
@@ -1117,7 +1117,7 @@ subgraph cluster_state_{state} {{
                 old_meta = dace.properties.json_store_metadata
                 dace.properties.json_store_metadata = with_metadata
             with open(filename, "w") as fp:
-                fp.write(self.toJSON())
+                fp.write(self.to_json())
             if with_metadata is not None:
                 dace.properties.json_store_metadata = old_meta
 
@@ -1132,7 +1132,7 @@ subgraph cluster_state_{state} {{
             fp.seek(0)
             if firstbyte == b'{':  # JSON file
                 sdfg_json = json.load(fp)
-                sdfg = SDFG.fromJSON_object(sdfg_json)
+                sdfg = SDFG.from_json(sdfg_json)
             else:  # Pickle
                 sdfg = symbolic.SympyAwareUnpickler(fp).load()
 
@@ -2270,7 +2270,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def draw_node(self, graph):
         return dot.draw_node(graph, self, shape="Msquare")
 
-    def toJSON(self, parent=None):
+    def to_json(self, parent=None):
         import json
         ret = {
             'type':
@@ -2287,9 +2287,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     self.scope_dict(node_to_children=True, return_ids=True)
                     .items())
             },
-            'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
+            'nodes': [json.loads(n.to_json(self)) for n in self.nodes()],
             'edges': [
-                json.loads(e.toJSON(self)) for e in sorted(
+                json.loads(e.to_json(self)) for e in sorted(
                     self.edges(),
                     key=lambda e: (e.src_conn or '', e.dst_conn or ''))
             ],
@@ -2300,7 +2300,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return json.dumps(ret)
 
     @classmethod
-    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context_info={'sdfg': None}):
         """ Loads the node properties, label and type into a dict.
             @param json_obj: The object containing information about this node.
                              NOTE: This may not be a string!

@@ -69,7 +69,7 @@ class InterstateEdge(object):
     def condition_symbols(self):
         return dace.symbolic.symbols_in_ast(self.condition[0])
 
-    def toJSON(self, parent=None):
+    def to_json(self, parent=None):
         import json
         ret = {
             'type': type(self).__name__,
@@ -80,7 +80,7 @@ class InterstateEdge(object):
         return json.dumps(ret)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "InterstateEdge":
             raise TypeError("Invalid data type")
 

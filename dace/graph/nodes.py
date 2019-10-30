@@ -40,7 +40,7 @@ class Node(object):
     def validate(self, sdfg, state):
         pass
 
-    def toJSON(self, parent):
+    def to_json(self, parent):
         labelstr = str(self)
         typestr = str(type(self).__name__)
 
@@ -183,7 +183,7 @@ class AccessNode(Node):
         self.data = data
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         ret = AccessNode("Nodata")
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret
@@ -293,7 +293,7 @@ class Tasklet(CodeNode):
         return self._code['language']
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         ret = Tasklet("dummylabel")
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret
@@ -336,7 +336,7 @@ class EmptyTasklet(Tasklet):
         pass
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         ret = EmptyTasklet("dummylabel")
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret
@@ -394,7 +394,7 @@ class NestedSDFG(CodeNode):
         self.debuginfo = debuginfo
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         from dace import SDFG  # Avoid import loop
 
         # We have to load the SDFG first.
@@ -469,7 +469,7 @@ class MapEntry(EntryNode):
         self._map = map
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         m = Map("", [], [])
         ret = MapEntry(map=m)
         Property.set_properties_from_json(ret, json_obj, context=context)
@@ -504,7 +504,7 @@ class MapExit(ExitNode):
         self._map = map
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         # Set map reference to map entry
         entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
 
@@ -634,7 +634,7 @@ class ConsumeEntry(EntryNode):
         self.add_out_connector('OUT_stream')
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         c = Consume("", ['i', 1], None)
         ret = ConsumeEntry(consume=c)
         Property.set_properties_from_json(ret, json_obj, context=context)
@@ -675,7 +675,7 @@ class ConsumeExit(ExitNode):
         self._consume = consume
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         # Set map reference to entry node
         entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
 
@@ -836,7 +836,7 @@ class Reduce(Node):
         return dot.draw_node(sdfg, state, self, shape="invtriangle")
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         ret = Reduce("(lambda a, b: (a + b))", None)
         Property.set_properties_from_json(ret, json_obj, context=context)
         return ret

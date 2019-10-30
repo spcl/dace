@@ -233,7 +233,7 @@ class typeclass(object):
             return True
         return False
 
-    def toJSON(self):
+    def to_json(self):
         return json.dumps(self.type.__name__)
 
     # Create a new type
@@ -276,14 +276,14 @@ class pointer(typeclass):
         self.dtype = self
         self.materialize_func = None
 
-    def toJSON(self):
+    def to_json(self):
         return json.dumps({
             'type': 'pointer',
-            'dtype': self._typeclass.toJSON()
+            'dtype': self._typeclass.to_json()
         })
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
@@ -324,11 +324,11 @@ class struct(typeclass):
     def fields(self):
         return self._data
 
-    def toJSON(self):
+    def to_json(self):
         return json.dumps({
             'type': 'struct',
             'name': self.name,
-            'data': {k: v.toJSON()
+            'data': {k: v.to_json()
                      for k, v in self._data.items()},
             'length': {k: v
                        for k, v in self._length.items()},
@@ -336,7 +336,7 @@ class struct(typeclass):
         })
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "struct":
             raise TypeError("Invalid type for struct")
 
@@ -505,17 +505,17 @@ class callback(typeclass):
     def __hash__(self):
         return hash((self.uid, self.return_type, *self.input_types))
 
-    def toJSON(self):
+    def to_json(self):
         return json.dumps({
             'type':
             'callback',
-            'arguments': [i.toJSON() for i in self.input_types],
+            'arguments': [i.to_json() for i in self.input_types],
             'returntype':
-            self.return_type.toJSON() if self.return_type else json.dumps(None)
+            self.return_type.to_json() if self.return_type else json.dumps(None)
         })
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "callback":
             raise TypeError("Invalid type for callback")
 
@@ -705,7 +705,7 @@ def _json_to_obj(obj):
     known_types = Property.known_types()
     if isinstance(obj, dict) and 'type' in obj:
         if obj['type'] in known_types:
-            return known_types[obj['type']].fromJSON_object(obj)
+            return known_types[obj['type']].from_json(obj)
         raise TypeError('Unrecognized object type %s' % obj['type'])
     return globals()[obj]
 

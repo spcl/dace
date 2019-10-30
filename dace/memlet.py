@@ -94,7 +94,7 @@ class Memlet(object):
 
         self.debuginfo = debuginfo
 
-    def toJSON(self, parent_graph=None):
+    def to_json(self, parent_graph=None):
         try:
             attrs = json.loads(Property.all_properties_to_json(self))
         except Exception as e:
@@ -107,7 +107,7 @@ class Memlet(object):
         return json.dumps(retdict)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Memlet":
             raise TypeError("Invalid data type")
 

@@ -91,7 +91,7 @@ class Data(object):
                             'or symbols')
         return True
 
-    def toJSON(self):
+    def to_json(self):
         try:
             attrs = json.loads(Property.all_properties_to_json(self))
         except Exception as e:
@@ -139,7 +139,7 @@ class Scalar(Data):
                                      location, toplevel, debuginfo)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Scalar":
             raise TypeError("Invalid data type")
 
@@ -284,7 +284,7 @@ class Array(Data):
                      self.offset, self.may_alias, self.toplevel,
                      self.debuginfo)
 
-    def toJSON(self):
+    def to_json(self):
         try:
             attrs = json.loads(Property.all_properties_to_json(self))
         except Exception as e:
@@ -300,7 +300,7 @@ class Array(Data):
         return json.dumps(retdict)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Array":
             raise TypeError("Invalid data type")
 
@@ -474,7 +474,7 @@ class Stream(Data):
         super(Stream, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
 
-    def toJSON(self):
+    def to_json(self):
         try:
             attrs = json.loads(Property.all_properties_to_json(self))
         except Exception as e:
@@ -490,7 +490,7 @@ class Stream(Data):
         return json.dumps(retdict)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Stream":
             raise TypeError("Invalid data type")
 

@@ -39,9 +39,9 @@ class Edge(object):
         yield self._dst
         yield self._data
 
-    def toJSON(self, parent_graph):
+    def to_json(self, parent_graph):
         # Slight hack to preserve the old format (attributes should not behave like this)
-        memlet_ret = json.loads(self.data.toJSON(parent_graph))
+        memlet_ret = json.loads(self.data.to_json(parent_graph))
         ret = {
             'type': type(self).__name__,
             'attributes': {
@@ -55,7 +55,7 @@ class Edge(object):
         return json.dumps(ret)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Edge":
             raise TypeError("Invalid data type")
 
@@ -88,8 +88,8 @@ class MultiConnectorEdge(MultiEdge):
         self._src_conn = src_conn
         self._dst_conn = dst_conn
 
-    def toJSON(self, parent_graph):
-        ret = json.loads(super(MultiConnectorEdge, self).toJSON(parent_graph))
+    def to_json(self, parent_graph):
+        ret = json.loads(super(MultiConnectorEdge, self).to_json(parent_graph))
 
         ret['dst_connector'] = self.dst_conn
         ret['src_connector'] = self.src_conn
@@ -99,7 +99,7 @@ class MultiConnectorEdge(MultiEdge):
         return json.dumps(ret)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
 
         sdfg = context['sdfg_state']
         if sdfg is None:
@@ -152,13 +152,13 @@ class Graph(object):
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
 
-    def toJSON(self):
+    def to_json(self):
         import json
         ret = {
             'type': type(self).__name__,
             'attributes': json.loads(Property.all_properties_to_json(self)),
-            'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
-            'edges': [json.loads(e.toJSON(self)) for e in self.edges()],
+            'nodes': [json.loads(n.to_json(self)) for n in self.nodes()],
+            'edges': [json.loads(e.to_json(self)) for e in self.edges()],
         }
         return json.dumps(ret)
 

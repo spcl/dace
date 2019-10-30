@@ -400,13 +400,13 @@ class Property:
 
     @staticmethod
     def json_dumper(obj):
-        if hasattr(obj, 'toJSON'):
-            # Try the toJSON-methods by default
-            tmp = json.loads(obj.toJSON())
+        if hasattr(obj, 'to_json'):
+            # Try the to_json-methods by default
+            tmp = json.loads(obj.to_json())
             return tmp
         elif isinstance(obj, np.ndarray):
             # Special case for external structures (numpy arrays)
-            return NumpyLoader.toJSON_object(obj)
+            return NumpyLoader.to_json_object(obj)
         else:
             # If not available, go for the default str() representation
             return str(obj)
@@ -467,7 +467,7 @@ class Property:
             t = attr_type
 
         if t in Property.known_types():
-            return (Property.known_types()[t]).fromJSON_object(
+            return (Property.known_types()[t]).from_json(
                 obj, context=context)
 
         return obj
@@ -689,13 +689,13 @@ class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None: return 'null'
 
-        return json.dumps(obj.toJSON())  # Make a string of a JSON
+        return json.dumps(obj.to_json())  # Make a string of a JSON
 
     def from_json(self, s, context=None):
         if s == "null": return None
 
         # Parse the string of the JSON back into an SDFG object
-        return dace.SDFG.fromJSON_object(json.loads(json.loads(s)))
+        return dace.SDFG.from_json(json.loads(json.loads(s)))
 
 
 class RangeProperty(Property):
@@ -723,7 +723,7 @@ class RangeProperty(Property):
             return "null"
         # to_string is not enough - it does not preserve all information
 
-        return obj.toJSON()
+        return obj.to_json()
 
     def from_json(self, s, sdfg=None):
         from dace.subsets import Range
@@ -1193,7 +1193,7 @@ class SubsetProperty(Property):
         if val is None:
             return 'null'
         try:
-            return val.toJSON()
+            return val.to_json()
         except:
             return json.dumps(SubsetProperty.to_string(val))
 
@@ -1384,7 +1384,7 @@ class TypeClassProperty(Property):
     def to_json(self, obj):
         if obj is None:
             return json.dumps(obj)
-        return obj.dtype.toJSON()
+        return obj.dtype.to_json()
 
     def from_json(self, s, sdfg=None):
         d = json.loads(s, object_hook=Property.json_loader)
@@ -1402,7 +1402,7 @@ class NumpyLoader(object):
     """ Helper class to load/store numpy arrays from JSON. """
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != 'ndarray':
             raise TypeError('Object is not a numpy ndarray')
 
@@ -1412,7 +1412,7 @@ class NumpyLoader(object):
         return np.array(json_obj['data'])
 
     @staticmethod
-    def toJSON_object(obj):
+    def to_json_object(obj):
         return {
             'type': 'ndarray',
             'data': obj.tolist(),
