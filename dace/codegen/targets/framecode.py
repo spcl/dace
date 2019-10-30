@@ -364,23 +364,22 @@ DACE_EXPORTED void __dace_exit(%s)
                                       dace.graph.edges.LoopAssignment):
                             # Generate the transition, but leave the
                             # assignments to the loop
-                            generate_transition = True
-                            generate_assignments = False
+                            generate_transition &= True
+                            generate_assignments &= False
 
                         elif isinstance(control, dace.graph.edges.LoopBack):
-                            generate_transition = False
-                            generate_assignments = False
+                            generate_transition &= False
+                            generate_assignments &= False
 
                         elif isinstance(control, dace.graph.edges.LoopExit):
                             # Need to strip the condition, so generate it from
                             # the loop entry
-                            generate_transition = False
-                            generate_assignments = True
-                            pass
+                            generate_transition &= False
+                            generate_assignments &= True
 
                         elif isinstance(control, dace.graph.edges.LoopEntry):
-                            generate_transition = False
-                            generate_assignments = False
+                            generate_transition &= False
+                            generate_assignments &= False
 
                             if control.scope.assignment is not None:
                                 assignment_edge = control.scope.assignment.edge
@@ -438,12 +437,12 @@ DACE_EXPORTED void __dace_exit(%s)
                                         control.scope.exit.edge.dst))
 
                         elif isinstance(control, dace.graph.edges.IfExit):
-                            generate_transition = True
-                            generate_assignments = True
+                            generate_transition &= True
+                            generate_assignments &= True
 
                         elif isinstance(control, dace.graph.edges.IfEntry):
-                            generate_transition = False
-                            generate_assignments = True
+                            generate_transition &= False
+                            generate_assignments &= True
 
                             if len(set(control.scope) - states_generated) == 0:
                                 continue
