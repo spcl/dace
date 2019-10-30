@@ -671,6 +671,9 @@ DACE_EXPORTED void __dace_exit(%s)
             ]
             # Group in terms of starting node
             starting_nodes = [c[0] for c in all_cycles]
+            # Order cycles according to starting node in topological sort
+            starting_nodes = sorted(
+                starting_nodes, key=lambda x: states_topological.index(x))
             cycles_by_node = [[c for c in all_cycles if c[0] == n]
                               for n in starting_nodes]
             for cycles in cycles_by_node:
@@ -726,8 +729,21 @@ DACE_EXPORTED void __dace_exit(%s)
 
                 # Make sure this is not already annotated to be another construct
                 if (len(control_flow[entry_edge]) != 0
-                        or len(control_flow[back_edge]) != 0
-                        or len(control_flow[exit_edge]) != 0):
+                        or len(control_flow[back_edge]) != 0):
+                    continue
+
+                # Nested loops - exit edge of internal loop is a back-edge
+                # of an external loop
+                if len(control_flow[exit_edge]) == 1:
+                    if isinstance(control_flow[exit_edge][0],
+                                  dace.graph.edges.LoopBack):
+                        # Nested loop, mark parent scope
+                        loop_parent = control_flow[exit_edge][0].scope
+                    else:
+                        continue
+                elif len(control_flow[exit_edge]) == 0:
+                    loop_parent = None
+                else:
                     continue
 
                 if entry_edge == back_edge:
@@ -745,8 +761,10 @@ DACE_EXPORTED void __dace_exit(%s)
                 loop_scope = dace.graph.edges.LoopScope(internal_nodes)
 
                 if ((len(previous_edge.data.assignments) > 0
-                     or len(back_edge.data.assignments) > 0)
-                        and len(control_flow[previous_edge]) == 0):
+                     or len(back_edge.data.assignments) > 0) and
+                    (len(control_flow[previous_edge]) == 0 or
+                     (len(control_flow[previous_edge]) == 1 and
+                      control_flow[previous_edge][0].scope == loop_parent))):
                     # Generate assignment edge, if available
                     control_flow[previous_edge].append(
                         dace.graph.edges.LoopAssignment(
