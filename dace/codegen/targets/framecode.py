@@ -732,16 +732,24 @@ DACE_EXPORTED void __dace_exit(%s)
                         or len(control_flow[back_edge]) != 0):
                     continue
 
-                # Nested loops - exit edge of internal loop is a back-edge
-                # of an external loop
-                if len(control_flow[exit_edge]) == 1:
-                    if isinstance(control_flow[exit_edge][0],
-                                  dace.graph.edges.LoopBack):
-                        # Nested loop, mark parent scope
-                        loop_parent = control_flow[exit_edge][0].scope
-                    else:
-                        continue
-                elif len(control_flow[exit_edge]) == 0:
+                # Nested loops case I - previous edge of internal loop is a
+                # loop-entry of an external loop (first state in a loop is
+                # another loop)
+                if (len(control_flow[previous_edge]) == 1
+                        and isinstance(control_flow[previous_edge][0],
+                                       dace.graph.edges.LoopEntry)):
+                    # Nested loop, mark parent scope
+                    loop_parent = control_flow[previous_edge][0].scope
+                # Nested loops case II - exit edge of internal loop is a
+                # back-edge of an external loop (last state in a loop is another
+                # loop)
+                elif (len(control_flow[exit_edge]) == 1
+                      and isinstance(control_flow[exit_edge][0],
+                                     dace.graph.edges.LoopBack)):
+                    # Nested loop, mark parent scope
+                    loop_parent = control_flow[exit_edge][0].scope
+                elif (len(control_flow[exit_edge]) == 0
+                      or len(control_flow[previous_edge]) == 0):
                     loop_parent = None
                 else:
                     continue
