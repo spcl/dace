@@ -102,7 +102,7 @@ test_xilinx:
     - xilinx
   script:
     - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
-    - xvfb-run tests/xilinx_test.sh 0
+    - tests/xilinx_test.sh 0
 
 test_polybench:
   stage: test
