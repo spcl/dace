@@ -43,7 +43,7 @@ run_sample() {
     #1: generate the opencl
     #trick: use type scripting to mask the first segfault due to the missing aocx file
     command='echo -e "'"${3}"'" |python3 '"${1}"'.py '"${@:4}"''
-    script -c  "$command" /tmp/test_intelfpga > /dev/null
+    script -c  "$command" /dev/null > /dev/null
     #echo -e $3 | python3 $1.py ${@:5} &> /dev/null
 
     #2: compile for emulation
@@ -129,6 +129,7 @@ DACE_compiler_fpga_vendor="intel_fpga"
 
 TEST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 cd $TEST_DIR
+echo "My running dir is $(pwd)"
 run_all ${1:-"0"}
 
 PASSED=`expr $TESTS - $ERRORS`
