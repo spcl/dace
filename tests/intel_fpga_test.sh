@@ -34,14 +34,14 @@ run_sample() {
     # Args:
     #  1 - Relative path of FPGA test starting from test folder
     #  2 - Name of the DAPP program
-    #  3 - a string indicating the list of input to pass to the python program (command line inputs)
+    #  3 - a string indicating the list of input to pass to the python program (the trasnformation sequence)
     #  4 - program command line argument (if any)
 
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
     #1: generate the opencl
-    #dirty trick: use type scripting to mask the first segfault due to the missing aocx file
+    #trick: use type scripting to mask the first segfault due to the missing aocx file
     command='echo -e "'"${3}"'" |python3 '"${1}"'.py '"${@:4}"''
     script -c  "$command" /tmp/test_intelfpga > /dev/null
     #echo -e $3 | python3 $1.py ${@:5} &> /dev/null

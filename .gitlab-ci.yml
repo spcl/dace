@@ -120,3 +120,12 @@ test_xilinx:
   script:
     - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
     - xvfb-run tests/xilinx_test.sh 0
+
+
+test_intel:
+  stage: test
+  tags:
+    - intel
+  script:
+    - source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
+    - xvfb-run tests/intel_fpga_test.sh
