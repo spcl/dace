@@ -1,14 +1,14 @@
 #pragma once
 
-#include "dace/cuda/cudacommon.cuh"
+#include <cublas_v2.h>
 
 namespace dacelib {
 
 namespace blas {
 
 class CublasHelper {
-  static cublasHandle_t* GlobalHandle() {
-    static CublasHelper singleton;
+  static cublasHandle_t* GetHandle(size_t i) {
+    static thread_local CublasHelper singleton;
     return singleton.handle_;
   }
 

@@ -20,15 +20,15 @@ def library(lib):
     # them as belonging to this library, such that we can keep track of when a
     # library becomes a real dependency
     for node in lib.nodes:
-        if not hasattr(node, "__dace_library_node"):
+        if not hasattr(node, "_dace_library_node"):
             raise ValueError(str(node) + " is not a DaCe library node.")
-        node.__dace_library_name = lib.__name__
+        node._dace_library_name = lib.__name__
         for trans in node.implementations.values():
-            if not hasattr(trans, "__dace_library_expansion"):
+            if not hasattr(trans, "_dace_library_expansion"):
                 raise ValueError(
                     str(trans) + " is not a DaCe library expansion.")
-            trans.__dace_library_name = lib.__name__
-    lib.__dace_library = True
+            trans._dace_library_name = lib.__name__
+    lib._dace_library = True
     _DACE_REGISTERED_LIBRARIES[lib.__name__] = lib
     return lib
 
@@ -49,7 +49,7 @@ def node(n):
     # Add the node type to all implementations for matching
     for Transformation in n.implementations.values():
         Transformation._match_node = n("__" + Transformation.__name__)
-    n.__dace_library_node = True
+    n._dace_library_node = True
     return n
 
 
@@ -63,12 +63,13 @@ def expansion(exp):
         raise ValueError("Library node expansion must define environments "
                          "(can be an empty list).")
     for dep in exp.environments:
-        if not hasattr(dep, "__dace_library_environment"):
+        if not hasattr(dep, "_dace_library_environment"):
             raise ValueError(str(dep) + " is not a DaCe library environment.")
-    exp.__dace_library_expansion = True
+    exp._dace_library_expansion = True
     return exp
 
 
+# Use to decorate DaCe library environments
 def environment(env):
     env = dace.properties.make_properties(env)
     if env.__name__ in _DACE_REGISTERED_ENVIRONMENTS:
@@ -90,14 +91,15 @@ def environment(env):
             raise ValueError(
                 "DaCe environment specification must implement the field \"" +
                 field + "\".")
-    env.__dace_library_environment = True
+    env._dace_library_environment = True
     # Retrieve which file this was called from
     caller_file = inspect.stack()[1].filename
-    env.__dace_file_path = caller_file
+    env._dace_file_path = caller_file
     _DACE_REGISTERED_ENVIRONMENTS[env.__name__] = env
     return env
 
 
+# Mapping from string to DaCe environment
 def get_environment(env_name):
     try:
         env = dace.library._DACE_REGISTERED_ENVIRONMENTS[env_name]

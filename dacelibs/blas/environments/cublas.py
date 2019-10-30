@@ -12,6 +12,6 @@ class cuBLAS:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = ["../include/dace_cublas.cuh"]
+    headers = ["../include/dace_cublas.h"]
     init_code = ""
     finalize_code = ""
