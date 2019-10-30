@@ -83,15 +83,15 @@ endif()
 
 # Function for performing deferred variable expansion
 function(expand_deferred_variables VAR_NAME)
-  string(REGEX MATCHALL "__DACE_CMAKE_EXPAND{(.+)}" EXPAND_VARS 
+  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{(.+)}" EXPAND_VARS 
          "${${VAR_NAME}}")
   foreach(EXPAND_VAR ${EXPAND_VARS})
       # Extract only the variable name
-      string(REGEX REPLACE "__DACE_CMAKE_EXPAND{(.+)}" "\\1"
+      string(REGEX REPLACE "_DACE_CMAKE_EXPAND{(.+)}" "\\1"
              EXPAND_VAR ${EXPAND_VAR})
       # Now expand the variable and substitute it back into the original
       # variable
-      string(REGEX REPLACE "__DACE_CMAKE_EXPAND{${EXPAND_VAR}}"
+      string(REGEX REPLACE "_DACE_CMAKE_EXPAND{${EXPAND_VAR}}"
              "${${EXPAND_VAR}}" ${VAR_NAME} ${${VAR_NAME}})
   endforeach()
   # Have to explicitly set parent scope, otherwise this will have no effect

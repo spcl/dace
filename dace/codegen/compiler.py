@@ -452,7 +452,7 @@ def configure_and_compile(program_folder, program_name=None):
         cmake_compile_flags |= set(env.cmake_compile_flags)
         cmake_link_flags |= set(env.cmake_link_flags)
         # Make path absolute
-        env_dir = os.path.dirname(env.__dace_file_path)
+        env_dir = os.path.dirname(env._dace_file_path)
         cmake_files |= set(
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) +
             (".cmake" if not f.endswith(".cmake") else "")
@@ -485,7 +485,7 @@ def configure_and_compile(program_folder, program_name=None):
     ]
     # Escape variable expansions to defer their evaluation
     environment_flags = [
-        cmd.replace("$", "__DACE_CMAKE_EXPAND") for cmd in environment_flags
+        cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in environment_flags
     ]
     cmake_command += environment_flags
 
