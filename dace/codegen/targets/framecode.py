@@ -330,7 +330,8 @@ DACE_EXPORTED void __dace_exit(%s)
             callsite_stream.write("}")
 
     def generate_states(self, sdfg, scope_label, control_flow, global_stream,
-                        callsite_stream, scope, states_generated):
+                        callsite_stream, scope, states_generated,
+                        generated_edges):
 
         states_topological = list(sdfg.topological_sort(sdfg.start_state))
         states_to_generate = collections.deque([
@@ -390,29 +391,29 @@ DACE_EXPORTED void __dace_exit(%s)
                                       dace.graph.edges.LoopAssignment):
                             # Generate the transition, but leave the
                             # assignments to the loop
-                            generate_transition = True
-                            generate_assignments = False
+                            generate_transition &= True
+                            generate_assignments &= False
 
                         elif isinstance(control, dace.graph.edges.LoopBack):
-                            generate_transition = False
-                            generate_assignments = False
+                            generate_transition &= False
+                            generate_assignments &= False
 
                         elif isinstance(control, dace.graph.edges.LoopExit):
                             # Need to strip the condition, so generate it from
                             # the loop entry
-                            generate_transition = False
-                            generate_assignments = True
-                            pass
+                            generate_transition &= False
+                            generate_assignments &= True
 
                         elif isinstance(control, dace.graph.edges.LoopEntry):
-                            generate_transition = False
-                            generate_assignments = False
+                            generate_transition &= False
+                            generate_assignments &= False
 
                             if control.scope.assignment is not None:
                                 assignment_edge = control.scope.assignment.edge
                                 init_assignments = ", ".join(
                                     DaCeCodeGenerator._generate_assignments(
                                         assignment_edge.data.assignments))
+                                generated_edges.add(assignment_edge)
                             else:
                                 init_assignments = ""
 
@@ -420,10 +421,12 @@ DACE_EXPORTED void __dace_exit(%s)
                             continue_assignments = ", ".join(
                                 DaCeCodeGenerator._generate_assignments(
                                     back_edge.data.assignments))
+                            generated_edges.add(back_edge)
 
                             entry_edge = control.scope.entry.edge
                             condition = cppunparse.cppunparse(
                                 entry_edge.data.condition, False)
+                            generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
                                     or len(continue_assignments) > 0):
@@ -440,7 +443,8 @@ DACE_EXPORTED void __dace_exit(%s)
                             self.generate_states(
                                 sdfg, entry_edge.src.label + "_loop",
                                 control_flow, global_stream, callsite_stream,
-                                control.scope, states_generated)
+                                control.scope, states_generated,
+                                generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
 
@@ -457,19 +461,23 @@ DACE_EXPORTED void __dace_exit(%s)
                                     and states_to_generate[0] == exit_edge.dst
                                     and exit_edge.dst not in states_generated):
                                 pass
+                            elif edge in generated_edges:
+                                # This edge has more roles, goto doesn't apply
+                                pass
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
                                         sdfg.name,
                                         control.scope.exit.edge.dst))
+                                generated_edges.add(control.scope.exit.edge)
 
                         elif isinstance(control, dace.graph.edges.IfExit):
-                            generate_transition = True
-                            generate_assignments = True
+                            generate_transition &= True
+                            generate_assignments &= True
 
                         elif isinstance(control, dace.graph.edges.IfEntry):
-                            generate_transition = False
-                            generate_assignments = True
+                            generate_transition &= False
+                            generate_assignments &= True
 
                             if len(set(control.scope) - states_generated) == 0:
                                 continue
@@ -484,22 +492,25 @@ DACE_EXPORTED void __dace_exit(%s)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
+                            generated_edges.add(then_entry)
 
                             # Generate the then-scope
-                            self.generate_states(sdfg, state.label + "_then",
-                                                 control_flow, global_stream,
-                                                 callsite_stream, then_scope,
-                                                 states_generated)
+                            self.generate_states(
+                                sdfg, state.label + "_then", control_flow,
+                                global_stream, callsite_stream, then_scope,
+                                states_generated, generated_edges)
 
                             callsite_stream.write("} else {", sdfg, sid)
+                            generated_edges.add(else_scope.entry.edge)
 
                             # Generate the else-scope
-                            self.generate_states(sdfg, state.label + "_else",
-                                                 control_flow, global_stream,
-                                                 callsite_stream, else_scope,
-                                                 states_generated)
+                            self.generate_states(
+                                sdfg, state.label + "_else", control_flow,
+                                global_stream, callsite_stream, else_scope,
+                                states_generated, generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
+                            generated_edges.add(else_scope.exit.edge)
 
                             # Update states to generate after nested call
                             states_to_generate = collections.deque([
@@ -557,6 +568,8 @@ DACE_EXPORTED void __dace_exit(%s)
                         ";\n".join(
                             DaCeCodeGenerator._generate_assignments(
                                 assignments_to_generate) + [""]), sdfg, sid)
+                generated_edges.add(edge)
+                # End of out_edges loop
 
             if (((len(out_edges) == 0) or
                  (not isinstance(scope, dace.graph.edges.ControlFlowScope) and
@@ -689,6 +702,9 @@ DACE_EXPORTED void __dace_exit(%s)
             ]
             # Group in terms of starting node
             starting_nodes = [c[0] for c in all_cycles]
+            # Order cycles according to starting node in topological sort
+            starting_nodes = sorted(
+                starting_nodes, key=lambda x: states_topological.index(x))
             cycles_by_node = [[c for c in all_cycles if c[0] == n]
                               for n in starting_nodes]
             for cycles in cycles_by_node:
@@ -744,8 +760,29 @@ DACE_EXPORTED void __dace_exit(%s)
 
                 # Make sure this is not already annotated to be another construct
                 if (len(control_flow[entry_edge]) != 0
-                        or len(control_flow[back_edge]) != 0
-                        or len(control_flow[exit_edge]) != 0):
+                        or len(control_flow[back_edge]) != 0):
+                    continue
+
+                # Nested loops case I - previous edge of internal loop is a
+                # loop-entry of an external loop (first state in a loop is
+                # another loop)
+                if (len(control_flow[previous_edge]) == 1
+                        and isinstance(control_flow[previous_edge][0],
+                                       dace.graph.edges.LoopEntry)):
+                    # Nested loop, mark parent scope
+                    loop_parent = control_flow[previous_edge][0].scope
+                # Nested loops case II - exit edge of internal loop is a
+                # back-edge of an external loop (last state in a loop is another
+                # loop)
+                elif (len(control_flow[exit_edge]) == 1
+                      and isinstance(control_flow[exit_edge][0],
+                                     dace.graph.edges.LoopBack)):
+                    # Nested loop, mark parent scope
+                    loop_parent = control_flow[exit_edge][0].scope
+                elif (len(control_flow[exit_edge]) == 0
+                      or len(control_flow[previous_edge]) == 0):
+                    loop_parent = None
+                else:
                     continue
 
                 if entry_edge == back_edge:
@@ -763,8 +800,10 @@ DACE_EXPORTED void __dace_exit(%s)
                 loop_scope = dace.graph.edges.LoopScope(internal_nodes)
 
                 if ((len(previous_edge.data.assignments) > 0
-                     or len(back_edge.data.assignments) > 0)
-                        and len(control_flow[previous_edge]) == 0):
+                     or len(back_edge.data.assignments) > 0) and
+                    (len(control_flow[previous_edge]) == 0 or
+                     (len(control_flow[previous_edge]) == 1 and
+                      control_flow[previous_edge][0].scope == loop_parent))):
                     # Generate assignment edge, if available
                     control_flow[previous_edge].append(
                         dace.graph.edges.LoopAssignment(
@@ -880,9 +919,10 @@ DACE_EXPORTED void __dace_exit(%s)
         # Generate actual program body
 
         states_generated = set()  # For sanity check
-        self.generate_states(sdfg, "sdfg", control_flow,
-                             global_stream, callsite_stream,
-                             set(states_topological), states_generated)
+        generated_edges = set()
+        self.generate_states(
+            sdfg, "sdfg", control_flow, global_stream, callsite_stream,
+            set(states_topological), states_generated, generated_edges)
 
         #######################################################################
 

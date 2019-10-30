@@ -382,8 +382,11 @@ class SDFG(OrderedDiGraph):
     @property
     def start_state(self):
         """ Returns the starting state of this SDFG. """
+        source_nodes = self.source_nodes()
+        if len(source_nodes) == 1:
+            return source_nodes[0]
         if self._start_state is None:
-            return self.source_nodes()[0]
+            raise ValueError('Ambiguous or undefined starting state for SDFG')
 
         return self.node(self._start_state)
 
@@ -1338,6 +1341,7 @@ subgraph cluster_state_{state} {{
         while name in self._arrays:
             self._temp_transients += 1
             name = '__tmp%d' % self._temp_transients
+        self._temp_transients += 1
 
         return name
 
@@ -2312,8 +2316,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             self.is_collapsed,
             'scope_dict': {
                 k: sorted(v)
-                for k, v in self.scope_dict(
-                    node_to_children=True, return_ids=True).items()
+                for k, v in sorted(
+                    self.scope_dict(node_to_children=True, return_ids=True)
+                    .items())
             },
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
             'edges': [
