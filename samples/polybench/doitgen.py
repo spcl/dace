@@ -51,43 +51,23 @@ def init_array(A, C4):
 
 @dace.program(datatype[NR, NQ, NP], datatype[NP, NP])
 def doitgen(A, C4):
-    sum = dace.define_local([NR, NQ, NP], dtype=datatype)
-
     @dace.mapscope
     def doit(r: _[0:NR], q: _[0:NQ]):
-        # nA << A[r, q, :]
-        # nC4 << C4[:, :]
-        # nSum << sum[r, q, :]
-        # nAout >> A[r, q, :]
+        sum = dace.define_local([NP], dtype=datatype)
+        sum[:] = 0
 
         @dace.map
         def compute_sum(p: _[0:NP], s: _[0:NP]):
             inA << A[r, q, s]
             inC4 << C4[s, p]
-            s >> sum(1, lambda a, b: a + b, 0)[r, q, p]
+            s >> sum(1, lambda a, b: a + b, 0)[p]
             s = inA * inC4
 
         @dace.map
         def compute_A(p: _[0:NP]):
-            insum << sum[r, q, p]
+            insum << sum[p]
             out >> A[r, q, p]
             out = insum
-
-        # @dace.program(datatype[NP], datatype[NP, NP], datatype[NP],
-        #               datatype[NP])
-        # def internal(nA, nC4, nSum, nAout):
-        #     @dace.map
-        #     def compute_sum(p: _[0:NP], s: _[0:NP]):
-        #         inA << nA[s]
-        #         inC4 << nC4[s, p]
-        #         s >> nSum(1, lambda a, b: a + b, 0)[p]
-        #         s = inA * inC4
-
-        #     @dace.map
-        #     def compute_A(p: _[0:NP]):
-        #         insum << nSum[p]
-        #         out >> nAout[p]
-        #         out = insum
 
 
 if __name__ == '__main__':
