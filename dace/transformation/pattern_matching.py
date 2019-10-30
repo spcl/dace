@@ -380,7 +380,10 @@ def match_pattern(state_id,
             try:
                 match_found = pattern.can_be_applied(
                     state, subgraph, idx, sdfg, strict=strict)
-            except:
+            except Exception as e:
+                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+                      ' {e}'.format(p=pattern.__name__,
+                                    c=e.__class__.__name__, e=e))
                 match_found = False
             if match_found:
                 yield pattern(
@@ -427,7 +430,10 @@ def match_stateflow_pattern(sdfg,
             try:
                 match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
                                                      strict)
-            except:
+            except Exception as e:
+                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+                      ' {e}'.format(p=pattern.__name__,
+                                    c=e.__class__.__name__, e=e))
                 match_found = False
             if match_found:
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
