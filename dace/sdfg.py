@@ -2283,8 +2283,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             self.is_collapsed,
             'scope_dict': {
                 k: sorted(v)
-                for k, v in self.scope_dict(
-                    node_to_children=True, return_ids=True).items()
+                for k, v in sorted(
+                    self.scope_dict(node_to_children=True, return_ids=True)
+                    .items())
             },
             'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
             'edges': [
