@@ -104,6 +104,16 @@ test_xilinx:
     - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
     - xvfb-run tests/xilinx_test.sh 0
 
+test_polybench:
+  stage: test
+  tags:
+    - intel
+    - linux
+  script:
+    - NOSTATUSBAR=1 tests/polybench_test.sh
+
+# Nightly tests
+
 test_all:on-schedule:
   only:
     - schedules
