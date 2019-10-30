@@ -290,8 +290,32 @@ class InlineSDFG(pattern_matching.Transformation):
                     graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
             elif isinstance(e.dst, nodes.AccessNode) and e.dst.data in outputs:
                 cnode, cconn, cmemlet = outputs[e.dst.data]
-                # Connect to destination node instead
                 newmemlet = self._modify_memlet(e.data, cmemlet)
+                if state.out_edges(e.dst):
+                    graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, newmemlet)
+                    e._src = e._dst
+                    e._src_conn = e._dst_conn
+                    # Remove wcr
+                    newmemlet = dc(newmemlet)
+                    newmemlet.wcr = None
+                    newmemlet.other_subset = dc(newmemlet.subset)
+                    for _, _, dst, _, memlet in graph.out_edges(cnode):
+                        if isinstance(dst, nodes.AccessNode) and memlet.data == cmemlet.data:
+                            memlet.wcr = None
+                    # # Remove output node
+                    # out_conn = 'OUT_{}'.format(cconn[3:])
+                    # for _, conn, dst, _, _ in graph.out_edges(cnode):
+                    #     if conn == out_conn:
+                    #         graph.remove_node(dst)
+                    # # Remove connectors
+                    # in_connectors = dc(cnode.in_connectors)
+                    # in_connectors.remove(cconn)
+                    # cnode.in_connectors = in_connectors
+                    # out_connectors = dc(cnode.out_connectors)
+                    # out_connectors.remove(out_conn)
+                    # cnode.out_connectors = out_connectors
+                # else:
+                # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
             elif e.data.data in torename:
                 if e.data.data in inputs:
