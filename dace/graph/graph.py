@@ -5,6 +5,7 @@ import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
 from dace.properties import Property
+import dace.serialize
 import json
 
 
@@ -16,6 +17,7 @@ class EdgeNotFoundError(Exception):
     pass
 
 
+@dace.serialize.serializable
 class Edge(object):
     def __init__(self, src, dst, data):
         self._src = src
@@ -41,7 +43,7 @@ class Edge(object):
 
     def to_json(self, parent_graph):
         # Slight hack to preserve the old format (attributes should not behave like this)
-        memlet_ret = json.loads(self.data.to_json(parent_graph))
+        memlet_ret = self.data.to_json(parent_graph)
         ret = {
             'type': type(self).__name__,
             'attributes': {
@@ -52,7 +54,7 @@ class Edge(object):
             'dst': str(parent_graph.node_id(self.dst)),
         }
 
-        return json.dumps(ret)
+        return ret
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -72,6 +74,7 @@ class Edge(object):
         self._src, self._dst = self._dst, self._src
 
 
+@dace.serialize.serializable
 class MultiEdge(Edge):
     def __init__(self, src, dst, data, key):
         super(MultiEdge, self).__init__(src, dst, data)
@@ -82,6 +85,7 @@ class MultiEdge(Edge):
         return self._key
 
 
+@dace.serialize.serializable
 class MultiConnectorEdge(MultiEdge):
     def __init__(self, src, src_conn, dst, dst_conn, data, key):
         super(MultiConnectorEdge, self).__init__(src, dst, data, key)
@@ -89,14 +93,14 @@ class MultiConnectorEdge(MultiEdge):
         self._dst_conn = dst_conn
 
     def to_json(self, parent_graph):
-        ret = json.loads(super(MultiConnectorEdge, self).to_json(parent_graph))
+        ret = super().to_json(parent_graph)
 
         ret['dst_connector'] = self.dst_conn
         ret['src_connector'] = self.src_conn
 
         ret['type'] = "MultiConnectorEdge"
 
-        return json.dumps(ret)
+        return ret
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -148,19 +152,19 @@ class MultiConnectorEdge(MultiEdge):
         return 5
 
 
+@dace.serialize.serializable
 class Graph(object):
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
 
     def to_json(self):
-        import json
         ret = {
             'type': type(self).__name__,
-            'attributes': json.loads(Property.all_properties_to_json(self)),
-            'nodes': [json.loads(n.to_json(self)) for n in self.nodes()],
-            'edges': [json.loads(e.to_json(self)) for e in self.edges()],
+            'attributes': dace.serialize.all_properties_to_json(self),
+            'nodes': [n.to_json(self) for n in self.nodes()],
+            'edges': [e.to_json(self) for e in self.edges()],
         }
-        return json.dumps(ret)
+        return ret
 
     def nodes(self):
         """Returns an iterable to internal graph nodes."""

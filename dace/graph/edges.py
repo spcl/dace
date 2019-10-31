@@ -11,7 +11,7 @@ from dace.properties import Property, CodeProperty, make_properties
 
 
 def assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited 
+    """ Returns a dictionary of assignments from a semicolon-delimited
         string of expressions. """
 
     result = {}
@@ -24,14 +24,14 @@ def assignments_from_string(astr):
 
 
 def assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment 
+    """ Returns a semicolon-delimited string from a dictionary of assignment
         expressions. """
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
 @make_properties
 class InterstateEdge(object):
-    """ An SDFG state machine edge. These edges can contain a condition     
+    """ An SDFG state machine edge. These edges can contain a condition
         (which may include data accesses for data-dependent decisions) and
         zero or more assignments of values to inter-state variables (e.g.,
         loop iterates).
@@ -73,11 +73,11 @@ class InterstateEdge(object):
         import json
         ret = {
             'type': type(self).__name__,
-            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'attributes': dace.serialize.all_properties_to_json(self),
             'label': self.label
         }
 
-        return json.dumps(ret)
+        return ret
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -86,7 +86,7 @@ class InterstateEdge(object):
 
         # Create dummy object
         ret = InterstateEdge()
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 

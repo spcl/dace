@@ -63,7 +63,6 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     def to_json(self):
-        import json
         ret = []
 
         def a2s(obj):
@@ -81,21 +80,14 @@ class Range(Subset):
                 'tile': a2s(tile)
             })
 
-        return json.dumps({'type': 'subsets.Range', 'ranges': ret})
-
-    @staticmethod
-    def fromJSON(obj, context=None):
-        import json
-        obj = json.loads(obj)
-
-        return Range.from_json(obj, context)
+        return {'type': 'subsets.Range', 'ranges': ret}
 
     @staticmethod
     def from_json(obj, context=None):
         if obj['type'] != 'subsets.Range':
             raise TypeError(
-                "fromJSON of class `Range` called on json with type %s (expected 'subsets.Range')"
-                % obj['type'])
+                "from_json of class \"Range\" called on json "
+                "with type %s (expected 'subsets.Range')" % obj['type'])
 
         ranges = obj['ranges']
         tuples = []
@@ -115,7 +107,7 @@ class Range(Subset):
 
     @staticmethod
     def from_array(array):
-        """ Constructs a range that covers the full array given as input. 
+        """ Constructs a range that covers the full array given as input.
             @type array: dace.data.Data """
         return Range([(0, s - 1, 1) for s in array.shape])
 
@@ -177,9 +169,9 @@ class Range(Subset):
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
-            
+
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            
+
             @param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
             @return: Absolute coordinates for index i (length equal to
@@ -203,13 +195,13 @@ class Range(Subset):
     def at(self, i, global_shape):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
-            
+
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            
+
             @param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            @param global_shape: The full size of the set that we are 
-                                 subsetting (e.g., full array strides/padded 
+            @param global_shape: The full size of the set that we are
+                                 subsetting (e.g., full array strides/padded
                                  shape).
             @return: Absolute 1D index at coordinate i.
         """
@@ -543,32 +535,24 @@ class Indices(Subset):
         self.tile_sizes = [1]
 
     def to_json(self):
-        import json
 
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
-                return str(obj.expr)
+                return obj.expr
             else:
-                return str(obj)
+                return obj
 
-        return json.dumps({
+        return {
             'type': 'subsets.Indices',
             'indices': [*map(a2s, self.indices)]
-        })
-
-    @staticmethod
-    def fromJSON(obj, context=None):
-        import json
-        obj = json.loads(obj)
-
-        return Indices.from_json(obj, context)
+        }
 
     @staticmethod
     def from_json(obj, context=None):
         if obj['type'] != 'subsets.Indices':
             raise TypeError(
-                "fromJSON of class `Indices` called on json with type %s (expected 'subsets.Indices')"
-                % obj['type'])
+                "from_json of class \"Indices\" called on json "
+                "with type %s (expected 'subsets.Indices')" % obj['type'])
 
         #return Indices(symbolic.SymExpr(obj['indices']))
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
@@ -630,8 +614,8 @@ class Indices(Subset):
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
             @param i: A tuple of the same dimensionality as subset.dims().
-            @param global_shape: The full size of the set that we are 
-                                 subsetting (e.g., full array strides/padded 
+            @param global_shape: The full size of the set that we are
+                                 subsetting (e.g., full array strides/padded
                                  shape).
             @return: Absolute 1D index at coordinate i.
         """
