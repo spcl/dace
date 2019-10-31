@@ -622,6 +622,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 # ------------------------------------------------------------------------------
 
 
+@dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
@@ -666,6 +667,7 @@ class ConsumeEntry(EntryNode):
         return str(self.consume)
 
 
+@dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
