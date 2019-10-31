@@ -458,6 +458,7 @@ class ExitNode(Node):
 # ------------------------------------------------------------------------------
 
 
+@dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
@@ -493,6 +494,7 @@ class MapEntry(EntryNode):
         return str(self.map)
 
 
+@dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map

@@ -5,6 +5,7 @@ import copy as cp
 
 import json
 import dace
+import dace.serialize
 from dace import data as dt, subsets, symbolic, dtypes
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
@@ -108,7 +109,7 @@ class Memlet(object):
 
         # Create dummy object
         ret = Memlet("", dace.dtypes.DYNAMIC, None, 1)
-        serialize.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 

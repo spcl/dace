@@ -194,7 +194,7 @@ _BYTES = {
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
-        
+
         These types are defined for three reasons:
             1. Controlling DaCe types
             2. Enabling declaration syntax: `dace.float32[M,N]`
@@ -234,7 +234,7 @@ class typeclass(object):
         return False
 
     def to_json(self):
-        return json.dumps(self.type.__name__)
+        return self.type.__name__
 
     # Create a new type
     def __call__(self, *args, **kwargs):
@@ -248,7 +248,7 @@ class typeclass(object):
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: dace.uint32[N,M] 
+            with the following syntax: dace.uint32[N,M]
             @return: A data.Array data descriptor.
         """
         from dace import data
@@ -263,8 +263,8 @@ class typeclass(object):
 
 class pointer(typeclass):
     """ A data type for a pointer to an existing typeclass.
-        
-        Example use: 
+
+        Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
 
     def __init__(self, wrapped_typeclass):
@@ -295,8 +295,8 @@ class pointer(typeclass):
 
 
 def immaterial(dace_data, materialize_func):
-    """ A data type with a materialize/serialize function. Data objects with 
-        this type do not allocate new memory. Whenever it is accessed, the 
+    """ A data type with a materialize/serialize function. Data objects with
+        this type do not allocate new memory. Whenever it is accessed, the
         materialize/serialize function is invoked instead. """
     dace_data.materialize_func = materialize_func
     return dace_data
@@ -304,7 +304,7 @@ def immaterial(dace_data, materialize_func):
 
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
-    
+
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
 
@@ -640,7 +640,7 @@ def ismodule(var):
 
 
 def ismoduleallowed(var):
-    """ Helper function to determine the source module of an object, and 
+    """ Helper function to determine the source module of an object, and
         whether it is allowed in DaCe programs. """
     mod = inspect.getmodule(var)
     try:
@@ -653,7 +653,7 @@ def ismoduleallowed(var):
 
 
 def ismodule_and_allowed(var):
-    """ Returns True if a given object is a module and is one of the allowed 
+    """ Returns True if a given object is a module and is one of the allowed
         modules in DaCe programs. """
     if inspect.ismodule(var):
         if var.__name__ in _ALLOWED_MODULES:
@@ -680,7 +680,7 @@ class _external_function(object):
 
 
 class DebugInfo:
-    """ Source code location identifier of a node/edge in an SDFG. Used for 
+    """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
 
     def __init__(self,

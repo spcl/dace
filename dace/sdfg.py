@@ -3,6 +3,7 @@ import collections
 import copy
 import errno
 import itertools
+import json
 from inspect import getframeinfo, stack
 import os
 import pickle, json
@@ -159,11 +160,11 @@ def _arrays_to_json(arrays):
     }
 
 
-def _arrays_from_json(obj):
+def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
     return {
-        k: dace.serialize.from_json(v)
+        k: dace.serialize.from_json(v, context)
         for k, v in obj.items()
     }
 
@@ -270,6 +271,7 @@ class SDFG(OrderedDiGraph):
 
     @classmethod
     def from_json(cls, json_obj, context_info={'sdfg': None}):
+
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -277,8 +279,6 @@ class SDFG(OrderedDiGraph):
         attrs = json_obj['attributes']
         nodes = json_obj['nodes']
         edges = json_obj['edges']
-
-        import json
 
         ret = SDFG(
             name=attrs['name'],
@@ -2348,7 +2348,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         }
         dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
-        import json
         for n in nodes:
             nret = json.loads(
                 json.dumps(n),

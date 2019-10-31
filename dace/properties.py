@@ -106,12 +106,23 @@ class Property:
         if to_string is not None:
             self._to_string = to_string
         elif choices is not None:
-            self._to_string = lambda val: val._name_
+            self._to_string = lambda val: val.__name__
         else:
             self._to_string = str
 
         if from_json is None:
-            self._from_json = dace.serialize.from_json
+
+            def f(obj, *args, **kwargs):
+                if isinstance(obj, str) and self._from_string is not None:
+                    # The serializer does not know about this property, so if
+                    # we can convert using our to_string method, do that here
+                    return self._from_string(obj)
+                # Otherwise ship off to the serializer, telling it which type
+                # it's dealing with as a sanity check
+                return dace.serialize.from_json(
+                    obj, *args, known_type=dtype, **kwargs)
+
+            self._from_json = f
         else:
             self._from_json = from_json
 
@@ -447,8 +458,7 @@ class OrderedDictProperty(Property):
         # This is expected to be a list (a JSON dict does not guarantee an order,
         # although it would often be lexicographically ordered by key name)
 
-        import collections
-        ret = collections.OrderedDict()
+        ret = OrderedDict()
         for x in obj:
             ret[list(x.keys())[0]] = list(x.values())[0]
 
@@ -986,14 +996,13 @@ class SubsetProperty(Property):
         return True
 
     def __set__(self, obj, val):
+        if isinstance(val, str):
+            val = self.from_string(val)
         if (val is not None and not isinstance(val, sbs.Range)
                 and not isinstance(val, sbs.Indices)):
-            try:
-                val = self.from_string(val)
-            except SyntaxError:
-                raise TypeError(
-                    "Subset property must be either Range or Indices: got {}".
-                    format(type(val).__name__))
+            raise TypeError(
+                "Subset property must be either Range or Indices: got {}".
+                format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 
     @staticmethod
@@ -1021,13 +1030,11 @@ class SubsetProperty(Property):
             return None
         try:
             return val.to_json()
-        except:
+        except AttributeError:
             return SubsetProperty.to_string(val)
 
     def from_json(self, val, sdfg=None):
-        if val == None:
-            return None
-        return obj
+        return dace.serialize.from_json(val)
 
 
 class SymbolicProperty(Property):
@@ -1213,7 +1220,7 @@ class TypeClassProperty(Property):
     def from_json(self, d, sdfg=None):
         if d is None:
             return None
-        if isinstance(d, str):
+        elif isinstance(d, str):
             return TypeClassProperty.from_string(d)
         elif isinstance(d, dace.typeclass):
             return d

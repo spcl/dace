@@ -1,3 +1,4 @@
+import enum
 import json
 import numpy as np
 
@@ -61,13 +62,24 @@ def to_json(obj):
     elif isinstance(obj, np.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
+    elif isinstance(obj, enum.Enum):
+        # Store just the name of this key
+        return obj._name_
     else:
         # If not available, go for the default str() representation
         return str(obj)
 
 
-def from_json(obj, context=None):
+def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
+        if known_type is not None:
+            # For enums, resolve using the type if known
+            if issubclass(known_type, enum.Enum):
+                return known_type[obj]
+            # If we can, convert from string
+            if isinstance(obj, str) and hasattr(known_type, "from_string"):
+                return known_type.from_string(obj)
+        # Otherwise we don't know what to do with this
         return obj
     attr_type = None
     if "attributes" in obj:
@@ -88,9 +100,12 @@ def from_json(obj, context=None):
     except KeyError:
         t = attr_type
 
-    if t in Property.known_types():
-        return (Property.known_types()[t]).from_json(
-            obj, context=context)
+    if known_type is not None and t is not None and t != known_type.__name__:
+        raise TypeError("Type mismatch in JSON, found " + t + ", expected " +
+                        known_type.__name__)
+
+    if t:
+        return _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
 
     return obj
 
@@ -125,7 +140,4 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
                            type(object_with_propertes).__name__ + ":" +
                            prop_name)
 
-        # Some properties only work when converted back from string.
-        stringified = json.dumps(val, default=dump_json)
-        val = prop.from_json(stringified, context)
-        setattr(object_with_properties, field_name, val)
+        setattr(object_with_properties, prop_name, val)

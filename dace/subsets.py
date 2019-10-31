@@ -1,3 +1,4 @@
+import dace.serialize
 from dace import data, symbolic, dtypes
 import re
 import sympy as sp
@@ -43,6 +44,7 @@ def _tuple_to_symexpr(val):
             if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
 
 
+@dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
 
@@ -80,11 +82,13 @@ class Range(Subset):
                 'tile': a2s(tile)
             })
 
-        return {'type': 'subsets.Range', 'ranges': ret}
+        return {'type': 'Range', 'ranges': ret}
 
     @staticmethod
     def from_json(obj, context=None):
-        if obj['type'] != 'subsets.Range':
+        if not isinstance(obj, dict):
+            raise TypeError("Expected dict, got {}".format(type(obj)))
+        if obj['type'] != 'Range':
             raise TypeError(
                 "from_json of class \"Range\" called on json "
                 "with type %s (expected 'subsets.Range')" % obj['type'])
@@ -518,6 +522,7 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
 
+@dace.serialize.serializable
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
