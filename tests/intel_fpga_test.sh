@@ -43,7 +43,7 @@ run_sample() {
     #1: generate the opencl
     #trick: use type scripting to mask the first segfault due to the missing aocx file
     command='echo -e "'"${3}"'" |python3 '"${1}"'.py '"${@:4}"''
-    script -c  "$command" /dev/null 
+    script -c  "$command" /dev/null > /dev/null
     #echo -e $3 | python3 $1.py ${@:5} &> /dev/null
 
     #2: compile for emulation
@@ -89,30 +89,30 @@ run_all() {
 
     # #### REDUCE ####
     # Simple reduce
-#    run_sample intel_fpga/vector_reduce vector_reduce "1\n"
+    run_sample intel_fpga/vector_reduce vector_reduce "1\n"
 
     # GEMM sample
-#    run_sample ../samples/simple/gemm gemm "1\n"
+    run_sample ../samples/simple/gemm gemm "1\n"
 
     # #### TYPE INFERENCE ####
-#    run_sample ../samples/simple/mandelbrot mandelbrot "1\n"
+    run_sample ../samples/simple/mandelbrot mandelbrot "1\n"
 
     # type inference for statements with annotation
-#    run_sample intel_fpga/type_inference type_inference "1\n"
+    run_sample intel_fpga/type_inference type_inference "1\n"
 
 
     # #### SYSTOLIC ARRAY ###
-#    run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
-#    run_sample intel_fpga/gemm_systolic_array gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
+    run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
+    run_sample intel_fpga/gemm_systolic_array gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
 
 
 
     # #### MISCELLANEA ####
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
-#    run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
-#    run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
-#    run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
+    run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
+    run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
+    run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
 }
 
 # Check if aoc is vailable
