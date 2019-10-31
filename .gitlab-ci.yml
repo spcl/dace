@@ -126,6 +126,7 @@ test_intel_fpga:
   stage: test
   tags:
     - intel_fpga
+    - linux
   script:
     - source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
-    - xvfb-run tests/intel_fpga_test.sh
+    - tests/intel_fpga_test.sh
