@@ -156,7 +156,7 @@ def _arrays_to_json(arrays):
         return None
     return {
         k: dace.serialize.to_json(v)
-        for k, v in arrays.items()
+        for k, v in arrays.items() if k is not None
     }
 
 
@@ -292,7 +292,6 @@ class SDFG(OrderedDiGraph):
 
         dace.serialize.set_properties_from_json(ret, json_obj)
 
-        import copy
         for n in nodes:
             nci = copy.deepcopy(context_info)
             nci['sdfg'] = ret

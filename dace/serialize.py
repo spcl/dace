@@ -51,7 +51,9 @@ def serializable(cls):
 
 
 def to_json(obj):
-    if hasattr(obj, "to_json"):
+    if obj is None:
+        return None
+    elif hasattr(obj, "to_json"):
         # If the object knows how to convert itself, let it. By calling the
         # method directly on the type, this works for both static and
         # non-static implementations of to_json.
@@ -77,8 +79,9 @@ def from_json(obj, context=None, known_type=None):
             if issubclass(known_type, enum.Enum):
                 return known_type[obj]
             # If we can, convert from string
-            if isinstance(obj, str) and hasattr(known_type, "from_string"):
-                return known_type.from_string(obj)
+            if isinstance(obj, str):
+                if hasattr(known_type, "from_string"):
+                    return known_type.from_string(obj)
         # Otherwise we don't know what to do with this
         return obj
     attr_type = None
@@ -140,4 +143,12 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
                            type(object_with_propertes).__name__ + ":" +
                            prop_name)
 
+        try:
+            val = prop.from_json(val, context)
+        except TypeError:
+            # Would prefer not to do this, but SDFGState actually double-parses
+            # the JSON for nodes, and fails here otherwise
+            pass
+
         setattr(object_with_properties, prop_name, val)
+

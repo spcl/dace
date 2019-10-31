@@ -530,8 +530,8 @@ class ListProperty(Property):
 
 class SDFGReferenceProperty(Property):
     def to_json(self, obj):
-        if obj is None: return 'null'
-
+        if obj is None:
+            return None
         return obj.to_json()  # Make a string of a JSON
 
     def from_json(self, obj, context=None):
