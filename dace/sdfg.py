@@ -755,7 +755,7 @@ class SDFG(OrderedDiGraph):
             to the SDFG, loop iteration variables, array sizes and variables
             used in interstate edges. """
         symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters())
+            (name, data) for name, data in self.scalar_parameters(include_constants))
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(used)
