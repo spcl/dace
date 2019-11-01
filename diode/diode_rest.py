@@ -671,7 +671,7 @@ def set_properties_from_json(obj, prop, sdfg=None):
             if '.' in val:
                 val = val.split('.')[-1]
         dace.properties.set_property_from_string(
-            prop['name'], obj, val, sdfg, from_json=True)
+            prop['name'], obj, json.dumps(val), sdfg, from_json=True)
 
 
 def applySDFGProperty(sdfg, property_element, step=None):
@@ -859,7 +859,7 @@ def compileProgram(request, language, perfopts=None):
                 in_sdfg = in_sdfg[0]
 
             if isinstance(in_sdfg, str):
-                in_sdfg = dace.serialize.loads(in_sdfg)
+                in_sdfg = json.loads(in_sdfg)
 
             if isinstance(in_sdfg, dict):
                 # Generate callbacks (needed for elements referencing others)
@@ -1327,7 +1327,7 @@ def compile(language):
     compounds = {}
     for n, s in sdfgs.items():
         compounds[n] = {
-            "sdfg": dace.serialize.dumps(s),
+            "sdfg": s.to_json(),
             "matching_opts": opts[n]['matching_opts'],
             "generated_code": [*map(lambda x: x.code, code_tuples[n])]
         }
@@ -1370,7 +1370,7 @@ def decompile(obj):
             "compounds": {
                 sdfg_name: {
                     'input_code': loaded_sdfg.sourcecode,
-                    'sdfg': dace.serialize.dumps(loaded_sdfg.to_json()),
+                    'sdfg': json.dumps(loaded_sdfg.to_json()),
                     'matching_opts': opts[sdfg_name]['matching_opts'],
                     'generated_code': [*map(lambda x: x.code, gen_code)]
                 }
