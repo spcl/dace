@@ -8,6 +8,7 @@ import os
 import pickle, json
 from pydoc import locate
 import random
+import shutil
 import sys
 from typing import Any, Dict, Set, Tuple, List, Union
 import warnings
@@ -1528,7 +1529,7 @@ subgraph cluster_state_{state} {{
         # Update constants
         self.constants_prop.update(syms)
 
-    def compile(self, specialize=None, optimizer=None):
+    def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.
 
             @param specialize: If True, specializes all symbols to their
@@ -1537,6 +1538,8 @@ subgraph cluster_state_{state} {{
             @param optimizer: If defines a valid class name, it will be called
                               during compilation to transform the SDFG as
                               necessary. If None, uses configuration setting.
+            @param output_file: If not None, copies the output library file to
+                                the specified path.
             @return: A callable CompiledSDFG object.
         """
 
@@ -1586,6 +1589,12 @@ subgraph cluster_state_{state} {{
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder)
+
+        # If provided, save output to path or filename
+        if output_file is not None:
+            if os.path.isdir(output_file):
+                output_file = os.path.join(output_file, os.path.basename(shared_library))
+            shutil.copyfile(shared_library, output_file)
 
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)

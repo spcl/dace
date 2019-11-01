@@ -147,6 +147,10 @@ class CompiledSDFG(object):
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
     @property
+    def filename(self):
+        return self._lib._library_filename
+
+    @property
     def sdfg(self):
         return self._sdfg
 
