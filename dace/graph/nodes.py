@@ -14,7 +14,6 @@ from dace.properties import (
     DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
-import json
 
 # -----------------------------------------------------------------------------
 

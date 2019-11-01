@@ -3,7 +3,6 @@ from functools import reduce
 import operator
 import copy as cp
 
-import json
 import dace
 import dace.serialize
 from dace import data as dt, subsets, symbolic, dtypes

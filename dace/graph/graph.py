@@ -6,7 +6,6 @@ import networkx as nx
 from dace.dtypes import deduplicate
 from dace.properties import Property
 import dace.serialize
-import json
 
 
 class NodeNotFoundError(Exception):

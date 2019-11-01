@@ -3,6 +3,7 @@
 
 # Usage example: cat ../samples/simple/gemm.py | ./diode_client.py --code --compile
 import argparse, requests, json, sys
+import dace.serialize
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -79,11 +80,11 @@ if args.compile or args.run:
     else:
         # Compile from serialized data
         try:
-            data['sdfg'] = json.loads(stdin_input)['sdfg']
+            data['sdfg'] = json.loads(
+                stdin_input, object_hook=dace.serialize.from_json)['sdfg']
         except:
-            sys.stderr.write(
-                "Failed to parse serialized SDFG input, is it in a correct json format?"
-            )
+            sys.stderr.write("Failed to parse serialized SDFG input, "
+                             "is it in a correct json format?")
             sys.stdout.write("Invalid data: " + str(stdin_input))
             sys.exit(-3)
 

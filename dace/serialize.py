@@ -126,6 +126,14 @@ def from_json(obj, context=None, known_type=None):
     }
 
 
+def loads(s, context=None):
+    return json.loads(s, object_hook=lambda x: from_json(x, context))
+
+
+def dumps(obj):
+    return json.dumps(obj, default=to_json)
+
+
 def all_properties_to_json(object_with_properties, store_metadata=False):
     retdict = {}
     for x, v in object_with_properties.properties():

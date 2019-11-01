@@ -3,7 +3,6 @@ import collections
 import copy
 import errno
 import itertools
-import json
 from inspect import getframeinfo, stack
 import os
 import pickle, json
@@ -282,12 +281,10 @@ class SDFG(OrderedDiGraph):
 
         ret = SDFG(
             name=attrs['name'],
-            arg_types=json.loads(
-                json.dumps(attrs['arg_types']),
-                object_hook=properties.dace.serialize.from_json),
-            constants=json.loads(
-                json.dumps(attrs['constants_prop']),
-                object_hook=properties.dace.serialize.from_json),
+            arg_types=dace.serialize.loads(
+                dace.serialize.dumps(attrs['arg_types'])),
+            constants=dace.serialize.loads(
+                dace.serialize.dumps(attrs['constants_prop'])),
             parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret, json_obj)
@@ -300,7 +297,7 @@ class SDFG(OrderedDiGraph):
             ret.add_node(state)
 
         for e in edges:
-            e = json.loads(json.dumps(e), object_hook=dace.serialize.from_json)
+            e = dace.serialize.loads(dace.serialize.dumps(e))
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         # Redefine symbols
@@ -1050,7 +1047,7 @@ subgraph cluster_state_{state} {{
     var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=json.dumps(self.to_json()),
+            sdfg=dace.serialize.dumps(self.to_json()),
             uid=random.randint(0, sys.maxsize - 1))
 
         return result
@@ -1136,8 +1133,7 @@ subgraph cluster_state_{state} {{
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                fp.write(
-                    json.dumps(self.to_json(), default=dace.serialize.to_json))
+                fp.write(dace.serialize.dumps(self.to_json()))
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 
@@ -2348,16 +2344,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
         for n in nodes:
-            nret = json.loads(
-                json.dumps(n),
-                object_hook=lambda x: dace.serialize.from_json(x, rec_ci))
+            nret = dace.serialize.loads(dace.serialize.dumps(n), rec_ci)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            eret = json.loads(
-                json.dumps(e),
-                object_hook=lambda x: dace.serialize.from_json(x, rec_ci))
+            eret = dace.serialize.loads(dace.serialize.dumps(e), rec_ci)
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)

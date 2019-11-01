@@ -14,7 +14,6 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo
-import json
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -532,14 +531,14 @@ class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None:
             return None
-        return json.dumps(obj.to_json())  # Make a string of a JSON
+        return dace.serialize.dumps(obj.to_json())  # Make a string of a JSON
 
     def from_json(self, obj, context=None):
         if obj is None:
             return None
 
         # Parse the string of the JSON back into an SDFG object
-        return dace.SDFG.from_json(json.loads(obj))
+        return dace.SDFG.from_json(dace.serialize.loads(obj))
 
 
 class RangeProperty(Property):

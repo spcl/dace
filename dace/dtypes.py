@@ -3,7 +3,6 @@ from __future__ import print_function
 import ctypes
 import enum
 import inspect
-import json
 import numpy
 import pydoc
 from functools import wraps
@@ -343,9 +342,11 @@ class struct(typeclass):
         if json_obj['type'] != "struct":
             raise TypeError("Invalid type for struct")
 
+        import dace.serialize  # Avoid import loop
+
         ret = struct(json_obj['name'])
         ret._data = {
-            k: json_to_typeclass(json.loads(v))
+            k: json_to_typeclass(dace.serialize.loads(v))
             for k, v in json_obj['data'].items()
         }
         ret._length = {k: v for k, v in json_obj['length'].items()}

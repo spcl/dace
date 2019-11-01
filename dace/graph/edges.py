@@ -70,7 +70,6 @@ class InterstateEdge(object):
         return dace.symbolic.symbols_in_ast(self.condition[0])
 
     def to_json(self, parent=None):
-        import json
         ret = {
             'type': type(self).__name__,
             'attributes': dace.serialize.all_properties_to_json(self),
