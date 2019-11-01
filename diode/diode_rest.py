@@ -1,6 +1,7 @@
 #!flask/bin/python
 
 import dace
+import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
 import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
@@ -1326,7 +1327,7 @@ def compile(language):
     compounds = {}
     for n, s in sdfgs.items():
         compounds[n] = {
-            "sdfg": s.to_json(),
+            "sdfg": json.dumps(s, default=dace.serialize.to_json),
             "matching_opts": opts[n]['matching_opts'],
             "generated_code": [*map(lambda x: x.code, code_tuples[n])]
         }
