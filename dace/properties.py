@@ -532,14 +532,14 @@ class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None:
             return None
-        return obj.to_json()  # Make a string of a JSON
+        return json.dumps(obj.to_json())  # Make a string of a JSON
 
     def from_json(self, obj, context=None):
-        if s is None:
+        if obj is None:
             return None
 
         # Parse the string of the JSON back into an SDFG object
-        return dace.SDFG.from_json(json.loads(s))
+        return dace.SDFG.from_json(json.loads(obj))
 
 
 class RangeProperty(Property):
