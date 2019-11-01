@@ -36,17 +36,17 @@ test_linux_cpu:
     - export DACE_debugprint=1
     - tests/gemm_test.sh
 
-#test_linux_cuda:
-#  stage: test
-#  tags:
-#    - cuda
-#    - linux
-#  script:
-#    - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-#    - export PATH=/usr/local/cuda/bin:$PATH
-#    - export CUDA_ROOT=/usr/local/cuda
-#    - export DACE_debugprint=1
-#    - tests/cuda_test.sh
+test_linux_cuda:
+  stage: test
+  tags:
+    - cuda
+    - linux
+  script:
+    - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    - export PATH=/usr/local/cuda/bin:$PATH
+    - export CUDA_ROOT=/usr/local/cuda
+    - export DACE_debugprint=1
+    - tests/cuda_test.sh
 
 
 test_mpihello:
