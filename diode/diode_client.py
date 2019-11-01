@@ -80,8 +80,7 @@ if args.compile or args.run:
     else:
         # Compile from serialized data
         try:
-            data['sdfg'] = json.loads(
-                stdin_input, object_hook=dace.serialize.from_json)['sdfg']
+            data['sdfg'] = dace.serialize.loads(stdin_input)['sdfg']
         except:
             sys.stderr.write("Failed to parse serialized SDFG input, "
                              "is it in a correct json format?")
@@ -107,7 +106,7 @@ if args.compile or args.run:
             sys.exit(-4)
 
         try:
-            transforms = json.loads(stdin_input)['advanced_transform']
+            transforms = dace.serialize.loads(stdin_input)['advanced_transform']
         except:
             sys.stderr.write(
                 "Commands executed with --transform need an input file generated previously that includes --extract txform_detail. (Not passing --extract is not valid)"
@@ -234,7 +233,7 @@ if args.compile or args.run:
                 for k, v in comps.items():
                     ret[k] = v['sdfg']
                 sys.stdout.write('"sdfg":')
-                sys.stdout.write(json.dumps(ret, indent=2))
+                sys.stdout.write(dace.serialize.dumps(ret, indent=2))
                 if "sdfg" != args.extract[-1]: sys.stdout.write(',')
             if "txform" == elem:
                 # Output available transformations
@@ -248,18 +247,18 @@ if args.compile or args.run:
                 # Output available transformations in json-format (necessary to apply)
                 sys.stdout.write('"advanced_transform":')
                 sys.stdout.write("{")
-                get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
+                get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + dace.serialize.dumps(c, indent=2) + '\n\n'))
                 sys.stdout.write("}")
                 if "txform_detail" != args.extract[-1]: sys.stdout.write(',')
             if "structure" == elem:
                 # Remove values; only output skeleton structure (i.e. only true tree nodes, no leafs)
                 sys.stdout.write('"structure":')
                 new_d = dict_scanner(resp_json)
-                sys.stdout.write(json.dumps(new_d, indent=2))
+                sys.stdout.write(dace.serialize.dumps(new_d, indent=2))
             if "struct_noprop" == elem:
                 sys.stdout.write('"struct_noprop":')
                 new_d = dict_scanner(resp_json, nometa=True)
-                sys.stdout.write(json.dumps(new_d, indent=2))
+                sys.stdout.write(dace.serialize.dumps(new_d, indent=2))
             if "outcode" == elem:
                 # Don't add objects if this is the only requested output
                 as_json = False
@@ -268,7 +267,7 @@ if args.compile or args.run:
                     as_json = True
                 if as_json:
                     sys.stdout.write(
-                        json.dumps({
+                        dace.serialize.dumps({
                             k: v['generated_code']
                             for k, v in resp_json['compounds'].items()
                         }))

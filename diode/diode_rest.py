@@ -859,7 +859,7 @@ def compileProgram(request, language, perfopts=None):
                 in_sdfg = in_sdfg[0]
 
             if isinstance(in_sdfg, str):
-                in_sdfg = json.loads(in_sdfg)
+                in_sdfg = dace.serialize.loads(in_sdfg)
 
             if isinstance(in_sdfg, dict):
                 # Generate callbacks (needed for elements referencing others)
@@ -1327,7 +1327,7 @@ def compile(language):
     compounds = {}
     for n, s in sdfgs.items():
         compounds[n] = {
-            "sdfg": json.dumps(s, default=dace.serialize.to_json),
+            "sdfg": dace.serialize.dumps(s),
             "matching_opts": opts[n]['matching_opts'],
             "generated_code": [*map(lambda x: x.code, code_tuples[n])]
         }
@@ -1370,7 +1370,7 @@ def decompile(obj):
             "compounds": {
                 sdfg_name: {
                     'input_code': loaded_sdfg.sourcecode,
-                    'sdfg': json.dumps(loaded_sdfg.to_json()),
+                    'sdfg': dace.serialize.dumps(loaded_sdfg.to_json()),
                     'matching_opts': opts[sdfg_name]['matching_opts'],
                     'generated_code': [*map(lambda x: x.code, gen_code)]
                 }

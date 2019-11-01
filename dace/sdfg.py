@@ -293,7 +293,7 @@ class SDFG(OrderedDiGraph):
             nci = copy.deepcopy(context_info)
             nci['sdfg'] = ret
 
-            state = SDFGState.from_json(n, nci)
+            state = SDFGState.from_json(n, context=nci)
             ret.add_node(state)
 
         for e in edges:
@@ -2315,7 +2315,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return ret
 
     @classmethod
-    def from_json(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context={'sdfg': None}):
         """ Loads the node properties, label and type into a dict.
             @param json_obj: The object containing information about this node.
                              NOTE: This may not be a string!
@@ -2331,25 +2331,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         edges = json_obj['edges']
 
         ret = SDFGState(
-            label=json_obj['label'], sdfg=context_info['sdfg'], debuginfo=None)
+            label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
 
         rec_ci = {
             'sdfg':
-            context_info['sdfg'],
+            context['sdfg'],
             'sdfg_state':
             ret,
             'callback':
-            context_info['callback'] if 'callback' in context_info else None
+            context['callback'] if 'callback' in context else None
         }
         dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
         for n in nodes:
-            nret = dace.serialize.loads(dace.serialize.dumps(n), rec_ci)
+            nret = dace.serialize.loads(
+                dace.serialize.dumps(n), context=rec_ci)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            eret = dace.serialize.loads(dace.serialize.dumps(e), rec_ci)
+            eret = dace.serialize.loads(
+                dace.serialize.dumps(e), context=rec_ci)
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)

@@ -126,12 +126,13 @@ def from_json(obj, context=None, known_type=None):
     }
 
 
-def loads(s, context=None):
-    return json.loads(s, object_hook=lambda x: from_json(x, context))
+def loads(*args, context=None, **kwargs):
+    return json.loads(
+        *args, object_hook=lambda x: from_json(x, context), **kwargs)
 
 
-def dumps(obj):
-    return json.dumps(obj, default=to_json)
+def dumps(*args, **kwargs):
+    return json.dumps(*args, default=to_json, **kwargs)
 
 
 def all_properties_to_json(object_with_properties, store_metadata=False):
