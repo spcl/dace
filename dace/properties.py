@@ -5,6 +5,7 @@ from collections import OrderedDict
 import copy
 from dace.frontend.python.astutils import unparse
 import itertools
+import json
 import pydoc
 import re
 import sympy as sp
@@ -538,7 +539,8 @@ class SDFGReferenceProperty(Property):
             return None
 
         # Parse the string of the JSON back into an SDFG object
-        return dace.SDFG.from_json(dace.serialize.loads(obj))
+        # Need to use regular json.loads instead of dace.serialize.dumps
+        return dace.SDFG.from_json(json.loads(obj))
 
 
 class RangeProperty(Property):
