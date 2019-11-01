@@ -1192,6 +1192,15 @@ class TypeProperty(Property):
             raise ValueError("Object \"{}\" is not a type.".format(dtype))
         return dtype
 
+    @staticmethod
+    def from_json(obj, context=None):
+        if obj is None:
+            return None
+        if isinstance(obj, str):
+            return TypeProperty.from_string(obj)
+        else:
+            raise TypeError("Cannot parse type from: {}".format(obj))
+
 
 class TypeClassProperty(Property):
     """ Custom property type for memory as defined in dace.types,
@@ -1217,12 +1226,14 @@ class TypeClassProperty(Property):
             return None
         return obj.dtype.to_json()
 
-    def from_json(self, d, sdfg=None):
-        if d is None:
+    @staticmethod
+    def from_json(obj, context=None):
+        if obj is None:
             return None
-        elif isinstance(d, str):
-            return TypeClassProperty.from_string(d)
-        elif isinstance(d, dace.typeclass):
-            return d
+        elif isinstance(obj, str):
+            return TypeClassProperty.from_string(obj)
+        elif isinstance(obj, dict):
+            # Let the deserializer handle this
+            return dace.serialize.from_json(obj)
         else:
-            raise TypeError('Unrecognized typeclass object: %s' % d)
+            raise TypeError("Cannot parse type from: {}".format(obj))

@@ -1,6 +1,7 @@
 import enum
 import json
 import numpy as np
+import dace.dtypes
 
 
 JSON_STORE_METADATA = True
@@ -33,10 +34,18 @@ class NumpySerializer:
 
 
 _DACE_SERIALIZE_TYPES = {
+    # Define these manually, so dtypes can stay independent
+    "pointer": dace.dtypes.pointer,
+    "callback": dace.dtypes.callback,
+    "struct": dace.dtypes.struct,
     "ndarray": NumpySerializer
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }
+# Also register each of the basic types
+_DACE_SERIALIZE_TYPES.update(
+    {v.to_string(): v
+     for v in dace.dtypes.DTYPE_TO_TYPECLASS.values()})
 
 
 def get_serializer(type_name):
@@ -110,7 +119,11 @@ def from_json(obj, context=None, known_type=None):
     if t:
         return _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
 
-    return obj
+    # No type was found, so treat this as a regular dictionary
+    return {
+        from_json(k, context): from_json(v, context)
+        for k, v in obj.items()
+    }
 
 
 def all_properties_to_json(object_with_properties, store_metadata=False):
@@ -143,12 +156,22 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
                            type(object_with_propertes).__name__ + ":" +
                            prop_name)
 
-        try:
+        if isinstance(val, dict):
             val = prop.from_json(val, context)
-        except TypeError:
-            # Would prefer not to do this, but SDFGState actually double-parses
-            # the JSON for nodes, and fails here otherwise
-            pass
+            if val is None and attrs[prop_name] is not None:
+                raise ValueError("Unparsed to None from: {}".format(
+                    attrs[prop_name]))
+        else:
+            try:
+                val = prop.from_json(val, context)
+            except TypeError as err:
+                # TODO: This seems to be called both from places where the
+                # dictionary has been fully deserialized, and on raw json
+                # objects. In the interest of time, we're not failing here, but
+                # should untangle this eventually
+                print("WARNING: failed to parse object {}"
+                      " for property {} of type {}. Error was: {}".format(
+                          val, prop_name, prop, err))
+                pass
 
         setattr(object_with_properties, prop_name, val)
-

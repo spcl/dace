@@ -5,6 +5,7 @@ import enum
 import inspect
 import json
 import numpy
+import pydoc
 from functools import wraps
 
 
@@ -203,6 +204,11 @@ class typeclass(object):
 
     def __init__(self, wrapped_type):
         # Convert python basic types
+        if isinstance(wrapped_type, str):
+            try:
+                wrapped_type = getattr(numpy, wrapped_type)
+            except AttributeError:
+                raise ValueError("Unknown type: {}".format(wrapped_type))
         if wrapped_type is int:
             wrapped_type = numpy.int64
         elif wrapped_type is float:
@@ -277,17 +283,14 @@ class pointer(typeclass):
         self.materialize_func = None
 
     def to_json(self):
-        return json.dumps({
-            'type': 'pointer',
-            'dtype': self._typeclass.to_json()
-        })
+        return {'type': 'pointer', 'dtype': self._typeclass.to_json()}
 
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
-        return pointer(_json_to_obj(json.loads(json_obj['dtype'])))
+        return pointer(json_to_typeclass(json_obj['dtype']))
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -325,7 +328,7 @@ class struct(typeclass):
         return self._data
 
     def to_json(self):
-        return json.dumps({
+        return {
             'type': 'struct',
             'name': self.name,
             'data': {k: v.to_json()
@@ -333,7 +336,7 @@ class struct(typeclass):
             'length': {k: v
                        for k, v in self._length.items()},
             'bytes': self.bytes
-        })
+        }
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -342,7 +345,7 @@ class struct(typeclass):
 
         ret = struct(json_obj['name'])
         ret._data = {
-            k: _json_to_obj(json.loads(v))
+            k: json_to_typeclass(json.loads(v))
             for k, v in json_obj['data'].items()
         }
         ret._length = {k: v for k, v in json_obj['length'].items()}
@@ -423,12 +426,21 @@ class callback(typeclass):
         self.uid = next(_atomic_counter_generator())
         from dace import data
         if isinstance(return_type, data.Array):
-            raise TypeError(
-                "Callbacks that return arrays are not supported as per SDFG semantics"
-            )
+            raise TypeError("Callbacks that return arrays are "
+                            "not supported as per SDFG semantics")
         self.dtype = self
         self.return_type = return_type
-        self.input_types = variadic_args
+        self.input_types = []
+        for arg in variadic_args:
+            if isinstance(arg, typeclass):
+                pass
+            elif isinstance(arg, data.Data):
+                pass
+            elif isinstance(arg, str):
+                arg = json_to_typeclass(arg)
+            else:
+                raise TypeError("Cannot resolve type from: {}".format(arg))
+            self.input_types.append(arg)
         self.bytes = int64.bytes
         self.materialize_func = None
         self.type = self
@@ -506,24 +518,25 @@ class callback(typeclass):
         return hash((self.uid, self.return_type, *self.input_types))
 
     def to_json(self):
-        return json.dumps({
-            'type':
-            'callback',
+        return {
+            'type': 'callback',
             'arguments': [i.to_json() for i in self.input_types],
-            'returntype':
-            self.return_type.to_json() if self.return_type else json.dumps(None)
-        })
+            'returntype': self.return_type.to_json()
+            if self.return_type else None
+        }
 
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj['type'] != "callback":
             raise TypeError("Invalid type for callback")
 
-        rettype = json.loads(json_obj['returntype'])
+        rettype = json_obj['returntype']
+
+        import dace.serialize  # Avoid import loop
 
         return callback(
-            globals()[rettype] if rettype else None,
-            *(_json_to_obj(json.loads(arg)) for arg in json_obj['arguments']))
+            json_to_typeclass(rettype) if rettype else None,
+            *(dace.serialize.from_json(arg) for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"
@@ -700,14 +713,14 @@ class DebugInfo:
 # Static (utility) functions
 
 
-def _json_to_obj(obj):
-    from dace.properties import Property
-    known_types = Property.known_types()
-    if isinstance(obj, dict) and 'type' in obj:
-        if obj['type'] in known_types:
-            return known_types[obj['type']].from_json(obj)
-        raise TypeError('Unrecognized object type %s' % obj['type'])
-    return globals()[obj]
+def json_to_typeclass(obj):
+    from dace.serialize import get_serializer
+    if isinstance(obj, str):
+        return get_serializer(obj)
+    elif isinstance(obj, dict) and "type" in obj:
+        return get_serializer(obj["type"])
+    else:
+        raise ValueError("Cannot resolve: {}".format(obj))
 
 
 def paramdec(dec):

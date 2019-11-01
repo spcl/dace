@@ -91,7 +91,7 @@ class Range(Subset):
         if obj['type'] != 'Range':
             raise TypeError(
                 "from_json of class \"Range\" called on json "
-                "with type %s (expected 'subsets.Range')" % obj['type'])
+                "with type %s (expected 'Range')" % obj['type'])
 
         ranges = obj['ranges']
         tuples = []
@@ -548,16 +548,16 @@ class Indices(Subset):
                 return obj
 
         return {
-            'type': 'subsets.Indices',
+            'type': 'Indices',
             'indices': [*map(a2s, self.indices)]
         }
 
     @staticmethod
     def from_json(obj, context=None):
-        if obj['type'] != 'subsets.Indices':
+        if obj['type'] != 'Indices':
             raise TypeError(
                 "from_json of class \"Indices\" called on json "
-                "with type %s (expected 'subsets.Indices')" % obj['type'])
+                "with type %s (expected 'Indices')" % obj['type'])
 
         #return Indices(symbolic.SymExpr(obj['indices']))
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
