@@ -367,6 +367,7 @@ class Graph(object):
         return nx.all_simple_paths(self._nx, source_node, dest_node)
 
 
+@dace.serialize.serializable
 class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
         self._graph = graph
@@ -457,6 +458,7 @@ class SubgraphView(Graph):
         return self._graph.is_multigraph()
 
 
+@dace.serialize.serializable
 class DiGraph(Graph):
     def __init__(self):
         self._nx = nx.DiGraph()
@@ -560,6 +562,7 @@ class MultiDiConnectorGraph(MultiDiGraph):
         return True
 
 
+@dace.serialize.serializable
 class OrderedDiGraph(Graph):
     """ Directed graph where nodes and edges are returned in the order they
         were added. """
