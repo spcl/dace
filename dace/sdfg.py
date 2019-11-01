@@ -4012,16 +4012,16 @@ def local_transients(sdfg, dfg, entry_node):
     return transients
 
 
-def compile(function_or_sdfg, *args, specialize=None):
+def compile(function_or_sdfg, *args, **kwargs):
     """ Obtain a runnable binary from a Python (@dace.program) function. """
     if isinstance(function_or_sdfg, dace.frontend.python.parser.DaceProgram):
         sdfg = dace.frontend.python.parser.parse_from_function(
-            function_or_sdfg, *args)
+            function_or_sdfg, *args, **kwargs)
     elif isinstance(function_or_sdfg, SDFG):
         sdfg = function_or_sdfg
     else:
         raise TypeError("Unsupported function type")
-    return sdfg.compile(specialize=specialize)
+    return sdfg.compile(**kwargs)
 
 
 def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
