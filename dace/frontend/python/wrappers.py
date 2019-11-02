@@ -1,0 +1,57 @@
+""" Types and wrappers used in DaCe's Python frontend. """
+from __future__ import print_function
+import numpy
+import itertools
+from collections import deque
+
+from dace import dtypes
+
+
+class stream(object):
+    """ Stream array object in Python. Mostly used in the Python SDFG 
+        simulator. """
+
+    def __init__(self, dtype, shape):
+        from dace import data
+
+        self._type = dtype
+        self._shape = shape
+        self.descriptor = data.Stream(dtype, 1, 0, shape, True)
+        self.queue_array = numpy.ndarray(shape, dtype=deque)
+        for i in itertools.product(*(range(s) for s in shape)):
+            self.queue_array[i] = deque()
+
+    @property
+    def shape(self):
+        return self.shape
+
+    def __getitem__(self, key):
+        return self.queue_array.__getitem__(key)
+
+    def __getslice__(self, *args):
+        return self.queue_array.__getslice__(*args)
+
+
+def scalar(dtype=dtypes.float32, allow_conflicts=False):
+    """ Convenience function that defines a scalar (array of size 1). """
+    return numpy.ndarray([1], dtype.type, allow_conflicts=allow_conflicts)
+
+
+def define_local(dimensions, dtype=dtypes.float32, allow_conflicts=False):
+    """ Defines a transient array in a DaCe program. """
+    return numpy.ndarray(dimensions, dtype=dtype.type, allow_conflicts=allow_conflicts)
+
+
+def define_local_scalar(dtype=dtypes.float32, allow_conflicts=False):
+    """ Defines a transient scalar (array of size 1) in a DaCe program. """
+    return numpy.ndarray([1], dtype=dtype.type, allow_conflicts=allow_conflicts)
+
+
+def define_stream(dtype=dtypes.float32, buffer_size=1):
+    """ Defines a local stream in a DaCe program. """
+    return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
+
+
+def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
+    """ Defines a local stream array in a DaCe program. """
+    return stream(dtype, dimensions)
