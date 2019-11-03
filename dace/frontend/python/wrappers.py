@@ -41,21 +41,19 @@ class stream(object):
         return self.queue_array.__getslice__(*args)
 
 
-def scalar(dtype=dtypes.float32, allow_conflicts=False):
+def scalar(dtype=dtypes.float32):
     """ Convenience function that defines a scalar (array of size 1). """
-    return numpy.ndarray([1], dtype.type, allow_conflicts=allow_conflicts)
+    return ndarray([1], dtype)
 
 
-def define_local(dimensions, dtype=dtypes.float32, allow_conflicts=False):
+def define_local(dimensions, dtype=dtypes.float32):
     """ Defines a transient array in a DaCe program. """
-    return numpy.ndarray(
-        dimensions, dtype=dtype.type, allow_conflicts=allow_conflicts)
+    return ndarray(dimensions, dtype=dtype)
 
 
-def define_local_scalar(dtype=dtypes.float32, allow_conflicts=False):
+def define_local_scalar(dtype=dtypes.float32):
     """ Defines a transient scalar (array of size 1) in a DaCe program. """
-    return numpy.ndarray(
-        [1], dtype=dtype.type, allow_conflicts=allow_conflicts)
+    return ndarray([1], dtype=dtype)
 
 
 def define_stream(dtype=dtypes.float32, buffer_size=1):
