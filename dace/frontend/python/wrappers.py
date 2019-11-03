@@ -4,7 +4,16 @@ import numpy
 import itertools
 from collections import deque
 
-from dace import dtypes
+from dace import dtypes, symbolic
+
+
+def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
+    """ Returns a numpy ndarray where all symbols have been evaluated to
+        numbers and types are converted to numpy types. """
+
+    new_shape = [symbolic.eval(s) for s in shape]
+    new_dtype = dtype.type if isinstance(dtype, dtypes.typeclass) else dtype
+    return numpy.ndarray(shape=new_shape, dtype=new_dtype, *args, **kwargs)
 
 
 class stream(object):
@@ -39,12 +48,14 @@ def scalar(dtype=dtypes.float32, allow_conflicts=False):
 
 def define_local(dimensions, dtype=dtypes.float32, allow_conflicts=False):
     """ Defines a transient array in a DaCe program. """
-    return numpy.ndarray(dimensions, dtype=dtype.type, allow_conflicts=allow_conflicts)
+    return numpy.ndarray(
+        dimensions, dtype=dtype.type, allow_conflicts=allow_conflicts)
 
 
 def define_local_scalar(dtype=dtypes.float32, allow_conflicts=False):
     """ Defines a transient scalar (array of size 1) in a DaCe program. """
-    return numpy.ndarray([1], dtype=dtype.type, allow_conflicts=allow_conflicts)
+    return numpy.ndarray(
+        [1], dtype=dtype.type, allow_conflicts=allow_conflicts)
 
 
 def define_stream(dtype=dtypes.float32, buffer_size=1):

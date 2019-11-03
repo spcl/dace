@@ -17,7 +17,7 @@ import sympy as sp
 import dace
 from dace import data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic
 from dace.config import Config
-from dace.frontend.python import ndarray
+from dace.frontend.python import wrappers
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
@@ -755,7 +755,8 @@ class SDFG(OrderedDiGraph):
             to the SDFG, loop iteration variables, array sizes and variables
             used in interstate edges. """
         symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters(include_constants))
+            (name, data)
+            for name, data in self.scalar_parameters(include_constants))
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(used)
@@ -1638,8 +1639,7 @@ subgraph cluster_state_{state} {{
                 else:
                     continue
             if isinstance(expected, dace.data.Array):
-                if (not isinstance(passed, ndarray.ndarray)
-                        and not isinstance(passed, np.ndarray)):
+                if not isinstance(passed, np.ndarray):
                     raise TypeError("Type mismatch for argument {}: "
                                     "expected array type, got {}".format(
                                         arg, type(passed)))
