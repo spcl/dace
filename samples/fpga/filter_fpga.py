@@ -246,7 +246,7 @@ if __name__ == "__main__":
 
     A = dace.ndarray([N], dtype=dace.float32)
     B = dace.ndarray([N], dtype=dace.float32)
-    outsize = dace.scalar(dace.uint32, allow_conflicts=True)
+    outsize = dace.scalar(dace.uint32)
     outsize[0] = 0
 
     ratio = np.float32(args["ratio"])
