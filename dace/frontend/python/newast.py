@@ -1479,7 +1479,10 @@ class TaskletTransformer(ExtNodeTransformer):
                 })[1])
         elif isinstance(node, ast.Subscript):
             actual_node = copy.deepcopy(node)
-            actual_node.value.id = name
+            if isinstance(actual_node.value, ast.Call):
+                actual_node.value.func.id = name
+            else:
+                actual_node.value.id = name
             rng = dace.subsets.Range(
                 astutils.subscript_to_slice(actual_node, {
                     **self.sdfg.arrays,
