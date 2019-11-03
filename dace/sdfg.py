@@ -755,7 +755,8 @@ class SDFG(OrderedDiGraph):
             to the SDFG, loop iteration variables, array sizes and variables
             used in interstate edges. """
         symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters(include_constants))
+            (name, data)
+            for name, data in self.scalar_parameters(include_constants))
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(used)
@@ -4110,13 +4111,15 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
     # Test all memlet paths from the array. If the path goes directly
     # to/from a stream, construct a stream array view
+    all_source_paths = []
     source_paths = []
+    all_sink_paths = []
     sink_paths = []
     for e in dfg.in_edges(node):
         src_node = dfg.memlet_path(e)[0].src
         # Append empty path to differentiate between a copy and an array-view
         if isinstance(src_node, nd.CodeNode):
-            source_paths.append(None)
+            all_source_paths.append(None)
         # Append path from source node
         if isinstance(src_node, nd.AccessNode) and isinstance(
                 src_node.desc(sdfg), dt.Array):
@@ -4126,15 +4129,18 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
         # Append empty path to differentiate between a copy and an array-view
         if isinstance(sink_node, nd.CodeNode):
-            sink_paths.append(None)
+            all_sink_paths.append(None)
         # Append path to sink node
         if isinstance(sink_node, nd.AccessNode) and isinstance(
                 sink_node.desc(sdfg), dt.Array):
             sink_paths.append(sink_node)
 
+    all_sink_paths.extend(sink_paths)
+    all_source_paths.extend(source_paths)
+
     # Special case: stream can be represented as a view of an array
-    if ((len(source_paths) > 0 and len(sink_paths) == 1)
-            or (len(sink_paths) > 0 and len(source_paths) == 1)):
+    if ((len(all_source_paths) > 0 and len(sink_paths) == 1)
+            or (len(all_sink_paths) > 0 and len(source_paths) == 1)):
         # TODO: What about a source path?
         arrnode = sink_paths[0]
         # Only works if the stream itself is not an array of streams
