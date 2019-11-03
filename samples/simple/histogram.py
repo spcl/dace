@@ -30,18 +30,13 @@ if __name__ == "__main__":
     parser.add_argument("H", type=int, nargs="?", default=32)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
-    hist = dace.ndarray([BINS], dtype=dace.uint32)
-
     W.set(args["W"])
     H.set(args["H"])
 
     print('Histogram %dx%d' % (W.get(), H.get()))
 
-    A[:] = np.random.rand(H.get(),
-                          W.get()).astype(dace.float32.type)  #randint(0, 256,
-    #        (H.get(), W.get())).astype(dace.uint8.type)
-    hist[:] = dace.uint32(0)
+    A = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
+    hist = np.zeros([BINS], dtype=np.uint32)
 
     histogram(A, hist)
 
