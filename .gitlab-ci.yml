@@ -35,6 +35,7 @@ test_linux_cpu:
     - linux
   script: 
     - export DACE_debugprint=1
+    - tests/e2e_test.sh
     - tests/gemm_test.sh
 
 test_mpihello:
