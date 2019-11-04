@@ -543,13 +543,13 @@ class Indices(Subset):
 
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
-                return obj.expr
+                return str(obj.expr)
             else:
-                return obj
+                return str(obj)
 
         return {
             'type': 'Indices',
-            'indices': [*map(a2s, self.indices)]
+            'indices': list(map(a2s, self.indices))
         }
 
     @staticmethod

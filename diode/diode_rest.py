@@ -1314,24 +1314,25 @@ def compile(language):
     tmp = None
     try:
         tmp = compileProgram(request, language)
+
+        if len(tmp) > 1:
+            sdfgs, code_tuples, dace_state = tmp
+        else:
+            # Error
+            return jsonify({'error': tmp})
+
+        opts = get_transformations(sdfgs)
+        compounds = {}
+        for n, s in sdfgs.items():
+            compounds[n] = {
+                "sdfg": s.to_json(),
+                "matching_opts": opts[n]['matching_opts'],
+                "generated_code": [*map(lambda x: x.code, code_tuples[n])]
+            }
+        return jsonify({"compounds": compounds})
+
     except Exception as e:
         return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
-
-    if len(tmp) > 1:
-        sdfgs, code_tuples, dace_state = tmp
-    else:
-        # Error
-        return jsonify({'error': tmp})
-
-    opts = get_transformations(sdfgs)
-    compounds = {}
-    for n, s in sdfgs.items():
-        compounds[n] = {
-            "sdfg": s.to_json(),
-            "matching_opts": opts[n]['matching_opts'],
-            "generated_code": [*map(lambda x: x.code, code_tuples[n])]
-        }
-    return jsonify({"compounds": compounds})
 
 
 @app.route('/dace/api/v1.0/decompile/<string:obj>/', methods=['POST'])
