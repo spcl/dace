@@ -1424,6 +1424,9 @@ class CPUCodeGen(TargetCodeGenerator):
         if defined_type == DefinedType.Pointer:
             typedef += '*'
             datadef = '&' + datadef
+        elif defined_type == DefinedType.Scalar:
+            typedef += '&'
+            offset_expr = ''
         elif defined_type == DefinedType.Stream:
             typedef += '&'
             offset_expr = ''
