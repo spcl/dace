@@ -10,9 +10,9 @@ if __name__ == '__main__':
     print('SDFG direct compilation test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
+    N.set(20)
     input = dp.ndarray([N], dp.int32)
     output = dp.ndarray([N], dp.int32)
-    N.set(20)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 

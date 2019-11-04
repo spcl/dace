@@ -11,7 +11,7 @@ base = dace.int8
 # Dataset sizes
 sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2500}, {N: 5500}]
 
-args = [dace.ndarray([N], datatype), dace.ndarray([N, N], datatype)]
+args = [([N], datatype), ([N, N], datatype)]
 
 
 def init_array(seq, table):

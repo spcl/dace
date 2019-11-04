@@ -3,7 +3,6 @@ from __future__ import print_function
 
 import argparse
 import dace
-import math
 import numpy as np
 
 N = dace.symbol("N")
@@ -25,8 +24,7 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=64)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([N], dtype=dace.float32)
-    B = dace.ndarray([N], dtype=dace.float32)
+    # Create two numpy ndarrays of size 1
     out_AB = dace.scalar(dace.float64)
     out_AA = dace.scalar(dace.float64)
 
@@ -34,10 +32,10 @@ if __name__ == "__main__":
 
     print('Dot product %d' % (N.get()))
 
-    A[:] = np.random.rand(N.get()).astype(dace.float32.type)
-    B[:] = np.random.rand(N.get()).astype(dace.float32.type)
-    out_AB[0] = dace.float64(0)
-    out_AA[0] = dace.float64(0)
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+    out_AB[0] = np.float64(0)
+    out_AA[0] = np.float64(0)
 
     cdot = dace.compile(dot, A, B, out_AB)
     cdot(A=A, B=B, out=out_AB, N=N)

@@ -10,9 +10,9 @@ if __name__ == '__main__':
     print('Multidimensional offset and stride test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
+    N.set(20)
     input = dp.ndarray([N, N], dp.float32)
     output = dp.ndarray([4, 3], dp.float32)
-    N.set(20)
     input[:] = (np.random.rand(N.get(), N.get()) * 5).astype(dp.float32.type)
     output[:] = dp.float32(0)
 

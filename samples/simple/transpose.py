@@ -10,9 +10,9 @@ W = dace.symbol('W')
 H = dace.symbol('H')
 
 
-@dace.program(dace.float32[H, W], dace.float32[H, W])
+@dace.program(dace.float32[H, W], dace.float32[W, H])
 def transpose(A, B):
-    @dace.map(_[0:H, 0:W])
+    @dace.map(_[0:W, 0:H])
     def compute(i, j):
         a << A[j, i]
         b >> B[i, j]
@@ -27,16 +27,13 @@ if __name__ == "__main__":
     parser.add_argument("H", type=int, nargs="?", default=64)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
-    B = dace.ndarray([H, W], dtype=dace.float32)
-
     W.set(args["W"])
     H.set(args["H"])
 
     print('Transpose %dx%d' % (W.get(), H.get()))
 
-    A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
-    B[:] = dace.float32(0)
+    A = np.random.rand(H.get(), W.get()).astype(np.float32)
+    B = np.zeros([W.get(), H.get()], dtype=np.float32)
 
     transpose(A, B)
 

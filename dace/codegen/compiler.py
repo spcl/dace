@@ -19,7 +19,7 @@ import numpy as np
 
 import dace
 from dace.frontend import operations
-from dace.frontend.python import ndarray
+from dace.frontend.python import wrappers
 from dace import symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.codegen import codegen
@@ -250,11 +250,10 @@ class CompiledSDFG(object):
             for arg, atype in callparams)
 
         # Replace arrays with their pointers
-        newargs = tuple(
-            (ctypes.c_void_p(arg.__array_interface__['data'][0]),
-             atype) if (isinstance(arg, ndarray.ndarray)
-                        or isinstance(arg, np.ndarray)) else (arg, atype)
-            for arg, atype in callparams)
+        newargs = tuple((ctypes.c_void_p(arg.__array_interface__['data'][0]),
+                         atype) if isinstance(arg, np.ndarray) else (arg,
+                                                                     atype)
+                        for arg, atype in callparams)
 
         newargs = tuple(
             atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg

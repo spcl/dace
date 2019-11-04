@@ -592,7 +592,7 @@ if __name__ == "__main__":
 
     A = dace.ndarray([N], dtype=dtype)
     B = dace.ndarray([N], dtype=dtype)
-    outsize = dace.scalar(dace.uint32, allow_conflicts=True)
+    outsize = dace.scalar(dace.uint32)
     outsize[0] = 0
 
     A[:] = np.random.rand(N.get()).astype(dtype.type)

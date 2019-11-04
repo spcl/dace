@@ -3,20 +3,16 @@ from __future__ import print_function
 
 import argparse
 import dace
-import math
 import numpy as np
 import networkx as nx
 
 E = dace.symbol('E')
 V = dace.symbol('V')
 
-EL = dace.ndarray([2 * E, 2], dace.uint64)
-comp = dace.ndarray([V], dace.uint64, allow_conflicts=True)
-
 
 @dace.program
 def shiloach_vishkin(EL, comp):
-    flag_hook = dace.define_local_scalar(dace.int32, allow_conflicts=True)
+    flag_hook = dace.define_local_scalar(dace.int32)
 
     @dace.tasklet
     def initflag():
@@ -81,13 +77,14 @@ if __name__ == "__main__":
 
     graph = nx.gnm_random_graph(V.get(), E.get(), seed=args['seed'])
 
-    comp[:] = np.arange(0, V.get(), dtype=dace.uint64.type)
+    comp = np.arange(0, V.get(), dtype=np.uint64)
+    EL = dace.ndarray([2 * E, 2], dace.uint64)
     EL[:E.get()] = np.array(
-        [[u, v] for u, v, d in nx.to_edgelist(graph)], dtype=dace.uint64.type)
+        [[u, v] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
     EL[E.get():] = np.array(
-        [[v, u] for u, v, d in nx.to_edgelist(graph)], dtype=dace.uint64.type)
+        [[v, u] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
 
-    shiloach_vishkin(EL, comp)
+    shiloach_vishkin(EL, comp, E=E, V=V)
 
     cc = nx.number_connected_components(graph)
     diff = abs(cc - len(np.unique(comp)))

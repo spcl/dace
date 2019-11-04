@@ -2,7 +2,7 @@ from .dtypes import *
 
 # Python frontend
 from .frontend.python.decorators import *
-from .frontend.python.ndarray import *
+from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.python.simulator import simulate
 
