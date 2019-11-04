@@ -35,6 +35,7 @@ test_linux_cpu:
     - linux
   script: 
     - export DACE_debugprint=1
+    - tests/e2e_test.sh
     - tests/gemm_test.sh
 
 test_mpihello:
@@ -102,7 +103,7 @@ test_xilinx:
     - xilinx
   script:
     - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
-    - xvfb-run tests/xilinx_test.sh 0
+    - tests/xilinx_test.sh 0
 
 test_polybench:
   stage: test

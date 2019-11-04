@@ -1,7 +1,8 @@
 #!/bin/bash
 
-DIODEBASEPATH="../../diode/"
-SAMPLESBASEPATH="../../samples/"
+SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
+DIODEBASEPATH="$SCRIPTPATH/../../diode/"
+SAMPLESBASEPATH="$SCRIPTPATH/../../samples/"
 PORT=5002
 
 # Remove old config files if they exist

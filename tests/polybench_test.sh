@@ -123,10 +123,4 @@ cd $SCRIPTPATH/../samples/polybench
 TESTPREFIX=""
 runtests
 
-for test in $SUBTESTS; do
-    cd $SCRIPTPATH/tests/$test
-    TESTPREFIX="$test/"
-    runtests
-done
-
 endreport
