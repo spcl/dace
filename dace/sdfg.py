@@ -162,10 +162,7 @@ def _arrays_to_json(arrays):
 def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
-    return {
-        k: dace.serialize.from_json(v, context)
-        for k, v in obj.items()
-    }
+    return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
 
 
 @make_properties
@@ -261,8 +258,11 @@ class SDFG(OrderedDiGraph):
         tmp = super().to_json()
 
         # Inject the undefined symbols
-        tmp['undefined_symbols'] = self.undefined_symbols(True)
-        tmp['scalar_parameters'] = self.scalar_parameters(True)
+        tmp['undefined_symbols'] = [
+            (k, v.to_json()) for k, v in self.undefined_symbols(True).items()
+        ]
+        tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
+            self.scalar_parameters(True), key=lambda x: x[0])]
 
         tmp['attributes']['name'] = self.name
 
@@ -301,7 +301,7 @@ class SDFG(OrderedDiGraph):
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         # Redefine symbols
-        for k, v in json_obj['undefined_symbols'].items():
+        for k, v in json_obj['undefined_symbols']:
             v = dace.serialize.from_json(v)
             symbolic.symbol(k, v.dtype)
 
@@ -2334,12 +2334,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
 
         rec_ci = {
-            'sdfg':
-            context['sdfg'],
-            'sdfg_state':
-            ret,
-            'callback':
-            context['callback'] if 'callback' in context else None
+            'sdfg': context['sdfg'],
+            'sdfg_state': ret,
+            'callback': context['callback'] if 'callback' in context else None
         }
         dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
