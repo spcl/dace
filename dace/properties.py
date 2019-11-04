@@ -563,17 +563,6 @@ class RangeProperty(Property):
     def from_string(s):
         return sbs.Range.from_string(s)
 
-    def to_json(self, obj):
-        if obj is None:
-            return None
-        # to_string is not enough - it does not preserve all information
-        return obj.to_json()
-
-    def from_json(self, s, sdfg=None):
-        if s is None:
-            return None
-        return sbs.Range.from_json(s)
-
 
 class DebugInfoProperty(Property):
     """ Custom Property type for DebugInfo members. """
