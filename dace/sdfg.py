@@ -647,6 +647,12 @@ class SDFG(OrderedDiGraph):
             assigned.update(a)
             used.update(u)
 
+        assigned = collections.OrderedDict([(k, v)
+                                            for k, v in assigned.items()
+                                            if not k.startswith('__dace')])
+        used = collections.OrderedDict(
+            [(k, v) for k, v in used.items() if not k.startswith('__dace')])
+
         return assigned, used
 
     def scalar_parameters(self, include_constants):
@@ -1030,7 +1036,7 @@ subgraph cluster_state_{state} {{
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
-    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
+    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
             sdfg=json.dumps(self.toJSON()),
@@ -1402,7 +1408,7 @@ subgraph cluster_state_{state} {{
             increment_expr: str,
             loop_end_state=None,
     ):
-        """ Helper function that adds a looping state machine around a 
+        """ Helper function that adds a looping state machine around a
             given state (or sequence of states).
             @param before_state: The state after which the loop should
                                  begin, or None if the loop is the first
@@ -1410,7 +1416,7 @@ subgraph cluster_state_{state} {{
             @param loop_state: The state that begins the loop. See also
                                `loop_end_state` if the loop is multi-state.
             @param after_state: The state that should be invoked after
-                                the loop ends, or None if the program 
+                                the loop ends, or None if the program
                                 should terminate (creates an empty state).
             @param loop_var: A name of an inter-state variable to use
                              for the loop. If None, `initialize_expr`
@@ -1419,14 +1425,14 @@ subgraph cluster_state_{state} {{
                                     to `loop_var` before the loop begins.
                                     If None, does not define an expression.
             @param condition_expr: A string condition that occurs every
-                                   loop iteration. If None, loops forever 
+                                   loop iteration. If None, loops forever
                                    (undefined behavior).
             @param increment_expr: A string expression that is assigned to
                                    `loop_var` after every loop iteration.
                                     If None, does not define an expression.
             @param loop_end_state: If the loop wraps multiple states, the
                                    state where the loop iteration ends.
-                                   If None, sets the end state to 
+                                   If None, sets the end state to
                                    `loop_state` as well.
             @return: A 3-tuple of (`before_state`, generated loop guard state,
                                    `after_state`).
@@ -1879,7 +1885,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
-    
+
             @note: Behavior is undefined when there is more than one path
                    involving this edge.
             @param edge: An edge within this state.
@@ -1935,7 +1941,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a tree
             between its node source(s) and sink(s). Used for memlet tracking.
-    
+
             @param edge: An edge within this state.
             @return: A list of edges from source nodes to destination nodes
                      (in arbitrary order) that pass through the given edge.
@@ -3954,7 +3960,8 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
             scope.parent is None and n.desc(scope).transient or scope.parent))
     }
     symbols = collections.OrderedDict(
-        (key, value) for key, value in symbols.items() if key not in defined)
+        (key, value) for key, value in symbols.items()
+        if key not in defined and not key.startswith('__dace'))
     return symbols
 
 
