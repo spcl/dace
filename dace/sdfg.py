@@ -1068,16 +1068,24 @@ subgraph cluster_state_{state} {{
             state. """
         seen = {}
         shared = []
+
+        # If a transient is present in an inter-state edge, it is shared
+        for interstate_edge in self.edges():
+            for sym in interstate_edge.data.condition_symbols():
+                if sym in self.arrays and self.arrays[sym].transient:
+                    seen[sym] = interstate_edge
+                    shared.append(sym)
+
+        # If transient is accessed in more than one state, it is shared
         for state in self.nodes():
             for node in state.nodes():
                 if isinstance(node,
                               nd.AccessNode) and node.desc(self).transient:
-                    # If transient is accessed in more than one state, it is a
-                    # shared transient
                     if node.desc(self).toplevel or (node.data in seen and
                                                     seen[node.data] != state):
                         shared.append(node.data)
                     seen[node.data] = state
+
         return dtypes.deduplicate(shared)
 
     def input_arrays(self):
