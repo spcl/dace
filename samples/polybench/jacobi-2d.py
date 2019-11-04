@@ -28,8 +28,8 @@ sizes = [{
     N: 2800
 }]
 args = [
-    dace.ndarray([N, N], datatype),
-    dace.ndarray([N, N], datatype)  #, N, tsteps
+    ([N, N], datatype),
+    ([N, N], datatype)  #, N, tsteps
 ]
 
 

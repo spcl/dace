@@ -8,7 +8,7 @@ import numpy
 
 from dace import data, symbolic
 from dace.config import Config
-from dace.frontend.python import astnodes, ndloop, ndarray
+from dace.frontend.python import astnodes, ndloop, wrappers
 from dace.frontend.python.astutils import unparse, rname
 from dace.frontend.python.parser import DaceProgram
 
@@ -88,7 +88,7 @@ def simulate(dace_program: DaceProgram, *args):
     # Store parameter objects
     pdp.arrayobjs = {
         k: v
-        for k, v in zip(pdp.params, newargs) if isinstance(v, ndarray.ndarray)
+        for k, v in zip(pdp.params, newargs) if isinstance(v, numpy.ndarray)
     }
 
     # Simulate f
@@ -122,7 +122,7 @@ class RangeStorage:
 
 def converttype(argument, cvt_type, argname):
     """ Helper function to convert a scalar argument to its type. """
-    if isinstance(argument, ndarray.ndarray):
+    if isinstance(argument, numpy.ndarray):
         return argument
 
     # Convert type

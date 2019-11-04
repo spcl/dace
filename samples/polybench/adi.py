@@ -38,7 +38,7 @@ c = a
 d = -mul2 / datatype(2.0)
 e = datatype(1.0) + mul2
 f = d
-args = [dace.ndarray([N, N], datatype)]
+args = [([N, N], datatype)]
 
 
 def init_array(u):

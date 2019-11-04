@@ -44,10 +44,10 @@ if __name__ == '__main__':
     print('Nested SDFG test')
     # Externals (parameters, symbols)
 
-    input = dp.ndarray([N, N], dp.float32)
-    output = dp.ndarray([N, N], dp.float32)
     N.set(64)
 
+    input = dp.ndarray([N, N], dp.float32)
+    output = dp.ndarray([N, N], dp.float32)
     input[:] = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
     output[:] = dp.float32(0)
 

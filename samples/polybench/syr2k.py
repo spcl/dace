@@ -26,13 +26,8 @@ sizes = [{
     N: 2600
 }]
 
-args = [
-    dace.ndarray([N, N], datatype),
-    dace.ndarray([N, M], datatype),
-    dace.ndarray([N, M], datatype),
-    dace.ndarray([1], datatype),
-    dace.ndarray([1], datatype)
-]
+args = [([N, N], datatype), ([N, M], datatype), ([N, M], datatype),
+        ([1], datatype), ([1], datatype)]
 
 outputs = [(0, 'C')]
 

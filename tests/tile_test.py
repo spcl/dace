@@ -33,9 +33,6 @@ if __name__ == "__main__":
     parser.add_argument("TW", type=int, nargs="?", default=16)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
-    B = dace.ndarray([H, W], dtype=dace.float32)
-
     W.set(args["W"])
     H.set(args["H"])
     TW.set(args["TW"])
@@ -44,6 +41,8 @@ if __name__ == "__main__":
     print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W.get(), H.get(),
                                                           TW.get(), TH.get()))
 
+    A = dace.ndarray([H, W], dtype=dace.float32)
+    B = dace.ndarray([H, W], dtype=dace.float32)
     A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
     B[:] = dace.float32(0)
 

@@ -26,4 +26,4 @@ if __name__ == '__main__':
         A[i, :] += 10 * (i + 1)
     B[:] = dp.float32(0.0)
 
-    subarray(A, B)
+    subarray(A, B, W=W)
