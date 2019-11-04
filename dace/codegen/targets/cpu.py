@@ -934,7 +934,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     "Unsupported number of accesses {} for scalar {}".format(
                         memlet.num_accesses, local_name))
         elif var_type == DefinedType.Pointer:
-            if memlet.num_accesses == 1:
+            if memlet.num_accesses == 1 and memlet.subset.num_elements() == 1:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
