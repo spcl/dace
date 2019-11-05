@@ -4,9 +4,9 @@ import dace.library
 class cuBLAS:
 
     cmake_minimum_version = None
-    cmake_packages = []
+    cmake_packages = ["CUDA"]
     cmake_variables = {}
-    cmake_includes = []
+    cmake_includes = ["${CUDA_INCLUDE_DIRS}"]
     cmake_libraries = ["mmul_2", "cublas", "curand"]
     cmake_compile_flags = []
     cmake_link_flags = []
