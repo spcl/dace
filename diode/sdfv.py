@@ -47,6 +47,7 @@ if __name__ == '__main__':
 
     with open(html_filename, "w") as fp:
         fp.write(html)
+    print("File saved at %s" % html_filename)
 
     system = platform.system()
 
