@@ -109,7 +109,7 @@ class DaCeCodeGenerator(object):
         for env in environments:
             if len(env.headers) > 0:
                 global_stream.write("\n".join(
-                    "#include <" + h + ">" for h in env.headers), sdfg)
+                    "#include \"" + h + "\"" for h in env.headers), sdfg)
 
         global_stream.write("\n", sdfg)
 

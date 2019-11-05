@@ -264,10 +264,10 @@ class ExpandTransformation(Transformation):
     def expansion(node):
         raise NotImplementedError("Must be implemented by subclass")
 
-    def apply(self, sdfg):
+    def apply(self, sdfg, *args, **kwargs):
         state = sdfg.nodes()[self.state_id]
         node = state.nodes()[self.subgraph[type(self)._match_node]]
-        expansion = type(self).expansion(node, state, sdfg)
+        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, dace.SDFG):
             expansion = state.add_nested_sdfg(
                 expansion,

@@ -897,7 +897,7 @@ class LibraryNode(Node):
         else:
             self.implementation = None
 
-    def expand(self, sdfg):
+    def expand(self, sdfg, *args, **kwargs):
         """Shorthand to create and perform the expansion transformation
            for this library node."""
         implementation = self.implementation
@@ -920,7 +920,7 @@ class LibraryNode(Node):
         state_id = sdfg.nodes().index(state)
         subgraph = {Transformation._match_node: state.node_id(self)}
         transformation = Transformation(sdfg_id, state_id, subgraph, 0)
-        transformation.apply(sdfg)
+        transformation.apply(sdfg, *args, **kwargs)
 
     def draw_node(self, sdfg, state):
         return dot.draw_node(sdfg, state, self, shape="folder")

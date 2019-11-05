@@ -136,6 +136,8 @@ if(${NUM_ENV_VARS} GREATER 0)
   endforeach()
 endif()
 # Configure specified include directories, libraries, and flags
+string(REPLACE " " ";" DACE_ENV_INCLUDES "${DACE_ENV_INCLUDES}")
+string(REPLACE " " ";" DACE_ENV_LIBRARIES "${DACE_ENV_LIBRARIES}")
 include_directories(${DACE_ENV_INCLUDES})
 set(DACE_LIBS ${DACE_LIBS} ${DACE_ENV_LIBRARIES})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${DACE_ENV_COMPILE_FLAGS}")
