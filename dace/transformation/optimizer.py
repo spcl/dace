@@ -108,7 +108,7 @@ class SDFGOptimizer(object):
             self.sdfg.draw_to_file('before.dot')
             self.sdfg.save(os.path.join('_dotgraphs', 'before.sdfg'))
             if VISUALIZE:
-                os.system('xdot before.dot&')
+                os.system('xdot _dotgraphs/before.dot&')
 
         # Optimize until there is not pattern matching or user stops the process.
         pattern_counter = 0
