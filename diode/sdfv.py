@@ -34,28 +34,27 @@ if __name__ == '__main__':
         sdfg = dace.SDFG.from_file(filename)
         sdfg_json = sdfg.toJSON()
 
-    basepath = os.path.dirname(__file__)
+    basepath = os.path.dirname(os.path.realpath(__file__))
     template_loader = jinja2.FileSystemLoader(
         searchpath=os.path.join(basepath, 'templates'))
     template_env = jinja2.Environment(loader=template_loader)
     template = template_env.get_template('sdfv.html')
 
-    with tempfile.NamedTemporaryFile(
-            dir=basepath, prefix='sdfv_tmp', suffix='.html',
-            delete=False) as fp:
-        fp.write(template.render(sdfg=json.dumps(sdfg_json)).encode('utf-8'))
-        filename = fp.name
+    html = template.render(sdfg=json.dumps(sdfg_json),
+                           dir=basepath + '/')
+
+    html_filename = filename + ".html"
+
+    with open(html_filename, "w") as fp:
+        fp.write(html)
+    print("File saved at %s" % html_filename)
 
     system = platform.system()
 
     if system == 'Windows':
-        os.system(filename)
+        os.system(html_filename)
     elif system == 'Darwin':
-        os.system('open %s' % filename)
+        os.system('open %s' % html_filename)
     else:
-        os.system('xdg-open %s' % filename)
+        os.system('xdg-open %s' % html_filename)
 
-    print('Running in browser, press any key to exit...')
-    sys.stdin.read(1)
-
-    os.unlink(filename)
