@@ -46,13 +46,16 @@ class CublasHelper {
     // Allocate constant zero
     cudaMalloc(&float_zero_, sizeof(float) * 1);
     float float_zero = 0.0f;
-    cudaMemcpy(float_zero_, &float_zero, sizeof(float) * 1);
+    cudaMemcpy(float_zero_, &float_zero, sizeof(float) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&double_zero_, sizeof(double) * 1);
     double double_zero = 0.0;
-    cudaMemcpy(double_zero_, &double_zero, sizeof(double) * 1);
+    cudaMemcpy(double_zero_, &double_zero, sizeof(double) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&complex64_zero_, sizeof(cuComplex) * 1);
     cuComplex complex64_zero = make_cuComplex(0.0f, 0.0f);
-    cudaMemcpy(complex64_zero_, &complex64_zero, sizeof(cuComplex) * 1);
+    cudaMemcpy(complex64_zero_, &complex64_zero, sizeof(cuComplex) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&complex128_zero_, sizeof(cuDoubleComplex) * 1);
     cuDoubleComplex complex128_zero = make_cuDoubleComplex(0.0, 0.0);
     cudaMemcpy(complex128_zero_, &complex128_zero, sizeof(cuDoubleComplex) * 1,
@@ -60,13 +63,16 @@ class CublasHelper {
     // Allocate constant one
     cudaMalloc(&float_pone_, sizeof(float) * 1);
     float float_pone = 1.0f;
-    cudaMemcpy(float_pone_, &float_pone, sizeof(float) * 1);
+    cudaMemcpy(float_pone_, &float_pone, sizeof(float) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&double_pone_, sizeof(double) * 1);
     double double_pone = 0.0;
-    cudaMemcpy(double_pone_, &double_pone, sizeof(double) * 1);
+    cudaMemcpy(double_pone_, &double_pone, sizeof(double) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&complex64_pone_, sizeof(cuComplex) * 1);
     cuComplex complex64_pone = make_cuComplex(1.0f, 0.0f);
-    cudaMemcpy(complex64_pone_, &complex64_pone, sizeof(cuComplex) * 1);
+    cudaMemcpy(complex64_pone_, &complex64_pone, sizeof(cuComplex) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&complex128_pone_, sizeof(cuDoubleComplex) * 1);
     cuDoubleComplex complex128_pone = make_cuDoubleComplex(1.0, 0.0);
     cudaMemcpy(complex128_pone_, &complex128_pone, sizeof(cuDoubleComplex) * 1,

@@ -87,14 +87,18 @@ class ExpandDotCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for cuBLAS dot product: " +
                              str(dtype))
-        code = "_result = cublas{}(__dace_cublas_handle, _x, 1, _y, 1);".format(
-            func)
+
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                "cublas{func}(handle, n, ___x.ptr<1>(), 1, ___y.ptr<1>(), "
+                "1, ___result.ptr<1>());".format(func=func))
+
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
             node.in_connectors,
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP)
+
         return tasklet
 
 
@@ -112,10 +116,15 @@ class Dot(dace.graph.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
+    location = dace.properties.Property(
+        dtype=str,
+        desc="Execution location descriptor (e.g., GPU identifier)",
+        allow_none=True)
 
-    def __init__(self, name, dtype=None, *args, **kwargs):
+    def __init__(self, name, dtype=None, location=None, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
         self.dtype = dtype
+        self.location = location
 
     def validate(self, state, sdfg):
         in_edges = state.in_edges(self)
