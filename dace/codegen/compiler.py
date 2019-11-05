@@ -49,7 +49,7 @@ class ReloadableDLL(object):
         bypasses Python's dynamic library reloading issues. """
 
     def __init__(self, library_filename, program_name):
-        """ Creates a new reloadable shared object. 
+        """ Creates a new reloadable shared object.
             @param library_filename: Path to library file.
             @param program_name: Name of the DaCe program (for use in finding
                                  the stub library loader).
@@ -162,8 +162,8 @@ class CompiledSDFG(object):
 
     def _construct_args(self, **kwargs):
         """ Main function that controls argument construction for calling
-            the C prototype of the SDFG. 
-            
+            the C prototype of the SDFG.
+
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """

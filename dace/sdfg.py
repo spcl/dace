@@ -663,6 +663,12 @@ class SDFG(OrderedDiGraph):
             assigned.update(a)
             used.update(u)
 
+        assigned = collections.OrderedDict([(k, v)
+                                            for k, v in assigned.items()
+                                            if not k.startswith('__dace')])
+        used = collections.OrderedDict(
+            [(k, v) for k, v in used.items() if not k.startswith('__dace')])
+
         return assigned, used
 
     def scalar_parameters(self, include_constants):
@@ -3963,7 +3969,8 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
             scope.parent is None and n.desc(scope).transient or scope.parent))
     }
     symbols = collections.OrderedDict(
-        (key, value) for key, value in symbols.items() if key not in defined)
+        (key, value) for key, value in symbols.items()
+        if key not in defined and not key.startswith('__dace'))
     return symbols
 
 
