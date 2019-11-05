@@ -9,7 +9,7 @@ from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.graph import nodes
 from dace import dtypes, config
 
-from dace.frontend.python import ndarray
+from dace.frontend.python import wrappers
 from dace.codegen import cppunparse
 
 import networkx as nx
@@ -41,10 +41,7 @@ class DaCeCodeGenerator(object):
         # Write constants
         for cstname, cstval in sdfg.constants.items():
             if isinstance(cstval, np.ndarray):
-                if isinstance(cstval, ndarray.ndarray):
-                    dtype = cstval.descriptor.dtype
-                else:
-                    dtype = dtypes.typeclass(cstval.dtype.type)
+                dtype = dtypes.typeclass(cstval.dtype.type)
                 const_str = "constexpr " + dtype.ctype + \
                     " " + cstname + "[" + str(cstval.size) + "] = {"
                 it = np.nditer(cstval, order='C')

@@ -2,7 +2,7 @@
 import dace as dp
 import numpy as np
 
-W = dp.symbol()
+W = dp.symbol('W')
 
 
 @dp.program
@@ -37,7 +37,7 @@ if __name__ == '__main__':
     A[:] = np.mgrid[0:W.get()]
     B[:] = dp.float32(0.0)
 
-    raw_prog(A, B)
+    raw_prog(A, B, W=W)
 
     diff = np.linalg.norm(4 * A - B) / W.get()
     print("Difference:", diff)

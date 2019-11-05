@@ -27,11 +27,7 @@ sizes = [{
     N: 2600
 }]
 
-args = [
-    dace.ndarray([M, N], datatype),
-    dace.ndarray([N, N], datatype),
-    dace.ndarray([M, N], datatype)
-]
+args = [([M, N], datatype), ([N, N], datatype), ([M, N], datatype)]
 
 
 def init_array(A, R, Q):

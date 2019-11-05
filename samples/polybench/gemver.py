@@ -10,19 +10,9 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
-args = [
-    dace.ndarray([N, N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([N], datatype),
-    dace.ndarray([1], datatype),
-    dace.ndarray([1], datatype)
-]
+args = [([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype),
+        ([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype),
+        ([N], datatype), ([1], datatype), ([1], datatype)]
 
 outputs = [(5, 'w')]
 

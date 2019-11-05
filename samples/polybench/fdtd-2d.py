@@ -31,10 +31,10 @@ sizes = [{
     NY: 2600
 }]
 args = [
-    dace.ndarray([NX, NY], datatype),  # ex
-    dace.ndarray([NX, NY], datatype),  # ey
-    dace.ndarray([NX, NY], datatype),  # hz
-    dace.ndarray([TMAX], datatype),  # _fict_
+    ([NX, NY], datatype),  # ex
+    ([NX, NY], datatype),  # ey
+    ([NX, NY], datatype),  # hz
+    ([TMAX], datatype),  # _fict_
     # NX,
     # NY,
     # TMAX

@@ -6,9 +6,6 @@ import numpy as np
 
 N = dace.symbol('N')
 
-V = dace.ndarray([N], dace.float32)
-Vout = dace.ndarray([N], dace.float32)
-
 
 @dace.program(dace.float32[N], dace.float32[N])
 def cudahello(V, Vout):
@@ -25,6 +22,8 @@ if __name__ == "__main__":
 
     print('Vector double CUDA %d' % (N.get()))
 
+    V = dace.ndarray([N], dace.float32)
+    Vout = dace.ndarray([N], dace.float32)
     V[:] = np.random.rand(N.get()).astype(dace.float32.type)
     Vout[:] = dace.float32(0)
 
