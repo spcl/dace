@@ -1,0 +1,4 @@
+*.from_code
+*.from_serialized
+*.serialized
+*.txt

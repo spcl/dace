@@ -54,7 +54,7 @@ class Data(object):
     storage = Property(
         dtype=dace.dtypes.StorageType,
         desc="Storage location",
-        enum=dace.dtypes.StorageType,
+        choices=dace.dtypes.StorageType,
         default=dace.dtypes.StorageType.Default,
         from_string=lambda x: dtypes.StorageType[x])
     location = Property(
@@ -91,17 +91,12 @@ class Data(object):
                             'or symbols')
         return True
 
-    def toJSON(self):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     def copy(self):
         raise RuntimeError(
@@ -139,13 +134,13 @@ class Scalar(Data):
                                      location, toplevel, debuginfo)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Scalar":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Scalar(dace.dtypes.int8)
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
         ret.validate()
@@ -284,29 +279,24 @@ class Array(Data):
                      self.offset, self.may_alias, self.toplevel,
                      self.debuginfo)
 
-    def toJSON(self):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         # Take care of symbolic expressions
         attrs['strides'] = list(map(str, attrs['strides']))
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Array":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Array(dace.dtypes.int8, ())
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
 
@@ -474,29 +464,24 @@ class Stream(Data):
         super(Stream, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
 
-    def toJSON(self):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         # Take care of symbolic expressions
         attrs['strides'] = list(map(str, attrs['strides']))
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Stream":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Stream(dace.dtypes.int8, 1, 1)
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         # TODO: FIXME:
         # Since the strides are a list-property (normal Property()),
         # loading from/to string (and, consequently, from/to json)

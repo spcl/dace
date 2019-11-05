@@ -32,7 +32,7 @@ if __name__ == '__main__':
     # Load SDFG
     if sdfg_json is None:
         sdfg = dace.SDFG.from_file(filename)
-        sdfg_json = sdfg.toJSON()
+        sdfg_json = sdfg.to_json()
 
     basepath = os.path.dirname(__file__)
     template_loader = jinja2.FileSystemLoader(
