@@ -13,20 +13,38 @@ namespace blas {
 
 template <typename Key = size_t>
 class CublasHelper {
-  static cublasHandle_t& GetHandle() {
+ public:
+  /// Returns the singleton instance associated with the current thread.
+  static CublasHelper& Get() {
     static thread_local CublasHelper singleton;
     return singleton;
   }
 
+  cublasHandle_t& Handle(Key i) {
+    auto f = handles_.find(i);
+    if (f == handles_.end()) {
+      // Lazily construct new cuBLAS handle if the specified key does not yet
+      // exist
+      cublasHandle_t handle;
+      CheckError(cublasCreate(&handle));
+      f = handles_.emplace(i, handle).first;
+    }
+    return f->second;
+  }
+
+  /// Provides a pointer to a constant complex zero that has been allocated and
+  /// copied to the device.
   cuDoubleComplex const* ComplexZero() const { return complex_zero_; }
 
  private:
   CublasHelper() {
-    // Allocate constant complex zero
-    cudaMalloc(&complex_zero_, sizeof(cuDoubleComplex) * 1);
-    cuDoubleComplex zero = make_cuDoubleComplex(0.0, 0.0);
-    cudaMemcpy(complex_zero_, &zero, sizeof(cuDoubleComplex) * 1,
-               cudaMemcpyHostToDevice);
+    {
+      // Allocate constant complex zero
+      cudaMalloc(&complex_zero_, sizeof(cuDoubleComplex) * 1);
+      cuDoubleComplex zero = make_cuDoubleComplex(0.0, 0.0);
+      cudaMemcpy(complex_zero_, &zero, sizeof(cuDoubleComplex) * 1,
+                 cudaMemcpyHostToDevice);
+    }
   }
 
   CublasHelper(CublasHelper const&) = delete;
@@ -39,17 +57,6 @@ class CublasHelper {
   }
 
   CublasHelper& operator=(CublasHelper const&) = delete;
-
-  cublasHandle_t& GetHandle(Key i) {
-    auto f = handles_.find(i);
-    if (f == handles_.end()) {
-      // Lazily construct new cuBLAS handle
-      cublasHandle_t handle;
-      CheckError(cublasCreate(&handle));
-      f = handles_.emplace(i, handle).first;
-    }
-    return f->second;
-  }
 
   void CheckError(cublasStatus_t const& status) {
     if (status != CUBLAS_STATUS_SUCCESS) {
