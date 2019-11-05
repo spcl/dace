@@ -27,9 +27,9 @@ sizes = [{
 }]
 
 args = [
-    dace.ndarray([M, M], datatype),
-    dace.ndarray([M, N], datatype),
-    dace.ndarray([1], datatype),
+    ([M, M], datatype),
+    ([M, N], datatype),
+    ([1], datatype),
 ]
 
 outputs = [(1, 'B')]

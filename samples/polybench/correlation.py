@@ -26,12 +26,8 @@ sizes = [{
     N: 3000
 }]
 
-args = [
-    dace.ndarray([N, M], datatype),
-    dace.ndarray([M, M], datatype),
-    dace.ndarray([M], datatype),
-    dace.ndarray([M], datatype), M, N
-]
+args = [([N, M], datatype), ([M, M], datatype), ([M], datatype),
+        ([M], datatype), M, N]
 
 
 def init_array(data, corr, mean, stddev, M, N):

@@ -1,6 +1,6 @@
 """ A single generator that creates an N-dimensional for loop in Python. """
 import itertools
-from dace.frontend.python import ndarray
+import numpy as np
 
 # Python 3 compatibility for xrange
 try:
@@ -25,7 +25,7 @@ def tupletoxrange(s):
         return xxrange(s, s + 1)
 
     ifnone = lambda a, b: b if a is None else a
-    ifscalar = lambda a: a[0] if isinstance(a, ndarray.ndarray) else a
+    ifscalar = lambda a: a[0] if isinstance(a, np.ndarray) else a
     allconds = lambda a, b: ifnone(ifscalar(a), b)
 
     return xxrange(allconds(s[0], 0), ifscalar(s[1]) + 1, allconds(s[2], 1))

@@ -25,7 +25,10 @@ if __name__ == '__main__':
     B[:] = dp.float32(0)
     x[:] = np.random.randint(0, W.get() * W.get(), W.get())
 
-    indirection(A, x, B)
+    indirection(A, x, B, W=W)
 
-    print(x.view(type=np.ndarray))
-    print(B.view(type=np.ndarray))
+    print(x)
+    print(B)
+    B_ref = np.array([A[x[i]] for i in range(W.get())], dtype=B.dtype)
+    diff = np.linalg.norm(B - B_ref)
+    exit(0 if diff == 0 else 1)

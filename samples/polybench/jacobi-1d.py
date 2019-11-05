@@ -25,8 +25,7 @@ sizes = [{
     tsteps: 1000,
     N: 4000
 }]
-args = [dace.ndarray([N], datatype),
-        dace.ndarray([N], datatype)]  #, N, tsteps]
+args = [([N], datatype), ([N], datatype)]  #, N, tsteps]
 
 
 @dace.program(datatype[N], datatype[N])  #, dace.int32, dace.int32)

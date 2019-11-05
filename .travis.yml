@@ -1,8 +1,11 @@
 dist: xenial
 language: python
 python:
-  - "3.6"
   - "3.7"  
+
+env:
+  - DACE_optimizer_automatic_strict_transformations=1
+  - DACE_optimizer_automatic_strict_transformations=0
 
 # Dependencies
 before_install:

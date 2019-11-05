@@ -177,12 +177,12 @@ class DaceProgram:
         sdfg = parse_from_function(self, *args, strict=strict)
         return sdfg.compile(specialize=specialize)
 
-    def __call__(self, *args, strict=None, specialize=None):
+    def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
-        binaryobj = self.compile(*args, strict=strict, specialize=specialize)
+        binaryobj = self.compile(*args)
         # Add named arguments to the call
-        kwargs = {aname: arg for aname, arg in zip(self.argnames, args)}
+        kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
         # Update arguments with symbols in data shapes
         kwargs.update({
             sym: symbolic.symbol(sym).get()

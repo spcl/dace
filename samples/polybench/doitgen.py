@@ -32,7 +32,7 @@ sizes = [{
     NP: 270
 }]
 
-args = [dace.ndarray([NR, NQ, NP], datatype), dace.ndarray([NP, NP], datatype)]
+args = [([NR, NQ, NP], datatype), ([NP, NP], datatype)]
 
 
 def init_array(A, C4):

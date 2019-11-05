@@ -32,15 +32,14 @@ if __name__ == "__main__":
     parser.add_argument("H", type=int, nargs="?", default=128)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
-    B = dace.ndarray([H, W], dtype=dace.float32)
-    res = dace.ndarray([1], dtype=dace.float32)
-
     W.set(args["W"])
     H.set(args["H"])
 
     print('Map-Reduce Test %dx%d' % (W.get(), H.get()))
 
+    A = dace.ndarray([H, W], dtype=dace.float32)
+    B = dace.ndarray([H, W], dtype=dace.float32)
+    res = dace.ndarray([1], dtype=dace.float32)
     A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
     B[:] = dace.float32(0)
     res[:] = dace.float32(0)

@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-W = dace.symbol()
+W = dace.symbol('W')
 
 
 @dace.program
@@ -26,7 +26,7 @@ if __name__ == '__main__':
     A[:] = np.random.normal(3.0, 5.0, W.get())
     stats[:] = 0.0
 
-    prog(A, stats)
+    prog(A, stats, W=W)
 
     mean = stats[0] / W.get()
     variance = stats[1] / W.get() - mean * mean
