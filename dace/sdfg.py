@@ -8,6 +8,7 @@ import os
 import pickle, json
 from pydoc import locate
 import random
+import shutil
 import sys
 from typing import Any, Dict, Set, Tuple, List, Union
 import warnings
@@ -653,6 +654,12 @@ class SDFG(OrderedDiGraph):
             assigned.update(a)
             used.update(u)
 
+        assigned = collections.OrderedDict([(k, v)
+                                            for k, v in assigned.items()
+                                            if not k.startswith('__dace')])
+        used = collections.OrderedDict(
+            [(k, v) for k, v in used.items() if not k.startswith('__dace')])
+
         return assigned, used
 
     def scalar_parameters(self, include_constants):
@@ -762,7 +769,8 @@ class SDFG(OrderedDiGraph):
             to the SDFG, loop iteration variables, array sizes and variables
             used in interstate edges. """
         symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters())
+            (name, data)
+            for name, data in self.scalar_parameters(include_constants))
         symbols.update(self.data_symbols(True))
         assigned, used = self.interstate_symbols()
         symbols.update(used)
@@ -1073,16 +1081,24 @@ subgraph cluster_state_{state} {{
             state. """
         seen = {}
         shared = []
+
+        # If a transient is present in an inter-state edge, it is shared
+        for interstate_edge in self.edges():
+            for sym in interstate_edge.data.condition_symbols():
+                if sym in self.arrays and self.arrays[sym].transient:
+                    seen[sym] = interstate_edge
+                    shared.append(sym)
+
+        # If transient is accessed in more than one state, it is shared
         for state in self.nodes():
             for node in state.nodes():
                 if isinstance(node,
                               nd.AccessNode) and node.desc(self).transient:
-                    # If transient is accessed in more than one state, it is a
-                    # shared transient
                     if node.desc(self).toplevel or (node.data in seen and
                                                     seen[node.data] != state):
                         shared.append(node.data)
                     seen[node.data] = state
+
         return dtypes.deduplicate(shared)
 
     def input_arrays(self):
@@ -1535,7 +1551,7 @@ subgraph cluster_state_{state} {{
         # Update constants
         self.constants_prop.update(syms)
 
-    def compile(self, specialize=None, optimizer=None):
+    def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.
 
             @param specialize: If True, specializes all symbols to their
@@ -1544,6 +1560,8 @@ subgraph cluster_state_{state} {{
             @param optimizer: If defines a valid class name, it will be called
                               during compilation to transform the SDFG as
                               necessary. If None, uses configuration setting.
+            @param output_file: If not None, copies the output library file to
+                                the specified path.
             @return: A callable CompiledSDFG object.
         """
 
@@ -1596,6 +1614,13 @@ subgraph cluster_state_{state} {{
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder)
+
+        # If provided, save output to path or filename
+        if output_file is not None:
+            if os.path.isdir(output_file):
+                output_file = os.path.join(output_file,
+                                           os.path.basename(shared_library))
+            shutil.copyfile(shared_library, output_file)
 
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)
@@ -3968,7 +3993,8 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
             scope.parent is None and n.desc(scope).transient or scope.parent))
     }
     symbols = collections.OrderedDict(
-        (key, value) for key, value in symbols.items() if key not in defined)
+        (key, value) for key, value in symbols.items()
+        if key not in defined and not key.startswith('__dace'))
     return symbols
 
 
@@ -4045,16 +4071,16 @@ def local_transients(sdfg, dfg, entry_node):
     return transients
 
 
-def compile(function_or_sdfg, *args, specialize=None):
+def compile(function_or_sdfg, *args, **kwargs):
     """ Obtain a runnable binary from a Python (@dace.program) function. """
     if isinstance(function_or_sdfg, dace.frontend.python.parser.DaceProgram):
         sdfg = dace.frontend.python.parser.parse_from_function(
-            function_or_sdfg, *args)
+            function_or_sdfg, *args, **kwargs)
     elif isinstance(function_or_sdfg, SDFG):
         sdfg = function_or_sdfg
     else:
         raise TypeError("Unsupported function type")
-    return sdfg.compile(specialize=specialize)
+    return sdfg.compile(**kwargs)
 
 
 def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
@@ -4143,13 +4169,15 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
     # Test all memlet paths from the array. If the path goes directly
     # to/from a stream, construct a stream array view
+    all_source_paths = []
     source_paths = []
+    all_sink_paths = []
     sink_paths = []
     for e in dfg.in_edges(node):
         src_node = dfg.memlet_path(e)[0].src
         # Append empty path to differentiate between a copy and an array-view
         if isinstance(src_node, nd.CodeNode):
-            source_paths.append(None)
+            all_source_paths.append(None)
         # Append path from source node
         if isinstance(src_node, nd.AccessNode) and isinstance(
                 src_node.desc(sdfg), dt.Array):
@@ -4159,15 +4187,18 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
         # Append empty path to differentiate between a copy and an array-view
         if isinstance(sink_node, nd.CodeNode):
-            sink_paths.append(None)
+            all_sink_paths.append(None)
         # Append path to sink node
         if isinstance(sink_node, nd.AccessNode) and isinstance(
                 sink_node.desc(sdfg), dt.Array):
             sink_paths.append(sink_node)
 
+    all_sink_paths.extend(sink_paths)
+    all_source_paths.extend(source_paths)
+
     # Special case: stream can be represented as a view of an array
-    if ((len(source_paths) > 0 and len(sink_paths) == 1)
-            or (len(sink_paths) > 0 and len(source_paths) == 1)):
+    if ((len(all_source_paths) > 0 and len(sink_paths) == 1)
+            or (len(all_sink_paths) > 0 and len(source_paths) == 1)):
         # TODO: What about a source path?
         arrnode = sink_paths[0]
         # Only works if the stream itself is not an array of streams

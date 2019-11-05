@@ -1479,7 +1479,10 @@ class TaskletTransformer(ExtNodeTransformer):
                 })[1])
         elif isinstance(node, ast.Subscript):
             actual_node = copy.deepcopy(node)
-            actual_node.value.id = name
+            if isinstance(actual_node.value, ast.Call):
+                actual_node.value.func.id = name
+            else:
+                actual_node.value.id = name
             rng = dace.subsets.Range(
                 astutils.subscript_to_slice(actual_node, {
                     **self.sdfg.arrays,
@@ -1854,39 +1857,38 @@ class ProgramVisitor(ExtNodeVisitor):
 
         elif dec.startswith('dace.map') or dec.startswith(
                 'dace.consume'):  # Scope or scope+tasklet
-            params = self._decorator_or_annotation_params(node)
-            params, map_inputs = self._parse_map_inputs(
-                node.name, params, node)
-            dummy = False
             if 'map' in dec:
+                params = self._decorator_or_annotation_params(node)
+                params, map_inputs = self._parse_map_inputs(
+                    node.name, params, node)
                 entry, exit = state.add_map(node.name, ndrange=params)
             elif 'consume' in dec:
-                entry, exit = state.add_consume(node.name, **params)
+                (stream_name, stream_elem, PE_tuple, condition,
+                 chunksize) = self._parse_consume_inputs(node)
+                map_inputs = {}
+                entry, exit = state.add_consume(
+                    node.name, PE_tuple, condition, chunksize=chunksize)
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
                 sdfg, inputs, outputs = self._parse_subprogram(node.name, node)
-                internal_node = state.add_nested_sdfg(sdfg, self.sdfg,
-                                                      set(inputs.keys()),
-                                                      set(outputs.keys()))
             else:  # Scope + tasklet (e.g., @dace.map)
-                # internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(
-                #     state, node)
-                # dummy = True
                 name = "{}_body".format(entry.label)
-                # name = "{}_{}_{}_body".format(self.sdfg.label, state.label,
-                #                               state.node_id(entry))
-                body, inputs, outputs = self._parse_subprogram(
+                sdfg, inputs, outputs = self._parse_subprogram(
                     name, node, True)
-                internal_node = state.add_nested_sdfg(body, self.sdfg,
-                                                      inputs.keys(),
-                                                      outputs.keys())
+
+            internal_node = state.add_nested_sdfg(sdfg, self.sdfg,
+                                                  set(inputs.keys()),
+                                                  set(outputs.keys()))
+
+            # If consume scope, inject stream inputs to the internal SDFG
+            if 'consume' in dec:
+                self._inject_consume_memlets(dec, entry, inputs, internal_node,
+                                             sdfg, state, stream_elem,
+                                             stream_name)
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs,
                                    outputs, map_inputs)
-            if dummy:
-                self.inputs.update(sdfg_inp)
-                self.outputs.update(sdfg_out)
 
         elif dec == 'dace.program':  # Nested SDFG
             raise DaceSyntaxError(
@@ -1894,6 +1896,45 @@ class ProgramVisitor(ExtNodeVisitor):
                 'defined outside existing programs')
         else:
             raise DaceSyntaxError(self, node, 'Unsupported function decorator')
+
+    def _inject_consume_memlets(self, dec, entry, inputs, internal_node, sdfg,
+                                state, stream_elem, stream_name):
+        """ Inject stream inputs to subgraph when creating a consume scope. """
+
+        # Inject element to internal SDFG arrays
+        ntrans = sdfg.temp_data_name()
+        sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype)
+        internal_memlet = dace.Memlet(ntrans, 1, subsets.Indices([0]), 1)
+        external_memlet = dace.Memlet(stream_name, dtypes.DYNAMIC,
+                                      subsets.Indices([0]), 1)
+
+        # Inject to internal tasklet
+        if not dec.endswith('scope'):
+            injected_node_count = 0
+            for s in sdfg.nodes():
+                for n in s.nodes():
+                    if (isinstance(n, nodes.Tasklet)
+                            and not isinstance(n, nodes.EmptyTasklet)):
+                        n.add_in_connector(stream_elem)
+                        rnode = s.add_read(ntrans)
+                        s.add_edge(rnode, None, n, stream_elem,
+                                   internal_memlet)
+                        injected_node_count += 1
+            assert injected_node_count == 1
+
+        # Inject to nested SDFG node
+        internal_node.add_in_connector(ntrans)
+        stream_node = state.add_read(stream_name)
+        state.add_edge_pair(
+            entry,
+            internal_node,
+            stream_node,
+            external_memlet,
+            scope_connector='stream',
+            internal_connector=ntrans)
+
+        # Mark as input so that no extra edges are added
+        inputs[ntrans] = None
 
     def _parse_for_indices(self, node: ast.Expr):
         """Parses the indices of a for-loop statement
@@ -2084,6 +2125,49 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return new_params, map_inputs
 
+    def _parse_consume_inputs(self, node: ast.FunctionDef
+                              ) -> Tuple[str, str, Tuple[str, str], str, str]:
+        """ Parse consume parameters from AST.
+            @return: A 5-tuple of Stream name, internal stream name,
+                     (PE index, number of PEs), condition, chunk size.
+        """
+
+        # Consume scopes in Python are defined as functions with the following
+        # syntax:
+        # @dace.consume(<stream name>, <number of PEs>[, <quiescence condition>,
+        #               <chunk size>)
+        # def func(<internal stream element name>, <internal PE index name>):
+
+        # Parse decorator
+        dec = node.decorator_list[0]
+        if hasattr(dec, 'args') and len(dec.args) >= 2:
+            stream_name = self.visit(dec.args[0])
+            num_PEs = pystr_to_symbolic(self.visit(dec.args[1]))
+            if len(dec.args) >= 3:
+                # TODO: Does not work if the condition uses arrays
+                condition = astutils.unparse(dec.args[2])
+            else:
+                condition = None  # Run until stream is empty
+            if len(dec.args) >= 4:
+                chunksize = pystr_to_symbolic(self.visit(dec.args[3]))
+            else:
+                chunksize = 1
+        else:
+            raise DaceSyntaxError(
+                self, node, 'Consume scope decorator must '
+                'contain at least two arguments')
+
+        # Parse function
+        if len(node.args.args) != 2:
+            raise DaceSyntaxError(
+                self, node, 'Consume scope function must '
+                'contain two arguments')
+
+        stream_elem, PE_index = tuple(a.arg for a in node.args.args)
+
+        return (stream_name, stream_elem, (PE_index, num_PEs), condition,
+                chunksize)
+
     def _find_access(self, name: str, rng: subsets.Range, mode: str):
         for n, r, m in self.accesses:
             if n == name and m == mode:
@@ -2121,6 +2205,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse internal node inputs and indirect memory accesses
         if inputs:
             for conn, v in inputs.items():
+                if v is None:  # Input already handled outside
+                    continue
                 if isinstance(v, tuple):
                     memlet, inner_indices = v
                 else:
@@ -2227,6 +2313,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse internal node outputs
         if outputs:
             for conn, v in outputs.items():
+                if v is None:  # Output already handled outside
+                    continue
                 if isinstance(v, tuple):
                     memlet, inner_indices = v
                 else:
