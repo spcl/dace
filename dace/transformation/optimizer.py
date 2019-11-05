@@ -111,7 +111,7 @@ class SDFGOptimizer(object):
             if VISUALIZE:
                 os.system('xdot _dotgraphs/before.dot&')
             if VISUALIZE_SDFV:
-                os.system('sdfv1 _dotgraphs/before.sdfg&')
+                os.system('sdfv _dotgraphs/before.sdfg&')
 
         # Optimize until there is not pattern matching or user stops the process.
         pattern_counter = 0
@@ -194,7 +194,7 @@ class SDFGOptimizer(object):
 
                     if VISUALIZE_SDFV:
                         os.system(
-                            'sdfv1 _dotgraphs/after_%d_%s.sdfg&' %
+                            'sdfv _dotgraphs/after_%d_%s.sdfg&' %
                             (pattern_counter, type(pattern_match).__name__))
 
         return self.sdfg

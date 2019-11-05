@@ -64,4 +64,4 @@ setup(
         'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
         'scikit-build', 'cmake'
     ],
-    scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv', 'scripts/sdfv1'])
+    scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
