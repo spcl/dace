@@ -346,7 +346,7 @@ class struct(typeclass):
 
         ret = struct(json_obj['name'])
         ret._data = {
-            k: json_to_typeclass(dace.serialize.loads(v))
+            k: json_to_typeclass(v)
             for k, v in json_obj['data'].items()
         }
         ret._length = {k: v for k, v in json_obj['length'].items()}
@@ -715,11 +715,13 @@ class DebugInfo:
 
 
 def json_to_typeclass(obj):
+    # TODO: this does two different things at the same time. Should be split
+    # into two separate functions.
     from dace.serialize import get_serializer
     if isinstance(obj, str):
         return get_serializer(obj)
     elif isinstance(obj, dict) and "type" in obj:
-        return get_serializer(obj["type"])
+        return get_serializer(obj["type"]).from_json(obj)
     else:
         raise ValueError("Cannot resolve: {}".format(obj))
 
