@@ -18,11 +18,6 @@ void __dace_serialize(const char* arrayname, int start, int end, const void* out
 }
 """
 
-#V = dace.ndarray([N], dace.float64)
-V = dace.ndarray([N], dace.float64, materialize_V)
-#Vout = dace.ndarray([N], dace.float64)
-Vout = dace.ndarray([N], dace.float64, serialize_Vout)
-
 
 @dace.program(
     dace.immaterial(dace.float64[N], materialize_V),
@@ -40,7 +35,9 @@ def mpihello(V, Vout):
 
 if __name__ == "__main__":
 
-    N.set(50)
+    N.set(128)
+    V = dace.ndarray([N], dace.float64)
+    Vout = dace.ndarray([N], dace.float64)
 
     print('Vector add MPI %d' % (N.get()))
 
