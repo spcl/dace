@@ -38,16 +38,6 @@ test_linux_cpu:
     - tests/e2e_test.sh
     - tests/gemm_test.sh
 
-test_mpihello:
-  stage: test
-  tags: 
-    - intel
-    - linux
-    - mpi
-  script: 
-    - cd tests/
-    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello_test_opt.py -d2p "../diode/" | sh'
-
 test_linux_cuda:
   stage: test
   tags: 
@@ -60,16 +50,6 @@ test_linux_cuda:
     - export DACE_debugprint=1
     - tests/cuda_test.sh
    
-test_mpihello2:
-  stage: test
-  tags: 
-    - intel
-    - linux
-    - mpi
-  script: 
-    - cd tests/
-    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello2_test_opt.py -d2p "../diode/" | sh'
-
 test_filter:
   stage: test
   tags: 

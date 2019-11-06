@@ -18,16 +18,11 @@ void __dace_serialize(const char* arrayname, int start, int end, const void* out
 }
 """
 
-#V = dace.ndarray([N], dace.float64)
-V = dace.ndarray([N], dace.float64, materialize_V)
-#Vout = dace.ndarray([N], dace.float64)
-Vout = dace.ndarray([N], dace.float64, serialize_Vout)
-
 
 @dace.program(
     dace.immaterial(dace.float64[N], materialize_V),
     dace.immaterial(dace.float64[N], serialize_Vout))
-def mpihello(V, Vout):
+def immaterial_range_test(V, Vout):
     # Transient variable
     @dace.map(_[0:N:2])
     def multiplication(i):
@@ -40,8 +35,10 @@ def mpihello(V, Vout):
 
 if __name__ == "__main__":
 
-    N.set(50)
+    N.set(128)
+    V = dace.ndarray([N], dace.float64)
+    Vout = dace.ndarray([N], dace.float64)
 
-    print('Vector add MPI %d' % (N.get()))
+    print('Immaterial range access test %d' % (N.get()))
 
-    mpihello(V, Vout)
+    immaterial_range_test(V, Vout)
