@@ -89,8 +89,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
                              str(dtype))
 
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                "cublas{func}(handle, n, ___x.ptr<1>(), 1, ___y.ptr<1>(), "
-                "1, ___result.ptr<1>());".format(func=func))
+                "cublas{func}(__dace_cublas_handle, n, ___x.ptr<1>(), 1, "
+                "___y.ptr<1>(), 1, ___result.ptr<1>());".format(func=func))
 
         tasklet = dace.graph.nodes.Tasklet(
             node.name,

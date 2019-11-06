@@ -29,7 +29,7 @@ class cuBLAS:
                 raise ValueError("Invalid GPU identifier: {}".format(location))
 
         code = """\
-auto &handle = dacelib::blas::CublasHelper<>::Get().Handle({location});
-cublasSetStream(handle, __dace_current_stream);\n"""
+auto &__dace_cublas_handle = dacelib::blas::CublasHandle::Get({location});
+cublasSetStream(__dace_cublas_handle, __dace_current_stream);\n"""
 
         return code.format(location=location)

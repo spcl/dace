@@ -11,27 +11,60 @@ namespace dacelib {
 
 namespace blas {
 
-template <typename Key = size_t>
-class CublasHelper {
+void CheckCublasError(cublasStatus_t const& status) {
+  if (status != CUBLAS_STATUS_SUCCESS) {
+    throw std::runtime_error("cuBLAS failed with error code: " +
+                             std::to_string(status));
+  }
+}
+
+cublasHandle_t CreateCublasHandle(int device) {
+  if (cudaSetDevice(device) != cudaSuccess) {
+    throw std::runtime_error("Failed to set CUDA device.");
+  }
+  cublasHandle_t handle;
+  CheckCublasError(cublasCreate(&handle));
+  return handle;
+}
+
+class CublasHandle {
  public:
   /// Returns the singleton instance associated with the current thread.
-  static CublasHelper& Get() {
-    static thread_local CublasHelper singleton;
-    return singleton;
+  static cublasHandle_t& Get(int device) {
+    static thread_local CublasHandle singleton;
+    return singleton._Get(device);
   }
 
-  cublasHandle_t& Handle(Key i) {
-    auto f = handles_.find(i);
+ private:
+  CublasHandle() = default;
+  CublasHandle(CublasHandle const&) = delete;
+
+  cublasHandle_t& _Get(int device) {
+    auto f = handles_.find(device);
     if (f == handles_.end()) {
       // Lazily construct new cuBLAS handle if the specified key does not yet
       // exist
-      cublasHandle_t handle;
-      CheckError(cublasCreate(&handle));
-      f = handles_.emplace(i, handle).first;
+      auto handle = CreateCublasHandle(device);
+      f = handles_.emplace(device, handle).first;
     }
     return f->second;
   }
 
+  ~CublasHandle() {
+    for (auto& h : handles_) {
+      CheckCublasError(cublasDestroy(h.second));
+    }
+  }
+
+  CublasHandle& operator=(CublasHandle const&) = delete;
+
+  std::unordered_map<int, cublasHandle_t> handles_;
+};
+
+namespace {
+
+class _CublasConstants {
+ public:
   float const* FloatZero() const { return float_zero_; }
   double const* DoubleZero() const { return double_zero_; }
   cuComplex const* Complex64Zero() const { return complex64_zero_; }
@@ -41,8 +74,10 @@ class CublasHelper {
   cuComplex const* Complex64Pone() const { return complex64_pone_; }
   cuDoubleComplex const* Complex128Pone() const { return complex128_pone_; }
 
- private:
-  CublasHelper() {
+  _CublasConstants(int device) {
+    if (cudaSetDevice(device) != cudaSuccess) {
+      throw std::runtime_error("Failed to set CUDA device.");
+    }
     // Allocate constant zero
     cudaMalloc(&float_zero_, sizeof(float) * 1);
     float float_zero = 0.0f;
@@ -79,12 +114,9 @@ class CublasHelper {
                cudaMemcpyHostToDevice);
   }
 
-  CublasHelper(CublasHelper const&) = delete;
+  _CublasConstants(_CublasConstants const&) = delete;
 
-  ~CublasHelper() {
-    for (auto& h : handles_) {
-      CheckError(cublasDestroy(h.second));
-    }
+  ~_CublasConstants() {
     cudaFree(float_zero_);
     cudaFree(double_zero_);
     cudaFree(complex64_zero_);
@@ -95,7 +127,7 @@ class CublasHelper {
     cudaFree(complex128_pone_);
   }
 
-  CublasHelper& operator=(CublasHelper const&) = delete;
+  _CublasConstants& operator=(_CublasConstants const&) = delete;
 
   void CheckError(cublasStatus_t const& status) {
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -104,7 +136,6 @@ class CublasHelper {
     }
   }
 
-  std::unordered_map<Key, cublasHandle_t> handles_;
   float* float_zero_;
   double* double_zero_;
   cuComplex* complex64_zero_;
@@ -113,6 +144,29 @@ class CublasHelper {
   double* double_pone_;
   cuComplex* complex64_pone_;
   cuDoubleComplex* complex128_pone_;
+};
+
+}  // namespace
+
+class CublasConstants {
+ public:
+  /// Returns the constants instance associated with the specified device
+  static _CublasConstants& Get(int device) {
+    static CublasConstants singleton;
+    return singleton._Get(device);
+  }
+
+ private:
+  _CublasConstants& _Get(int device) {
+    auto f = constants_.find(device);
+    if (f == constants_.end()) {
+      // Lazily construct new cuBLAS constants
+      f = constants_.emplace(device, device).first;
+    }
+    return f->second;
+  }
+
+  std::unordered_map<int, _CublasConstants> constants_;
 };
 
 }  // namespace blas
