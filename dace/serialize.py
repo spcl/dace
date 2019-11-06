@@ -162,7 +162,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
             val = attrs[prop_name]
         except KeyError:
             raise KeyError("Missing property for object of type " +
-                           type(object_with_propertes).__name__ + ":" +
+                           type(object_with_properties).__name__ + ":" +
                            prop_name)
 
         if isinstance(val, dict):

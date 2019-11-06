@@ -735,7 +735,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
                 #if prop['name'] == 'subgraph': continue
                 #set_properties_from_json(pattern, prop, sdfg)
 
-                dace.serialize.set_properties_from_json(
+                set_properties_from_json(
                     pattern, x['params']['props'], context={'sdfg': sdfg})
                 pattern.apply_pattern(sdfg)
 
