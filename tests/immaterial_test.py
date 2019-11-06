@@ -34,7 +34,7 @@ def immaterial_test(V, Vout):
 
 if __name__ == "__main__":
 
-    N.set(128)
+    N.set(16)
 
     V = dace.ndarray([N], dace.float64)
     Vout = dace.ndarray([N], dace.float64)
