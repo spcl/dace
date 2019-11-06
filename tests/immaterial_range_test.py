@@ -2,7 +2,7 @@
 from __future__ import print_function
 
 import dace
-import numpy as np
+import warnings
 
 N = dace.symbol('N')
 
@@ -34,6 +34,12 @@ def immaterial_range_test(V, Vout):
 
 
 if __name__ == "__main__":
+
+    if dace.Config.get_bool('optimizer',
+                            'automatic_strict_transformations') == False:
+        warnings.warn(
+            'This test is not supported in non-strict mode. Skipping')
+        exit(0)
 
     N.set(16)
     V = dace.ndarray([N], dace.float64)
