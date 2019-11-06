@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <title>SDFG Viewer</title>
-    <link rel="stylesheet" type="text/css" href="./client/external_lib/material/material-icons.css">
-    <script src="./client/renderer_dir/dagre.js"></script>
-    <script src="./client/external_lib/jquery.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="{{dir|safe}}./client/external_lib/material/material-icons.css">
+    <script src="{{dir|safe}}./client/renderer_dir/dagre.js"></script>
+    <script src="{{dir|safe}}./client/external_lib/jquery.min.js"></script>
 
-    <script src="./client/renderer_dir/global_vars.js"></script>
-    <script src="./client/renderer_elements.js"></script>
-    <script src="./client/context_menu.js"></script>
-    <script src="./client/sdfg_utils.js"></script>
-    <script src="./client/renderer.js"></script>
+    <script src="{{dir|safe}}./client/renderer_dir/global_vars.js"></script>
+    <script src="{{dir|safe}}./client/renderer_elements.js"></script>
+    <script src="{{dir|safe}}./client/context_menu.js"></script>
+    <script src="{{dir|safe}}./client/sdfg_utils.js"></script>
+    <script src="{{dir|safe}}./client/renderer.js"></script>
 </head>
 <body>
 <div id="filepicker"><form><input type="file"> <input type="button" id="reload" value="Refresh"></form></div>
