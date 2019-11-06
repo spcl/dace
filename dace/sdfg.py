@@ -260,7 +260,8 @@ class SDFG(OrderedDiGraph):
 
         # Inject the undefined symbols
         tmp['undefined_symbols'] = [
-            (k, v.to_json()) for k, v in self.undefined_symbols(True).items()
+            (k, v.to_json())
+            for k, v in sorted(self.undefined_symbols(True).items())
         ]
         tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
             self.scalar_parameters(True), key=lambda x: x[0])]
