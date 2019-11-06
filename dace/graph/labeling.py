@@ -718,7 +718,7 @@ def propagate_memlet(dfg_state,
     if union_inner_edges:
         aggdata = [
             e.data for e in neighboring_edges
-            if e.data.data == arr and e.data != memlet
+            if e.data.data == memlet.data and e.data != memlet
         ]
     else:
         aggdata = []

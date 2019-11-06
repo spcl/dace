@@ -102,6 +102,7 @@ class SDFGOptimizer(object):
 
         # Visualize SDFGs during optimization process
         VISUALIZE = Config.get_bool('optimizer', 'visualize')
+        VISUALIZE_SDFV = Config.get_bool('optimizer', 'visualize_sdfv')
         SAVE_DOTS = Config.get_bool('optimizer', 'savedots')
 
         if SAVE_DOTS:
@@ -109,6 +110,8 @@ class SDFGOptimizer(object):
             self.sdfg.save(os.path.join('_dotgraphs', 'before.sdfg'))
             if VISUALIZE:
                 os.system('xdot _dotgraphs/before.dot&')
+            if VISUALIZE_SDFV:
+                os.system('sdfv _dotgraphs/before.sdfg&')
 
         # Optimize until there is not pattern matching or user stops the process.
         pattern_counter = 0
@@ -187,6 +190,11 @@ class SDFGOptimizer(object):
                         time.sleep(0.7)
                         os.system(
                             'xdot _dotgraphs/after_%d_%s.dot&' %
+                            (pattern_counter, type(pattern_match).__name__))
+
+                    if VISUALIZE_SDFV:
+                        os.system(
+                            'sdfv _dotgraphs/after_%d_%s.sdfg&' %
                             (pattern_counter, type(pattern_match).__name__))
 
         return self.sdfg
