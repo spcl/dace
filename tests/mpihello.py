@@ -34,7 +34,7 @@ def mpihello(V, Vout):
 
 if __name__ == "__main__":
 
-    N.set(50)
+    N.set(128)
 
     V = dace.ndarray([N], dace.float64)
     Vout = dace.ndarray([N], dace.float64)
