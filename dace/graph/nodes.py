@@ -7,6 +7,7 @@ import dace
 import itertools
 import dace.serialize
 from typing import Set
+from dace.config import Config
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
@@ -900,13 +901,14 @@ class LibraryNode(CodeNode):
     def expand(self, sdfg, *args, **kwargs):
         """Shorthand to create and perform the expansion transformation
            for this library node."""
-        implementation = self.implementation
-        if implementation is None:
+        implementation = Config.get('experimental',
+                                    'library_node_implementation')
+        if implementation not in self.implementations.keys():
             implementation = self.default_implementation
             if implementation is None:
                 raise ValueError("No implementation or default "
                                  "implementation specified.")
-        Transformation = type(self).implementations[self.implementation]
+        Transformation = type(self).implementations[implementation]
         states = sdfg.states_for_node(self)
         if len(states) < 1:
             raise ValueError("Node \"" + str(self) +
