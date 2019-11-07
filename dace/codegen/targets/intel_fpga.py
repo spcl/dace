@@ -337,6 +337,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
          nested_global_transients) = self.make_parameters(
             sdfg, state, subgraphs)
 
+        # Scalar parameters are never output
+        sc_parameters = [(False, pname, param)
+                         for pname, param in scalar_parameters]
+
         host_code_header_stream = CodeIOStream()
         host_code_body_stream = CodeIOStream()
 
@@ -351,15 +355,15 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         # Generate host code
         self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters,
-            scalar_parameters, symbol_parameters, nested_global_transients,
+            sdfg, state, kernel_name, global_data_parameters + sc_parameters,
+            symbol_parameters, nested_global_transients,
             host_code_body_stream, function_stream, callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state,
                                              host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters, scalar_parameters,
+                              subgraph_parameters, sc_parameters,
                               symbol_parameters, kernel_stream,
                               host_code_header_stream, host_code_body_stream)
 
@@ -372,6 +376,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         self._host_codes.append(
             (kernel_name, host_code_header_stream.getvalue() +
              host_code_body_stream.getvalue()))
+
 
     @staticmethod
     def generate_host_function_prologue(sdfg, state, host_stream):
@@ -396,7 +401,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        scalar_parameters, symbol_parameters, module_stream,
+                        symbol_parameters, module_stream,
                         host_header_stream, host_body_stream):
 
         state_id = sdfg.node_id(state)
@@ -417,12 +422,17 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             if pname in added:
                 continue
             added.add(pname)
-            arg = self.make_kernel_argument(
-                p, pname, self._memory_widths[pname], is_output, True)
+            if isinstance(p, dace.data.Array):
+                arg = self.make_kernel_argument(
+                    p, pname, self._memory_widths[pname], is_output, True)
+            else:
+                arg = self.make_kernel_argument(
+                    p, pname, 1, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.signature(True, name=pname))
                 kernel_args_call.append(pname)
+
         kernel_args_opencl += symbol_sigs
         kernel_args_host += symbol_sigs
         kernel_args_call += symbol_names
@@ -443,9 +453,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 raise NotImplementedError(
                     "Unrolling of PEs not yet implemented for Intel FPGA.")
 
-        # Add kernel definition to host function
-        # host_header_stream.write("DACE_EXPORTED void {}({});\n\n".format(
-        #     module_function_name, ", ".join(kernel_args_host)))
 
         # Add kernel call host function
         host_body_stream.write(
@@ -908,7 +915,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(
-                    "__constant %s %s = %s;\n" % (types._CTYPES[type(val)],
+                    "__constant %s %s = %s;\n" % (dtypes._CTYPES[type(val)],
                                                   name, str(val)), sdfg)
 
 

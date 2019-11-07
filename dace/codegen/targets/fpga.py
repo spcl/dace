@@ -1269,12 +1269,11 @@ class FPGACodeGen(TargetCodeGenerator):
             module_name = "_".join(labels)
 
             self.generate_module(sdfg, state, module_name, subgraph,
-                                 subgraph_parameters[subgraph],
-                                 scalar_parameters, symbol_parameters,
+                                 subgraph_parameters[subgraph] + scalar_parameters, symbol_parameters,
                                  module_stream, entry_stream, host_stream)
 
     def generate_host_function_boilerplate(
-            self, sdfg, state, kernel_name, parameters, scalar_parameters,
+            self, sdfg, state, kernel_name, parameters,
             symbol_parameters, nested_global_transients, host_code_stream,
             header_stream, callsite_stream):
 

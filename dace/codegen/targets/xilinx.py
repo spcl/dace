@@ -106,7 +106,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         host_code = CodeIOStream()
         host_code.write("""\
-#include <dace/xilinx/host.h>\n\n""")
+#include "dace/xilinx/host.h"
+#include "dace/dace.h"
+#include <iostream>\n\n""")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
@@ -267,6 +269,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         self._frame.generate_fileheader(sdfg, module_stream)
         module_stream.write("\n", sdfg)
 
+        symbol_params = [
+            v.signature(with_types=True, name=k)
+            for k, v in symbol_parameters.items()
+        ]
+
         # Build kernel signature
         kernel_args = []
         for is_output, dataname, data in global_data_parameters:
@@ -274,9 +281,12 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 data, dataname, self._memory_widths[dataname], is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
-        kernel_args += [
-            arg.signature(with_types=True, name=argname)
-            for argname, arg in  symbol_parameters.items()]
+
+
+        kernel_args += ([
+                arg.signature(with_types=True, name=argname)
+                for argname, arg in scalar_parameters
+            ] + symbol_params)
 
         # Write kernel signature
         kernel_stream.write(
@@ -309,8 +319,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
     def generate_host_function_body(self, sdfg, state, kernel_name, parameters,
-                                    scalar_parameters, symbol_parameters,
-                                    kernel_stream):
+                                    symbol_parameters, kernel_stream):
 
         # Just collect all variable names for calling the kernel function
         kernel_args = [
@@ -333,7 +342,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
              kernel_args=", ".join(kernel_args)), sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        scalar_parameters, symbol_parameters, module_stream,
+                        symbol_parameters, module_stream,
                         entry_stream, host_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
@@ -349,6 +358,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_args_call = []
         kernel_args_module = []
         added = set()
+
         for is_output, pname, p in parameters:
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
@@ -380,9 +390,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                         p.signature(with_types=True, name=pname))
         kernel_args_call += symbol_names
         kernel_args_module += symbol_sigs
-
         module_function_name = "module_" + name
-
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_dict = subgraph.scope_dict(node_to_children=True)
@@ -404,7 +412,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".
-                        format(
+                            format(
                             param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
                     unrolled_loops += 1
 
@@ -436,13 +444,13 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             argname
             for out, argname, arg in parameters
             if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
+               and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
         }
         out_args = {
             argname
             for out, argname, arg in parameters
             if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
+               and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
         if len(in_args) > 0 or len(out_args) > 0:
             # Add ArrayInterface objects to wrap input and output pointers to
@@ -543,19 +551,20 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
          nested_global_transients) = self.make_parameters(
              sdfg, state, subgraphs)
 
+        # Scalar parameters are never output
+        sc_parameters = [(False, pname, param)
+                         for pname, param in scalar_parameters]
+
         host_code_stream = CodeIOStream()
 
         # Generate host code
-        self.generate_host_header(sdfg, kernel_name, global_data_parameters,
-                                  scalar_parameters, symbol_parameters,
+        self.generate_host_header(sdfg, kernel_name, global_data_parameters + sc_parameters, symbol_parameters,
                                   host_code_stream)
         self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters,
-            scalar_parameters, symbol_parameters, nested_global_transients,
+            sdfg, state, kernel_name, global_data_parameters + sc_parameters, symbol_parameters, nested_global_transients,
             host_code_stream, function_stream, callsite_stream)
         self.generate_host_function_body(
-            sdfg, state, kernel_name, global_data_parameters,
-            scalar_parameters, symbol_parameters, host_code_stream)
+            sdfg, state, kernel_name, global_data_parameters + sc_parameters, symbol_parameters, host_code_stream)
         # Store code to be passed to compilation phase
         self._host_codes.append((kernel_name, host_code_stream.getvalue()))
 
@@ -577,7 +586,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                                                  module_stream, entry_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters, scalar_parameters,
+                              subgraph_parameters, sc_parameters,
                               symbol_parameters, module_stream, entry_stream,
                               host_code_stream)
 
@@ -587,10 +596,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         self.generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id)
 
     def generate_host_header(self, sdfg, kernel_function_name, parameters,
-                             scalar_parameters, symbol_parameters,
+                             symbol_parameters,
                              host_code_stream):
 
         kernel_args = []
+
         seen = set()
         for is_output, name, arg in parameters:
             if isinstance(arg, dace.data.Array):
@@ -610,9 +620,6 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         host_code_stream.write(
             """\
-#include "dace/xilinx/host.h"
-#include <iostream>
-
 // Signature of kernel function (with raw pointers) for argument matching
 DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 kernel_function_name=kernel_function_name,
