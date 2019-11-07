@@ -558,7 +558,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         self.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                              callsite_stream, self._cpu_codegen._locals,
-                             self._cpu_codegen._ldepth)
+                             self._cpu_codegen._ldepth,
+                             self._cpu_codegen._toplevel_schedule)
 
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
