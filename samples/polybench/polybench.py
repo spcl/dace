@@ -51,6 +51,11 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
     for k, v in psize.items():
         k.set(v)
 
+    # Construct arrays from tuple arguments
+    for i, arg in enumerate(args):
+        if isinstance(arg, tuple):
+            args[i] = dace.ndarray(*arg)
+
     if FLAGS.simulate == False:
         if isinstance(func, dace.SDFG):
             sdfg = func

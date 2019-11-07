@@ -27,8 +27,8 @@ sizes = [{
 }]
 
 args = [
-    dace.ndarray([W, H], datatype),
-    dace.ndarray([W, H], datatype),
+    ([W, H], datatype),
+    ([W, H], datatype),
 ]
 
 # Constants

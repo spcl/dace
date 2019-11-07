@@ -44,6 +44,12 @@ required:
                 title: Visualize SDFG
                 description: Open a GraphViz window after every transformation.
 
+            visualize_sdfv:
+                type: bool
+                default: false
+                title: Visualize SDFG
+                description: Open a SDFV in browser every transformation.
+
             savedots:
                 type: bool
                 default: false

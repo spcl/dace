@@ -11,7 +11,7 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
-args = [dace.ndarray([N, N], datatype)]
+args = [([N, N], datatype)]
 
 
 def init_array(A):

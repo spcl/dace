@@ -1,9 +1,7 @@
 #!/usr/bin/env python
-from __future__ import print_function
 
 import argparse
 import dace
-import math
 import numpy as np
 
 N = dace.symbol('N', positive=True)
@@ -40,18 +38,15 @@ if __name__ == "__main__":
     parser.add_argument("ratio", type=float, nargs="?", default=0.5)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([N], dtype=dace.float32)
-    B = dace.ndarray([N], dtype=dace.float32)
-    outsize = dace.scalar(dace.uint32, allow_conflicts=True)
-    outsize[0] = 0
-
     N.set(args["N"])
     ratio = np.float32(args["ratio"])
 
     print('Predicate-Based Filter. size=%d, ratio=%f' % (N.get(), ratio))
 
-    A[:] = np.random.rand(N.get()).astype(dace.float32.type)
-    B[:] = dace.float32(0)
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.zeros_like(A)
+    outsize = dace.scalar(dace.uint32)
+    outsize[0] = 0
 
     pbf(A, B, outsize, ratio)
 

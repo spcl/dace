@@ -19,7 +19,7 @@ import numpy as np
 
 import dace
 from dace.frontend import operations
-from dace.frontend.python import ndarray
+from dace.frontend.python import wrappers
 from dace import symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.codegen import codegen
@@ -49,7 +49,7 @@ class ReloadableDLL(object):
         bypasses Python's dynamic library reloading issues. """
 
     def __init__(self, library_filename, program_name):
-        """ Creates a new reloadable shared object. 
+        """ Creates a new reloadable shared object.
             @param library_filename: Path to library file.
             @param program_name: Name of the DaCe program (for use in finding
                                  the stub library loader).
@@ -162,8 +162,8 @@ class CompiledSDFG(object):
 
     def _construct_args(self, **kwargs):
         """ Main function that controls argument construction for calling
-            the C prototype of the SDFG. 
-            
+            the C prototype of the SDFG.
+
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """
@@ -250,11 +250,10 @@ class CompiledSDFG(object):
             for arg, atype in callparams)
 
         # Replace arrays with their pointers
-        newargs = tuple(
-            (ctypes.c_void_p(arg.__array_interface__['data'][0]),
-             atype) if (isinstance(arg, ndarray.ndarray)
-                        or isinstance(arg, np.ndarray)) else (arg, atype)
-            for arg, atype in callparams)
+        newargs = tuple((ctypes.c_void_p(arg.__array_interface__['data'][0]),
+                         atype) if isinstance(arg, np.ndarray) else (arg,
+                                                                     atype)
+                        for arg, atype in callparams)
 
         newargs = tuple(
             atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg

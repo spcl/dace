@@ -2,7 +2,7 @@
 from __future__ import print_function
 
 import dace
-import numpy as np
+import warnings
 
 N = dace.symbol('N')
 
@@ -18,14 +18,11 @@ void __dace_serialize(const char* arrayname, int start, int end, const void* out
 }
 """
 
-V = dace.ndarray([N], dace.float64, materialize_func=materialize_V)
-Vout = dace.ndarray([N], dace.float64, materialize_func=serialize_Vout)
-
 
 @dace.program(
     dace.immaterial(dace.float64[N], materialize_V),
     dace.immaterial(dace.float64[N], serialize_Vout))
-def mpihello(V, Vout):
+def immaterial_test(V, Vout):
     # Transient variable
     @dace.map(_[0:N])
     def multiplication(i):
@@ -37,9 +34,17 @@ def mpihello(V, Vout):
 
 if __name__ == "__main__":
 
-    N.set(50)
+    if dace.Config.get_bool('optimizer',
+                            'automatic_strict_transformations') == False:
+        warnings.warn(
+            'This test is not supported in non-strict mode. Skipping')
+        exit(0)
 
-    print('Vector add MPI %d' % (N.get()))
+    N.set(16)
 
-    mpihello(V, Vout)
+    V = dace.ndarray([N], dace.float64)
+    Vout = dace.ndarray([N], dace.float64)
 
+    print('Immaterial element access test %d' % (N.get()))
+
+    immaterial_test(V, Vout)
