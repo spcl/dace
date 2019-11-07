@@ -1,7 +1,7 @@
 import os
 from typing import List
 
-from dace import types
+from dace import dtypes
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
@@ -63,7 +63,7 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Instantiate all instrumentation providers in SDFG
     frame._dispatcher.instrumentation[
-        types.InstrumentationType.No_Instrumentation] = None
+        dtypes.InstrumentationType.No_Instrumentation] = None
     for node, _ in sdfg.all_nodes_recursive():
         if hasattr(node, 'instrument'):
             frame._dispatcher.instrumentation[node.instrument] = \

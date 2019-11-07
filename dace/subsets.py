@@ -1,4 +1,4 @@
-from dace import data, symbolic, types
+from dace import data, symbolic, dtypes
 import re
 import sympy as sp
 from functools import reduce
@@ -227,13 +227,19 @@ class Range(Subset):
                 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
                                                     for ts in self.tile_sizes))
 
-    def offset(self, other, negative):
+    def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
             other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
-        for i, off in enumerate(other.min_element()):
+        if not indices:
+            indices = set(range(len(self.ranges)))
+        off = other.min_element()
+        for i in indices:
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off, re + mult * off, rs)
+            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+        # for i, off in enumerate(other.min_element()):
+        #     rb, re, rs = self.ranges[i]
+        #     self.ranges[i] = (rb + mult * off, re + mult * off, rs)
 
     def dims(self):
         return len(self.ranges)
@@ -423,6 +429,12 @@ class Range(Subset):
         return ", ".join(
             [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)])
 
+    @staticmethod
+    def ndslice_to_string_list(slice, tile_sizes=None):
+        if tile_sizes is None:
+            return [Range.dim_to_string(s) for s in slice]
+        return [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)]
+
     def ndrange(self):
         return [(rb, re, rs) for rb, re, rs in self.ranges]
 
@@ -480,6 +492,41 @@ class Range(Subset):
             return Indices(new_subset)
         else:
             raise NotImplementedError
+
+    def squeeze(self):
+        shape = self.size()
+        non_ones = [i for i, d in enumerate(shape) if d != 1]
+        squeezed_ranges = [self.ranges[i] for i in non_ones]
+        squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
+        if not squeezed_ranges:
+            squeezed_ranges = [(0, 0, 1)]
+            squeezed_tsizes = [1]
+            non_ones = [len(shape) - 1]
+        self.ranges = squeezed_ranges
+        self.tile_sizes = squeezed_tsizes
+        self.offset(self, True)
+        return non_ones
+
+    def unsqueeze(self, axes):
+        for axis in sorted(axes):
+            self.ranges.insert(axis, (0, 0, 1))
+            self.tile_sizes.insert(axis, 1)
+
+    def pop(self, dimensions):
+        new_ranges = []
+        new_tsizes = []
+        for i in range(len(self.ranges)):
+            if i not in dimensions:
+                new_ranges.append(self.ranges[i])
+                new_tsizes.append(self.tile_sizes[i])
+        if not new_ranges:
+            new_ranges = [self.ranges[-1]]
+            new_tsizes = [self.tile_sizes[-1]]
+        self.ranges = new_ranges
+        self.tile_sizes = new_tsizes
+
+    def string_list(self):
+        return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
 
 class Indices(Subset):
@@ -653,6 +700,10 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
+    def unsqueeze(self, axes):
+        for axis in sorted(axes):
+            self.indices.insert(axis, 0)
+
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     """ Perform union by creating a bounding-box of two subsets. """
@@ -673,24 +724,28 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
         @param subset_a: The first subset.
         @param subset_b: The second subset.
         @return: A Subset object whose size is at least the union of the two
-                 inputs.
+                 inputs. If union failed, returns None.
     """
-    if type(subset_a) != type(subset_b):
-        return bounding_box_union(subset_a, subset_b)
-    elif subset_a is not None and subset_b is None:
-        return subset_a
-    elif subset_b is not None and subset_a is None:
-        return subset_b
-    elif subset_a is None and subset_b is None:
-        raise TypeError('Both subsets cannot be None')
-    elif isinstance(subset_a, Indices):
-        # Two indices. If they are adjacent, returns a range that contains both,
-        # otherwise, returns a bounding box of the two
-        return bounding_box_union(subset_a, subset_b)
-    elif isinstance(subset_a, Range):
-        # TODO(later): More involved Strided-Tiled Range union
-        return bounding_box_union(subset_a, subset_b)
-    else:
-        warnings.warn('Unrecognized Subset type %s in union, degenerating to'
-                      ' bounding box' % type(subset_a).__name__)
-        return bounding_box_union(subset_a, subset_b)
+    try:
+        if type(subset_a) != type(subset_b):
+            return bounding_box_union(subset_a, subset_b)
+        elif subset_a is not None and subset_b is None:
+            return subset_a
+        elif subset_b is not None and subset_a is None:
+            return subset_b
+        elif subset_a is None and subset_b is None:
+            raise TypeError('Both subsets cannot be None')
+        elif isinstance(subset_a, Indices):
+            # Two indices. If they are adjacent, returns a range that contains both,
+            # otherwise, returns a bounding box of the two
+            return bounding_box_union(subset_a, subset_b)
+        elif isinstance(subset_a, Range):
+            # TODO(later): More involved Strided-Tiled Range union
+            return bounding_box_union(subset_a, subset_b)
+        else:
+            warnings.warn(
+                'Unrecognized Subset type %s in union, degenerating to'
+                ' bounding box' % type(subset_a).__name__)
+            return bounding_box_union(subset_a, subset_b)
+    except TypeError:  # cannot determine truth value of Relational
+        return None

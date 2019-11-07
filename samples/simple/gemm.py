@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-import gc
 import argparse
 import dace
 import numpy as np
@@ -76,7 +75,7 @@ if __name__ == "__main__":
         gemmfunc = dace.compile(gemm, A, B, C)
 
     if not args["compile-only"]:
-        gemmfunc(A, B, C)
+        gemmfunc(A=A, B=B, C=C, M=M, N=N, K=K)
 
     if dace.Config.get_bool('profiling'):
         dace.timethis('gemm', contender, dace.eval(2 * N * N * N), np.dot,

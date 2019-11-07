@@ -5,7 +5,7 @@ import itertools
 import networkx as nx
 
 import dace
-from dace import data, memlet, types, sdfg as sd, subsets, symbolic
+from dace import data, memlet, dtypes, sdfg as sd, subsets, symbolic
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 

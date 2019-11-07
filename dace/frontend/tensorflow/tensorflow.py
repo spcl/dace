@@ -204,7 +204,7 @@ class TFSession:
             dace.graph.edges.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 <" + str(iterations - 1),
-                    dace.types.Language.Python),
+                    dace.dtypes.Language.Python),
                 assignments={"__dacet1": "__dacet1+1"},
             ),
         )
@@ -215,8 +215,7 @@ class TFSession:
             dace.graph.edges.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 >= " +
-                    str(iterations - 1), dace.types.Language.Python)),
-        )
+                    str(iterations - 1), dace.dtypes.Language.Python)))
 
         try:
             iter(initializer)
@@ -518,7 +517,7 @@ class TFSession:
                 #        )
                 #        sdfg_args[aname][:] = arg
 
-            if len(patterns) > 0:
+            if patterns and len(patterns) > 0:
                 for _pattern in patterns:
                     self.graph.apply_transformations(_pattern, validate,
                                                      strict)
@@ -533,13 +532,16 @@ class TFSession:
 
         ############################
         # Create the function that invokes the SDFG
-        def call_func(feed_dict={}):
-            invoke_args = dict(
-                sdfg_args, **{(k if isinstance(k, str) else
-                               string_builder(k.name)): v
-                              for k, v in feed_dict.items()})
+        def call_func(feed_dict=None):
+            if feed_dict is not None:
+                invoke_args = dict(
+                    sdfg_args, **{(k if isinstance(k, str) else
+                                   string_builder(k.name)): v
+                                  for k, v in feed_dict.items()})
 
-            compiled_sdfg(**invoke_args)
+                compiled_sdfg(**invoke_args)
+            else:
+                compiled_sdfg(**sdfg_args)
 
             # Single output
             if output_type is object:
@@ -568,9 +570,9 @@ class TFSession:
     def run(
             self,
             nodes,
-            feed_dict={},
+            feed_dict=None,
             gpu=False,
-            transformations=[],
+            transformations=None,
             validate=False,
             strict=True,
             name=None,
@@ -3123,12 +3125,9 @@ class TFSession:
             schedule=dace.ScheduleType.Sequential,
         )
         tasklet = state.add_tasklet(
-            mapLabel + "_denominator",
-            {"j0", "j1"},
-            {"out"},
+            mapLabel + "_denominator", {"j0", "j1"}, {"out"},
             "out = dace::math::exp(j0-j1);",
-            language=dace.types.Language.CPP,
-        )
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(temp2Node, [inputParams[1]], [inputDims[1]], "0")
         inList = [inputNodes[0], temp1Node]
         self.add_in_memlets(inList, mapEntry, tasklet, inputDims, inputParams)
@@ -3150,12 +3149,9 @@ class TFSession:
         mapEntry, mapExit = state.add_map(mapLabel + "_softmax",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(
-            mapLabel + "_softmax",
-            {"j0", "j1", "j2"},
-            {"out"},
+            mapLabel + "_softmax", {"j0", "j1", "j2"}, {"out"},
             "out = (dace::math::exp(j0-j1))/j2;",
-            language=dace.types.Language.CPP,
-        )
+            language=dace.dtypes.Language.CPP)
         inList = [inputNodes[0], temp1Node, temp2Node]
         paramsList = inputParams + [inputParams[1]]
         dimsList = inputDims + [inputDims[1]]
@@ -3174,7 +3170,7 @@ class TFSession:
         #    {"j0", "j1"},
         #    {"out"},
         #    "if (int(j1) == i1) {\n\tout=-(dace::math::log(j0));}\nelse{\n\tout=0;}",
-        #    language=dace.types.Language.CPP,
+        #    language=dace.dtypes.Language.CPP,
         # )
         # self.reinitCR(outputList[0], [inputParams[1]], [inputDims[1]], "0")
         # self.add_in_memlets(
@@ -3312,12 +3308,9 @@ class TFSession:
             alpha + "*" + beta + "*j1*j0/j2;}\n else{\n out = -2*" + alpha +
             "*" + beta + "*j1*j0/j2;}")
         tasklet = state.add_tasklet(
-            label,
-            {"j0", "j1", "j2"},
-            {"out"},
+            label, {"j0", "j1", "j2"}, {"out"},
             taskletCode,
-            language=dace.types.Language.CPP,
-        )
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(preOut, [shortParams], [shortDims], "0")
         inList = [inputNodes[1]]
         inList.append(paddedInput)
@@ -3413,12 +3406,10 @@ class TFSession:
         mapEntry, mapExit = state.add_map(label,
                                           dict(zip(shortParams, shortDims)))
         tasklet = state.add_tasklet(
-            string_builder(node.name),
-            {"j0", "j1"},
-            {"out"},
+            string_builder(node.name), {"j0", "j1"}, {"out"},
             "out = j0/(pow(" + bias + "+" + alpha + "*j1," + beta + "));",
-            language=dace.types.Language.CPP,
-        )
+            language=dace.dtypes.Language.CPP)
+
         self.add_in_memlets(
             (inputNodes + [sqrsum]),
             mapEntry,
@@ -3643,12 +3634,9 @@ class TFSession:
         mapEntry, mapExit = state.add_map(mapLabel + "_denominator",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(
-            mapLabel + "_denominator",
-            {"j0", "j1"},
-            {"out"},
+            mapLabel + "_denominator", {"j0", "j1"}, {"out"},
             "out = dace::math::exp(j0-j1);",
-            language=dace.types.Language.CPP,
-        )
+            language=dace.dtypes.Language.CPP)
         self.reinitCR(temp2Node, [inputParams[1]], [inputDims[1]], "0")
         inList = [inputNodes[0], temp1Node]
         self.add_in_memlets(inList, mapEntry, tasklet, inputDims, inputParams)
@@ -3666,12 +3654,9 @@ class TFSession:
         mapEntry, mapExit = state.add_map(mapLabel + "_softmax",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(
-            mapLabel + "_softmax",
-            {"j0", "j1", "out"},
-            {"out"},
+            mapLabel + "_softmax", {"j0", "j1", "out"}, {"out"},
             "out = (dace::math::exp(j0-j1))/j2;",
-            language=dace.types.Language.CPP,
-        )
+            language=dace.dtypes.Language.CPP)
         inList = [inputList[0], temp1Node, temp2Node]
         paramsList = inputParams + [inputParams[1]]
         dimsList = inputDims + [inputDims[1]]

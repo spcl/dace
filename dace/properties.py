@@ -11,7 +11,7 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 from dace.symbolic import pystr_to_symbolic
-from dace.types import DebugInfo
+from dace.dtypes import DebugInfo
 import json
 
 ###############################################################################
@@ -431,9 +431,9 @@ class Property:
             # Data types (Note: Types must be qualified, as properties also have type subelements)
             "subsets.Range": dace.subsets.Range,
             "subsets.Indices": dace.subsets.Indices,
-            "pointer": dace.types.pointer,
-            "callback": dace.types.callback,
-            "struct": dace.types.struct,
+            "pointer": dace.dtypes.pointer,
+            "callback": dace.dtypes.callback,
+            "struct": dace.dtypes.struct,
             "ndarray": NumpyLoader
         }
 
@@ -999,7 +999,7 @@ class CodeProperty(Property):
         return tmp
 
     def to_json(self, obj):
-        lang = dace.types.Language.Python
+        lang = dace.dtypes.Language.Python
         if obj is None:
             return json.dumps(obj)
 
@@ -1027,11 +1027,11 @@ class CodeProperty(Property):
             return None
 
         if lang is None:
-            lang = dace.types.Language.Python
+            lang = dace.dtypes.Language.Python
         elif lang.endswith("Python"):
-            lang = dace.types.Language.Python
+            lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
-            lang = dace.types.Language.CPP
+            lang = dace.dtypes.Language.CPP
 
         try:
             cdata = tmp['string_data']
@@ -1046,7 +1046,7 @@ class CodeProperty(Property):
         if language is None:
             raise TypeError("Must pass language as second argument to "
                             "from_string method of CodeProperty")
-        if language == dace.types.Language.Python:
+        if language == dace.dtypes.Language.Python:
             block = CodeBlock(ast.parse(string).body)
             block.as_string = string
             return {'code_or_block': block, 'language': language}
@@ -1088,7 +1088,7 @@ class CodeProperty(Property):
             try:
                 language = getattr(obj, "_" + self.attr_name)['language']
             except:
-                language = dace.types.Language.Python
+                language = dace.dtypes.Language.Python
             if language is not None:
                 # Store original string
                 val = self.from_string(val, language)['code_or_block']
@@ -1098,9 +1098,9 @@ class CodeProperty(Property):
                 val = val['code_or_block']
             except:
                 # Default to Python
-                language = dace.types.Language.Python
+                language = dace.dtypes.Language.Python
             try:
-                if language is not dace.types.Language.Python and not isinstance(
+                if language is not dace.dtypes.Language.Python and not isinstance(
                         val, str):
                     raise TypeError(
                         "Only strings accepted for other "
@@ -1358,12 +1358,12 @@ class TypeClassProperty(Property):
 
     @property
     def dtype(self):
-        return dace.types.typeclass
+        return dace.dtypes.typeclass
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate("dace.types.{}".format(s))
-        if dtype is None or not isinstance(dtype, dace.types.typeclass):
+        dtype = pydoc.locate("dace.dtypes.{}".format(s))
+        if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
             raise ValueError("Not a valid data type: {}".format(s))
         return dtype
 

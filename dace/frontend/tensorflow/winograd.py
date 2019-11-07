@@ -265,7 +265,7 @@ def mm(
         #    # Teardown code (called in __dace_exit())
         #    code_exit="""
         # """,
-        language=dace.types.Language.CPP,
+        language=dace.dtypes.Language.CPP,
     )
 
     if not buffer_a:
@@ -806,7 +806,7 @@ def winograd_convolution(dace_session, tf_node):
         string_builder(tf_node.name) + "_printer" + "(" +
         ",".join(taskletInputs) + ");",
         location="cpu",
-        language=dace.types.Language.CPP,
+        language=dace.dtypes.Language.CPP,
     )
     for _n, _conn in zip(debugNodes, taskletInputs):
         _n_cpu = state.add_transient(

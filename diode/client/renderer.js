@@ -490,7 +490,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         node.attributes.layout.width = nodesize.width;
         node.attributes.layout.height = nodesize.height;
         node.attributes.layout.label = node.label;
-        node.attributes.layout.type = node.type;
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
@@ -882,6 +881,8 @@ class SDFGRenderer {
                         return;
 
                     let ng = state.data.graph;
+                    if (!ng)
+                        return;
                     ng.nodes().forEach(node_id => {
                         let node = ng.node(node_id);
                         if (node.intersect(x, y, w, h)) {

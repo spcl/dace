@@ -26,7 +26,8 @@ def mapreduce_test_2(A, B, C):
 
         out = in_A * in_B
 
-    dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
+    C[:] = dace.reduce(lambda a, b: a + b, tmp, axis=2, identity=0)
+    # dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
 
 
 if __name__ == "__main__":
@@ -52,6 +53,8 @@ if __name__ == "__main__":
     mapreduce_test_2(A, B, C)
     np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * K))
+    diff = np.linalg.norm(C_regression - C) / np.linalg.norm(C_regression)
+    print(C_regression)
+    print(C)
     print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+    exit(0 if diff <= 1e-10 else 1)

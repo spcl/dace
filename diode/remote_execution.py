@@ -4,6 +4,7 @@ import stat
 import tempfile
 import traceback
 import subprocess
+import dace.dtypes
 from string import Template
 from dace.codegen.compiler import generate_program_folder
 from dace.config import Config
@@ -265,7 +266,8 @@ class Executor:
                          use_mpi=True,
                          fail_on_nonzero=False,
                          omp_num_threads=None,
-                         additional_options_dict={}):
+                         additional_options_dict=None):
+        additional_options_dict = additional_options_dict or {}
         run = "${command} "
         if use_mpi == True:
             run = self.config_get("execution", "mpi", "mpiexec")
@@ -277,7 +279,7 @@ class Executor:
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
         perf_instrumentation_result_marker = ""
-        if (omp_num_threads is not None):
+        if omp_num_threads is not None:
             omp_num_threads_str = "export OMP_NUM_THREADS=" + str(
                 omp_num_threads) + "\n"
             omp_num_threads_unset_str = "unset OMP_NUM_THREADS\n"

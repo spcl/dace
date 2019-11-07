@@ -78,7 +78,7 @@ def gramschmidt(A, R, Q):
             out_Q >> Q[i, k]
             out_Q = in_A / in_R
 
-        @dace.map
+        @dace.mapscope
         def set_rna(j: _[k + 1:N]):
             # for j in range(k+1, N, 1):
 

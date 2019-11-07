@@ -1,7 +1,7 @@
 """ Contains redundant array removal transformations. """
 
 import copy
-from dace import data as dt, types, subsets, symbolic
+from dace import data as dt, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
 from dace.sdfg import SDFGState

@@ -53,7 +53,7 @@ def init_array(A, C4):
 def doitgen(A, C4):
     sum = dace.define_local([NR, NQ, NP], dtype=datatype)
 
-    @dace.map
+    @dace.mapscope
     def doit(r: _[0:NR], q: _[0:NQ]):
         # nA << A[r, q, :]
         # nC4 << C4[:, :]

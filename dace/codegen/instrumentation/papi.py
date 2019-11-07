@@ -9,7 +9,7 @@ from dace.codegen import cppunparse
 
 from dace.config import Config
 
-from dace.types import ScheduleType
+from dace.dtypes import ScheduleType
 
 import re
 
@@ -19,7 +19,7 @@ import ast
 import copy
 import sqlite3
 import dace
-from dace import types
+from dace import dtypes
 from dace.graph import nodes
 
 # Helper function to get the module path
@@ -368,10 +368,10 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         # From cuda.py
         cpu_storage_types = [
-            types.StorageType.CPU_Heap,
-            types.StorageType.CPU_Stack,
-            types.StorageType.CPU_Pinned,
-            types.StorageType.Register,
+            dtypes.StorageType.CPU_Heap,
+            dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_Pinned,
+            dtypes.StorageType.Register,
         ]
 
         perf_cpu_only = (src_storage in cpu_storage_types) and (
@@ -831,8 +831,8 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     @staticmethod
     def perf_get_supersection_start_string(node, sdfg, dfg, unified_id):
-        from dace import types
-        if node.map.schedule == types.ScheduleType.CPU_Multicore:
+        from dace import dtypes
+        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
 
             if not hasattr(node.map, '_can_be_supersection_start'):
                 node.map._can_be_supersection_start = True
@@ -846,13 +846,13 @@ class PAPIInstrumentation(InstrumentationProvider):
                 if PAPIInstrumentation.map_depth(
                         x) > PAPISettings.perf_max_scope_depth():
                     break  # We have our relevant nodes.
-                if x.map.schedule == types.ScheduleType.CPU_Multicore:
+                if x.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                     # Nested SuperSections are not supported
                     # We have to mark the outermost section,
                     # which also means that we have to somehow tell the lower nodes
                     # to not mark the section start.
                     x.map._can_be_supersection_start = False
-                elif x.map.schedule == types.ScheduleType.Sequential:
+                elif x.map.schedule == dtypes.ScheduleType.Sequential:
                     x.map._can_be_supersection_start = False
                 else:
                     # Any other type (FPGA, GPU) - not supported by PAPI. TODO: support

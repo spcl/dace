@@ -156,6 +156,7 @@ sdaccel_timeline_*
 
 # NVIDIA
 *.nvprof
+out.sdfg
 
 # Miscellaneous
 *~

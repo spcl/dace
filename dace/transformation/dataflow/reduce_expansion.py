@@ -1,7 +1,7 @@
 """ Contains classes that implement the reduce-expansion transformation. """
 
 from copy import deepcopy as dcpy
-from dace import sdfg, subsets, types, symbolic
+from dace import sdfg, subsets, dtypes, symbolic
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedMultiDiGraph
 from dace.transformation import pattern_matching as pm
@@ -81,7 +81,7 @@ class ReduceExpansion(pm.Transformation):
         inner_map_entry, inner_map_exit = graph.add_map(
             'reduce_inner',
             inner_map_range,
-            schedule=(types.ScheduleType.Default
+            schedule=(dtypes.ScheduleType.Default
                       if len(outer_map_range) > 0 else red_node.schedule))
 
         tasklet = graph.add_tasklet(

@@ -274,10 +274,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
             setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
             
             if(msg.type == "symbol-properties") {
-                this.symbolPropertyChanged(msg.node, msg.name, msg.value);
+                this.symbolPropertyChanged(msg.element, msg.name, msg.value);
             }
             else
-                this.propertyChanged(msg.node, msg.name, msg.value);
+                this.propertyChanged(msg.element, msg.name, msg.value);
             
         }, true);
 
@@ -342,7 +342,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
     addDataSymbol(type, aname) {
 
@@ -388,7 +388,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.resetState(old);
 
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
     analysisProvider(aname, nodeinfo) {
@@ -571,7 +571,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 new_attrs[bprefix + xa] = node_b.attributes[xa];
             }
         }
-        // Copy the entry node for good measure
+        // Copy the first node for good measure
+        // TODO: Inhibits property update for map/array
         let ecpy = JSON.parse(JSON.stringify(node_a));
         ecpy.attributes = new_attrs;
         return ecpy;
@@ -608,7 +609,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 
         */
 
-        let params = node.data().props;
+        let params = node.data;
         let transthis = this;
 
         // Render in the (single, global) property window
@@ -676,7 +677,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         /*
             A data symbol was changed.
         */
-        console.log("symbolPropertyChanged", node.data(), name, value);
+        console.log("symbolPropertyChanged", name, value);
         
         // Search arrays first
         let o = this.getSDFGDataFromState();
@@ -702,7 +703,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
     propertyChanged(node, name, value) {
@@ -710,34 +711,20 @@ class DIODE_Context_SDFG extends DIODE_Context {
             When a node-property is changed, the changed data is written back
             into the state.
         */
-        let nref = this.getSDFGElementReference(node.node_id, node.state_id);
+        let nref = node.element;
+        let sdfg = node.sdfg;
 
-        // Special case: Entry nodes may contain properties of exit nodes
-        if(name.startsWith("exit_")) {
-            let exit_node = find_exit_for_entry(nref[1].nodes[node.state_id].nodes, nref[0]);
-            nref = this.getSDFGElementReference(exit_node.id, node.state_id);
-            name = name.substr("exit_".length);
-        }
-        else if(name.startsWith("entry_")) {
-            name = name.substr("entry_".length);
-        }
-        else if(name.startsWith("datadesc_")) {
-            name = name.substr("datadesc_".length);
-            let sdfg = nref[1];
-            nref = [sdfg.attributes._arrays[nref[0].attributes.data], sdfg];
-        }
-
-        nref[0].attributes[name] = value;
+        nref.attributes[name] = value;
 
         let old = this.getState();
         if(old.type == "SDFG")
-            old = nref[1];
+            old = sdfg;
         else
-            old.sdfg_data.sdfg = nref[1];
+            old.sdfg_data.sdfg = sdfg;
 
         this.resetState(old);
 
-        this.diode.showStaleDataButton();
+        this.diode.refreshSDFG();
     }
 
 
@@ -962,46 +949,34 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 dst_nodeid = edge.dst;
             }
 
-            let render_props = n => {
-                let attr = n.attributes;
+            let render_props = element_list => {
+                let properties = [];
+                element_list.forEach(element => {
+                    // Collect all properties and metadata for each element
+                    let attr = element.attributes;
+                    let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
 
-                let akeys = Object.keys(attr).filter(x => !x.startsWith("_meta_"));
+                    for (let k of akeys) {
+                        let value = attr[k];
+                        let meta = attr["_meta_" + k];
+                        if (meta == undefined)
+                            continue;
 
-                let proplist = [];
-                for (let k of akeys) {
+                        let pdata = JSON.parse(JSON.stringify(meta));
+                        pdata.value = value;
+                        pdata.name = k;
 
-                    let value = attr[k];
-                    let meta = attr["_meta_" + k];
-                    if (meta == undefined) {
-                        continue;
+                        properties.push({property: pdata, element: element, sdfg: foreground_elem.sdfg,
+                            category: element.type + ' - ' + pdata.category});
                     }
-
-                    let pdata = JSON.parse(JSON.stringify(meta));
-                    pdata.value = value;
-                    pdata.name = k;
-
-                    proplist.push(pdata);
-                }
-                let nid = parseInt(n.id);
-                if (!n || isNaN(nid))
-                    nid = null;
-                if (nid === null && dst_nodeid !== null)
-                    nid = dst_nodeid;
-
-                let propobj = {
-                    node_id: nid,
-                    state_id: state_id,
-                    element: n,
-                    sdfg_name: foreground_elem.sdfg.attributes.name,
-                    sdfg: foreground_elem.sdfg,
-                    data: () => ({props: proplist})
-                };
-
-                this.renderProperties(propobj);
+                });
+                this.renderProperties({
+                    data: properties
+                });
             };
 
             if (foreground_elem instanceof Edge)
-                render_props(foreground_elem.data);
+                render_props([foreground_elem.data]);
             else if (foreground_elem instanceof Node) {
                 let n = foreground_elem.data.node;
                 let state = foreground_elem.sdfg.nodes[foreground_elem.parent_id];
@@ -1014,9 +989,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     let gstate = renderer.graph.node(foreground_elem.parent_id);
                     let rnode = gstate.data.graph.node(exit_node.id);
                     this.highlighted_elements.push(rnode);
-                    
-                    let tmp = this.merge_properties(n, 'entry_', exit_node, 'exit_');
-                    render_props(tmp);
+
+                    render_props([n, exit_node]);
                 } else if (n.type.endsWith("Exit")) {
                     // Find the matching entry node and continue with that
                     let entry_id = parseInt(n.scope_entry);
@@ -1027,17 +1001,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     let rnode = gstate.data.graph.node(entry_node.id);
                     this.highlighted_elements.push(rnode);
 
-                    let tmp = this.merge_properties(entry_node, 'entry_', n, 'exit_');
-                    render_props(tmp);
+                    render_props([entry_node, n]);
                 } else if (n.type === "AccessNode") {
                     // Find matching data descriptor and show that as well
                     let ndesc = foreground_elem.sdfg.attributes._arrays[n.attributes.data];
-                    let tmp = this.merge_properties(n, '', ndesc, 'datadesc_');
-                    render_props(tmp);
+                    render_props([n, ndesc]);
                 } else
-                    render_props(n);
+                    render_props([n]);
             } else if (foreground_elem instanceof State)
-                render_props(foreground_elem.data.state);
+                render_props([foreground_elem.data.state]);
 
             this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "red";});
             renderer.draw_async();
@@ -1246,7 +1218,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
-            this.propertyChanged(msg.node, msg.name, msg.value);
+            this.propertyChanged(msg.element, msg.name, msg.value);
             setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
         });
     }
@@ -1288,14 +1260,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 
     propertyChanged2(node, name, value) {
-        /*
-            The new transformation model does not allow changing properties
-            of an already-applied transformation. This means there is no recompilation
-        */
-
-        let tmp = node.data();
-        
-        tmp[name] = value;
+        node.element[name] = value;
     }
 
     renderProperties(node, pos, apply_params) {
@@ -3928,6 +3893,8 @@ class DIODE {
             return;
         }
         if(!Array.isArray(params)) {
+            let realparams = params;
+
             // Format is different (diode to_json with seperate meta / value - fix before passing to renderer)
             let params_keys = Object.keys(params).filter(x => !x.startsWith('_meta_'));
             params_keys = params_keys.filter(x => Object.keys(params).includes('_meta_' + x));
@@ -3938,7 +3905,7 @@ class DIODE {
                 mx.name = x;
                 mx.value = params[x];
 
-                return mx;
+                return {property: mx, category: mx.category, element: realparams, data: node.data};
             });
 
             params = _lst;
@@ -3948,19 +3915,25 @@ class DIODE {
             // Event-based
             let target_name = transthis;
             transthis = {
-                propertyChanged: (node, name, value) => {
+                propertyChanged: (element, name, value) => {
+                    // Modify in SDFG object first
                     this.project().request(['property-changed-' + target_name], x => {
 
                     }, {
                         timeout: 200,
                         params: {
-                            node: node,
+                            element: element,
                             name: name,
                             value: value,
                             type: options ? options.type : options
                         }
                     });
-                    this.showStaleDataButton();
+
+                    // No need to refresh SDFG if transformation
+                    if (options && options.type === 'transformation')
+                        return;
+                    
+                    this.refreshSDFG();
                 },
                 applyTransformation: () => {
                     this.project().request(['apply-adv-transformation-' + target_name], x => {
@@ -3982,7 +3955,6 @@ class DIODE {
             };
         }
         let dt = new DiodeTables.Table();
-        let i = 0;
         let cur_dt = dt;
 
         let dtc = null;
@@ -4002,7 +3974,7 @@ class DIODE {
             
             // Sort within category
             let cat_name = z[0];
-            let y = z[1].sort((a, b) => a.name.localeCompare(b.name));
+            let y = z[1].sort((a, b) => a.property.name.localeCompare(b.property.name));
 
 
             // Add Category header
@@ -4014,11 +3986,12 @@ class DIODE {
 
             dtc = new DiodeTables.TableCategory(cur_dt, tr);
 
-            for(let x of y) {
+            for(let propx of y) {
                 let title_part = document.createElement("span");
+                let x = propx.property;
                 title_part.innerText = x.name;
                 title_part.title = x.desc;
-                let value_part = diode.getMatchingInput(transthis, x, node);
+                let value_part = diode.getMatchingInput(transthis, x, propx);
                 let cr = cur_dt.addRow(title_part, value_part);
                 if(dtc != null) {
                     dtc.addContentRow(cr);
@@ -4052,9 +4025,10 @@ class DIODE {
             let button = document.createElement('button');
             button.innerText = "Apply advanced transformation";
             button.addEventListener('click', _x => {
+                button.disabled = true;
                 this.project().request(['apply-adv-transformation-' + options.sdfg_name], _y => {}, {
                     params: JSON.stringify(options.apply_params)
-                })
+                });
             });
             parent.appendChild(button);
 
@@ -5133,7 +5107,7 @@ class DIODE {
             }, storage_types, qualified);
         }
         else if(x.type == "typeclass") {
-            // #TODO: Find a better type for this
+            // #TODO: Type combobox
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
@@ -5188,7 +5162,7 @@ class DIODE {
         let dobj = {
             transthis: typeof(transthis) == 'string' ? transthis : transthis.created,
             node: node,
-            params: params ? JSON.stringify(params) : undefined,
+            params: params,
             options: options
         };
         this.replaceOrCreate(['display-properties'], 'PropWinComponent', dobj,
@@ -5212,6 +5186,10 @@ class DIODE {
     }
     removeStaleDataButton() {
         this.project().request(['remove_stale_data_button'], x=>{}, {});
+    }
+
+    refreshSDFG() {
+        this.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true });
     }
 
     __impl_showStaleDataButton() {
@@ -5802,7 +5780,7 @@ class DIODE {
         */
         let post_params = {};
         if(options.code_is_sdfg === true) {
-            post_params = { "sdfg": code };
+            post_params = { "sdfg": stringify_sdfg(code) };
 
             post_params['code'] = options.runnercode;
         }
@@ -5966,7 +5944,7 @@ class DIODE {
         */
         let post_params = {};
         if(options.code_is_sdfg === true) {
-            post_params = { "sdfg": code };
+            post_params = { "sdfg": stringify_sdfg(code) };
             post_params['code'] = options.runnercode;
         }
         else {

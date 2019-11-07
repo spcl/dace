@@ -119,13 +119,17 @@ class CPPLocals(LocalScheme):
     def is_defined(self, local_name, current_depth):
         return local_name in self.locals
 
-    def define(self, local_name, lineno, depth):
-        self.locals[local_name] = (lineno, depth)
+    def define(self, local_name, lineno, depth, dtype=None):
+        self.locals[local_name] = (lineno, depth, dtype)
+
+    def get_type(self, local_name):
+        return self.locals[local_name][
+            2] if local_name in self.locals else None
 
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
         toremove = set()
-        for local_name, (lineno, depth) in self.locals.items():
+        for local_name, (lineno, depth, dtype) in self.locals.items():
             if depth >= from_indentation:
                 toremove.add(local_name)
 
@@ -142,13 +146,17 @@ class PythonLocals(LocalScheme):
     def is_defined(self, local_name, current_depth):
         return local_name in self.locals and self.locals[local_name][1] == current_depth
 
-    def define(self, local_name, lineno, depth):
-        self.locals[local_name] = (lineno, depth)
+    def define(self, local_name, lineno, depth, dtype=None):
+        self.locals[local_name] = (lineno, depth, dtype)
+
+    def get_type(self, local_name):
+        return self.locals[local_name][
+            2] if local_name in self.locals else None
 
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
         toremove = set()
-        for local_name, (lineno, depth) in self.locals.items():
+        for local_name, (lineno, depth, dtype) in self.locals.items():
             if depth >= from_indentation:
                 toremove.add(local_name)
         for var in toremove:
@@ -175,6 +183,7 @@ class CPPUnparser:
         self.indent_output = indent_output
         self.indent_offset = indent_offset
         self.expr_semicolon = expr_semicolon
+        self.dtype = None
         if not isinstance(locals, LocalScheme):
             raise TypeError('Locals must be a LocalScheme object')
         self.locals = locals
@@ -307,12 +316,17 @@ class CPPUnparser:
                     target,
                 (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
                     target.id, self._indent):
-                self.locals.define(target.id, t.lineno, self._indent)
+                self.locals.define(target.id, t.lineno, self._indent, None)
                 self.write('auto ')
             self.dispatch(target)
+            if not isinstance(target, ast.Subscript):
+                self.dtype = self.locals.get_type(target.id)
+            else:
+                self.dtype = self.locals.get_type(target.value.id)
 
         self.write(" = ")
         self.dispatch(t.value)
+        self.dtype = None
         self.write(';')
 
     def _AugAssign(self, t):
@@ -338,7 +352,7 @@ class CPPUnparser:
             if len(t.target.elts) > 1:
                 self.dispatch_lhs_tuple(t.target.elts)
             else:
-                target = target.elts[0]
+                target = t.target.elts[0]
         else:
             target = t.target
 
@@ -720,11 +734,15 @@ class CPPUnparser:
 
     def _Num(self, t):
         repr_n = repr(t.n)
+
+        # For complex values, use type of assignment (if exists), or
+        # double-complex (128-bit) otherwise
+        dtype = self.dtype or 'dace::complex128'
+
         if six.PY3:
             if repr_n.endswith("j"):
-                # FIXME: Complex is not a native type in C++, this type-hack should deduce the target type
                 self.write(
-                    "dace::complexJ()*%s" % repr_n.replace("inf", INFSTR)[:-1])
+                    "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
                 self.write(repr_n.replace("inf", INFSTR))
         else:
@@ -735,9 +753,8 @@ class CPPUnparser:
                 repr_n = repr_n.replace("*j", "j")
 
             if repr_n.endswith("j"):
-                # FIXME: Complex is not a native type in C++, this type-hack should deduce the target type
                 self.write(
-                    "dace::complexJ()*%s" % repr_n.replace("inf", INFSTR)[:-1])
+                    "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
                 # Substitute overflowing decimal literal for AST infinities.
                 self.write(repr_n.replace("inf", INFSTR))

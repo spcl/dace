@@ -12,7 +12,6 @@ N = dace.symbol('N', positive=True)
 @dace.program(dace.float32[N], dace.float32[N], dace.uint32[1], dace.float32)
 def pbf(A, out, outsz, ratio):
     ostream = dace.define_stream(dace.float32, 1)
-    ostream >> out
 
     @dace.map(_[0:N])
     def filter(i):
@@ -26,6 +25,8 @@ def pbf(A, out, outsz, ratio):
             b = a
 
         osz = filter
+
+    ostream >> out
 
 
 def regression(A, ratio):

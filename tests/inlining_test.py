@@ -4,13 +4,12 @@ import dace as dp
 W = dp.symbol('W')
 H = dp.symbol('H')
 
+#@dp.program
+#def mirror(i):
+#    return -i
 
-@dp.external_function
-def mirror(i):
-    return -i
 
-
-@dp.external_function
+@dp.program
 def transpose(input, output):
     @dp.map(_[0:H, 0:W])
     def compute(i, j):
@@ -19,7 +18,7 @@ def transpose(input, output):
         b = a
 
 
-@dp.external_function
+@dp.program
 def bla(A, B, alpha):
     @dp.tasklet
     def something():
@@ -30,9 +29,10 @@ def bla(A, B, alpha):
 
 @dp.program
 def myprogram(A, B, cst):
-    dp.call(transpose, A, B)
-    dp.call(bla, A, B, -dp.call(mirror, cst) + 1)
-    bla(A, B, -dp.call(mirror, -cst) + 1)
+    transpose(A, B)
+    bla(A, B, cst)
+    #bla(A, B, -mirror(cst) + 1)
+    #bla(A, B, -mirror(-cst) + 1)
 
 
 if __name__ == '__main__':

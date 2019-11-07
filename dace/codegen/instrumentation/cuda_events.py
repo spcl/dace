@@ -1,4 +1,4 @@
-from dace import types
+from dace import dtypes
 from dace.graph import nodes
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
@@ -63,7 +63,7 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
                 s = self._get_sobj(node)
-                if s.instrument == types.InstrumentationType.CUDA_Events:
+                if s.instrument == dtypes.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(
                         self._create_event('b' + idstr), sdfg, state_id, node)
@@ -71,7 +71,7 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
                         self._create_event('e' + idstr), sdfg, state_id, node)
 
         # Create and record a CUDA event for the entire state
-        if state.instrument == types.InstrumentationType.CUDA_Events:
+        if state.instrument == dtypes.InstrumentationType.CUDA_Events:
             idstr = 'b' + self._idstr(sdfg, state, None)
             local_stream.write(self._create_event(idstr), sdfg, state_id)
             local_stream.write(self._record_event(idstr, 0), sdfg, state_id)
@@ -79,7 +79,7 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
     def on_state_end(self, sdfg, state, local_stream, global_stream):
         state_id = sdfg.node_id(state)
         # Record and measure state stream event
-        if state.instrument == types.InstrumentationType.CUDA_Events:
+        if state.instrument == dtypes.InstrumentationType.CUDA_Events:
             idstr = self._idstr(sdfg, state, None)
             local_stream.write(
                 self._record_event('e' + idstr, 0), sdfg, state_id)
@@ -95,7 +95,7 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
                 s = self._get_sobj(node)
-                if s.instrument == types.InstrumentationType.CUDA_Events:
+                if s.instrument == dtypes.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(
                         self._destroy_event('b' + idstr), sdfg, state_id, node)
@@ -106,11 +106,11 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
                        global_stream):
         state_id = sdfg.node_id(state)
         s = self._get_sobj(node)
-        if s.instrument == types.InstrumentationType.CUDA_Events:
-            if s.schedule != types.ScheduleType.GPU_Device:
+        if s.instrument == dtypes.InstrumentationType.CUDA_Events:
+            if s.schedule != dtypes.ScheduleType.GPU_Device:
                 raise TypeError('CUDA Event instrumentation only applies to '
                                 'GPU_Device map scopes')
-            
+
             idstr = 'b' + self._idstr(sdfg, state, node)
             outer_stream.write(
                 self._record_event(idstr, node._cuda_stream), sdfg, state_id,
@@ -121,7 +121,7 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
         state_id = sdfg.node_id(state)
         entry_node = state.entry_node(node)
         s = self._get_sobj(node)
-        if s.instrument == types.InstrumentationType.CUDA_Events:
+        if s.instrument == dtypes.InstrumentationType.CUDA_Events:
             idstr = 'e' + self._idstr(sdfg, state, entry_node)
             outer_stream.write(
                 self._record_event(idstr, node._cuda_stream), sdfg, state_id,

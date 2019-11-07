@@ -2,7 +2,7 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import symbolic, types
+from dace import data, dtypes, subsets, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from typing import List, Dict, Union
@@ -207,7 +207,7 @@ class MapFusion(pattern_matching.Transformation):
                     new_tuple = []
                     if isinstance(_tup, symbolic.symbol):
                         new_tuple = symbolic.symbol(params_dict[str(_tup)])
-                    else:
+                    elif isinstance(_tup, (list, tuple)):
                         for _sym in _tup:
                             if isinstance(_sym, symbolic.symbol):
                                 new_tuple.append(
@@ -215,6 +215,8 @@ class MapFusion(pattern_matching.Transformation):
                             else:
                                 new_tuple.append(_sym)
                         new_tuple = tuple(new_tuple)
+                    else:
+                        new_tuple = _tup
                     expected_second_subset.append(new_tuple)
                 if expected_second_subset == list(second_memlet.subset):
                     provided = True
@@ -353,7 +355,7 @@ class MapFusion(pattern_matching.Transformation):
                             dtype=_access_node.desc(graph).dtype,
                             toplevel=False,
                             transient=True,
-                            storage=types.StorageType.Register,
+                            storage=dtypes.StorageType.Register,
                         )
                         _edge.data.data = (
                             local_name)  # graph.add_access(local_name).data
@@ -439,7 +441,7 @@ class MapFusion(pattern_matching.Transformation):
                             local_node = sdfg.add_scalar(
                                 local_name,
                                 dtype=_access_node.desc(graph).dtype,
-                                storage=types.StorageType.Register,
+                                storage=dtypes.StorageType.Register,
                                 toplevel=False,
                                 transient=True,
                             )

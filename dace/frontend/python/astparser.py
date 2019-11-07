@@ -6,41 +6,10 @@ import copy
 from functools import wraps
 import inspect
 
-from dace import data, subsets, symbolic, types
+from dace import data, subsets, symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import astnodes, astutils
 from dace.frontend.python.astutils import *
-
-
-def function_to_ast(f):
-    """ Obtain the source code of a Python function and create an AST. 
-        @param f: Python function.
-        @return: A 4-tuple of (AST, function filename, function line-number,
-                               source code as string).
-    """
-    try:
-        src = inspect.getsource(f)
-    # TypeError: X is not a module, class, method, function, traceback, frame,
-    # or code object; OR OSError: could not get source code
-    except (TypeError, OSError):
-        raise TypeError('cannot obtain source code for dace program')
-
-    src_file = inspect.getfile(f)
-    _, src_line = inspect.findsource(f)
-    src_ast = ast.parse(_remove_outer_indentation(src))
-    ast.increment_lineno(src_ast, src_line)
-
-    return src_ast, src_file, src_line, src
-
-
-def _remove_outer_indentation(src: str):
-    """ Removes extra indentation from a source Python function.
-        @param src: Source code (possibly indented).
-        @return: Code after de-indentation.
-    """
-    lines = src.split('\n')
-    indentation = len(lines[0]) - len(lines[0].lstrip())
-    return '\n'.join([line[indentation:] for line in lines])
 
 
 class FindLocals(ast.NodeVisitor):
@@ -53,50 +22,6 @@ class FindLocals(ast.NodeVisitor):
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Store):
             self.locals[node.id] = node
-
-
-def parse_dace_program(f, argtypes, global_vars, modules):
-    """ Parses a `@dace.program` function into a _ProgramNode object. 
-        @param f: A Python function to parse.
-        @param argtypes: An iterable of tuples (name, type) for the given
-                         function's arguments.
-        @param global_vars: A dictionary of global variables in the closure
-                            of `f`.
-        @param modules: A dictionary from an imported module name to the
-                        module itself.
-        @return: Hierarchical tree of `astnodes._Node` objects, where the top
-                 level node is an `astnodes._ProgramNode`.
-        @rtype: astnodes._ProgramNode
-    """
-    src_ast, src_file, src_line, src = function_to_ast(f)
-
-    # Find local variables
-    local_finder = FindLocals()
-    local_finder.visit(src_ast)
-    local_vars = local_finder.locals
-
-    # 1. Inline all "dace.call"ed functions and structs
-    src_ast = StructTransformer(global_vars).visit(src_ast)
-    inliner = FunctionInliner(global_vars, modules, local_vars)
-    src_ast = inliner.visit(src_ast)
-
-    # 2. resolve all the symbols in the AST
-    allowed_globals = global_vars.copy()
-    allowed_globals.update(argtypes)
-    symresolver = SymbolResolver(allowed_globals)
-    src_ast = symresolver.visit(src_ast)
-
-    # 3. Parse the DaCe program to a hierarchical dependency representation
-    ast_parser = ParseDaCe(src_file, src_line, argtypes, global_vars, modules,
-                           symresolver)
-    ast_parser.visit(src_ast)
-    pdp = ast_parser.program
-    pdp.source = src
-    pdp.filename = src_file
-    pdp.param_syms = sorted(symbolic.getsymbols(argtypes.values()).items())
-    pdp.argtypes = argtypes
-
-    return pdp
 
 
 class MemletRemover(ExtNodeTransformer):
@@ -120,7 +45,7 @@ class StructTransformer(ast.NodeTransformer):
         super().__init__()
         self._structs = {
             k: v
-            for k, v in gvars.items() if isinstance(v, types.struct)
+            for k, v in gvars.items() if isinstance(v, dtypes.struct)
         }
 
     def visit_Call(self, node: ast.Call):
@@ -193,6 +118,7 @@ class ParseDaCe(ExtNodeVisitor):
     ###############################################################
     def _get_module(self, node):
         try:
+            #fullmodname = rname(node)
             fullmodname = inspect.getmodule(eval(unparse(node),
                                                  self.globals)).__name__
         except NameError:
@@ -261,7 +187,7 @@ class ParseDaCe(ExtNodeVisitor):
 
             # External function calls
             elif func in self.globals:
-                if isinstance(self.globals[func], types._external_function):
+                if isinstance(self.globals[func], dtypes._external_function):
                     # External function needs to be recompiled with current
                     # symbols
                     src_ast, src_file, src_line, src = function_to_ast(
@@ -579,7 +505,7 @@ class ParseDaCe(ExtNodeVisitor):
                 return None
             elif (funcname.rfind('.') != -1
                   and funcname[funcname.rfind('.') +
-                               1:] in types.TYPECLASS_STRINGS):
+                               1:] in dtypes.TYPECLASS_STRINGS):
                 return node
             else:
                 raise DaCeSyntaxError(
@@ -751,10 +677,10 @@ class ParseDaCe(ExtNodeVisitor):
                         self.getarg_or_kwarg(dec, 1, 'global_code'))
 
                 if lang is None:
-                    lang = types.Language.Python
+                    lang = dtypes.Language.Python
                 else:
                     try:
-                        lang = types.Language[lang]
+                        lang = dtypes.Language[lang]
                     except KeyError:
                         raise DaCeSyntaxError(
                             self, node,
@@ -1240,10 +1166,10 @@ class ParseDaCe(ExtNodeVisitor):
                         self.getarg_or_kwarg(dec, 1, 'global_code'))
 
                 if lang is None:
-                    lang = types.Language.Python
+                    lang = dtypes.Language.Python
                 else:
                     try:
-                        lang = types.Language[lang]
+                        lang = dtypes.Language[lang]
                     except KeyError:
                         raise DaCeSyntaxError(
                             self, node,
@@ -1492,18 +1418,18 @@ class SymbolResolver(astutils.ExtNodeTransformer):
         sym = self.symbols[node.id]
         if isinstance(sym, symbolic.symbol):
             return ast.copy_location(ast.Name(id=sym.name, ctx=node.ctx), node)
-        elif isinstance(sym, types.typeclass):
+        elif isinstance(sym, dtypes.typeclass):
             # Find dace module name
             dacemodule = next(
                 k for k, v in self.symbols.items()
-                if isinstance(v, type(types)) and v.__name__ == 'dace')
+                if isinstance(v, type(dtypes)) and v.__name__ == 'dace')
 
             return ast.copy_location(
                 ast.Attribute(
                     value=ast.Name(id=dacemodule, ctx=ast.Load()),
                     attr=sym.to_string(),
                     ctx=node.ctx), node)
-        elif types.isconstant(sym):
+        elif dtypes.isconstant(sym):
             return ast.copy_location(ast.Num(n=sym, ctx=node.ctx), node)
         elif isinstance(sym, ast.Name):
             return ast.copy_location(ast.Name(id=sym.id, ctx=node.ctx), node)
@@ -1541,9 +1467,9 @@ class FunctionInliner(ExtNodeTransformer):
     """ A Python AST transformer that inlines functions called (e.g., with 
         "dace.call") in an existing AST. """
 
-    def __init__(self, global_vars, modules, local_vars={}):
+    def __init__(self, global_vars, modules, local_vars=None):
         self.globals = global_vars
-        self.locals = local_vars
+        self.locals = local_vars or {}
         self.modules = modules
         self.function_inline_counter = CounterDict()
 
@@ -1636,7 +1562,7 @@ class FunctionInliner(ExtNodeTransformer):
 
         # Obtain the function object
         f = None
-        if isinstance(self.globals[funcname], types._external_function):
+        if isinstance(self.globals[funcname], dtypes._external_function):
             f = self.globals[funcname].func
         else:
             f = self.globals[funcname]
