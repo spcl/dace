@@ -3,8 +3,8 @@ from functools import reduce
 import operator
 import copy as cp
 
-import json
 import dace
+import dace.serialize
 from dace import data as dt, subsets, symbolic, dtypes
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
@@ -56,22 +56,22 @@ class Memlet(object):
                                  unknown at compile time.
             @param subset: The subset of `data` that is going to be accessed.
             @param vector_length: The length of a single unit of access to
-                                  the data (used for vectorization 
+                                  the data (used for vectorization
                                   optimizations).
             @param wcr: A lambda function specifying how write-conflicts
                         are resolved. The syntax of the lambda function receives two elements: `current` value and `new` value,
                         and returns the value after resolution. For example,
                         summation is `lambda cur, new: cur + new`.
-            @param wcr_identity: Identity value used for the first write 
+            @param wcr_identity: Identity value used for the first write
                                  conflict. B{Note:} this parameter will soon
                                  be deprecated.
-            @param other_subset: The reindexing of `subset` on the other 
+            @param other_subset: The reindexing of `subset` on the other
                                  connected data.
-            @param debuginfo: Source-code information (e.g., line, file) 
+            @param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
-            @param wcr_conflict: If False, forces non-locked conflict 
+            @param wcr_conflict: If False, forces non-locked conflict
                                  resolution when generating code. The default
-                                 is to let the code generator infer this 
+                                 is to let the code generator infer this
                                  information from the SDFG.
         """
 
@@ -94,26 +94,21 @@ class Memlet(object):
 
         self.debuginfo = debuginfo
 
-    def toJSON(self, parent_graph=None):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self, parent_graph=None):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         retdict = {"type": "Memlet", "label": str(self), "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Memlet":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Memlet("", dace.dtypes.DYNAMIC, None, 1)
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 
@@ -132,34 +127,34 @@ class Memlet(object):
                          parameter will soon be deprecated.
             @type data: Either a string of the data descriptor name or an
                         AccessNode.
-            @param subset_str: The subset of `data` that is going to 
+            @param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
             @param veclen: The length of a single unit of access to
                            the data (used for vectorization optimizations).
-            @param wcr_str: A lambda function (as a string) specifying 
-                            how write-conflicts are resolved. The syntax 
+            @param wcr_str: A lambda function (as a string) specifying
+                            how write-conflicts are resolved. The syntax
                             of the lambda function receives two elements:
                             `current` value and `new` value,
-                            and returns the value after resolution. For 
-                            example, summation is 
+                            and returns the value after resolution. For
+                            example, summation is
                             `'lambda cur, new: cur + new'`.
-            @param wcr_identity: Identity value used for the first write 
+            @param wcr_identity: Identity value used for the first write
                                  conflict. B{Note:} this parameter will soon
                                  be deprecated.
-            @param other_subset_str: The reindexing of `subset` on the other 
+            @param other_subset_str: The reindexing of `subset` on the other
                                      connected data (as a string).
-            @param wcr_conflict: If False, forces non-locked conflict 
+            @param wcr_conflict: If False, forces non-locked conflict
                                  resolution when generating code. The default
-                                 is to let the code generator infer this 
+                                 is to let the code generator infer this
                                  information from the SDFG.
             @param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
                                  `dace.dtypes.DYNAMIC` (-1),
                                  designates that the number of accesses is
                                  unknown at compile time.
-            @param debuginfo: Source-code information (e.g., line, file) 
+            @param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
-                                 
+
         """
         subset = SubsetProperty.from_string(subset_str)
         if num_accesses is not None:
@@ -231,7 +226,7 @@ class Memlet(object):
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
     def __label__(self, sdfg, state):
-        """ Returns a string representation of the memlet for display in a 
+        """ Returns a string representation of the memlet for display in a
             graph.
 
             @param sdfg: The SDFG in which the memlet resides.
