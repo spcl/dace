@@ -8,18 +8,26 @@ namespace blas {
 
 class BlasConstants {
 public:
-    static constexpr const void* Complex64Zero() { return &complex64_zero_; }
-    static constexpr const void* Complex128Zero() { return &complex128_zero_; }
-    static constexpr const void* Complex64Pone() { return &complex64_pone_; }
-    static constexpr const void* Complex128Pone() { return &complex128_pone_; }
+    static BlasConstants &Get() {
+      static BlasConstants singleton;
+      return singleton;
+    }
+
+    const void* Complex64Zero() const { return &complex64_zero_; }
+    const void* Complex128Zero() const { return &complex128_zero_; }
+    const void* Complex64Pone() const { return &complex64_pone_; }
+    const void* Complex128Pone() const { return &complex128_pone_; }
 
 private:
-    static constexpr std::complex<float> complex64_zero_ = std::complex<float>(0.0f, 0.0f);
-    static constexpr std::complex<double> complex128_zero_ = std::complex<double>(0.0, 0.0);
-    static constexpr std::complex<float> complex64_pone_ = std::complex<float>(1.0f, 0.0f);
-    static constexpr std::complex<double> complex128_pone_ = std::complex<double>(1.0, 0.0);
+    BlasConstants() = default;
+
+    const std::complex<float> complex64_zero_{0.0f, 0.0f};
+    const std::complex<double> complex128_zero_{0.0, 0.0};
+    const std::complex<float> complex64_pone_{1.0f, 0.0f};
+    const std::complex<double> complex128_pone_{1.0, 0.0};
 };
 
 }   // namespace blas
 
 }   // namespace dacelib
+
