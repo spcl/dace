@@ -338,6 +338,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
          nested_global_transients) = self.make_parameters(
             sdfg, state, subgraphs)
 
+        # Scalar parameters are never output
+        sc_parameters = [(False, pname, param)
+                         for pname, param in scalar_parameters]
+
         host_code_header_stream = CodeIOStream()
         host_code_body_stream = CodeIOStream()
 
@@ -352,8 +356,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         # Generate host code
         self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters,
-            scalar_parameters, symbol_parameters, nested_global_transients,
+            sdfg, state, kernel_name, global_data_parameters + sc_parameters,
+            symbol_parameters, nested_global_transients,
             host_code_body_stream, function_stream, callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state,
