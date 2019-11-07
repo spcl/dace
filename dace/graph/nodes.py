@@ -880,7 +880,7 @@ class Reduce(Node):
 
 
 @make_properties
-class LibraryNode(Node):
+class LibraryNode(CodeNode):
 
     name = Property(dtype=str, desc="Name of node")
     implementation = Property(
