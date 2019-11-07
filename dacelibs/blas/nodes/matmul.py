@@ -1,3 +1,5 @@
+from copy import deepcopy as dc
+from dace.config import Config
 import dace.library
 import dace.properties
 import dace.graph.nodes
@@ -21,11 +23,15 @@ class ExpandMatMulPure(ExpandTransformation):
         def matmul(_a: dtype[m, k], _b: dtype[k, n], _c: dtype[m, n]):
             _c[:] = _a @ _b
 
-        return matmul.to_sdfg()
+        default_implementation = Config.get('frontend', 'implementation')
+        Config.set('frontend', 'implementation', value='sdfg')
+        sdfg = matmul.to_sdfg()
+        Config.set('frontend', 'implementation', value=default_implementation)
+        return sdfg
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(state, sdfg)
+        node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
@@ -39,7 +45,7 @@ class ExpandMatMulOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(state, sdfg)
+        node.validate(sdfg, state)
         dtype = node.dtype
         if dtype == dace.float32:
             func = "sgemm"
@@ -89,7 +95,7 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(state, sdfg)
+        node.validate(sdfg, state)
         dtype = node.dtype
         if dtype == dace.float32:
             func = "Sgemm"
@@ -141,7 +147,7 @@ class MatMul(dace.graph.nodes.LibraryNode):
         super().__init__(name, *args, **kwargs)
         self.dtype = dtype
 
-    def validate(self, state, sdfg):
+    def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to matrix-matrix product")
@@ -150,20 +156,23 @@ class MatMul(dace.graph.nodes.LibraryNode):
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
-        in_memlets[0].subset.squeeze()
-        size0 = in_memlets[0].subset.size()
+        in_subset0 = dc(in_memlets[0].subset)
+        in_subset0.squeeze()
+        size0 = in_subset0.size()
         if len(size0) != 2:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
-        in_memlets[1].subset.squeeze()
-        size1 = in_memlets[1].subset.size()
+        in_subset1 = dc(in_memlets[1].subset)
+        in_subset1.squeeze()
+        size1 = in_subset1.size()
         if len(size1) != 2:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
         if size0[1] != size1[0]:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        out_memlet.subset.squeeze()
-        size2 = out_memlet.subset.size()
+        out_subset = dc(out_memlet.subset)
+        out_subset.squeeze()
+        size2 = out_subset.size()
         if len(size2) != 2:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
