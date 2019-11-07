@@ -176,20 +176,22 @@ class MatMul(dace.graph.nodes.LibraryNode):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to matrix-matrix product")
-        in_memlets = [in_edges[0].data, in_edges[1].data]
+        for _, _, _, dst_conn, memlet in state.in_edges(self):
+            if dst_conn == '_a':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size0 = subset.size()
+            if dst_conn == '_b':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
-        in_subset0 = dc(in_memlets[0].subset)
-        in_subset0.squeeze()
-        size0 = in_subset0.size()
         if len(size0) != 2:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
-        in_subset1 = dc(in_memlets[1].subset)
-        in_subset1.squeeze()
-        size1 = in_subset1.size()
         if len(size1) != 2:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
