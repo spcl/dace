@@ -696,3 +696,9 @@ required:
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+            
+            library_node_implementation:
+                type: string
+                default: "pure"
+                title: Default implementation for library nodes
+                description: Default implementation for library nodes.
