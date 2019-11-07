@@ -236,11 +236,25 @@ class CodeNode(Node):
     """ A node that contains runnable code with acyclic external data
         dependencies. May either be a tasklet or a nested SDFG, and
         denoted by an octagonal shape. """
-
+    
+    label = Property(dtype=str, desc="Name of the CodeNode")
+    location = Property(dtype=str,
+                        desc="CodeNode execution location descriptor",
+                        allow_none=True)
     environments = SetProperty(
         str,
         desc="Environments required by CMake to build and run this code node.",
         default=set())
+    
+    def __init__(self,
+                 label="",
+                 location=None,
+                 inputs=None,
+                 outputs=None):
+        super(CodeNode, self).__init__(inputs or set(), outputs or set())
+        # Properties
+        self.label = label
+        self.location = location
 
 
 @make_properties
@@ -252,7 +266,7 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    label = Property(dtype=str, desc="Name of the tasklet")
+    # label = Property(dtype=str, desc="Name of the tasklet")
     code = CodeProperty(desc="Tasklet code")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -261,8 +275,8 @@ class Tasklet(CodeNode):
         default="")
     code_exit = CodeProperty(
         desc="Extra code that is called on DaCe runtime cleanup", default="")
-    location = Property(
-        dtype=str, desc="Tasklet execution location descriptor")
+    # location = Property(
+    #     dtype=str, desc="Tasklet execution location descriptor")
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -281,15 +295,15 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location="-1",
                  debuginfo=None):
-        super(Tasklet, self).__init__(inputs or set(), outputs or set())
+        super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.label = label
+        # self.label = label
         # Set the language directly
         #self.language = language
         self.code = {'code_or_block': code, 'language': language}
 
-        self.location = location
+        # self.location = location
         self.code_global = {'code_or_block': code_global, 'language': language}
         self.code_init = {'code_or_block': code_init, 'language': language}
         self.code_exit = {'code_or_block': code_exit, 'language': language}
@@ -363,7 +377,7 @@ class NestedSDFG(CodeNode):
         @note: A nested SDFG cannot create recursion (one of its parent SDFGs).
     """
 
-    label = Property(dtype=str, desc="Name of the SDFG")
+    # label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
     schedule = Property(
@@ -371,7 +385,7 @@ class NestedSDFG(CodeNode):
         desc="SDFG schedule",
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x])
-    location = Property(dtype=str, desc="SDFG execution location descriptor")
+    # location = Property(dtype=str, desc="SDFG execution location descriptor")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
@@ -391,13 +405,13 @@ class NestedSDFG(CodeNode):
                  schedule=dtypes.ScheduleType.Default,
                  location="-1",
                  debuginfo=None):
-        super(NestedSDFG, self).__init__(inputs, outputs)
+        super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.label = label
+        # self.label = label
         self.sdfg = sdfg
         self.schedule = schedule
-        self.location = location
+        # self.location = location
         self.debuginfo = debuginfo
 
     @staticmethod
