@@ -24,7 +24,6 @@ def mapreduce_test(A, B, sum):
         t = a * 5
 
     sum[:] = dace.reduce(lambda a, b: a + b, tmp)
-    # dace.reduce(lambda a, b: a + b, tmp, sum)
 
 
 if __name__ == "__main__":

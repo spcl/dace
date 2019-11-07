@@ -1,3 +1,5 @@
+import functools
+
 from dace import data, subsets, symbolic, dtypes
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator
@@ -214,9 +216,12 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                             (cppunparse.pyexpr2cpp(symbolic.symstr(rb)),
                              cppunparse.pyexpr2cpp(symbolic.symstr(s))))
             elif len(nonIndexDims) == 0:  # Scalar view
-                # Compute address
-                memlet_params[-1] += ' + ' + cpp_array_expr(
-                    sdfg, memlet, False)
+                if len(memlet_params) > 0:
+                    # Compute address
+                    memlet_params[-1] += ' + ' + cpp_array_expr(
+                        sdfg, memlet, False)
+                else:
+                    memlet_params.append(cpp_array_expr(sdfg, memlet, False))
                 dims = 0
 
         else:

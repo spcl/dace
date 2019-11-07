@@ -27,7 +27,6 @@ def mapreduce_test_2(A, B, C):
         out = in_A * in_B
 
     C[:] = dace.reduce(lambda a, b: a + b, tmp, axis=2, identity=0)
-    # dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
 
 
 if __name__ == "__main__":

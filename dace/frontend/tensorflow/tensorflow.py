@@ -523,11 +523,6 @@ class TFSession:
                                                      strict)
             self.graph.draw_to_file()
             compiled_sdfg = self.graph.compile(optimizer=False)
-
-            sdfg_args_filename = os.path.join(".dacecache", name,
-                                              "sdfg_args.pickle")
-            with open(sdfg_args_filename, "wb") as handle:
-                pickle.dump(sdfg_args, handle, pickle.HIGHEST_PROTOCOL)
             sdfg_args.update(self.callbackFunctionDict)
 
         ############################
@@ -737,6 +732,10 @@ class TFSession:
                 dace.callback(outputList[0].desc(self.graph).dtype,
                               *callback_input_types))
         self.callbackFunctionDict[node_name] = tensorflow_callback
+
+        # Register callback in SDFG
+        self.graph.add_symbol(node_name,
+                              self.callbackTypeDict[node_name].dtype)
 
         callback_tasklet = self.state.add_tasklet(
             node_name,

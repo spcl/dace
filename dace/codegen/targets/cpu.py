@@ -868,7 +868,12 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
-    def memlet_definition(self, sdfg, memlet, output, local_name):
+    def memlet_definition(self,
+                          sdfg,
+                          memlet,
+                          output,
+                          local_name,
+                          allow_shadowing=False):
         result = ("auto __%s = " % local_name + self.memlet_ctor(
             sdfg, memlet, output) + ";\n")
 
@@ -899,8 +904,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     result += "{} {};".format(memlet_type, local_name)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             elif memlet.num_accesses == -1:
                 if output:
                     # Variable number of writes: get reference to the target of
@@ -912,8 +919,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary
                     result += "auto const &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             else:
                 raise dace.codegen.codegen.CodegenError(
                     "Unsupported number of accesses {} for scalar {}".format(
@@ -925,20 +934,26 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     result += "{} {} = __{}.val<{}>();".format(
                         memlet_type, local_name, local_name, memlet.veclen)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             else:
                 if memlet.subset.data_dims() == 0:
                     # Forward ArrayView
                     result += "auto &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Scalar)
+                    self._dispatcher.defined_vars.add(
+                        local_name,
+                        DefinedType.Scalar,
+                        allow_shadowing=allow_shadowing)
                 else:
                     result += "auto *{} = __{}.ptr<{}>();".format(
                         local_name, local_name, memlet.veclen)
-                    self._dispatcher.defined_vars.add(local_name,
-                                                      DefinedType.Pointer)
+                    self._dispatcher.defined_vars.add(
+                        local_name,
+                        DefinedType.Pointer,
+                        allow_shadowing=allow_shadowing)
         elif var_type == DefinedType.Stream or var_type == DefinedType.StreamArray:
             if memlet.num_accesses == 1:
                 if output:
@@ -946,13 +961,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     result += "auto {} = __{}.pop();".format(
                         local_name, local_name)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Scalar,
+                    allow_shadowing=allow_shadowing)
             else:
                 # Just forward actions to the underlying object
                 result += "auto &{} = __{};".format(local_name, local_name)
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Stream)
+                self._dispatcher.defined_vars.add(
+                    local_name,
+                    DefinedType.Stream,
+                    allow_shadowing=allow_shadowing)
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
 
@@ -1404,13 +1423,17 @@ class CPUCodeGen(TargetCodeGenerator):
         for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
             if vconn in inout or in_memlet.data is None:
                 continue
+            # TODO: Instead of allowing shadowing, emit nested SDFG as a
+            #       separate function
             callsite_stream.write(
-                self.memlet_definition(sdfg, in_memlet, False, vconn), sdfg,
+                self.memlet_definition(
+                    sdfg, in_memlet, False, vconn, allow_shadowing=True), sdfg,
                 state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
                 callsite_stream.write(
-                    self.memlet_definition(sdfg, out_memlet, True, uconn),
+                    self.memlet_definition(
+                        sdfg, out_memlet, True, uconn, allow_shadowing=True),
                     sdfg, state_id, node)
 
         callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
@@ -1572,6 +1595,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
                 if node.map.unroll:
                     result.write("#pragma unroll", sdfg, state_id, node)
+
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %
                     (var, sym2cpp(begin), var, sym2cpp(end + 1), var,
@@ -1597,41 +1621,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                                                None, result)
             self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
                                                  None, result)
-
-        # # Generate register definitions for inter-tasklet memlets
-        # scope_dict = dfg.scope_dict()
-        # for edge in dfg.edges():
-        #     # Only interested in edges within current scope
-        #     if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
-        #         continue
-        #     if isinstance(edge.src, nodes.CodeNode) and isinstance(
-        #             edge.dst, nodes.CodeNode):
-        #         local_name = edge.data.data
-        #         # Allocate variable type
-        #         code = "dace::vec<%s, %s> %s;" % (
-        #             sdfg.arrays[edge.data.data].dtype.ctype,
-        #             sym2cpp(edge.data.veclen),
-        #             local_name,
-        #         )
-        #         result.write(code, sdfg, state_id, [edge.src, edge.dst])
-        #         arg_type = sdfg.arrays[edge.data.data]
-        #         if (isinstance(arg_type, dace.data.Scalar)
-        #                 or isinstance(arg_type, dace.dtypes.typeclass)):
-        #             self._dispatcher.defined_vars.add(local_name,
-        #                                               DefinedType.Scalar)
-        #         elif isinstance(arg_type, dace.data.Array):
-        #             self._dispatcher.defined_vars.add(local_name,
-        #                                               DefinedType.Pointer)
-        #         elif isinstance(arg_type, dace.data.Stream):
-        #             if arg_type.is_stream_array():
-        #                 self._dispatcher.defined_vars.add(
-        #                     local_name, DefinedType.StreamArray)
-        #             else:
-        #                 self._dispatcher.defined_vars.add(
-        #                     local_name, DefinedType.Stream)
-        #         else:
-        #             raise TypeError("Unrecognized argument type: {}".format(
-        #                 type(arg_type).__name__))
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1950,6 +1939,20 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             end_braces += 1
             use_tmpout = True
 
+        # Compute output expression
+        outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
+            sdfg,
+            output_memlet,
+            offset=["__o%d" % i for i in range(output_dims)],
+            relative_offset=False,
+        ))
+
+        if len(axes) != input_dims and node.identity is not None:
+            # Write code for identity value in multiple axes
+            callsite_stream.write(
+                "%s = %s;" % (outvar, sym2cpp(node.identity)), sdfg, state_id,
+                node)
+
         # Instrumentation: internal part
         if instr is not None:
             callsite_stream.write(inner_stream.getvalue())
@@ -1975,13 +1978,6 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         credtype = "dace::ReductionType::" + str(
             redtype)[str(redtype).find(".") + 1:]
 
-        # Use index expressions
-        outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
-            sdfg,
-            output_memlet,
-            offset=["__o%d" % i for i in range(output_dims)],
-            relative_offset=False,
-        ))
         invar = cpp_array_expr(
             sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
@@ -2180,21 +2176,12 @@ def ndslice_cpp(slice, dims, rowmajor=True):
     if len(slice) == 0:  # Scalar
         return "0"
 
-    generated_index = False
-
     for i, d in enumerate(slice):
         if isinstance(d, tuple):
             raise SyntaxError(
                 "CPU backend does not yet support ranges as inputs/outputs")
 
         # TODO(later): Use access order
-
-        if str(d) == "0":
-            continue
-
-        if generated_index:
-            result.write(" + ")
-        generated_index = True
 
         result.write(sym2cpp(d))
 
@@ -2203,7 +2190,6 @@ def ndslice_cpp(slice, dims, rowmajor=True):
             strdims = [str(dim) for dim in dims[i + 1:]]
             result.write(
                 "*%s + " % "*".join(strdims))  # Multiply by leading dimensions
-
 
     return result.getvalue()
 

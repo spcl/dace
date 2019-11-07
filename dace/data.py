@@ -434,7 +434,7 @@ class Stream(Data):
     # Properties
     strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
-    buffer_size = Property(dtype=int, desc="Size of internal buffer.")
+    buffer_size = SymbolicProperty(desc="Size of internal buffer.")
     veclen = Property(
         dtype=int, desc="Vector length. Memlets must adhere to this.")
 

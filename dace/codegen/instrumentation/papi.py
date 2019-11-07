@@ -2076,13 +2076,13 @@ LIMIT
                 target = sp.functions.Min(
                     retparams[x] * (retparams[x] - 1) / 2, 0)
                 bstr = str(element)
-                element = sp.sympify(bstr, sp.abc._clash)
+                element = symbolic.pystr_to_symbolic(bstr)
                 element = element.subs(
                     x, target)  # Add the classic sum formula; going upwards
 
                 # To not have hidden elements that get added again later, we also replace the values in the other itvars...
                 for k, v in retparams.items():
-                    newv = sp.sympify(str(v), sp.abc._clash)
+                    newv = symbolic.pystr_to_symbolic(str(v))
 
                     itsyms = symbols_in_sympy_expr(newv)
                     tarsyms = symbols_in_sympy_expr(target)
@@ -2253,15 +2253,13 @@ LIMIT
                     if memlet.wcr is not None:
                         # write_and_resolve
                         # We have to assume that every reduction costs 3 accesses of the same size
-                        out_costs += 3 * sp.sympify(
-                            PAPIUtils.get_memlet_byte_size(sdfg, memlet),
-                            sp.abc._clash)
+                        out_costs += 3 * symbolic.pystr_to_symbolic(
+                            PAPIUtils.get_memlet_byte_size(sdfg, memlet))
                     else:
                         #'%s.write(%s);\n'
                         # This standard operation is already counted
-                        out_costs += sp.sympify(
-                            PAPIUtils.get_memlet_byte_size(sdfg, memlet),
-                            sp.abc._clash)
+                        out_costs += symbolic.pystr_to_symbolic(
+                            PAPIUtils.get_memlet_byte_size(sdfg, memlet))
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
                 pass
@@ -2368,7 +2366,7 @@ LIMIT
         import sympy as sp
         import dace.symbolic as symbolic
 
-        input_size = sp.sympify(input_size, sp.abc._clash)
+        input_size = symbolic.pystr_to_symbolic(input_size)
 
         used_symbols = symbolic.symbols_in_sympy_expr(input_size)
         defined_symbols = sdfg.symbols_defined_at(node)
@@ -2442,7 +2440,7 @@ LIMIT
             elif isinstance(node, MapExit):
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
-                return itcount * sp.sympify(
+                return itcount * symbolic.pystr_to_symbolic(
                     PAPIUtils.get_tasklet_byte_accesses(
                         node, dfg, sdfg, state_id))
             else:

@@ -173,7 +173,7 @@ if __name__ == '__main__':
     print("=== Drawing dot Files ===")
     sdfg.draw_to_file('rgf_dense.dot')
     print("=== Saving SDFG ===")
-    sdfg.save('rgf_dense.sdfg')
+    sdfg.save('rgf_dense_saved.sdfg')
     print("=== Compiling ===")
     # sdfg = dace.SDFG.from_file('rgf_dense.sdfg')
     sdfg.compile()

@@ -77,9 +77,13 @@ def covariance(data, cov, mean):
         @dace.map
         def symmetrize_col(j: _[i:M]):
             cov_ij << cov[i, j]
-            covout >> cov(2)[:, :]
-            covout[i, j] = cov_ij / (N - 1)
-            covout[j, i] = cov_ij / (N - 1)
+            # covout >> cov(2)[:, :]
+            # covout[i, j] = cov_ij / (N - 1)
+            # covout[j, i] = cov_ij / (N - 1)
+            covout_ij >> cov[i, j]
+            covout_ji >> cov[j, i]
+            covout_ij = cov_ij / (N - 1)
+            covout_ji = cov_ij / (N - 1)
 
 
 if __name__ == '__main__':

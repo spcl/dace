@@ -237,9 +237,6 @@ class Range(Subset):
         for i in indices:
             rb, re, rs = self.ranges[i]
             self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
-        # for i, off in enumerate(other.min_element()):
-        #     rb, re, rs = self.ranges[i]
-        #     self.ranges[i] = (rb + mult * off, re + mult * off, rs)
 
     def dims(self):
         return len(self.ranges)

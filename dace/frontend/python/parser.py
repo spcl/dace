@@ -2,6 +2,7 @@
 from __future__ import print_function
 import inspect
 import copy
+import os
 
 from dace import symbolic, dtypes
 from dace.config import Config
@@ -114,13 +115,13 @@ def parse_from_function(function, *compilation_args, strict=None):
     ########################
 
     # Apply strict transformations automatically
-    if (strict == True
-            or (strict is None
-                and Config.get_bool('optimizer', 'automatic_state_fusion'))):
+    if (strict == True or (strict is None and Config.get_bool(
+            'optimizer', 'automatic_strict_transformations'))):
         sdfg.apply_strict_transformations()
 
     # Drawing the SDFG (again) to a .dot file
     sdfg.draw_to_file(recursive=True)
+    sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()
