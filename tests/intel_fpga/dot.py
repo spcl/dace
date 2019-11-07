@@ -39,9 +39,7 @@ if __name__ == "__main__":
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)
     B[:] = np.random.rand(N.get()).astype(dace.float32.type)
     out_AB[0] = dace.float32(0)
-
-    cdot = dace.compile(dot, A, B, out_AB)
-    cdot(A, B, out_AB)
+    dot(A, B, out_AB)
 
     diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
     print("Difference (A*B):", diff_ab)

@@ -377,8 +377,14 @@ def match_pattern(state_id,
                 cexpr.nodes[j]['node']: state.node_id(digraph.nodes[i]['node'])
                 for (i, j) in subgraph.items()
             }
-            match_found = pattern.can_be_applied(
-                state, subgraph, idx, sdfg, strict=strict)
+            try:
+                match_found = pattern.can_be_applied(
+                    state, subgraph, idx, sdfg, strict=strict)
+            except Exception as e:
+                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+                      ' {e}'.format(p=pattern.__name__,
+                                    c=e.__class__.__name__, e=e))
+                match_found = False
             if match_found:
                 yield pattern(
                     sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx)
@@ -421,8 +427,14 @@ def match_stateflow_pattern(sdfg,
                 cexpr.nodes[j]['node']: sdfg.node_id(digraph.nodes[i]['node'])
                 for (i, j) in subgraph.items()
             }
-            match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
-                                                 strict)
+            try:
+                match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
+                                                     strict)
+            except Exception as e:
+                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+                      ' {e}'.format(p=pattern.__name__,
+                                    c=e.__class__.__name__, e=e))
+                match_found = False
             if match_found:
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
 

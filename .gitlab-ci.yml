@@ -3,6 +3,7 @@ image: python:3-stretch
 
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
+  GIT_CLONE_PATH: $CI_BUILDS_DIR/$CI_CONCURRENT_ID/$CI_PROJECT_PATH
    
 setup_dace:
   stage: build
@@ -34,6 +35,7 @@ test_linux_cpu:
     - linux
   script: 
     - export DACE_debugprint=1
+    - tests/e2e_test.sh
     - tests/gemm_test.sh
 
 test_mpihello:
@@ -101,7 +103,17 @@ test_xilinx:
     - xilinx
   script:
     - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
-    - xvfb-run tests/xilinx_test.sh 0
+    - tests/xilinx_test.sh 0
+
+test_polybench:
+  stage: test
+  tags:
+    - intel
+    - linux
+  script:
+    - NOSTATUSBAR=1 tests/polybench_test.sh
+
+# Nightly tests
 
 test_all:on-schedule:
   only:
