@@ -28,7 +28,7 @@ class ExpandDotPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(state, sdfg)
+        node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
@@ -42,7 +42,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(state, sdfg)
+        node.validate(sdfg, state)
         dtype = node.dtype
         if dtype == dace.float32:
             func = "sdot"
@@ -78,7 +78,7 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(state, sdfg)
+        node.validate(sdfg, state)
         dtype = node.dtype
         if dtype == dace.float32:
             func = "Sdot"
@@ -126,7 +126,7 @@ class Dot(dace.graph.nodes.LibraryNode):
         self.dtype = dtype
         self.location = location
 
-    def validate(self, state, sdfg):
+    def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to dot product")
