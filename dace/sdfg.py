@@ -177,7 +177,7 @@ class SDFG(OrderedDiGraph):
         assignments (see the `InterstateEdge` class documentation). The nested
         acyclic multigraphs represent dataflow, where nodes may represent data
         regions in memory, tasklets, or parametric graph scopes (see
-        `dace.graph.nodes` for a full list of available node types); edges i
+        `dace.graph.nodes` for a full list of available node types); edges in
         the multigraph represent data movement using memlets, as described in
         the `Memlet` class documentation.
     """
