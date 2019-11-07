@@ -111,26 +111,39 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
         dtype = node.dtype
         if dtype == dace.float32:
             func = "Sgemm"
-            alpha = "dacelib::blas::CublasHelper::FloatPone()"
-            beta = "dacelib::blas::CublasHelper::FloatZero()"
+            alpha = "dacelib::blas::CublasConstants::Get(0).FloatPone()"
+            beta = "dacelib::blas::CublasConstants::Get(0).FloatZero()"
         elif dtype == dace.float64:
             func = "Dgemm"
-            alpha = "dacelib::blas::CublasHelper::DoublePone()"
-            beta = "dacelib::blas::CublasHelper::DoubleZero()"
+            alpha = "dacelib::blas::CublasConstants::Get(0).DoublePone()"
+            beta = "dacelib::blas::CublasConstants::Get(0).DoubleZero()"
         elif dtype == dace.complex64:
             func = "Cgemm"
-            alpha = "dacelib::blas::CublasHelper::Complex64Pone()"
-            beta = "dacelib::blas::CublasHelper::Complex64Zero()"
+            alpha = "dacelib::blas::CublasConstants::Get(0).Complex64Pone()"
+            beta = "dacelib::blas::CublasConstants::Get(0).Complex64Zero()"
         elif dtype == dace.complex128:
             func = "Zgemm"
-            alpha = "dacelib::blas::CublasHelper::Complex128Pone()"
-            beta = "dacelib::blas::CublasHelper::Complex128Zero()"
+            alpha = "dacelib::blas::CublasConstants::Get(0).Complex128Pone()"
+            beta = "dacelib::blas::CublasConstants::Get(0).Complex128Zero()"
         else:
             raise ValueError("Unsupported type for cuBLAS dot product: " +
                              str(dtype))
+        for _, _, _, dst_conn, memlet in state.in_edges(node):
+            if dst_conn == '_a':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size = subset.size()
+                m = size[0]
+                k = size[1]
+            if dst_conn == '_b':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size = subset.size()
+                n = size[1]
         code = ("cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
-                "CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, {a}, _b, m, _a, k, {b}, "
-                "_c, m);").format(f=func, a=alpha, b=beta)
+                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, _b, {m}, _a, "
+                "{k}, {b}, _c, {m});").format(f=func, m=m, n=n, k=k,
+                                              a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
             node.in_connectors,
