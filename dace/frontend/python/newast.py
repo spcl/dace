@@ -565,6 +565,44 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
                                         restype, arr1.storage)
 
+    state.add_mapped_tasklet(
+        '_MatMult_', {
+            '__i%d' % i: '0:%s' % s
+            for i, s in enumerate(
+                [arr1.shape[0], arr2.shape[1], arr1.shape[1]])
+        }, {
+            '__a': Memlet.simple(op1, '__i0, __i2'),
+            '__b': Memlet.simple(op2, '__i2, __i1')
+        },
+        '__c = __a * __b', {
+            '__c':
+            Memlet.simple(
+                op3,
+                '__i0, __i1',
+                wcr_str='lambda x, y: x + y',
+                wcr_identity=0)
+        },
+        external_edges=True)
+
+    return op3
+
+
+@oprepo.replaces_operator('Array', 'MatMult', implementation='blas')
+def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+
+    arr1 = sdfg.arrays[op1]
+    arr2 = sdfg.arrays[op2]
+    if (len(arr1.shape) != 2 or len(arr2.shape) != 2
+            or arr1.shape[1] != arr2.shape[0]):
+        raise SyntaxError('Matrix sizes must match')
+
+    type1 = arr1.dtype.type
+    type2 = arr2.dtype.type
+    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+
+    op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
+                                        restype, arr1.storage)
+
     acc1 = state.add_read(op1)
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
