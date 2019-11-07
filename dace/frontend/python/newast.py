@@ -19,6 +19,8 @@ from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
+import dacelibs.blas as blas
+
 import numpy as np
 import sympy
 
@@ -556,27 +558,21 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
             or arr1.shape[1] != arr2.shape[0]):
         raise SyntaxError('Matrix sizes must match')
 
-    op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
-                                        arr1.dtype, arr1.storage)
+    type1 = arr1.dtype.type
+    type2 = arr2.dtype.type
+    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
 
-    state.add_mapped_tasklet(
-        '_MatMult_', {
-            '__i%d' % i: '0:%s' % s
-            for i, s in enumerate(
-                [arr1.shape[0], arr2.shape[1], arr1.shape[1]])
-        }, {
-            '__a': Memlet.simple(op1, '__i0, __i2'),
-            '__b': Memlet.simple(op2, '__i2, __i1')
-        },
-        '__c = __a * __b', {
-            '__c':
-            Memlet.simple(
-                op3,
-                '__i0, __i1',
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=0)
-        },
-        external_edges=True)
+    op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
+                                        restype, arr1.storage)
+
+    acc1 = state.add_read(op1)
+    acc2 = state.add_read(op2)
+    acc3 = state.add_write(op3)
+    tasklet = blas.nodes.matmul.MatMul('_MatMult_', restype, in_connectors={'_a', '_b'}, out_connectors={'_c'})
+    state.add_node(tasklet)
+    state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(op1, arr1))
+    state.add_edge(acc2, None, tasklet, '_b', dace.Memlet.from_array(op2, arr2))
+    state.add_edge(tasklet, '_c', acc3, None, dace.Memlet.from_array(op3, arr3))
 
     return op3
 
