@@ -28,7 +28,7 @@ To install: `pip install dace`
 
 Runtime dependencies:
  * A C++14-capable compiler (e.g., gcc 5.3+)
- * Python 3.5 or newer
+ * Python 3.6 or newer
  * CMake 2.8.12 or newer (for Windows, CMake 3.15 is recommended)
 
 Running

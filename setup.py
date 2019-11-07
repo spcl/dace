@@ -15,6 +15,8 @@ diode_files = [
     for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
               glob.glob(diode_path + '**/*.css', recursive=True) +
               glob.glob(diode_path + '**/*.html', recursive=True) +
+              glob.glob(diode_path + '**/LICENSE', recursive=True) +
+              glob.glob(diode_path + 'client/external_lib/material/*') +
               glob.glob(diode_path + 'db_scripts/*', recursive=True))
 ]
 cub_files = [
@@ -46,7 +48,9 @@ setup(
         "License :: OSI Approved :: BSD License",
         "Operating System :: OS Independent",
     ],
-    packages=find_packages(),
+    python_requires='>=3.6',
+    packages=find_packages(
+        exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
@@ -57,7 +61,6 @@ setup(
     include_package_data=True,
     install_requires=[
         'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'scipy', 'pyyaml',
-        'absl-py', 'ply', 'websockets', 'graphviz', 'dace-xdot', 'requests',
-        'flask'
+        'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask'
     ],
     scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])

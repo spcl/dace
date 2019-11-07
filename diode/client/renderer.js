@@ -1179,3 +1179,4 @@ class SDFGRenderer {
     }
 }
 
+window.SDFGRenderer = SDFGRenderer;
