@@ -13,7 +13,7 @@ datatype = dace.int32
 # Dataset sizes
 sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2800}, {N: 5600}]
 
-args = [dace.ndarray([N, N], datatype)]
+args = [([N, N], datatype)]
 
 
 def init_array(path):
@@ -28,7 +28,7 @@ def init_array(path):
 
 @dace.program(datatype[N, N])
 def floyd_warshall(path):
-    @dace.map
+    @dace.mapscope
     def k_map(k: _[0:N]):
         @dace.map
         def ij_map(i: _[0:N], j: _[0:N]):

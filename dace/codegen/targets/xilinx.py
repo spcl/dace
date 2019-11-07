@@ -1,22 +1,32 @@
-import itertools
+from six import StringIO
+import collections
+import functools
 import os
+import itertools
 import re
+import sympy as sp
 
 import dace
 from dace import subsets
 from dace.config import Config
+from dace.frontend import operations
+from dace.graph import nodes
+from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import make_absolute, DefinedType
+from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
+                                         make_absolute, DefinedType)
+from dace.codegen.targets.cpu import cpp_offset_expr, cpp_array_expr
 from dace.codegen.targets import cpu, fpga
-from dace.sdfg import find_input_arraynode, find_output_arraynode
+
+from dace.codegen import cppunparse
 
 REDUCTION_TYPE_TO_HLSLIB = {
-    dace.types.ReductionType.Min: "hlslib::op::Min",
-    dace.types.ReductionType.Max: "hlslib::op::Max",
-    dace.types.ReductionType.Sum: "hlslib::op::Sum",
-    dace.types.ReductionType.Product: "hlslib::op::Product",
-    dace.types.ReductionType.Logical_And: "hlslib::op::And",
+    dace.dtypes.ReductionType.Min: "hlslib::op::Min",
+    dace.dtypes.ReductionType.Max: "hlslib::op::Max",
+    dace.dtypes.ReductionType.Sum: "hlslib::op::Sum",
+    dace.dtypes.ReductionType.Product: "hlslib::op::Product",
+    dace.dtypes.ReductionType.Logical_And: "hlslib::op::And",
 }
 
 
@@ -147,7 +157,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                            state_id, node):
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
             dtype.ctype, vector_length, var_name, array_size))
-        if storage == dace.types.StorageType.FPGA_Registers:
+        if storage == dace.dtypes.StorageType.FPGA_Registers:
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "complete\n".format(var_name))
         elif len(shape) > 1:
@@ -204,7 +214,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     @staticmethod
     def make_read(defined_type, type_str, var_name, vector_length, expr,
                   index):
-        if defined_type == DefinedType.Stream:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "{}.pop()".format(expr)
         if defined_type == DefinedType.StreamArray:
             if " " in expr:
@@ -220,7 +230,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
                    index, read_expr, wcr):
-        if defined_type == DefinedType.Stream:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "{}.push({});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             if not index:
@@ -264,13 +274,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 data, dataname, self._memory_widths[dataname], is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
-            # TO BE CHECKED: remove scalars that are already in kernel args
-            scalar_parameters.pop(dataname,None)
         kernel_args += [
             arg.signature(with_types=True, name=argname)
-            for argname, arg in itertools.chain(scalar_parameters.items(),
-                                                symbol_parameters.items())
-        ]
+            for argname, arg in  symbol_parameters.items()]
 
         # Write kernel signature
         kernel_stream.write(
@@ -311,11 +317,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             p.signature(False, name=name) for is_output, name, p in parameters
         ]
 
-        #TO BE CHECKED: remove scalar parameters that are already present in kernel_args
-        for p in kernel_args:
-            scalar_parameters.pop(p[0], None)
 
-        kernel_args += scalar_parameters.keys()
         kernel_args += symbol_parameters.keys()
 
         kernel_function_name = kernel_name
@@ -342,12 +344,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         # Treat scalars and symbols the same, assuming there are no scalar
         # outputs
         symbol_sigs = [
-            v.signature(with_types=True, name=k) for k, v in itertools.chain(
-                scalar_parameters.items(), symbol_parameters.items())
-        ]
-        symbol_names = list(
-            itertools.chain(scalar_parameters.keys(),
-                            symbol_parameters.keys()))
+            v.signature(with_types=True, name=k) for k, v in symbol_parameters.items()]
+        symbol_names =  symbol_parameters.keys()
         kernel_args_call = []
         kernel_args_module = []
         added = set()
@@ -438,13 +436,13 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             argname
             for out, argname, arg in parameters
             if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.types.StorageType.FPGA_Global and not out
+            and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
         }
         out_args = {
             argname
             for out, argname, arg in parameters
             if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.types.StorageType.FPGA_Global and out
+            and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
         if len(in_args) > 0 or len(out_args) > 0:
             # Add ArrayInterface objects to wrap input and output pointers to
@@ -605,15 +603,10 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     continue
                 seen.add(name)
                 kernel_args.append(arg.signature(with_types=True, name=name))
-            # remove scalars that are already in kernel args
-            scalar_parameters.pop(name, None)
 
 
         kernel_args += [
-            v.signature(with_types=True, name=k) for k, v in itertools.chain(
-                scalar_parameters.items(), symbol_parameters.items())
-        ]
-
+            v.signature(with_types=True, name=k) for k, v in  symbol_parameters.items()]
 
         host_code_stream.write(
             """\
@@ -695,7 +688,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
         cpu.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                             callsite_stream, self._cpu_codegen._locals,
-                            self._cpu_codegen._ldepth)
+                            self._cpu_codegen._ldepth,
+                            self._cpu_codegen._toplevel_schedule)
 
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
@@ -707,8 +701,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.types.StorageType.FPGA_Local
-                 or datadesc.storage == dace.types.StorageType.FPGA_Registers)
+                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
+                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and edge.data.wcr is None):
                 self.generate_no_dependence_post(
                     edge.src_conn, callsite_stream, sdfg, state_id, node)

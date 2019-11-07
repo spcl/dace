@@ -9,21 +9,19 @@ N = dp.symbol('N')
 
 
 @dp.program
-def sdfg_internal(input: dp.float32, output: dp.float32):
+def sdfg_internal(input: dp.float32, output: dp.float32[1]):
     @dp.tasklet
     def init():
-        inp << input
         out >> output
-        out = inp
+        out = input
 
     for k in range(4):
 
         @dp.tasklet
         def do():
-            inp << input
             oin << output
             out >> output
-            out = oin * inp
+            out = oin * input
 
 
 # Construct SDFG
@@ -46,10 +44,10 @@ if __name__ == '__main__':
     print('Nested SDFG test')
     # Externals (parameters, symbols)
 
-    input = dp.ndarray([N, N], dp.float32)
-    output = dp.ndarray([N, N], dp.float32)
     N.set(64)
 
+    input = dp.ndarray([N, N], dp.float32)
+    output = dp.ndarray([N, N], dp.float32)
     input[:] = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
     output[:] = dp.float32(0)
 

@@ -8,10 +8,6 @@ M = dace.symbol('M')
 N = dace.symbol('N')
 K = dace.symbol('K')
 
-A = dace.ndarray([M, N], dtype=dace.float64)
-B = dace.ndarray([N, K], dtype=dace.float64)
-C = dace.ndarray([M, K], dtype=dace.float64)
-
 
 @dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K])
 def mapreduce_test_2(A, B, C):
@@ -26,7 +22,7 @@ def mapreduce_test_2(A, B, C):
 
         out = in_A * in_B
 
-    dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
+    C[:] = dace.reduce(lambda a, b: a + b, tmp, axis=2, identity=0)
 
 
 if __name__ == "__main__":
@@ -38,6 +34,9 @@ if __name__ == "__main__":
     print('Matrix multiplication %dx%dx%d' % (M.get(), N.get(), K.get()))
 
     # Initialize arrays: Randomize A and B, zero C
+    A = dace.ndarray([M, N], dtype=dace.float64)
+    B = dace.ndarray([N, K], dtype=dace.float64)
+    C = dace.ndarray([M, K], dtype=dace.float64)
     A[:] = np.random.rand(M.get(), N.get()).astype(dace.float64.type)
     B[:] = np.random.rand(N.get(), K.get()).astype(dace.float64.type)
     C[:] = dace.float64(0)
@@ -52,6 +51,8 @@ if __name__ == "__main__":
     mapreduce_test_2(A, B, C)
     np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * K))
+    diff = np.linalg.norm(C_regression - C) / np.linalg.norm(C_regression)
+    print(C_regression)
+    print(C)
     print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+    exit(0 if diff <= 1e-10 else 1)

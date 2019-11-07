@@ -23,7 +23,7 @@ def mapreduce_test(A, B, sum):
         b = a * 5
         t = a * 5
 
-    dace.reduce(lambda a, b: a + b, tmp, sum)
+    sum[:] = dace.reduce(lambda a, b: a + b, tmp)
 
 
 if __name__ == "__main__":
@@ -32,23 +32,23 @@ if __name__ == "__main__":
     parser.add_argument("H", type=int, nargs="?", default=128)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
-    B = dace.ndarray([H, W], dtype=dace.float32)
-    res = dace.ndarray([1], dtype=dace.float32)
-
     W.set(args["W"])
     H.set(args["H"])
 
     print('Map-Reduce Test %dx%d' % (W.get(), H.get()))
 
+    A = dace.ndarray([H, W], dtype=dace.float32)
+    B = dace.ndarray([H, W], dtype=dace.float32)
+    res = dace.ndarray([1], dtype=dace.float32)
     A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
     B[:] = dace.float32(0)
     res[:] = dace.float32(0)
 
     mapreduce_test(A, B, res)
 
-    diff = np.linalg.norm(5 * A - B) / float(dace.eval(H * W))
-    diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
+    diff = np.linalg.norm(5 * A - B) / np.linalg.norm(5 * A)
+    diff_res = np.linalg.norm(np.sum(B) - res[0]) / np.linalg.norm(np.sum(B))
+    # diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
     print("Difference:", diff, diff_res)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 and diff_res <= 1 else 1)

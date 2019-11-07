@@ -28,14 +28,27 @@ To install: `pip install dace`
 
 Runtime dependencies:
  * A C++14-capable compiler (e.g., gcc 5.3+)
- * Python 3.5 or newer
+ * Python 3.6 or newer
  * CMake 2.8.12 or newer (for Windows, CMake 3.15 is recommended)
 
-To run DIODE (experimental), either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions.
+Running
+-------
 
-DaCe is Jupyter Notebook-compatible. If a result is an SDFG, it will show up directly in the notebook.
+**Python scripts:** Run DaCe programs (in implicit, explicit, or TensorFlow syntax) using Python directly.
 
-To view SDFGs separately, use SDFV (the SDFG Viewer). Run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can open `diode/sdfv.html` directly and choose a file in the browser.
+**DIODE interactive development (experimental):**: Either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions to enter the web interface.
+
+**Octave scripts (experimental):** `.m` files can be run using the installed script `dacelab`, which will create the appropriate SDFG file.
+
+**Jupyter Notebooks:** DaCe is Jupyter-compatible. If a result is an SDFG or a state, it will show up directly in the notebook. See the [tutorials](tutorials) for examples.
+
+**SDFV (standalone SDFG viewer):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can open `diode/sdfv.html` directly and choose a file in the browser.
+
+**Note for Windows/Visual C++ users:** If compilation fails in the linkage phase, try setting the following environment variable to force Visual C++ to use Multi-Threaded linkage:
+```
+X:\path\to\dace> set _CL_=/MT
+```
+
 
 Publication
 -----------
@@ -43,7 +56,7 @@ Publication
 If you use DaCe, cite us:
 ```bibtex
 @inproceedings{dace,
-  author    = {Ben-Nun, Tal and de Fine Licht, Johannes and Ziogas, Alexandros Nikolaos and Schneider, Timo and Hoefler, Torsten},
+  author    = {Ben-Nun, Tal and de~Fine~Licht, Johannes and Ziogas, Alexandros Nikolaos and Schneider, Timo and Hoefler, Torsten},
   title     = {Stateful Dataflow Multigraphs: A Data-Centric Model for Performance Portability on Heterogeneous Architectures},
   year      = {2019},
   booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},

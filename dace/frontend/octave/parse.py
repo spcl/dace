@@ -74,7 +74,7 @@ def p_arg1(p):
     """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di = dace.types.DebugInfo(startl, startc, endl, endc)
+    di = dace.dtypes.DebugInfo(startl, startc, endl, endc)
     p[0] = AST_Ident(di, p[1])
 
 
@@ -85,7 +85,7 @@ def p_arg2(p):
     """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di = dace.types.DebugInfo(startl, startc, endl, endc)
+    di = dace.dtypes.DebugInfo(startl, startc, endl, endc)
     p[0] = AST_Constant(di, p[1])
 
 
@@ -138,7 +138,7 @@ def p_cellarray(p):
     """
     startl, endl = p.linespan(0)
     startc, endc = p.lexspan(0)
-    di = dace.types.DebugInfo(startl, startc, endl, endc)
+    di = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     if len(p) == 3:
         p[0] = AST_Matrix(di, [])
@@ -185,11 +185,11 @@ def p_concat_list1(p):
 
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     startl, endl = p.linespan(3)
     startc, endc = p.lexspan(3)
-    di3 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di3 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = [AST_Matrix_Row(di1, p[1]), AST_Matrix_Row(di3, p[3])]
 
@@ -200,7 +200,7 @@ def p_concat_list2(p):
     """
     startl, endl = p.linespan(3)
     startc, endc = p.lexspan(3)
-    di3 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di3 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = p[1] + [AST_Matrix_Row(di3, p[3])]
 
@@ -249,7 +249,7 @@ def p_expr_2(p):
     """
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
-    di2 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di2 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_UnaryExpression(di2, p[1], p[2], "post")
 
@@ -264,7 +264,7 @@ def p_expr1(p):
     """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_UnaryExpression(di1, p[2], p[1], "pre")
 
@@ -305,7 +305,7 @@ def p_expr2(p):
     """
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
-    di2 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di2 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     if p[2] == "=":
         p[0] = AST_Assign(di2, p[1], p[3], p[2])
@@ -319,7 +319,7 @@ def p_expr_colon(p):
     """ colon : COLON """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_RangeExpression(di1, None, None)
 
@@ -333,7 +333,7 @@ def p_expr_ident(p):
     """ ident : IDENT """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_Ident(di1, p[1])
 
@@ -364,7 +364,7 @@ def p_expr_number(p):
     """ number : NUMBER """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_Constant(di1, p[1])
 
@@ -380,7 +380,7 @@ def p_expr_string(p):
     """ string : STRING """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_Constant(di1, p[1])
 
@@ -439,7 +439,7 @@ def p_funcall_expr(p):
     """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
-    di1 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     if len(p) == 4:
         p[0] = AST_FunCall(di1, p[1], [])
@@ -493,7 +493,7 @@ def p_matrix(p):
     """
     startl, endl = p.linespan(0)
     startc, endc = p.lexspan(0)
-    di0 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di0 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     if len(p) == 3:
         p[0] = AST_Matrix(di0, [])
@@ -507,10 +507,10 @@ def p_matrix_2(p):
     """
     startl, endl = p.linespan(0)
     startc, endc = p.lexspan(0)
-    di0 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di0 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
-    di2 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di2 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_Matrix(di0, [AST_Matrix_Row(di2, p[2])])
 
@@ -645,7 +645,7 @@ def p_transpose_expr(p):
     """ expr : expr TRANSPOSE """
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
-    di2 = dace.types.DebugInfo(startl, startc, endl, endc)
+    di2 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
 
     p[0] = AST_Transpose(di2, p[1], p[2])
 

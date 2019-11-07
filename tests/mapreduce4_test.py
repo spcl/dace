@@ -8,11 +8,6 @@ M = dace.symbol('M')
 N = dace.symbol('N')
 K = dace.symbol('K')
 
-A = dace.ndarray([M, N], dtype=dace.float64)
-B = dace.ndarray([N, K], dtype=dace.float64)
-C = dace.ndarray([M, K], dtype=dace.float64)
-D = dace.ndarray([M, K, N], dtype=dace.float64)
-
 
 @dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K],
               dace.float64[M, K, N])
@@ -42,6 +37,10 @@ if __name__ == "__main__":
     print('Matrix multiplication %dx%dx%d' % (M.get(), N.get(), K.get()))
 
     # Initialize arrays: Randomize A and B, zero C
+    A = dace.ndarray([M, N], dtype=dace.float64)
+    B = dace.ndarray([N, K], dtype=dace.float64)
+    C = dace.ndarray([M, K], dtype=dace.float64)
+    D = dace.ndarray([M, K, N], dtype=dace.float64)
     A[:] = np.random.rand(M.get(), N.get()).astype(dace.float64.type)
     B[:] = np.random.rand(N.get(), K.get()).astype(dace.float64.type)
     C[:] = dace.float64(0)

@@ -1,8 +1,9 @@
-# Docker image. You can delete this line if you're not using Docker
+# Docker image. You can delete this line if not using Docker
 image: python:3-stretch
 
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
+  GIT_CLONE_PATH: $CI_BUILDS_DIR/$CI_CONCURRENT_ID/$CI_PROJECT_PATH
    
 setup_dace:
   stage: build
@@ -11,8 +12,8 @@ setup_dace:
   script:
     - echo "Reverting configuration to defaults"
     - rm -f ~/.dace.conf
-    - echo "Clearing binary cache"
-    - rm -rf .dacecache tests/.dacecache
+    - echo "Clearing caches"
+    - rm -rf .dacecache tests/.dacecache client_configs tests/client_configs
     - echo "Installing additional dependencies"
     - pip3 install --upgrade --user tensorflow-gpu==1.14.0
     - echo "Installing DaCe"
@@ -34,6 +35,7 @@ test_linux_cpu:
     - linux
   script: 
     - export DACE_debugprint=1
+    - tests/e2e_test.sh
     - tests/gemm_test.sh
 
 test_linux_cuda:
@@ -48,57 +50,23 @@ test_linux_cuda:
     - export DACE_debugprint=1
     - tests/cuda_test.sh
    
-
-test_mpihello:
+test_xilinx:
   stage: test
-  tags: 
+  tags:
+    - xilinx
+  script:
+    - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
+    - tests/xilinx_test.sh 0
+
+test_polybench:
+  stage: test
+  tags:
     - intel
     - linux
-    - mpi
-  script: 
-    - cd tests/
-    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello_test_opt.py -d2p "../diode/" | sh'
+  script:
+    - NOSTATUSBAR=1 tests/polybench_test.sh
 
-
-test_mpihello2:
-  stage: test
-  tags: 
-    - intel
-    - linux
-    - mpi
-  script: 
-    - cd tests/
-    - PATH=$PATH:/opt/mpich3.2.11/bin ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file mpihello2_test_opt.py -d2p "../diode/" | sh'
-
-
-test_filter:
-  stage: test
-  tags: 
-    - intel
-    - linux
-  script: 
-    - cd tests/
-    - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file filter_test_opt.py -d2p "../diode/" | sh'
- 
-
-test_spmv:
-  stage: test
-  tags: 
-    - intel
-    - linux
-  script: 
-    - cd tests/
-    - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file spmv_test_opt.py -d2p "../diode/" | sh'
-
-
-test_jacobi:
-  stage: test
-  tags: 
-    - intel
-    - linux
-  script: 
-    - cd tests/
-    - ./diode_helper.sh 'python3 ../diode/diode_optscript_translator.py --file simple_stencil_test_opt.py -d2p "../diode/" | sh'
+# Nightly tests
 
 test_all:on-schedule:
   only:
@@ -111,12 +79,18 @@ test_all:on-schedule:
     - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
     - export PATH=/usr/local/cuda/bin:/opt/mpich3.2.11/bin:/opt/Xilinx/SDx/2018.2/bin:$PATH
     - export CUDA_ROOT=/usr/local/cuda
-    - NOSTATUSBAR=1 xvfb-run ./test_all.sh
+    - NOSTATUSBAR=1 ./test_all.sh
 
-test_xilinx:
+test_all_nostrict:on-schedule:
+  only:
+    - schedules
   stage: test
-  tags:
-    - xilinx
+  tags: 
+    - intel
+    - linux
   script:
-    - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
-    - xvfb-run tests/xilinx_test.sh 0
+    - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    - export PATH=/usr/local/cuda/bin:/opt/mpich3.2.11/bin:/opt/Xilinx/SDx/2018.2/bin:$PATH
+    - export CUDA_ROOT=/usr/local/cuda
+    - export DACE_optimizer_automatic_strict_transformations=0
+    - NOSTATUSBAR=1 ./test_all.sh

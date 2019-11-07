@@ -19,7 +19,7 @@ def ifchain(A: dace.float32[1]):
         @dace.tasklet
         def mytask():
             o >> A[0]
-            o = 5
+            o = 0
 
     if A[0] > 1:
 
@@ -28,7 +28,7 @@ def ifchain(A: dace.float32[1]):
             o >> A[0]
             o = 1
 
-    if A[0] < 0:
+    if A[0] > 0:
 
         @dace.tasklet
         def mytask():

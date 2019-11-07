@@ -2,12 +2,12 @@
 import dace
 import numpy as np
 
-W = dace.symbol()
+W = dace.symbol('W')
 
 number = 42
 
 
-@dace.external_function
+@dace.program
 def f(A, number):
     @dace.map(_[0:W])
     def bla(i):
@@ -39,7 +39,7 @@ if __name__ == '__main__':
     A[:] = np.mgrid[0:W.get()]
     B[:] = dace.float32(0.0)
 
-    prog(A, B)
+    prog(A, B, W=W)
 
     diff = np.linalg.norm(4 * A - B) / W.get()
     print("Difference:", diff)

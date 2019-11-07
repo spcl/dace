@@ -14,7 +14,7 @@ from diode.remote_execution import Executor, AsyncExecutor
 import traceback, os, threading, queue, time
 
 # Enum imports
-from dace.types import AccessType
+from dace.dtypes import AccessType
 from dace import ScheduleType, Language, StorageType
 
 app = Flask(__name__)
@@ -22,8 +22,8 @@ app = Flask(__name__)
 # Prepare a whitelist of DaCe enumeration types
 enum_list = [
     typename
-    for typename, dtype in inspect.getmembers(dace.types, inspect.isclass)
-    if issubclass(dtype, dace.types.AutoNumber)
+    for typename, dtype in inspect.getmembers(dace.dtypes, inspect.isclass)
+    if issubclass(dtype, dace.dtypes.AutoNumber)
 ]
 
 es_ref = []
@@ -581,7 +581,7 @@ def getEnum(name):
         abort(400)
 
     return jsonify({
-        'enum': [str(e).split(".")[-1] for e in getattr(dace.types, name)]
+        'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]
     })
 
 
@@ -854,7 +854,7 @@ def compileProgram(request, language, perfopts=None):
                 if len(in_sdfg) > 1:
                     print("More than 1 sdfg provided!")
                     raise Exception("#TODO: Allow multiple sdfg inputs")
-                    abort(400)
+
                 in_sdfg = in_sdfg[0]
 
             if isinstance(in_sdfg, str):
@@ -880,6 +880,8 @@ def compileProgram(request, language, perfopts=None):
                     # Leave it be if the sdfg was already created
                     # (this might happen with SDFG references)
                     if k in sdfg_dict: continue
+                    if isinstance(v, str):
+                        v = json.loads(v)
                     sdfg_dict[k] = dace.SDFG.fromJSON_object(
                         v, {
                             'sdfg': None,
@@ -945,17 +947,13 @@ def compileProgram(request, language, perfopts=None):
                 in_code = request.json['code']
             else:
                 in_code = ""
-            try:
-                dace_state = DaceState(in_code, "fake.py", headless=True)
-                dace_state.set_sdfg(
-                    list(codegen_sdfgs_dace_state.values())[0],
-                    list(codegen_sdfgs_dace_state.keys())[0])
-                if len(dace_state.errors) > 0:
-                    print("ERRORS: " + str(dace_state.errors))
-                    errors.extend(dace_state.errors)
-            except Exception as e:
-                traceback.print_exc()
-                print("Failed to create DaceState")
+            dace_state = DaceState(in_code, "tmp.py", headless=True)
+            dace_state.set_sdfg(
+                list(codegen_sdfgs_dace_state.values())[0],
+                list(codegen_sdfgs_dace_state.keys())[0])
+            if len(dace_state.errors) > 0:
+                print("ERRORS: " + str(dace_state.errors))
+                errors.extend(dace_state.errors)
 
         # The config won't save back on its own, and we don't want it to - these changes are transient
 
@@ -1212,6 +1210,11 @@ def run():
     except:
         corecounts = [0]
 
+    try:
+        repetitions = request.json['repetitions']
+    except:
+        repetitions = 1
+
     # Obtain the reference
     es = es_ref[0]
 
@@ -1219,7 +1222,11 @@ def run():
     es.addRun(client_id, "start", {})
 
     for pmode in perfmodes:
-        perfopts = {'mode': pmode, 'core_counts': corecounts}
+        perfopts = {
+            'mode': pmode,
+            'core_counts': corecounts,
+            'repetitions': repetitions
+        }
         tmp = compileProgram(request, 'dace', perfopts)
         if len(tmp) > 1:
             sdfgs, code_tuples, dace_state = tmp
@@ -1227,6 +1234,8 @@ def run():
             # ERROR
             print("An error occurred")
             abort(400)
+
+        dace_state.repetitions = repetitions
 
         more_options = {}
         more_options['perfopts'] = perfopts

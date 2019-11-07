@@ -26,12 +26,8 @@ sizes = [{
     N: 3000
 }]
 
-args = [
-    dace.ndarray([N, M], datatype),
-    dace.ndarray([M, M], datatype),
-    dace.ndarray([M], datatype),
-    dace.ndarray([M], datatype), M, N
-]
+args = [([N, M], datatype), ([M, M], datatype), ([M], datatype),
+        ([M], datatype), M, N]
 
 
 def init_array(data, corr, mean, stddev, M, N):
@@ -84,9 +80,9 @@ def correlation(data, corr, mean, stddev):
         corrout >> corr[i, i]
         corrout = 1.0
 
-    @dace.map
+    @dace.mapscope
     def comp_corr_row(i: _[0:M - 1]):
-        @dace.map
+        @dace.mapscope
         def comp_corr_col(j: _[i + 1:M]):
             @dace.map
             def comp_cov_k(k: _[0:N]):
@@ -95,7 +91,7 @@ def correlation(data, corr, mean, stddev):
                 cov_ij >> corr(1, lambda x, y: x + y, 0)[i, j]
                 cov_ij = (indi * indj)
 
-    @dace.map
+    @dace.mapscope
     def symmetrize(i: _[0:M - 1]):
         @dace.map
         def symmetrize_col(j: _[i + 1:M]):

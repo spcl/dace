@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-W = dace.symbol()
+W = dace.symbol('W')
 
 
 @dace.program
@@ -35,7 +35,7 @@ if __name__ == '__main__':
     A[:] = np.mgrid[0:W.get()]
     regression[:] = A[:]
 
-    prog(A)
+    prog(A, W=W)
 
     diff = np.linalg.norm(4 * regression - A) / W.get()
     print("Difference:", diff)

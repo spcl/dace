@@ -9,7 +9,7 @@ from dace.codegen import cppunparse
 
 from dace.config import Config
 
-from dace.types import ScheduleType
+from dace.dtypes import ScheduleType
 
 import re
 
@@ -19,7 +19,7 @@ import ast
 import copy
 import sqlite3
 import dace
-from dace import types
+from dace import dtypes
 from dace.graph import nodes
 
 # Helper function to get the module path
@@ -368,10 +368,10 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         # From cuda.py
         cpu_storage_types = [
-            types.StorageType.CPU_Heap,
-            types.StorageType.CPU_Stack,
-            types.StorageType.CPU_Pinned,
-            types.StorageType.Register,
+            dtypes.StorageType.CPU_Heap,
+            dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_Pinned,
+            dtypes.StorageType.Register,
         ]
 
         perf_cpu_only = (src_storage in cpu_storage_types) and (
@@ -831,8 +831,8 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     @staticmethod
     def perf_get_supersection_start_string(node, sdfg, dfg, unified_id):
-        from dace import types
-        if node.map.schedule == types.ScheduleType.CPU_Multicore:
+        from dace import dtypes
+        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
 
             if not hasattr(node.map, '_can_be_supersection_start'):
                 node.map._can_be_supersection_start = True
@@ -846,13 +846,13 @@ class PAPIInstrumentation(InstrumentationProvider):
                 if PAPIInstrumentation.map_depth(
                         x) > PAPISettings.perf_max_scope_depth():
                     break  # We have our relevant nodes.
-                if x.map.schedule == types.ScheduleType.CPU_Multicore:
+                if x.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                     # Nested SuperSections are not supported
                     # We have to mark the outermost section,
                     # which also means that we have to somehow tell the lower nodes
                     # to not mark the section start.
                     x.map._can_be_supersection_start = False
-                elif x.map.schedule == types.ScheduleType.Sequential:
+                elif x.map.schedule == dtypes.ScheduleType.Sequential:
                     x.map._can_be_supersection_start = False
                 else:
                     # Any other type (FPGA, GPU) - not supported by PAPI. TODO: support
@@ -2076,13 +2076,13 @@ LIMIT
                 target = sp.functions.Min(
                     retparams[x] * (retparams[x] - 1) / 2, 0)
                 bstr = str(element)
-                element = sp.sympify(bstr, sp.abc._clash)
+                element = symbolic.pystr_to_symbolic(bstr)
                 element = element.subs(
                     x, target)  # Add the classic sum formula; going upwards
 
                 # To not have hidden elements that get added again later, we also replace the values in the other itvars...
                 for k, v in retparams.items():
-                    newv = sp.sympify(str(v), sp.abc._clash)
+                    newv = symbolic.pystr_to_symbolic(str(v))
 
                     itsyms = symbols_in_sympy_expr(newv)
                     tarsyms = symbols_in_sympy_expr(target)
@@ -2253,15 +2253,13 @@ LIMIT
                     if memlet.wcr is not None:
                         # write_and_resolve
                         # We have to assume that every reduction costs 3 accesses of the same size
-                        out_costs += 3 * sp.sympify(
-                            PAPIUtils.get_memlet_byte_size(sdfg, memlet),
-                            sp.abc._clash)
+                        out_costs += 3 * symbolic.pystr_to_symbolic(
+                            PAPIUtils.get_memlet_byte_size(sdfg, memlet))
                     else:
                         #'%s.write(%s);\n'
                         # This standard operation is already counted
-                        out_costs += sp.sympify(
-                            PAPIUtils.get_memlet_byte_size(sdfg, memlet),
-                            sp.abc._clash)
+                        out_costs += symbolic.pystr_to_symbolic(
+                            PAPIUtils.get_memlet_byte_size(sdfg, memlet))
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
                 pass
@@ -2368,7 +2366,7 @@ LIMIT
         import sympy as sp
         import dace.symbolic as symbolic
 
-        input_size = sp.sympify(input_size, sp.abc._clash)
+        input_size = symbolic.pystr_to_symbolic(input_size)
 
         used_symbols = symbolic.symbols_in_sympy_expr(input_size)
         defined_symbols = sdfg.symbols_defined_at(node)
@@ -2442,7 +2440,7 @@ LIMIT
             elif isinstance(node, MapExit):
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
-                return itcount * sp.sympify(
+                return itcount * symbolic.pystr_to_symbolic(
                     PAPIUtils.get_tasklet_byte_accesses(
                         node, dfg, sdfg, state_id))
             else:

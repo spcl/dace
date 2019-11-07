@@ -6,7 +6,7 @@ from six import StringIO
 import numpy as np
 
 import dace
-from dace import subsets, types
+from dace import subsets, dtypes
 from dace.codegen import cppunparse
 from dace.config import Config
 from dace.codegen.codeobject import CodeObject
@@ -19,27 +19,27 @@ from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import SDFGState
 
 REDUCTION_TYPE_TO_HLSLIB = {
-    dace.types.ReductionType.Min: "min",
-    dace.types.ReductionType.Max: "max",
-    dace.types.ReductionType.Sum: "+",
-    dace.types.ReductionType.Product: "*",
-    dace.types.ReductionType.Logical_And: " && ",
-    dace.types.ReductionType.Bitwise_And: "&",
-    dace.types.ReductionType.Logical_Or: "||",
-    dace.types.ReductionType.Bitwise_Or: "|",
-    dace.types.ReductionType.Bitwise_Xor: "^"
+    dace.dtypes.ReductionType.Min: "min",
+    dace.dtypes.ReductionType.Max: "max",
+    dace.dtypes.ReductionType.Sum: "+",
+    dace.dtypes.ReductionType.Product: "*",
+    dace.dtypes.ReductionType.Logical_And: " && ",
+    dace.dtypes.ReductionType.Bitwise_And: "&",
+    dace.dtypes.ReductionType.Logical_Or: "||",
+    dace.dtypes.ReductionType.Bitwise_Or: "|",
+    dace.dtypes.ReductionType.Bitwise_Xor: "^"
 }
 
 REDUCTION_TYPE_TO_PYEXPR = {
-    dace.types.ReductionType.Min: "min({a}, {b})",
-    dace.types.ReductionType.Max: "max({a}, {b})",
-    dace.types.ReductionType.Sum: "{a} + {b}",
-    dace.types.ReductionType.Product: "*",
-    dace.types.ReductionType.Logical_And: " && ",
-    dace.types.ReductionType.Bitwise_And: "&",
-    dace.types.ReductionType.Logical_Or: "||",
-    dace.types.ReductionType.Bitwise_Or: "|",
-    dace.types.ReductionType.Bitwise_Xor: "^"
+    dace.dtypes.ReductionType.Min: "min({a}, {b})",
+    dace.dtypes.ReductionType.Max: "max({a}, {b})",
+    dace.dtypes.ReductionType.Sum: "{a} + {b}",
+    dace.dtypes.ReductionType.Product: "*",
+    dace.dtypes.ReductionType.Logical_And: " && ",
+    dace.dtypes.ReductionType.Bitwise_And: "&",
+    dace.dtypes.ReductionType.Logical_Or: "||",
+    dace.dtypes.ReductionType.Bitwise_Or: "|",
+    dace.dtypes.ReductionType.Bitwise_Xor: "^"
 }
 
 
@@ -150,7 +150,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                            storage, shape, function_stream, kernel_stream,
                            sdfg, state_id, node):
         vec_type = self.make_vector_type(dtype, vector_length, False)
-        if storage == dace.types.StorageType.FPGA_Registers:
+        if storage == dace.dtypes.StorageType.FPGA_Registers:
             attributes = " __attribute__((register))"
         else:
             attributes = ""
@@ -209,7 +209,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     @staticmethod
     def make_read(defined_type, type_str, var_name, vector_length, expr,
                   index):
-        if defined_type == DefinedType.Stream:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
             return "read_channel_intel({}[{}])".format(expr, index)
@@ -229,14 +229,14 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
-        if defined_type == DefinedType.Stream:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "write_channel_intel({}, {});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             return "write_channel_intel({}[{}], {});".format(
                 write_expr, index, read_expr)
         elif defined_type == DefinedType.Pointer:
             if wcr is not None:
-                if redtype != dace.types.ReductionType.Min and redtype != dace.types.ReductionType.Max:
+                if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
                     return "{}[{}] = {}[{}] {} {};".format(write_expr, index, write_expr, index,
                                                            REDUCTION_TYPE_TO_HLSLIB[redtype], read_expr)
                 else:
@@ -248,7 +248,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 return "{}[{}] = {};".format(write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
-                if redtype != dace.types.ReductionType.Min and redtype != dace.types.ReductionType.Max:
+                if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
                     return "{} = {} {} {};".format(write_expr, write_expr, REDUCTION_TYPE_TO_HLSLIB[redtype], read_expr)
                 else:
                     # use max/min opencl builtins
@@ -284,7 +284,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 "{} {} = ({}) ? ({}) : ({});".format(
                     output_type, prev_var, is_first_iteration, identity,
                     out_var), sdfg, state_id, node)
-            if reduction_type != dace.types.ReductionType.Min and reduction_type != dace.types.ReductionType.Max:
+            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
                 callsite_stream.write(
                     "{} = {} {} {};".format(out_var, prev_var, REDUCTION_TYPE_TO_HLSLIB[reduction_type],
                                             in_var), sdfg, state_id, node)
@@ -299,7 +299,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         else:
             # If this is the first iteration, assign the value read from the
             # input directly to the output
-            if reduction_type != dace.types.ReductionType.Min and reduction_type != dace.types.ReductionType.Max:
+            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
                 callsite_stream.write(
                     "{} = ({}) ? ({}) : {} {} {};".format(
                         out_var, is_first_iteration, in_var,
@@ -405,12 +405,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         # Treat scalars and symbols the same, assuming there are no scalar
         # outputs
         symbol_sigs = [
-            v.signature(with_types=True, name=k) for k, v in itertools.chain(
-                scalar_parameters.items(), symbol_parameters.items())
-        ]
-        symbol_names = list(
-            itertools.chain(scalar_parameters.keys(),
-                            symbol_parameters.keys()))
+            v.signature(with_types=True, name=k) for k, v in symbol_parameters.items()]
+        symbol_names = symbol_parameters.keys()
+
         kernel_args_opencl = []
         kernel_args_host = []
         kernel_args_call = []
@@ -564,7 +561,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         self.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                              callsite_stream, self._cpu_codegen._locals,
-                             self._cpu_codegen._ldepth)
+                             self._cpu_codegen._ldepth,
+                             self._cpu_codegen._toplevel_schedule)
 
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
@@ -576,8 +574,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
-                    (datadesc.storage == dace.types.StorageType.FPGA_Local
-                     or datadesc.storage == dace.types.StorageType.FPGA_Registers)
+                    (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
+                     or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and not cpu.is_write_conflicted(dfg, edge)):
                 self.generate_no_dependence_post(
                     edge.src_conn, callsite_stream, sdfg, state_id, node)
@@ -695,7 +693,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
             else:
-                if data_desc.storage == dace.types.StorageType.FPGA_Global:
+                if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
                     qualifiers = "__global volatile "
                 else:
                     qualifiers = ""
@@ -814,7 +812,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                       sdfg.node_id(dfg), node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
-                        callsite_stream, locals, ldepth):
+                        callsite_stream, locals, ldepth, toplevel_schedule):
         if node.label is None or node.label == "":
             return ''
 
@@ -825,7 +823,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             return ''
         # Not [], "" or None
         if node.code_global:
-            if node.language is not types.Language.CPP:
+            if node.language is not dtypes.Language.CPP:
                 raise ValueError(
                     "Global code only supported for C++ tasklets: got {}".
                         format(node.language))
@@ -835,8 +833,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             function_stream.write("\n", sdfg, state_id, node)
 
         # If raw C++ code, return the code directly
-        if node.language != types.Language.Python:
-            if node.language != types.Language.CPP:
+        if node.language != dtypes.Language.Python:
+            if node.language != dtypes.Language.CPP:
                 raise ValueError(
                     "Only Python or C++ code supported in CPU codegen, got: {}".
                         format(node.language))
@@ -899,7 +897,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 if isinstance(val, ndarray.ndarray):
                     dtype = val.descriptor.dtype
                 else:
-                    dtype = types.typeclass(val.dtype.type)
+                    dtype = dtypes.typeclass(val.dtype.type)
                 const_str = "__constant " + dtype.ctype + \
                             " " + name + "[" + str(val.size) + "] = {"
                 it = np.nditer(val, order='C')

@@ -1,10 +1,10 @@
 import functools
-import operator
 import re, json
 import copy as cp
 import sympy as sp
+import numpy
 
-import dace, dace.types as types
+import dace, dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic
 from dace.properties import (Property, make_properties, ReferenceProperty,
@@ -21,6 +21,27 @@ def validate_name(name):
     return True
 
 
+def create_datadescriptor(obj):
+    """ Creates a data descriptor from various types of objects.
+        @see: dace.data.Data
+    """
+    from dace import dtypes  # Avoiding import loops
+    if isinstance(obj, Data):
+        return obj
+
+    try:
+        return obj.descriptor
+    except AttributeError:
+        if isinstance(obj, numpy.ndarray):
+            return Array(
+                dtype=dtypes.typeclass(obj.dtype.type), shape=obj.shape)
+        if symbolic.issymbolic(obj):
+            return Scalar(symbolic.symtype(obj))
+        if isinstance(obj, dtypes.typeclass):
+            return Scalar(obj)
+        return Scalar(dtypes.typeclass(type(obj)))
+
+
 @make_properties
 class Data(object):
     """ Data type descriptors that can be used as references to memory.
@@ -31,11 +52,11 @@ class Data(object):
     shape = ShapeProperty()
     transient = Property(dtype=bool)
     storage = Property(
-        dtype=dace.types.StorageType,
+        dtype=dace.dtypes.StorageType,
         desc="Storage location",
-        enum=dace.types.StorageType,
-        default=dace.types.StorageType.Default,
-        from_string=lambda x: types.StorageType[x])
+        enum=dace.dtypes.StorageType,
+        default=dace.dtypes.StorageType.Default,
+        from_string=lambda x: dtypes.StorageType[x])
     location = Property(
         dtype=str,  # Dict[str, symbolic]
         desc='Full storage location identifier (e.g., rank, GPU ID)',
@@ -107,7 +128,7 @@ class Scalar(Data):
     def __init__(self,
                  dtype,
                  transient=False,
-                 storage=dace.types.StorageType.Default,
+                 storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
                  location='',
                  toplevel=False,
@@ -123,7 +144,7 @@ class Scalar(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Scalar(dace.types.int8)
+        ret = Scalar(dace.dtypes.int8)
         Property.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
@@ -185,11 +206,11 @@ def set_materialize_func(obj, val):
         immaterial.
     """
     if val is not None:
-        if (obj.storage != dace.types.StorageType.Default
-                and obj.storage != dace.types.StorageType.Immaterial):
+        if (obj.storage != dace.dtypes.StorageType.Default
+                and obj.storage != dace.dtypes.StorageType.Immaterial):
             raise ValueError("Immaterial array must have immaterial storage, "
                              "but has: {}".format(storage))
-        obj.storage = dace.types.StorageType.Immaterial
+        obj.storage = dace.dtypes.StorageType.Immaterial
     obj._materialize_func = val
 
 
@@ -217,7 +238,7 @@ class Array(Data):
                  materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
-                 storage=dace.types.StorageType.Default,
+                 storage=dace.dtypes.StorageType.Default,
                  location='',
                  access_order=None,
                  strides=None,
@@ -284,7 +305,7 @@ class Array(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Array(dace.types.int8, ())
+        ret = Array(dace.dtypes.int8, ())
         Property.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
@@ -352,7 +373,7 @@ class Array(Data):
             return False
 
         # Test type
-        if self.dtype != other.type:
+        if self.dtype != other.dtype:
             return False
 
         # Test dimensionality
@@ -401,6 +422,10 @@ class Array(Data):
             for d in self.shape
         ]
 
+    # OPERATORS
+    #def __add__(self, other):
+    #    return (self, None)
+
 
 @make_properties
 class Stream(Data):
@@ -409,7 +434,7 @@ class Stream(Data):
     # Properties
     strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
-    buffer_size = Property(dtype=int, desc="Size of internal buffer.")
+    buffer_size = SymbolicProperty(desc="Size of internal buffer.")
     veclen = Property(
         dtype=int, desc="Vector length. Memlets must adhere to this.")
 
@@ -419,7 +444,7 @@ class Stream(Data):
                  buffer_size,
                  shape=None,
                  transient=False,
-                 storage=dace.types.StorageType.Default,
+                 storage=dace.dtypes.StorageType.Default,
                  location='',
                  strides=None,
                  offset=None,
@@ -470,7 +495,7 @@ class Stream(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Stream(dace.types.int8, 1, 1)
+        ret = Stream(dace.dtypes.int8, 1, 1)
         Property.set_properties_from_json(ret, json_obj, context=context)
         # TODO: FIXME:
         # Since the strides are a list-property (normal Property()),
@@ -529,9 +554,9 @@ class Stream(Data):
     def signature(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
         if self.storage in [
-                dace.types.StorageType.GPU_Global,
-                dace.types.StorageType.GPU_Shared,
-                dace.types.StorageType.GPU_Stack
+                dace.dtypes.StorageType.GPU_Global,
+                dace.dtypes.StorageType.GPU_Shared,
+                dace.dtypes.StorageType.GPU_Stack
         ]:
             return 'dace::GPUStream<%s, %s> %s' % (
                 str(self.dtype.ctype), 'true'

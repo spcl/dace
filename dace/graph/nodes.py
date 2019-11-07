@@ -12,7 +12,7 @@ from dace.properties import (
     DebugInfoProperty, SetProperty, make_properties, indirect_properties,
     DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
 from dace.frontend.operations import detect_reduction_type
-from dace import data, subsets as sbs, types
+from dace import data, subsets as sbs, dtypes
 import json
 
 # -----------------------------------------------------------------------------
@@ -27,9 +27,9 @@ class Node(object):
     out_connectors = SetProperty(
         str, default=set(), desc="A set of output connectors for this node.")
 
-    def __init__(self, in_connectors=set(), out_connectors=set()):
-        self.in_connectors = in_connectors
-        self.out_connectors = out_connectors
+    def __init__(self, in_connectors=None, out_connectors=None):
+        self.in_connectors = in_connectors or set()
+        self.out_connectors = out_connectors or set()
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -162,14 +162,16 @@ class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
     access = Property(
-        enum=types.AccessType,
+        enum=dtypes.AccessType,
         desc="Type of access to this array",
-        default=types.AccessType.ReadWrite)
+        default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo2 = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
-    def __init__(self, data, access=types.AccessType.ReadWrite,
+    def __init__(self,
+                 data,
+                 access=dtypes.AccessType.ReadWrite,
                  debuginfo=None):
         super(AccessNode, self).__init__()
 
@@ -257,22 +259,22 @@ class Tasklet(CodeNode):
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
-        enum=types.InstrumentationType,
+        enum=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=types.InstrumentationType.No_Instrumentation)
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
-                 inputs=set(),
-                 outputs=set(),
+                 inputs=None,
+                 outputs=None,
                  code="",
-                 language=types.Language.Python,
+                 language=dtypes.Language.Python,
                  code_global="",
                  code_init="",
                  code_exit="",
                  location="-1",
                  debuginfo=None):
-        super(Tasklet, self).__init__(inputs, outputs)
+        super(Tasklet, self).__init__(inputs or set(), outputs or set())
 
         # Properties
         self.label = label
@@ -358,10 +360,10 @@ class NestedSDFG(CodeNode):
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     location = Property(dtype=str, desc="SDFG execution location descriptor")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
@@ -370,16 +372,16 @@ class NestedSDFG(CodeNode):
         default=False)
 
     instrument = Property(
-        enum=types.InstrumentationType,
+        enum=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=types.InstrumentationType.No_Instrumentation)
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
                  sdfg,
                  inputs: Set[str],
                  outputs: Set[str],
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  location="-1",
                  debuginfo=None):
         super(NestedSDFG, self).__init__(inputs, outputs)
@@ -460,8 +462,8 @@ class MapEntry(EntryNode):
         @see: Map
     """
 
-    def __init__(self, map, dynamic_inputs=set()):
-        super(MapEntry, self).__init__(dynamic_inputs)
+    def __init__(self, map, dynamic_inputs=None):
+        super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
             raise ValueError("Map for MapEntry can not be None.")
         self._map = map
@@ -554,10 +556,10 @@ class Map(object):
     params = ParamsProperty(desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters")
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="Map schedule",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
@@ -568,15 +570,15 @@ class Map(object):
         default=False)
 
     instrument = Property(
-        enum=types.InstrumentationType,
+        enum=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=types.InstrumentationType.No_Instrumentation)
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
                  params,
                  ndrange,
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  unroll=False,
                  is_async=False,
                  flatten=False,
@@ -622,8 +624,8 @@ class ConsumeEntry(EntryNode):
         @see: Consume
     """
 
-    def __init__(self, consume, dynamic_inputs=set()):
-        super(ConsumeEntry, self).__init__(dynamic_inputs)
+    def __init__(self, consume, dynamic_inputs=None):
+        super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
         self._consume = consume
@@ -728,10 +730,10 @@ class Consume(object):
     num_pes = SymbolicProperty(desc="Number of processing elements")
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="Consume schedule",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     chunksize = Property(
         dtype=int,
         desc="Maximal size of elements to consume at a time",
@@ -743,9 +745,9 @@ class Consume(object):
         default=False)
 
     instrument = Property(
-        enum=types.InstrumentationType,
+        enum=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=types.InstrumentationType.No_Instrumentation)
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -757,7 +759,7 @@ class Consume(object):
                  label,
                  pe_tuple,
                  condition,
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  chunksize=1,
                  debuginfo=None):
         super(Consume, self).__init__()
@@ -806,22 +808,22 @@ class Reduce(Node):
     wcr = LambdaProperty()
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
-        dtype=types.ScheduleType,
+        dtype=dtypes.ScheduleType,
         desc="Reduction execution policy",
-        enum=types.ScheduleType,
-        from_string=lambda x: types.ScheduleType[x])
+        enum=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x])
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
-        enum=types.InstrumentationType,
+        enum=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=types.InstrumentationType.No_Instrumentation)
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  wcr,
                  axes,
                  wcr_identity=None,
-                 schedule=types.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Default,
                  debuginfo=None):
         super(Reduce, self).__init__()
         self.wcr = wcr  # type: ast._Lambda
@@ -842,7 +844,7 @@ class Reduce(Node):
     def __str__(self):
         # Autodetect reduction type
         redtype = detect_reduction_type(self.wcr)
-        if redtype == types.ReductionType.Custom:
+        if redtype == dtypes.ReductionType.Custom:
             wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
         else:
             wcrstr = str(redtype)
@@ -854,7 +856,7 @@ class Reduce(Node):
     def __label__(self, sdfg, state):
         # Autodetect reduction type
         redtype = detect_reduction_type(self.wcr)
-        if redtype == types.ReductionType.Custom:
+        if redtype == dtypes.ReductionType.Custom:
             wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
         else:
             wcrstr = str(redtype)

@@ -5,8 +5,7 @@ import enum
 import inspect
 import json
 import numpy
-import itertools
-import numpy.ctypeslib as npct
+from functools import wraps
 
 
 class AutoNumber(enum.Enum):
@@ -479,10 +478,10 @@ class struct(typeclass):
 
     def emit_definition(self):
         return """struct {name} {{
-{types}
+{typ}
 }};""".format(
             name=self.name,
-            types="\n".join([
+            typ='\n'.join([
                 "    %s %s;" % (t.ctype, tname)
                 for tname, t in sorted(self._data.items())
             ]),
@@ -643,6 +642,27 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
+DTYPE_TO_TYPECLASS = {
+    int: int32,
+    float: float32,
+    bool: uint8,
+    numpy.bool: uint8,
+    numpy.bool_: bool,
+    numpy.int8: int8,
+    numpy.int16: int16,
+    numpy.int32: int32,
+    numpy.int64: int64,
+    numpy.uint8: uint8,
+    numpy.uint16: uint16,
+    numpy.uint32: uint32,
+    numpy.uint64: uint64,
+    numpy.float16: float16,
+    numpy.float32: float32,
+    numpy.float64: float64,
+    numpy.complex64: complex64,
+    numpy.complex128: complex128
+}
+
 TYPECLASS_STRINGS = [
     "int8",
     "int16",
@@ -666,6 +686,7 @@ TYPECLASS_STRINGS = [
 _CONSTANT_TYPES = [
     int,
     float,
+    str,
     numpy.intc,
     numpy.intp,
     numpy.int8,
@@ -707,6 +728,11 @@ _OPENCL_ALLOWED_MODULES = {
 }
 
 
+def ismodule(var):
+    """ Returns True if a given object is a module. """
+    return inspect.ismodule(var)
+
+
 def ismoduleallowed(var):
     """ Helper function to determine the source module of an object, and 
         whether it is allowed in DaCe programs. """
@@ -731,7 +757,8 @@ def ismodule_and_allowed(var):
 
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
-    return isconstant(var) or ismoduleallowed(var)
+    from dace.symbolic import symbol
+    return isconstant(var) or ismodule(var) or isinstance(var, symbol)
 
 
 class _external_function(object):
@@ -775,6 +802,30 @@ def _json_to_obj(obj):
             return known_types[obj['type']].fromJSON_object(obj)
         raise TypeError('Unrecognized object type %s' % obj['type'])
     return globals()[obj]
+
+
+def paramdec(dec):
+    """ Parameterized decorator meta-decorator. Enables using `@decorator`,
+        `@decorator()`, and `@decorator(...)` with the same function. """
+
+    @wraps(dec)
+    def layer(*args, **kwargs):
+
+        # Allows the use of @decorator, @decorator(), and @decorator(...)
+        if len(kwargs) == 0 and len(args) == 1 and callable(
+                args[0]) and not isinstance(args[0], typeclass):
+            return dec(*args, **kwargs)
+
+        @wraps(dec)
+        def repl(f):
+            return dec(f, *args, **kwargs)
+
+        return repl
+
+    return layer
+
+
+#############################################
 
 
 def deduplicate(iterable):

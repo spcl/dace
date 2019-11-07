@@ -17,7 +17,7 @@ U = dace.symbol('U')
 @dace.program
 def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U],
             B: dace.uint64[N, M, K, L]):
-    @dace.map
+    @dace.mapscope
     def kernel(i: _[5:N - 5], j: _[0:M], k: _[7:K - 1], l: _[0:L]):
         @dace.map
         def block(a: _[0:X], b: _[0:Y], c: _[1:Z], d: _[2:W - 2], e: _[0:U]):
@@ -48,8 +48,10 @@ if __name__ == '__main__':
     outdims = tuple(s.get() for s in (N, M, K, L))
     print('High-dimensional GPU kernel test', dims)
 
-    A = np.random.randint(10, size=dims).astype(np.uint64)
-    B = np.zeros(outdims, dtype=np.uint64)
+    A = dace.ndarray((N, M, K, L, X, Y, Z, W, U), dtype=dace.uint64)
+    B = dace.ndarray((N, M, K, L), dtype=dace.uint64)
+    A[:] = np.random.randint(10, size=dims).astype(np.uint64)
+    B[:] = np.zeros(outdims, dtype=np.uint64)
     B_regression = np.zeros(outdims, dtype=np.uint64)
 
     # Equivalent python code

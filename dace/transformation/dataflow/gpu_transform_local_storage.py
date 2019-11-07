@@ -4,7 +4,7 @@
 import copy
 import itertools
 
-from dace import data, types, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
@@ -81,20 +81,20 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     return False
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule == types.ScheduleType.MPI
-                    or candidate_map.schedule == types.ScheduleType.GPU_Device
+            if (candidate_map.schedule == dtypes.ScheduleType.MPI
+                    or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule ==
-                    types.ScheduleType.GPU_ThreadBlock or
-                    candidate_map.schedule == types.ScheduleType.Sequential):
+                    dtypes.ScheduleType.GPU_ThreadBlock or
+                    candidate_map.schedule == dtypes.ScheduleType.Sequential):
                 return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry
             while current_node is not None:
-                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
-                        types.ScheduleType.GPU_ThreadBlock):
+                        dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -103,9 +103,9 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
                 if (isinstance(node, nodes.AccessNode) and
-                        node.desc(sdfg).storage != types.StorageType.Default
-                        and
-                        node.desc(sdfg).storage != types.StorageType.Register):
+                        node.desc(sdfg).storage != dtypes.StorageType.Default
+                        and node.desc(sdfg).storage !=
+                        dtypes.StorageType.Register):
                     return False
 
             return True
@@ -113,18 +113,18 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
 
             # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule == types.ScheduleType.MPI
-                    or reduce.schedule == types.ScheduleType.GPU_Device
-                    or reduce.schedule == types.ScheduleType.GPU_ThreadBlock):
+            if (reduce.schedule == dtypes.ScheduleType.MPI
+                    or reduce.schedule == dtypes.ScheduleType.GPU_Device
+                    or reduce.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
             while current_node is not None:
-                if (current_node.map.schedule == types.ScheduleType.GPU_Device
+                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
                         or current_node.map.schedule ==
-                        types.ScheduleType.GPU_ThreadBlock):
+                        dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -154,7 +154,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             exit_nodes = [cnode]
 
         # Change schedule
-        node_schedprop._schedule = types.ScheduleType.GPU_Device
+        node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
         if Config.get_bool("debugprint"):
             GPUTransformLocalStorage._maps_transformed += 1
         # If nested graph is designated as sequential, transform schedules and
@@ -163,16 +163,16 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             for node in graph.scope_subgraph(cnode).nodes():
                 if isinstance(node, nodes.AccessNode):
                     arr = node.desc(sdfg)
-                    if arr.storage == types.StorageType.Default:
-                        arr.storage = types.StorageType.Register
+                    if arr.storage == dtypes.StorageType.Default:
+                        arr.storage = dtypes.StorageType.Register
                 elif isinstance(node, nodes.MapEntry):
-                    if node.map.schedule == types.ScheduleType.Default:
-                        node.map.schedule = types.ScheduleType.Sequential
+                    if node.map.schedule == dtypes.ScheduleType.Default:
+                        node.map.schedule = dtypes.ScheduleType.Sequential
 
         gpu_storage_types = [
-            types.StorageType.GPU_Global,
-            types.StorageType.GPU_Shared,
-            types.StorageType.GPU_Stack,
+            dtypes.StorageType.GPU_Global,
+            dtypes.StorageType.GPU_Shared,
+            dtypes.StorageType.GPU_Stack,
         ]
 
         #######################################################
@@ -248,8 +248,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         shape=[1],
                         dtype=array.dtype,
                         transient=True,
-                        storage=types.StorageType.GPU_Global,
-                    )
+                        storage=dtypes.StorageType.GPU_Global)
                 else:
                     cloned_array = sdfg.add_array(
                         name=cloned_name,
@@ -257,7 +256,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtype=array.dtype,
                         materialize_func=array.materialize_func,
                         transient=True,
-                        storage=types.StorageType.GPU_Global,
+                        storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
                         access_order=tuple(
                             [array.access_order[d] for d in actual_dims]),
@@ -314,8 +313,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         shape=[1],
                         dtype=array.dtype,
                         transient=True,
-                        storage=types.StorageType.GPU_Global,
-                    )
+                        storage=dtypes.StorageType.GPU_Global)
                 else:
                     cloned_array = sdfg.add_array(
                         name=cloned_name,
@@ -323,7 +321,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtype=array.dtype,
                         materialize_func=array.materialize_func,
                         transient=True,
-                        storage=types.StorageType.GPU_Global,
+                        storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
                         access_order=tuple(
                             [array.access_order[d] for d in actual_dims]),
