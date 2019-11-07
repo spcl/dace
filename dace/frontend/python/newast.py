@@ -606,7 +606,7 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     acc1 = state.add_read(op1)
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
-    tasklet = blas.nodes.matmul.MatMul('_MatMult_', restype, in_connectors={'_a', '_b'}, out_connectors={'_c'})
+    tasklet = blas.nodes.matmul.MatMul('_MatMult_', restype)
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(op1, arr1))
     state.add_edge(acc2, None, tasklet, '_b', dace.Memlet.from_array(op2, arr2))
