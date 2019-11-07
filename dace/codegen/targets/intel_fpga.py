@@ -209,7 +209,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     @staticmethod
     def make_read(defined_type, type_str, var_name, vector_length, expr,
                   index):
-        if defined_type == DefinedType.Stream:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
             return "read_channel_intel({}[{}])".format(expr, index)
@@ -229,7 +229,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
-        if defined_type == DefinedType.Stream:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "write_channel_intel({}, {});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             return "write_channel_intel({}[{}], {});".format(
@@ -807,7 +807,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                       sdfg.node_id(dfg), node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
-                        callsite_stream, locals, ldepth):
+                        callsite_stream, locals, ldepth, toplevel_schedule):
         if node.label is None or node.label == "":
             return ''
 

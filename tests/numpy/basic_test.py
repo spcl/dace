@@ -1,7 +1,6 @@
 import numpy as np
 import dace
 
-#M,N,K = (dapp.symbol(name) for name in ['M', 'N', 'K'])
 M, N, K = 24, 24, 24
 
 
