@@ -116,10 +116,10 @@ class Dot(dace.graph.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    location = dace.properties.Property(
-        dtype=str,
-        desc="Execution location descriptor (e.g., GPU identifier)",
-        allow_none=True)
+    # location = dace.properties.Property(
+    #     dtype=str,
+    #     desc="Execution location descriptor (e.g., GPU identifier)",
+    #     allow_none=True)
 
     def __init__(self, name, dtype=None, location=None, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
