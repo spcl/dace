@@ -264,6 +264,10 @@ class ExpandTransformation(Transformation):
     def expansion(node):
         raise NotImplementedError("Must be implemented by subclass")
 
+    @staticmethod
+    def postprocessing(sdfg, state, expansion):
+        pass
+
     def apply(self, sdfg, *args, **kwargs):
         state = sdfg.nodes()[self.state_id]
         node = state.nodes()[self.subgraph[type(self)._match_node]]
@@ -285,6 +289,7 @@ class ExpandTransformation(Transformation):
         dace.graph.nxutil.change_edge_dest(state, node, expansion)
         dace.graph.nxutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
+        type(self).postprocessing(sdfg, state, expansion)
 
 
 # Module functions ############################################################
