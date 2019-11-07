@@ -112,18 +112,22 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
         dtype = node.dtype
         if dtype == dace.float32:
             func = "Sgemm"
+            cast = ""
             alpha = "dacelib::blas::CublasConstants::Get(0).FloatPone()"
             beta = "dacelib::blas::CublasConstants::Get(0).FloatZero()"
         elif dtype == dace.float64:
             func = "Dgemm"
+            cast = ""
             alpha = "dacelib::blas::CublasConstants::Get(0).DoublePone()"
             beta = "dacelib::blas::CublasConstants::Get(0).DoubleZero()"
         elif dtype == dace.complex64:
             func = "Cgemm"
+            cast = "(cuComplex*)"
             alpha = "dacelib::blas::CublasConstants::Get(0).Complex64Pone()"
             beta = "dacelib::blas::CublasConstants::Get(0).Complex64Zero()"
         elif dtype == dace.complex128:
             func = "Zgemm"
+            cast = "(cuDoubleComplex*)"
             alpha = "dacelib::blas::CublasConstants::Get(0).Complex128Pone()"
             beta = "dacelib::blas::CublasConstants::Get(0).Complex128Zero()"
         else:
@@ -141,10 +145,11 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                 subset.squeeze()
                 size = subset.size()
                 n = size[1]
-        code = ("cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
-                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, _b, {m}, _a, "
-                "{k}, {b}, _c, {m});").format(f=func, m=m, n=n, k=k,
-                                              a=alpha, b=beta)
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                "cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
+                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, {c}_b, {m}, "
+                "{c}_a, {k}, {b}, {c}_c, {m});").format(
+                    f=func, c=cast, m=m, n=n, k=k, a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -173,8 +178,9 @@ class MatMul(dace.graph.nodes.LibraryNode):
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
-    def __init__(self, name, dtype=None, *args, **kwargs):
-        super().__init__(name, *args, **kwargs)
+    def __init__(self, name, dtype=None, location=None):
+        super().__init__(name, location=location,
+                         inputs={'_a', '_b'}, outputs={'_c'})
         self.dtype = dtype
 
     def validate(self, sdfg, state):
