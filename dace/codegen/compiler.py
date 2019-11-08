@@ -512,7 +512,7 @@ def configure_and_compile(program_folder, program_name=None):
         "-DCMAKE_LINKER=\"{}\"".format(
             make_absolute(Config.get('compiler', 'linker', 'executable'))),
         "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
-            Config.get('compiler', 'linker', 'args') +
+            Config.get('compiler', 'linker', 'args') + " " +
             Config.get('compiler', 'linker', 'additional_args') +
             " ".join(cmake_link_flags)),
     ]

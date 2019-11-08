@@ -111,20 +111,20 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
         dtype = node.dtype
         if dtype == dace.float32:
             func = "Sgemm"
-            alpha = "dacelib::blas::CublasConstants::Get(0).FloatPone()"
-            beta = "dacelib::blas::CublasConstants::Get(0).FloatZero()"
+            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatPone()"
+            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatZero()"
         elif dtype == dace.float64:
             func = "Dgemm"
-            alpha = "dacelib::blas::CublasConstants::Get(0).DoublePone()"
-            beta = "dacelib::blas::CublasConstants::Get(0).DoubleZero()"
+            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoublePone()"
+            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoubleZero()"
         elif dtype == dace.complex64:
             func = "Cgemm"
-            alpha = "dacelib::blas::CublasConstants::Get(0).Complex64Pone()"
-            beta = "dacelib::blas::CublasConstants::Get(0).Complex64Zero()"
+            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Pone()"
+            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Zero()"
         elif dtype == dace.complex128:
             func = "Zgemm"
-            alpha = "dacelib::blas::CublasConstants::Get(0).Complex128Pone()"
-            beta = "dacelib::blas::CublasConstants::Get(0).Complex128Zero()"
+            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Pone()"
+            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Zero()"
         else:
             raise ValueError("Unsupported type for cuBLAS dot product: " +
                              str(dtype))
@@ -140,10 +140,11 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                 subset.squeeze()
                 size = subset.size()
                 n = size[1]
-        code = ("cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                "cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
                 "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, _b, {m}, _a, "
-                "{k}, {b}, _c, {m});").format(f=func, m=m, n=n, k=k,
-                                              a=alpha, b=beta)
+                "{k}, {b}, _c, {m});").format(
+                    f=func, m=m, n=n, k=k, a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -167,10 +168,15 @@ class MatMul(dace.graph.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
+    location = dace.properties.Property(
+        dtype=str,
+        desc="Execution location descriptor (e.g., GPU identifier)",
+        allow_none=True)
 
-    def __init__(self, name, dtype=None, *args, **kwargs):
+    def __init__(self, name, dtype=None, location=None, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
         self.dtype = dtype
+        self.location = location
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
