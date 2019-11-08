@@ -1,5 +1,6 @@
 from copy import deepcopy as dc
 from dace.config import Config
+from dace.frontend.common.op_impl import gpu_transform_tasklet
 import dace.library
 import dace.properties
 import dace.graph.nodes
@@ -111,18 +112,22 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
         dtype = node.dtype
         if dtype == dace.float32:
             func = "Sgemm"
+            cast = ""
             alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatPone()"
             beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatZero()"
         elif dtype == dace.float64:
             func = "Dgemm"
+            cast = ""
             alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoublePone()"
             beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoubleZero()"
         elif dtype == dace.complex64:
             func = "Cgemm"
+            cast = "(cuComplex*)"
             alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Pone()"
             beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Zero()"
         elif dtype == dace.complex128:
             func = "Zgemm"
+            cast = "(cuDoubleComplex*)"
             alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Pone()"
             beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Zero()"
         else:
@@ -142,9 +147,9 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                 n = size[1]
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 "cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
-                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, _b, {m}, _a, "
-                "{k}, {b}, _c, {m});").format(
-                    f=func, m=m, n=n, k=k, a=alpha, b=beta)
+                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, {c}_b, {m}, "
+                "{c}_a, {k}, {b}, {c}_c, {m});").format(
+                    f=func, c=cast, m=m, n=n, k=k, a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -152,6 +157,10 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
             code,
             language=dace.dtypes.Language.CPP)
         return tasklet
+
+    @staticmethod
+    def postprocessing(sdfg, state, expansion):
+        gpu_transform_tasklet(sdfg, state, expansion)
 
 
 @dace.library.node
@@ -173,15 +182,17 @@ class MatMul(dace.graph.nodes.LibraryNode):
         desc="Execution location descriptor (e.g., GPU identifier)",
         allow_none=True)
 
-    def __init__(self, name, dtype=None, location=None, *args, **kwargs):
-        super().__init__(name, *args, **kwargs)
+    def __init__(self, name, dtype=None, location=None):
+        super().__init__(
+            name, location=location, inputs={'_a', '_b'}, outputs={'_c'})
         self.dtype = dtype
         self.location = location
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
-            raise ValueError("Expected exactly two inputs to matrix-matrix product")
+            raise ValueError(
+                "Expected exactly two inputs to matrix-matrix product")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
@@ -193,7 +204,8 @@ class MatMul(dace.graph.nodes.LibraryNode):
                 size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError("Expected exactly one output from matrix-matrix product")
+            raise ValueError(
+                "Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
         if len(size0) != 2:
             raise ValueError(
@@ -202,7 +214,9 @@ class MatMul(dace.graph.nodes.LibraryNode):
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
         if size0[1] != size1[0]:
-            raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
+            raise ValueError(
+                "Inputs to matrix-matrix product must agree in the k-dimension"
+            )
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size2 = out_subset.size()
@@ -210,4 +224,6 @@ class MatMul(dace.graph.nodes.LibraryNode):
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
         if list(size2) != [size0[0], size1[1]]:
-            raise ValueError("Output to matrix-matrix product must agree in the m and n dimensions")
+            raise ValueError(
+                "Output to matrix-matrix product must agree in the m and n dimensions"
+            )

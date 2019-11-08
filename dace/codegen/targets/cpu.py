@@ -1449,6 +1449,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream: CodeIOStream,
             callsite_stream: CodeIOStream,
     ):
+        callsite_stream.write('{', sdfg, state_id, node)
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
@@ -1516,6 +1517,7 @@ class CPUCodeGen(TargetCodeGenerator):
             skip_wcr=True)
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
+        callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_MapEntry(
             self,
