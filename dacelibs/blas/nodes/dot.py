@@ -124,7 +124,7 @@ class Dot(dace.graph.nodes.LibraryNode):
     def __init__(self, name, dtype=None, location=None, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
         self.dtype = dtype
-        self.location = location
+        # self.location = location
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
