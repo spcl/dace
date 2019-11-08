@@ -929,7 +929,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         self.defined_vars = defined_vars
         self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
                         'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
-                        'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double']
+                        'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double', 'float64']
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
@@ -1008,17 +1008,19 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         attrname = rname(node)
         module_name = attrname[:attrname.rfind(".")]
         func_name = attrname[attrname.rfind(".") + 1:]
-        if module_name in types._OPENCL_ALLOWED_MODULES:
-            cppmodname = types._OPENCL_ALLOWED_MODULES[module_name]
+        if module_name in dtypes._OPENCL_ALLOWED_MODULES:
+            cppmodname = dtypes._OPENCL_ALLOWED_MODULES[module_name]
             return ast.copy_location(
                 ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
         return self.generic_visit(node)
 
     def visit_Call(self, node):
         # enforce compliance to OpenCL
-
         # type casting
-        if isinstance(node.func, ast.Name) and node.func.id in self._ctypes:
+        if (isinstance(node.func, ast.Name)  and node.func.id in self._ctypes):
             node.func.id = "({})".format(node.func.id)
+        elif ((isinstance(node.func, ast.Num) and node.func.n.to_string() in self._ctypes)):
+            node.func.n = "({})".format(node.func.n)
+
 
         return self.generic_visit(node)

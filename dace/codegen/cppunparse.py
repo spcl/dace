@@ -87,6 +87,7 @@ _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "float64": "(double)"}
 
+
 _py2c_typeconversion = {"uint": dace.dtypes.typeclass(np.uint32), "int": dace.dtypes.typeclass(np.int32),
                         "float": dace.dtypes.typeclass(np.float32), "float64" : dace.dtypes.typeclass(np.float64)}
 
@@ -759,7 +760,10 @@ class CPPUnparser:
                 if t.id.strip("()") in  _py2c_typeconversion:
                     inferred_type = _py2c_typeconversion[t.id.strip("()")]
                 elif self.defined_symbols.get(t.id) is not None:
+                    # defined symbols could have dtypes, in case convert it to typeclass
                     inferred_type = self.defined_symbols.get(t.id)
+                    if isinstance(inferred_type, np.dtype):
+                        inferred_type = dace.dtypes.typeclass(inferred_type.type)
                 elif self.locals.is_defined(t.id, self._indent):
                     inferred_type = self.locals.get_type(t.id) if self.locals.get_type(t.id) is not None else None
             return inferred_type
@@ -775,6 +779,7 @@ class CPPUnparser:
     def _Num(self, t, infer_type=False):
         repr_n = repr(t.n)
 
+
         # For complex values, use type of assignment (if exists), or
         # double-complex (128-bit) otherwise
         dtype = self.dtype or 'dace::complex128'
@@ -784,7 +789,10 @@ class CPPUnparser:
                 self.write(
                     "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
-                self.write(repr_n.replace("inf", INFSTR), infer_type)
+                if isinstance(t.n, str): # TODO Temporary fix for handling cases in which type are treated as Num in ast
+                    self.write(t.n,infer_type)
+                else:
+                    self.write(repr_n.replace("inf", INFSTR), infer_type)
                 # If the number has a type, use it
                 if isinstance(t.n, np.uint):
                     return dace.dtypes.typeclass(np.uint32) if infer_type else None
