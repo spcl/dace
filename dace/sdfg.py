@@ -1608,7 +1608,7 @@ subgraph cluster_state_{state} {{
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
             opt = optclass(sdfg)
-            sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+            sdfg = opt.optimize()
 
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
