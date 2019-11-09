@@ -422,7 +422,10 @@ class XilinxCodeGen(TargetCodeGenerator):
         kernel_stream = CodeIOStream()
 
         # Write header
-        module_stream.write("#include <dace/xilinx/device.h>\n\n", sdfg)
+        module_stream.write(
+            """#include <dace/xilinx/device.h>
+#include <dace/math.h>
+#include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream)
         module_stream.write("\n", sdfg)
 
