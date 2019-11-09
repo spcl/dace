@@ -94,7 +94,6 @@ class NestSDFG(pattern_matching.Transformation):
         for oldarrname, newarrname in transients.items():
             nested_sdfg.arrays.pop(oldarrname)
             nested_sdfg.arrays[newarrname].transient = False
-            outer_sdfg.arrays[oldarrname].transient = True
         outputs.update(transients)
 
         # Update memlets
