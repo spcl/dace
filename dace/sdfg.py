@@ -1142,6 +1142,8 @@ subgraph cluster_state_{state} {{
                                   description). False or True override current
                                   option, whereas None keeps default
         """
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
