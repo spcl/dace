@@ -657,23 +657,6 @@ def properties_to_json_list(props):
     return ret
 
 
-def set_properties_from_json(obj, prop, sdfg=None):
-    if prop['default'] == "None" and sdfg is None:
-        # This dropout is only valid for transformations
-        # Properties without a default are transformation-generic and should not be settable.
-        pass
-    else:
-        # Catching some transcription errors
-        val = prop['value'] == 'True' if prop['type'] == 'bool' else prop[
-            'value']
-        if any(map(lambda x: x in prop['type'], enum_list)):
-            # This is an enum. If the value was fully qualified, it needs to be trimmed
-            if '.' in val:
-                val = val.split('.')[-1]
-        dace.properties.set_property_from_string(
-            prop['name'], obj, json.dumps(val), sdfg, from_json=True)
-
-
 def applySDFGProperty(sdfg, property_element, step=None):
 
     try:
@@ -692,7 +675,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
     node = sdfg.find_node(sid, nid)
 
     for prop in property_element['params']:
-        set_properties_from_json(node, prop, sdfg)
+        dace.serialize.set_properties_from_json(node, prop, context=sdfg)
 
     return sdfg
 
@@ -735,8 +718,8 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
                 #if prop['name'] == 'subgraph': continue
                 #set_properties_from_json(pattern, prop, sdfg)
 
-                set_properties_from_json(
-                    pattern, x['params']['props'], context={'sdfg': sdfg})
+                dace.serialize.set_properties_from_json(
+                    pattern, x['params']['props'], context=sdfg)
                 pattern.apply_pattern(sdfg)
 
                 if not useGlobalSuffix:
