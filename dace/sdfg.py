@@ -1056,7 +1056,9 @@ subgraph cluster_state_{state} {{
     var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=dace.serialize.dumps(self.to_json()),
+            # Dumping to a string so that Jupyter Javascript can parse it
+            # recursively
+            sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
 
         return result

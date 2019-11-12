@@ -322,6 +322,7 @@ class Tasklet(CodeNode):
             return self.label
 
 
+@make_properties
 class EmptyTasklet(Tasklet):
     """ A special tasklet that contains no code. Used for filling empty states
         in an SDFG. """
