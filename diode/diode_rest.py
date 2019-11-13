@@ -1,6 +1,7 @@
 #!flask/bin/python
 
 import dace
+import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
 import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
@@ -72,7 +73,7 @@ class ConfigCopy:
 
 class ExecutorServer:
     """
-       Implements a server scheduling execution of dace programs 
+       Implements a server scheduling execution of dace programs
     """
 
     def __init__(self):
@@ -566,7 +567,7 @@ def getPubSSH():
 
 @app.route('/dace/api/v1.0/getEnum/<string:name>', methods=['GET'])
 def getEnum(name):
-    """   
+    """
         Helper function to enumerate available values for `ScheduleType`.
 
         Returns:
@@ -656,23 +657,6 @@ def properties_to_json_list(props):
     return ret
 
 
-def set_properties_from_json(obj, prop, sdfg=None):
-    if prop['default'] == "None" and sdfg is None:
-        # This dropout is only valid for transformations
-        # Properties without a default are transformation-generic and should not be settable.
-        pass
-    else:
-        # Catching some transcription errors
-        val = prop['value'] == 'True' if prop['type'] == 'bool' else prop[
-            'value']
-        if any(map(lambda x: x in prop['type'], enum_list)):
-            # This is an enum. If the value was fully qualified, it needs to be trimmed
-            if '.' in val:
-                val = val.split('.')[-1]
-        dace.properties.set_property_from_string(
-            prop['name'], obj, json.dumps(val), sdfg, from_json=True)
-
-
 def applySDFGProperty(sdfg, property_element, step=None):
 
     try:
@@ -691,7 +675,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
     node = sdfg.find_node(sid, nid)
 
     for prop in property_element['params']:
-        set_properties_from_json(node, prop, sdfg)
+        dace.serialize.set_properties_from_json(node, prop, context=sdfg)
 
     return sdfg
 
@@ -734,8 +718,8 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
                 #if prop['name'] == 'subgraph': continue
                 #set_properties_from_json(pattern, prop, sdfg)
 
-                dace.properties.Property.set_properties_from_json(
-                    pattern, x['params']['props'], context={'sdfg': sdfg})
+                dace.serialize.set_properties_from_json(
+                    pattern, x['params']['props'], context=sdfg)
                 pattern.apply_pattern(sdfg)
 
                 if not useGlobalSuffix:
@@ -868,7 +852,7 @@ def compileProgram(request, language, perfopts=None):
                         return sdfg_dict[name]
 
                     # Else: This function has to recreate the given sdfg
-                    sdfg_dict[name] = dace.SDFG.fromJSON_object(
+                    sdfg_dict[name] = dace.SDFG.from_json(
                         in_sdfg[name], {
                             'sdfg': None,
                             'callback': loader_callback
@@ -882,14 +866,14 @@ def compileProgram(request, language, perfopts=None):
                     if k in sdfg_dict: continue
                     if isinstance(v, str):
                         v = json.loads(v)
-                    sdfg_dict[k] = dace.SDFG.fromJSON_object(
+                    sdfg_dict[k] = dace.SDFG.from_json(
                         v, {
                             'sdfg': None,
                             'callback': loader_callback
                         })
                     sdfg_eval_order.append(k)
             else:
-                in_sdfg = dace.SDFG.fromJSON_object(in_sdfg)
+                in_sdfg = dace.SDFG.from_json(in_sdfg)
                 sdfg_dict[in_sdfg.name] = in_sdfg
         else:
             print("Using code to compile")
@@ -986,8 +970,7 @@ def get_transformations(sdfgs):
                 for n in nodes:
                     nodeids.append([sid, n])
 
-                properties = json.loads(
-                    dace.properties.Property.all_properties_to_json(p))
+                properties = dace.serialize.all_properties_to_json(p)
             optimizations.append({
                 'opt_name': label,
                 'opt_params': properties,
@@ -1197,7 +1180,7 @@ def run():
             (Same as for compile(), language defaults to 'dace')
             perfmodes: list including every queried mode
             corecounts: list of core counts (one run for every number of cores)
-            
+
     """
 
     try:
@@ -1261,14 +1244,14 @@ def optimize():
             [opt] optpath:  list of dicts, as { name: <str>, params: <dict> }. Contains the current optimization path/tree.
                             This optpath is applied to the provided code before evaluating possible pattern matches.
 
-            client_id: <string>:    For later identification. May be unique across all runs, 
+            client_id: <string>:    For later identification. May be unique across all runs,
                                     must be unique across clients
 
         Returns:
             matching_opts:  list of dicts, as { opt_name: <str>, opt_params: <dict>, affects: <list>, children: <recurse> }.
                             Contains the matching transformations.
                             `affects` is a list of affected node ids, which must be unique in the current program.
-    
+
     """
     tmp = compileProgram(request, 'dace')
     if len(tmp) > 1:
@@ -1300,7 +1283,7 @@ def compile(language):
             [opt] perf_mode:    string. Providing "null" has the same effect as omission. If specified, enables performance instrumentation with the counter set
                                 provided in the DaCe settings. If null (or omitted), no instrumentation is enabled.
 
-            client_id: <string>:    For later identification. May be unique across all runs, 
+            client_id: <string>:    For later identification. May be unique across all runs,
                                     must be unique across clients
 
         Returns:
@@ -1314,24 +1297,25 @@ def compile(language):
     tmp = None
     try:
         tmp = compileProgram(request, language)
+
+        if len(tmp) > 1:
+            sdfgs, code_tuples, dace_state = tmp
+        else:
+            # Error
+            return jsonify({'error': tmp})
+
+        opts = get_transformations(sdfgs)
+        compounds = {}
+        for n, s in sdfgs.items():
+            compounds[n] = {
+                "sdfg": s.to_json(),
+                "matching_opts": opts[n]['matching_opts'],
+                "generated_code": [*map(lambda x: x.code, code_tuples[n])]
+            }
+        return jsonify({"compounds": compounds})
+
     except Exception as e:
         return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
-
-    if len(tmp) > 1:
-        sdfgs, code_tuples, dace_state = tmp
-    else:
-        # Error
-        return jsonify({'error': tmp})
-
-    opts = get_transformations(sdfgs)
-    compounds = {}
-    for n, s in sdfgs.items():
-        compounds[n] = {
-            "sdfg": json.loads(s.toJSON()),
-            "matching_opts": opts[n]['matching_opts'],
-            "generated_code": [*map(lambda x: x.code, code_tuples[n])]
-        }
-    return jsonify({"compounds": compounds})
 
 
 @app.route('/dace/api/v1.0/decompile/<string:obj>/', methods=['POST'])
@@ -1370,7 +1354,7 @@ def decompile(obj):
             "compounds": {
                 sdfg_name: {
                     'input_code': loaded_sdfg.sourcecode,
-                    'sdfg': loaded_sdfg.toJSON(),
+                    'sdfg': json.dumps(loaded_sdfg.to_json()),
                     'matching_opts': opts[sdfg_name]['matching_opts'],
                     'generated_code': [*map(lambda x: x.code, gen_code)]
                 }

@@ -38,8 +38,8 @@ from dace.config import Config
 
 
 class DIODE:
-    """ GUI class for DIODE: The Data-centric Interactive Optimization 
-        Development Environment. 
+    """ GUI class for DIODE: The Data-centric Interactive Optimization
+        Development Environment.
 
         @note: Written in Gtk+Glade, using pygobject and Webkit.
     """
@@ -185,7 +185,7 @@ class DIODE:
         raise ValueError("No page with the name \"" + page_name + "\" found.")
 
     def switch_to_page(self, notebook, pagename):
-        """ The Gtk notebook API only allows to go to the next or previous 
+        """ The Gtk notebook API only allows to go to the next or previous
             page, but not to a specific one, so we implement this logic in
             this function. """
         notebook.handler_block_by_func(self.OnSwitchPage)
@@ -719,7 +719,7 @@ class DIODE:
             current_state = self.optimization_graph.get_current(
             ).get_dace_state()
             sdfg = current_state.get_sdfg()
-            sdfg_json = sdfg.toJSON()
+            sdfg_json = sdfg.to_json()
 
             conserver = Conserver()
             conserver.conserveAll(

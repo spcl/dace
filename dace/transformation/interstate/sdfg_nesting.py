@@ -50,8 +50,7 @@ class NestSDFG(pattern_matching.Transformation):
         transients = {}
 
         for state in nested_sdfg.nodes():
-            # Take input and output nodes, they will be added as input and output node of the nested SDFG
-
+            #  Input and output nodes are added as input and output nodes of the nested SDFG
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
                         and not node.desc(nested_sdfg).transient):
@@ -95,7 +94,6 @@ class NestSDFG(pattern_matching.Transformation):
         for oldarrname, newarrname in transients.items():
             nested_sdfg.arrays.pop(oldarrname)
             nested_sdfg.arrays[newarrname].transient = False
-            outer_sdfg.arrays[oldarrname].transient = True
         outputs.update(transients)
 
         # Update memlets
@@ -118,9 +116,9 @@ class NestSDFG(pattern_matching.Transformation):
 
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
-        nested_node = outer_state.add_nested_sdfg(
-            nested_sdfg, outer_sdfg, inputs.values(), outputs.values()
-        )
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
+                                                  inputs.values(),
+                                                  outputs.values())
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)
             outer_state.add_edge(
