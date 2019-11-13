@@ -24,7 +24,7 @@ def make_copy_to_fpga_state(sdfg):
         "A_device", [N],
         dtype=dace.int32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     state.add_edge(A_host, None, A_device, None,
                    dace.memlet.Memlet.simple(A_device, "0:N"))
@@ -42,7 +42,7 @@ def make_copy_to_host_state(sdfg):
         "A_device", [N],
         dtype=dace.int32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     A_host = state.add_array("A", [N], dtype=dace.int32)
 
     state.add_edge(A_device, None, A_host, None,
@@ -71,13 +71,13 @@ def make_read_A_sdfg():
         loop_body,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "n < N", language=dace.types.Language.Python)))
+                "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         n_inner_entry,
         n_inner_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "n >= N", language=dace.types.Language.Python)))
+                "n >= N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_body,
@@ -87,10 +87,10 @@ def make_read_A_sdfg():
     mem = loop_body.add_array(
         "mem", [N],
         dtype=dace.int32,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     pipe = loop_body.add_stream(
-        "pipe", dace.int32, storage=dace.types.StorageType.FPGA_Local)
+        "pipe", dace.int32, storage=dace.dtypes.StorageType.FPGA_Local)
 
     loop_body.add_memlet_path(
         mem,
@@ -126,7 +126,7 @@ def make_write_A_sdfg():
         loop_body,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "n < N", language=dace.types.Language.Python)))
+                "n < N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_body,
@@ -138,15 +138,15 @@ def make_write_A_sdfg():
         n_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "n >= N", language=dace.types.Language.Python)))
+                "n >= N", language=dace.dtypes.Language.Python)))
 
     mem = loop_body.add_array(
         "mem", [N],
         dtype=dace.int32,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
 
     pipe = loop_body.add_stream(
-        "pipe", dace.int32, storage=dace.types.StorageType.FPGA_Local)
+        "pipe", dace.int32, storage=dace.dtypes.StorageType.FPGA_Local)
 
     loop_body.add_memlet_path(
         pipe,
@@ -174,11 +174,11 @@ def make_compute_sdfg():
 
     # Data nodes
     A_pipe_in = state.add_stream(
-        "A_stream_in", dace.int32, storage=dace.types.StorageType.FPGA_Local)
+        "A_stream_in", dace.int32, storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_out = state.add_stream(
         "A_stream_out",
         dace.int32,
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     # N-loop
     sdfg.add_edge(
@@ -190,13 +190,13 @@ def make_compute_sdfg():
         state,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "n < N", language=dace.types.Language.Python)))
+                "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         n_entry,
         n_end,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "n >= N", language=dace.types.Language.Python)))
+                "n >= N", language=dace.dtypes.Language.Python)))
 
     # Backtrack two loops
     sdfg.add_edge(
@@ -251,36 +251,36 @@ def make_fpga_state(sdfg):
         "A_device", [N],
         dtype=dace.int32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     A_OUT = state.add_array(
         "A_device", [N],
         dtype=dace.int32,
         transient=True,
-        storage=dace.types.StorageType.FPGA_Global)
+        storage=dace.dtypes.StorageType.FPGA_Global)
     A_pipe_read = state.add_stream(
         "A_pipe",
         dace.int32,
         transient=True,
         shape=(P + 1,),
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_in = state.add_stream(
         "A_pipe",
         dace.int32,
         transient=True,
         shape=(P + 1,),
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_write = state.add_stream(
         "A_pipe",
         dace.int32,
         transient=True,
         shape=(P + 1,),
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_out = state.add_stream(
         "A_pipe",
         dace.int32,
         transient=True,
         shape=(P + 1, ),
-        storage=dace.types.StorageType.FPGA_Local)
+        storage=dace.dtypes.StorageType.FPGA_Local)
 
     compute_entry, compute_exit = state.add_map(
         "unroll_compute", {"p": "0:P"},

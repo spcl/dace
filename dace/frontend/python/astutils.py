@@ -1,9 +1,43 @@
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
+from collections import OrderedDict
+import inspect
 import sympy
+from typing import Any, Dict, List, Tuple
 
-from dace import types, symbolic
+from dace import dtypes, symbolic
+
+
+def _remove_outer_indentation(src: str):
+    """ Removes extra indentation from a source Python function.
+        @param src: Source code (possibly indented).
+        @return: Code after de-indentation.
+    """
+    lines = src.split('\n')
+    indentation = len(lines[0]) - len(lines[0].lstrip())
+    return '\n'.join([line[indentation:] for line in lines])
+
+
+def function_to_ast(f):
+    """ Obtain the source code of a Python function and create an AST.
+        @param f: Python function.
+        @return: A 4-tuple of (AST, function filename, function line-number,
+                               source code as string).
+    """
+    try:
+        src = inspect.getsource(f)
+    # TypeError: X is not a module, class, method, function, traceback, frame,
+    # or code object; OR OSError: could not get source code
+    except (TypeError, OSError):
+        raise TypeError('cannot obtain source code for dace program')
+
+    src_file = inspect.getfile(f)
+    _, src_line = inspect.findsource(f)
+    src_ast = ast.parse(_remove_outer_indentation(src))
+    ast.increment_lineno(src_ast, src_line)
+
+    return src_ast, src_file, src_line, src
 
 
 def rname(node):
@@ -46,9 +80,47 @@ def getkwarg(node, argname, default=None):
     return default
 
 
+def _datadesc(obj: Any):
+    from dace import data
+    if isinstance(obj, data.Data):
+        return obj
+    elif symbolic.issymbolic(obj):
+        return data.Scalar(symbolic.symtype(obj))
+    elif isinstance(obj, dtypes.typeclass):
+        return data.Scalar(obj)
+    return data.Scalar(dtypes.typeclass(type(obj)))
+
+
+def get_argtypes(
+        func: ast.FunctionDef,
+        global_vars: Dict[str, Any],
+) -> List[Tuple[str, Any]]:  # Any is actually data.Data
+    arg_names = [arg.arg for arg in func.args.args]
+    param_anns = [unparse(arg.annotation) for arg in func.args.args]
+    if isinstance(func.decorator_list[0], ast.Call):
+        decorator_anns = [unparse(arg) for arg in func.decorator_list[0].args]
+    else:
+        decorator_anns = [None]
+
+    dtypes = None
+    if all((a is not None for a in param_anns)):
+        dtypes = param_anns
+    if all((a is not None for a in decorator_anns)):
+        if dtypes is not None:
+            raise SyntaxError(
+                'DAPP programs can only have decorator arguments ' +
+                '(\'@dapp.program(...)\') or type annotations ' +
+                '(\'def program(arr: type, ...)\'), but not both')
+        dtypes = decorator_anns
+    if dtypes is None:
+        raise SyntaxError('Data-centric programs must be annotated with types')
+
+    return OrderedDict([(name, _datadesc(eval(t, global_vars)))
+                        for name, t in zip(arg_names, dtypes)])
+
+
 def DaCeSyntaxError(visitor, node, err):
     """ Reports errors with their corresponding file/line information. """
-
     try:
         line = node.lineno
         col = node.col_offset
@@ -56,9 +128,11 @@ def DaCeSyntaxError(visitor, node, err):
         line = 0
         col = 0
 
-    return SyntaxError(err + "\n  in File " + str(visitor.filename) +
-                       ", line " + str(line) + ":" + str(col) +
-                       ", in function " + str(visitor.curnode.name))
+    return SyntaxError(
+        err + "\n  in File " + str(visitor.filename) + ", line " + str(line) +
+        ":" + str(col) + ", in function " +
+        str(visitor.curnode.name
+            if visitor.curnode is not None else visitor.program_name))
 
 
 def get_tuple(visitor, node):
@@ -193,11 +267,18 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         # If range is the entire array, use the array descriptor to obtain the
         # entire range
         if astrange is None:
-            return [
-                (symbolic.pystr_to_symbolic(0),
-                 symbolic.pystr_to_symbolic(types.symbol_name_or_value(s)) - 1,
-                 symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape
-            ]
+            return [(symbolic.pystr_to_symbolic(0),
+                     symbolic.pystr_to_symbolic(
+                         symbolic.symbol_name_or_value(s)) - 1,
+                     symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
+
+        missing_slices = len(arrdesc.shape) - len(astrange)
+        if missing_slices < 0:
+            raise Exception(
+                'Mismatching shape {} - range {} dimensions'.format(
+                    arrdesc.shape, astrange))
+        for i in range(missing_slices):
+            astrange.append((None, None, None))
 
     result = [None] * len(astrange)
     for i, r in enumerate(astrange):
@@ -214,7 +295,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 end = symbolic.pystr_to_symbolic(unparse(end)) - 1
             else:
                 end = symbolic.pystr_to_symbolic(
-                    types.symbol_name_or_value(arrdesc.shape[i])) - 1
+                    symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
             if skip is None:
                 skip = symbolic.pystr_to_symbolic(1)
             else:
@@ -257,9 +338,12 @@ class ExtNodeTransformer(ast.NodeTransformer):
         bodies in order to discern DaCe statements from others.
     """
 
-    # Default implementation of TopLevelExpr
-    def visit_TopLevelExpr(self, node):
-        return self.visit(node)
+    def visit_TopLevel(self, node):
+        clsname = type(node).__name__
+        if getattr(self, "visit_TopLevel" + clsname, False):
+            return getattr(self, "visit_TopLevel" + clsname)(node)
+        else:
+            return self.visit(node)
 
     def generic_visit(self, node):
         for field, old_value in ast.iter_fields(node):
@@ -270,7 +354,13 @@ class ExtNodeTransformer(ast.NodeTransformer):
                         if (field == 'body'
                                 or field == 'orelse') and isinstance(
                                     value, ast.Expr):
-                            value = self.visit_TopLevelExpr(value)
+                            clsname = type(value).__name__
+                            if getattr(self, "visit_TopLevel" + clsname,
+                                       False):
+                                value = getattr(
+                                    self, "visit_TopLevel" + clsname)(value)
+                            else:
+                                value = self.visit(value)
                         else:
                             value = self.visit(value)
                         if value is None:
@@ -319,4 +409,14 @@ class ExtNodeVisitor(ast.NodeVisitor):
                             self.visit(value)
             elif isinstance(old_value, ast.AST):
                 self.visit(old_value)
+        return node
+
+
+class ASTFindReplace(ast.NodeTransformer):
+    def __init__(self, repldict: Dict[str, str]):
+        self.repldict = repldict
+
+    def visit_Name(self, node):
+        if node.id in self.repldict:
+            node.id = self.repldict[node.id]
         return node

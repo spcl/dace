@@ -38,11 +38,19 @@ runtestopt() {
 
 runone() {
     echo "Running $1"
-    runtest $1 gemm.py $2
-    runtest $1 jacobi.py $2
+    runtest $1 axpy.py $2
+    runtest $1 ddot.py $2
+    runtest $1 fibonacci.py $2
     runtest $1 filter.py $2
+    runtest $1 gemm.py $2
     runtest $1 histogram.py $2
+    runtest $1 histogram_declarative.py $2
+    runtest $1 jacobi.py $2
+    runtest $1 mandelbrot.py $2
+    runtest $1 mat_add.py $2
     runtest $1 spmv.py $2
+    runtest $1 sum.py $2
+    runtest $1 transpose.py $2
 }
 
 runall() {

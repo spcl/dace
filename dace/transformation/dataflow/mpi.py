@@ -1,6 +1,6 @@
 """ Contains the MPITransformMap transformation. """
 
-from dace import types, symbolic
+from dace import dtypes, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -66,13 +66,13 @@ class MPITransformMap(pattern_matching.Transformation):
             return False
 
         # We cannot transform a map which is already of schedule type MPI
-        if map_entry.map.schedule == types.ScheduleType.MPI:
+        if map_entry.map.schedule == dtypes.ScheduleType.MPI:
             return False
 
         # We cannot transform a map which is already inside a MPI map, or in
         # another device
         schedule_whitelist = [
-            types.ScheduleType.Default, types.ScheduleType.Sequential
+            dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential
         ]
         sdict = graph.scope_dict()
         parent = sdict[map_entry]
@@ -136,7 +136,7 @@ class MPITransformMap(pattern_matching.Transformation):
             raise ValueError("Tasklet not found")
 
         # Add MPI schedule attribute to outer map
-        outer_map.map._schedule = types.ScheduleType.MPI
+        outer_map.map._schedule = dtypes.ScheduleType.MPI
 
         # Now create a transient for each array
         for e in edges:

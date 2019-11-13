@@ -6,7 +6,7 @@ import dace
 import math
 import numpy as np
 
-N = dace.symbol()
+N = dace.symbol('N')
 
 
 @dace.program
@@ -25,18 +25,16 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=64)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([N], dtype=dace.float32)
-    out_AA = dace.scalar(dace.float64)
-
     N.set(args["N"])
 
     print('Dot product %d' % (N.get()))
 
+    A = dace.ndarray([N], dtype=dace.float32)
+    out_AA = dace.scalar(dace.float64)
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)
     out_AA[0] = dace.float64(0)
 
-    cdot_self = dace.compile(dot, A, A, out_AA)
-    cdot_self(A, A, out_AA)
+    dot(A, A, out_AA, N=N)
 
     diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(N.get())
     print("Difference:", diff_aa)

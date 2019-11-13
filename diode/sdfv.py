@@ -1,21 +1,13 @@
 """ SDFG visualizer that uses Flask, HTML5, and Javascript. """
 
+import json
 import sys
 import os
+import platform
 
 import dace
-
-# Create Flask (Web interface) application
-from flask import Flask, render_template, jsonify, request
-app = Flask(__name__, static_url_path='', static_folder='client')
-
-sdfg_json = None
-
-
-@app.route('/', methods=['GET'])
-def main():
-    return render_template('sdfv.html', sdfg=sdfg_json)
-
+import tempfile
+import jinja2
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -40,6 +32,29 @@ if __name__ == '__main__':
     # Load SDFG
     if sdfg_json is None:
         sdfg = dace.SDFG.from_file(filename)
-        sdfg_json = sdfg.toJSON()
+        sdfg_json = sdfg.to_json()
 
-    app.run(port=5799)
+    basepath = os.path.dirname(os.path.realpath(__file__))
+    template_loader = jinja2.FileSystemLoader(
+        searchpath=os.path.join(basepath, 'templates'))
+    template_env = jinja2.Environment(loader=template_loader)
+    template = template_env.get_template('sdfv.html')
+
+    html = template.render(sdfg=json.dumps(sdfg_json),
+                           dir=basepath + '/')
+
+    html_filename = filename + ".html"
+
+    with open(html_filename, "w") as fp:
+        fp.write(html)
+    print("File saved at %s" % html_filename)
+
+    system = platform.system()
+
+    if system == 'Windows':
+        os.system(html_filename)
+    elif system == 'Darwin':
+        os.system('open %s' % html_filename)
+    else:
+        os.system('xdg-open %s' % html_filename)
+

@@ -3,7 +3,7 @@
 
 import dace
 from copy import deepcopy as dcpy
-from dace import data, properties, symbolic, types, subsets
+from dace import data, properties, symbolic, dtypes, subsets
 from dace.graph import edges, graph, nodes, nxutil
 from dace.transformation import pattern_matching
 from math import ceil
@@ -25,7 +25,7 @@ class CopyToDevice(pattern_matching.Transformation):
     """ Implements the copy-to-device transformation, which copies a nested
         SDFG and its dependencies to a given device.
 
-        The transformation changes all data storage types of a nested SDFG to 
+        The transformation changes all data storage types of a nested SDFG to
         the given `storage` property, and creates new arrays and copies around
         the nested SDFG to that storage.
     """
@@ -33,11 +33,11 @@ class CopyToDevice(pattern_matching.Transformation):
     _nested_sdfg = nodes.NestedSDFG("", graph.OrderedDiGraph(), set(), set())
 
     storage = properties.Property(
-        dtype=types.StorageType,
+        dtype=dtypes.StorageType,
         desc="Nested SDFG storage",
-        enum=types.StorageType,
-        from_string=lambda x: types.StorageType[x],
-        default=types.StorageType.Default)
+        choices=dtypes.StorageType,
+        from_string=lambda x: dtypes.StorageType[x],
+        default=dtypes.StorageType.Default)
 
     @staticmethod
     def annotates_memlets():

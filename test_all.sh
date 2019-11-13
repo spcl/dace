@@ -32,14 +32,14 @@ join_by_newline() {
 }
 
 bail() {
-    ERRORSTR=$1
+    ERRORSTR="$TESTPREFIX$1"
     /bin/echo -e "${RED}ERROR${NC} in $ERRORSTR" 1>&2
     ERRORS=`expr $ERRORS + 1`
     FAILED_TESTS="${FAILED_TESTS} $ERRORSTR\n"
 }
 
 bail_skip() {
-    ERRORSTR=$1
+    ERRORSTR="$TESTPREFIX$1"
     /bin/echo -e "${YELLOW}SKIPPING${NC} $ERRORSTR" 1>&2
     SKIPS=`expr $SKIPS + 1`
     SKIPPED_TESTS="${SKIPPED_TESTS} $ERRORSTR\n"
@@ -88,12 +88,6 @@ runtest_cu() {
     testcmd ./$1.out
     retval=$?
     rm -f $1.out
-    if [ $? -ne 0 ]; then bail $1; fi
-}
-
-runtest_optscript() {
-    test_start $1
-    testcmd python3 $SCRIPTPATH/diode/diode1.py --local --headless --optscript=$1
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
@@ -148,8 +142,6 @@ if [ $# -ne 0 ]; then
             runtest_cpp $arg
         elif [[ $arg == *_test.cu ]]; then
             runtest_cu $arg
-        elif [[ $arg == *_test_opt.py ]]; then
-            runtest_optscript $arg
         elif [[ $arg == *_test.py ]]; then
             runtest_py $arg
         elif [[ $arg == *.m ]]; then

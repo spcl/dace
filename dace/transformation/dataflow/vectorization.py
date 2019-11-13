@@ -1,5 +1,5 @@
 """ Contains classes that implement the vectorization transformation. """
-from dace import data, types, symbolic
+from dace import data, dtypes, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
@@ -65,7 +65,7 @@ class Vectorization(pattern_matching.Transformation):
                 for idx, expr in enumerate(subset):
                     if isinstance(expr, tuple):
                         for ex in expr:
-                            symbolic.pystr_to_symbolic(ex)
+                            ex = symbolic.pystr_to_symbolic(ex)
                             symbols = ex.free_symbols
                             if param in symbols:
                                 if idx == subset.dims() - 1:
@@ -96,10 +96,6 @@ class Vectorization(pattern_matching.Transformation):
             str(node) for node in [map_entry, tasklet, map_exit])
 
     def apply(self, sdfg):
-        #print(str(sdfg.nodes()))
-        sdfg.draw_to_file("vecto.dot")
-        for n in sdfg.nodes():
-            print(str(n))
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
         tasklet = graph.nodes()[self.subgraph[Vectorization._tasklet]]

@@ -48,13 +48,8 @@ sizes = [{
     NM: 2400
 }]
 
-args = [
-    dace.ndarray([NI, NK], datatype),
-    dace.ndarray([NK, NJ], datatype),
-    dace.ndarray([NJ, NM], datatype),
-    dace.ndarray([NM, NL], datatype),
-    dace.ndarray([NI, NL], datatype)
-]
+args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype),
+        ([NM, NL], datatype), ([NI, NL], datatype)]
 
 
 def init_array(A, B, C, D, G):

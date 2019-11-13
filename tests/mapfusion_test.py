@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import dace
 from dace.transformation.dataflow import MapFusion
 
@@ -62,7 +63,7 @@ def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20],
 if __name__ == '__main__':
     sdfg = fusion.to_sdfg()
     sdfg.apply_transformations([MapFusion])
-    sdfg.draw_to_file(filename='after.dot')
+    sdfg.save(os.path.join('_dotgraphs', 'after.sdfg'))
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
@@ -77,7 +78,7 @@ if __name__ == '__main__':
     # Second test
     sdfg = multiple_fusions.to_sdfg()
     sdfg.apply_transformations([MapFusion])
-    sdfg.draw_to_file(filename='after.dot')
+    sdfg.save(os.path.join('_dotgraphs', 'after.sdfg'))
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
     C = np.zeros_like(A)

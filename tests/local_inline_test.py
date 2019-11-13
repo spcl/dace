@@ -2,10 +2,10 @@
 import dace
 import numpy as np
 
-W = dace.symbol()
+W = dace.symbol('W')
 
 
-@dace.external_function
+@dace.program
 def bla(AA, BB):
     tmp = dace.define_local([W], AA.dtype)
 
@@ -39,7 +39,7 @@ if __name__ == '__main__':
     B[:] = dace.float32(0.0)
     C[:] = dace.float32(0.0)
 
-    prog(A, B, C)
+    prog(A, B, C, W=W)
 
     diff = np.linalg.norm((-(-A + 1) + 1) - C) / W.get()
     print("Difference:", diff)

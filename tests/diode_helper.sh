@@ -3,15 +3,16 @@
 # File helper that creates a diode server for test tasks to run with.
 DIODEBASEPATH="../diode/"
 SAMPLESBASEPATH="../samples/"
+SERVPORT=`expr 6000 + ${CI_CONCURRENT_ID:-0}`
 
 # Remove old config files if they exist
 rm ./client_configs/default.conf
 # Start the REST server
-python3 $DIODEBASEPATH/diode_rest.py --localhost --localdace &
+python3 $DIODEBASEPATH/diode_rest.py --localhost --localdace --port $SERVPORT &
 SERVPID=$!
 RETVAL=0
 
-echo "server pid is: $SERVPID"
+echo "server pid is: $SERVPID, port: $SERVPORT"
 
 
 # Wait 10 seconds for the server to come online
@@ -27,10 +28,11 @@ elif cat cmdout.txt | grep -q '+ exit 0'; then
     RETVAL=0
 else
     echo "Failed to get sensible output"
-    cat cmdout.txt
     RETVAL=1
 fi
 
+cat cmdout.txt
+    
 if [ $RETVAL -eq 0 ]; then
     echo "TEST COMMAND SUCCESSFUL"
 fi

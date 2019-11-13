@@ -120,7 +120,7 @@ class AST_BinExpression(AST_Node):
     def get_basetype(self):
         # The basetype of a binary expression should be the more accurate
         # type of lhs and rhs
-        return dace.types.float64
+        return dace.dtypes.float64
 
     def matrix2d_scalar(self, sdfg, state, op):
         lhs_dims = self.lhs.get_dims()

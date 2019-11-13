@@ -9,7 +9,7 @@ import argparse
 import dace
 import numpy as np
 
-N = dace.symbol()
+N = dace.symbol("N")
 
 
 @dace.program
@@ -28,20 +28,18 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=64)
     args = vars(parser.parse_args())
 
+    N.set(args["N"])
     A = dace.ndarray([N], dtype=dace.float32)
     B = dace.ndarray([N], dtype=dace.float32)
     out_AB = dace.scalar(dace.float32)
 
-    N.set(args["N"])
 
     print('Dot product %d' % (N.get()))
 
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)
     B[:] = np.random.rand(N.get()).astype(dace.float32.type)
     out_AB[0] = dace.float32(0)
-
-    cdot = dace.compile(dot, A, B, out_AB)
-    cdot(A, B, out_AB)
+    dot(A, B, out_AB)
 
     diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
     print("Difference (A*B):", diff_ab)

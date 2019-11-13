@@ -6,13 +6,10 @@ import numpy as np
 
 N = dace.symbol('N')
 
-V = dace.ndarray([N], dace.float64)
-Vout = dace.ndarray([N], dace.float64)
-
 
 @dace.program(dace.float64[N], dace.float64[N])
 def cudahello(A, Vout):
-    @dace.map(_[0:ceiling(N / 32)])
+    @dace.mapscope(_[0:ceiling(N / 32)])
     def multiplication(i):
         @dace.map(_[i * 32:min(N, (i + 1) * 32)])
         def mult_block(bi):
@@ -26,6 +23,8 @@ if __name__ == "__main__":
 
     print('Vector double CUDA (shared memory) %d' % (N.get()))
 
+    V = dace.ndarray([N], dace.float64)
+    Vout = dace.ndarray([N], dace.float64)
     V[:] = np.random.rand(N.get()).astype(dace.float64.type)
     Vout[:] = dace.float64(0)
 

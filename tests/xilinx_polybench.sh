@@ -46,16 +46,8 @@ run_sample() {
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
-    #0: dirty trick to get the number for SDFG transformation
-#    python3 $1.py &> out <<- EOF
-#EOF
-#
-#    transf_numb="$(grep "Transformation FPGATransformSDFG" out | sed -E 's/[ \t]*([0-9]+).*/\1/')"
-#    echo "Transformation number for $1 is $transf_numb"
-
     #1: execute the benchmark with timeout
-    echo "echo -e "FPGATransformSDFG$0\n\n" | timeout $TEST_TIMEOUT python3 $1.py -size ${POLYBENCH_INPUT} ${@:3}"
-    echo -e "FPGATransformSDFG\$0\ny" | timeout $TEST_TIMEOUT python3 $1.py -size ${POLYBENCH_INPUT} ${@:3}
+    echo -e "FPGATransformSDFG\$${3}\ny" | timeout $TEST_TIMEOUT python3 $1.py -size ${POLYBENCH_INPUT} ${@:3}
     ret_status=$?
     if [ $ret_status -ne 0 ]; then
       echo "Result " $ret_status
@@ -74,37 +66,36 @@ run_sample() {
 
 run_all() {
 
-    run_sample ../samples/polybench/2mm
-    run_sample ../samples/polybench/3mm
-    run_sample ../samples/polybench/adi
-    run_sample ../samples/polybench/atax
-    run_sample ../samples/polybench/bicg
-    run_sample ../samples/polybench/cholesky
-    run_sample ../samples/polybench/correlation
-    run_sample ../samples/polybench/covariance
-    run_sample ../samples/polybench/deriche
-    run_sample ../samples/polybench/doitgen
-    run_sample ../samples/polybench/durbin
-    run_sample ../samples/polybench/fdtd-2d
-    run_sample ../samples/polybench/floyd-warshall
-    run_sample ../samples/polybench/gemm
-    run_sample ../samples/polybench/gemver
-    run_sample ../samples/polybench/gesummv
-    run_sample ../samples/polybench/gramschmidt
-    run_sample ../samples/polybench/heat-3d
-    run_sample ../samples/polybench/jacobi-1d
-    run_sample ../samples/polybench/jacobi-2d
-    run_sample ../samples/polybench/ludcmp
-    run_sample ../samples/polybench/lu
-    run_sample ../samples/polybench/mvt
-    run_sample ../samples/polybench/nussinov
-    run_sample ../samples/polybench/polybench
-    run_sample ../samples/polybench/seidel-2d
-    run_sample ../samples/polybench/symm
-    run_sample ../samples/polybench/syr2k
-    run_sample ../samples/polybench/syrk
-    run_sample ../samples/polybench/trisolv
-    run_sample ../samples/polybench/trmm
+    run_sample 2mm k2mm 0
+    run_sample 3mm k3mm 0
+    run_sample adi adi 0
+    run_sample atax atax 0
+    run_sample bicg bicg 0
+    run_sample cholesky cholesky 0
+    run_sample correlation correlation 0
+    run_sample covariance covariance 0
+    run_sample deriche deriche 0
+    run_sample doitgen doitgen 1
+    run_sample durbin durbin 0
+    run_sample fdtd-2d fdtd2d 0
+    run_sample  floyd-warshall floyd_warshall 0
+    run_sample gemm gemm 0
+    run_sample gemver gemver 0
+    run_sample gesummv gesummv 0
+    run_sample gramschmidt gramschmidt 1
+    run_sample heat-3d heat3d 0
+    run_sample jacobi-1d jacobi1d 0
+    run_sample jacobi-2d jacobi2d 0
+    run_sample ludcmp ludcmp 0
+    run_sample lu lu 0
+    run_sample mvt mvt 0
+    run_sample nussinov nussinov 0
+    run_sample seidel-2d seidel2d 0
+    run_sample symm symm 1
+    run_sample syr2k syr2k 0
+    run_sample syrk syrk 0
+    run_sample trisolv trisolv 0
+    run_sample trmm trmm 1
 
 }
 # Check if xocc is vailable
@@ -125,8 +116,8 @@ echo "Attention: this will cleanup cache in 5 seconds..."
 rm -fr .dacecache/
 
 TEST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
-cd $TEST_DIR
-run_all ${1:-"0"}
+cd $TEST_DIR/../samples/polybench
+run_all
 
 PASSED=`expr $TESTS - $ERRORS`
 echo "$PASSED / $TESTS tests passed"

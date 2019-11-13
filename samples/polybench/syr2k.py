@@ -26,13 +26,8 @@ sizes = [{
     N: 2600
 }]
 
-args = [
-    dace.ndarray([N, N], datatype),
-    dace.ndarray([N, M], datatype),
-    dace.ndarray([N, M], datatype),
-    dace.ndarray([1], datatype),
-    dace.ndarray([1], datatype)
-]
+args = [([N, N], datatype), ([N, M], datatype), ([N, M], datatype),
+        ([1], datatype), ([1], datatype)]
 
 outputs = [(0, 'C')]
 
@@ -55,7 +50,7 @@ def init_array(C, A, B, alpha, beta):
 @dace.program(datatype[N, N], datatype[N, M], datatype[N, M], datatype[1],
               datatype[1])
 def syr2k(C, A, B, alpha, beta):
-    @dace.map
+    @dace.mapscope
     def mult_c_rows(i: _[0:N]):
         @dace.map
         def mult_c_cols(j: _[0:i + 1]):
@@ -64,7 +59,7 @@ def syr2k(C, A, B, alpha, beta):
             oc >> C[i, j]
             oc = ic * ib
 
-    @dace.map
+    @dace.mapscope
     def compute(i: _[0:N], k: _[0:M]):
         @dace.map
         def compute_elem(j: _[0:i + 1]):

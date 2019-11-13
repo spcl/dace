@@ -16,7 +16,8 @@ INFINITY = np.iinfo(vtype.type).max
 
 storage = dp.StorageType.Default
 
-sdfg = dp.SDFG('bfs_bsp', OrderedDict([('srcnode', dp.data.Scalar(vtype))]))
+sdfg = dp.SDFG('bfs_bsp')
+sdfg.add_symbol('srcnode', vtype)
 
 istate = sdfg.add_state('init')
 dstate = sdfg.add_state('doit')

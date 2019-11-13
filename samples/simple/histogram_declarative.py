@@ -37,17 +37,13 @@ if __name__ == "__main__":
     parser.add_argument("H", type=int, nargs="?", default=32)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([H, W], dtype=dace.uint8)
-    hist = dace.ndarray([BINS], dtype=dace.uint32)
-
     W.set(args["W"])
     H.set(args["H"])
 
     print('Histogram (dec) %dx%d' % (W.get(), H.get()))
 
-    A[:] = np.random.randint(0, 256,
-                             (H.get(), W.get())).astype(dace.uint8.type)
-    hist[:] = dace.uint32(0)
+    A = np.random.randint(0, BINS, (H.get(), W.get())).astype(np.uint8)
+    hist = np.zeros([BINS], dtype=np.uint32)
 
     histogram(A, hist)
 
@@ -55,7 +51,8 @@ if __name__ == "__main__":
         dace.timethis('histogram', 'numpy', dace.eval(H * W), np.histogram, A,
                       BINS)
 
-    diff = np.linalg.norm(np.histogram(A, bins=BINS)[0] - hist)
+    diff = np.linalg.norm(
+        np.histogram(A, bins=BINS, range=(0, BINS))[0] - hist)
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

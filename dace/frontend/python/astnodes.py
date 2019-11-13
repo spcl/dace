@@ -3,7 +3,7 @@
 from collections import OrderedDict
 from copy import deepcopy as dcpy
 
-from dace import data, types
+from dace import data, dtypes
 from dace.frontend.python import astutils
 
 
@@ -113,7 +113,7 @@ class _TaskletNode(_DataFlowNode):
     def __init__(self,
                  name,
                  node_ast,
-                 language=types.Language.Python,
+                 language=dtypes.Language.Python,
                  global_code=''):
         super(_TaskletNode, self).__init__(name, node_ast)
         self.language = language

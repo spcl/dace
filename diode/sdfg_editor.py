@@ -228,7 +228,7 @@ class SDFGEditor:
         state = self.parse_state_label(statelabel)
         if state is None:
             raise ValueError("State " + statelabel + " not found / parsable")
-        arrtype = self.sdfg.add_array("newarray", dace.types.float64, (1, ))
+        arrtype = self.sdfg.add_array("newarray", dace.dtypes.float64, (1, ))
         newarray = dace.graph.nodes.AccessNode(arrtype)
         self.sdfg.nodes()[state].add_node(newarray)
         self.rendered_sdfg.set_dotcode(self.sdfg.draw())
@@ -238,7 +238,7 @@ class SDFGEditor:
         state = self.parse_state_label(statelabel)
         if state is None:
             raise ValueError("State " + statelabel + " not found / parsable")
-        streamtype = self.sdfg.add_stream("newstream", dace.types.float64, 1,
+        streamtype = self.sdfg.add_stream("newstream", dace.dtypes.float64, 1,
                                           0)
         newstream = dace.graph.nodes.AccessNode(streamtype)
         self.sdfg.nodes()[state].add_node(newstream)
@@ -250,7 +250,7 @@ class SDFGEditor:
         dstnode = self.from_elem2sdfg(dstnodeid)
 
         # Create a dummy (but valid) array
-        mdata = self.sdfg.add_array("newarray", dace.types.float64, (1, ))
+        mdata = self.sdfg.add_array("newarray", dace.dtypes.float64, (1, ))
         msubset = dace.subsets.Range([("0", "N-1", "1")])
         newmemlet = dace.memlet.Memlet(mdata, 1, msubset, 1)
         sid1, nid1 = self.split_nodeid_in_state_and_nodeid(srcnodeid)
@@ -376,7 +376,7 @@ class SDFGEditor:
         return True
 
     def add_stream(self, x, y):
-        streamtype = self.sdfg.add_stream("newstream", dace.types.float64, 1,
+        streamtype = self.sdfg.add_stream("newstream", dace.dtypes.float64, 1,
                                           0)
         newstream = dace.graph.nodes.AccessNode(streamtype)
         state_label = self.rendered_sdfg.get_subgraph_by_coords(x, y)

@@ -27,9 +27,9 @@ def confres_test(A, B, red1, red2):
         r2 = 2
 
     dace.reduce(lambda a, b: a + b, A, red2)
-    dace.reduce(lambda a, b: a + b, B[2:H - 2, 5, :], red1[0])
-    dace.reduce(lambda a, b: a + b, B[3:H - 3, 5:7, :], red1[1:], axis=(2, 0))
-    dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :], red1[0])
+    red1[0:1] = dace.reduce(lambda a, b: a + b, B[2:H - 2, 5])
+    red1[1:] = dace.reduce(lambda a, b: a + b, B[3:H - 3, 5:7, :], axis=(2, 0))
+    red1[0:1] = dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :])
 
 
 if __name__ == "__main__":
@@ -38,15 +38,15 @@ if __name__ == "__main__":
     parser.add_argument("H", type=int, nargs="?", default=20)
     args = vars(parser.parse_args())
 
-    A = dace.ndarray([W, H], dtype=dace.float32)
-    B = dace.ndarray([H, W, H], dtype=dace.float32)
-    red1 = dace.ndarray([3], dtype=dace.float32)
-    red2 = dace.ndarray([1], dtype=dace.float32)
-
     W.set(args["W"])
     H.set(args["H"])
 
     print('Conflict Resolution Test %dx%d' % (W.get(), H.get()))
+
+    A = dace.ndarray([W, H], dtype=dace.float32)
+    B = dace.ndarray([H, W, H], dtype=dace.float32)
+    red1 = dace.ndarray([3], dtype=dace.float32)
+    red2 = dace.ndarray([1], dtype=dace.float32)
 
     A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
     B[:] = np.random.rand(H.get(), W.get(), H.get()).astype(dace.float32.type)

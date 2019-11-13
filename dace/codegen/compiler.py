@@ -19,8 +19,8 @@ import numpy as np
 
 import dace
 from dace.frontend import operations
-from dace.frontend.python import ndarray
-from dace import symbolic, types, data as dt
+from dace.frontend.python import wrappers
+from dace import symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -49,7 +49,7 @@ class ReloadableDLL(object):
         bypasses Python's dynamic library reloading issues. """
 
     def __init__(self, library_filename, program_name):
-        """ Creates a new reloadable shared object. 
+        """ Creates a new reloadable shared object.
             @param library_filename: Path to library file.
             @param program_name: Name of the DaCe program (for use in finding
                                  the stub library loader).
@@ -147,6 +147,10 @@ class CompiledSDFG(object):
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
     @property
+    def filename(self):
+        return self._lib._library_filename
+
+    @property
     def sdfg(self):
         return self._sdfg
 
@@ -156,19 +160,13 @@ class CompiledSDFG(object):
             self._initialized = False
         self._lib.unload()
 
-    def _construct_args(self, *args, **kwargs):
+    def _construct_args(self, **kwargs):
         """ Main function that controls argument construction for calling
-            the C prototype of the SDFG. 
-            
+            the C prototype of the SDFG.
+
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """
-
-        if len(kwargs) > 0 and len(args) > 0:
-            raise AttributeError(
-                'Compiled SDFGs can only be called with either arguments ' +
-                '(e.g. "program(a,b,c)") or keyword arguments ' +
-                '("program(A=a,B=b)"), but not both')
 
         # Argument construction
         sig = self._sdfg.signature_arglist(with_types=False)
@@ -185,11 +183,6 @@ class CompiledSDFG(object):
                     argnames.append(a)
                 except KeyError:
                     raise KeyError("Missing program argument \"{}\"".format(a))
-        elif len(args) > 0:
-            arglist = list(args)
-            argtypes = [typedict[s] for s in sig]
-            argnames = sig
-            sig = []
         else:
             arglist = []
             argtypes = []
@@ -226,9 +219,6 @@ class CompiledSDFG(object):
         symparams = {}
         symtypes = {}
         for symname in sdfg.undefined_symbols(False):
-            # Ignore arguments (as they may not be symbols but constants,
-            # see below)
-            if symname in sdfg.arg_types: continue
             try:
                 symval = symbolic.symbol(symname)
                 symparams[symname] = symval.get()
@@ -260,11 +250,10 @@ class CompiledSDFG(object):
             for arg, atype in callparams)
 
         # Replace arrays with their pointers
-        newargs = tuple(
-            (ctypes.c_void_p(arg.__array_interface__['data'][0]),
-             atype) if (isinstance(arg, ndarray.ndarray)
-                        or isinstance(arg, np.ndarray)) else (arg, atype)
-            for arg, atype in callparams)
+        newargs = tuple((ctypes.c_void_p(arg.__array_interface__['data'][0]),
+                         atype) if isinstance(arg, np.ndarray) else (arg,
+                                                                     atype)
+                        for arg, atype in callparams)
 
         newargs = tuple(
             atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
@@ -285,8 +274,8 @@ class CompiledSDFG(object):
         if self._exit is not None:
             self._exit(*argtuple)
 
-    def __call__(self, *args, **kwargs):
-        argtuple = self._construct_args(*args, **kwargs)
+    def __call__(self, **kwargs):
+        argtuple = self._construct_args(**kwargs)
 
         # Call initializer function if necessary, then SDFG
         if self._initialized == False:

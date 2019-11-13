@@ -27,11 +27,7 @@ sizes = [{
     N: 2600
 }]
 
-args = [
-    dace.ndarray([M, N], datatype),
-    dace.ndarray([N, N], datatype),
-    dace.ndarray([M, N], datatype)
-]
+args = [([M, N], datatype), ([N, N], datatype), ([M, N], datatype)]
 
 
 def init_array(A, R, Q):
@@ -78,7 +74,7 @@ def gramschmidt(A, R, Q):
             out_Q >> Q[i, k]
             out_Q = in_A / in_R
 
-        @dace.map
+        @dace.mapscope
         def set_rna(j: _[k + 1:N]):
             # for j in range(k+1, N, 1):
 

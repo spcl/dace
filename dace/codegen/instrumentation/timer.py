@@ -1,4 +1,4 @@
-from dace import types
+from dace import dtypes
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 
@@ -51,11 +51,11 @@ printf("{timer_name}: %lf ms\\n", __dace_tdiff_{id}.count());'''.format(
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
-        if state.instrument == types.InstrumentationType.Timer:
+        if state.instrument == dtypes.InstrumentationType.Timer:
             self.on_tbegin(local_stream, sdfg, state)
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
-        if state.instrument == types.InstrumentationType.Timer:
+        if state.instrument == dtypes.InstrumentationType.Timer:
             self.on_tend('State %s' % state.label, local_stream, sdfg, state)
 
     def _get_sobj(self, node):
@@ -68,13 +68,13 @@ printf("{timer_name}: %lf ms\\n", __dace_tdiff_{id}.count());'''.format(
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):
         s = self._get_sobj(node)
-        if s.instrument == types.InstrumentationType.Timer:
+        if s.instrument == dtypes.InstrumentationType.Timer:
             self.on_tbegin(outer_stream, sdfg, state, node)
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
         entry_node = state.entry_node(node)
         s = self._get_sobj(node)
-        if s.instrument == types.InstrumentationType.Timer:
+        if s.instrument == dtypes.InstrumentationType.Timer:
             self.on_tend('%s %s' % (type(s).__name__, s.label), outer_stream,
                          sdfg, state, entry_node)

@@ -81,9 +81,8 @@ if args.compile or args.run:
         try:
             data['sdfg'] = json.loads(stdin_input)['sdfg']
         except:
-            sys.stderr.write(
-                "Failed to parse serialized SDFG input, is it in a correct json format?"
-            )
+            sys.stderr.write("Failed to parse serialized SDFG input, "
+                             "is it in a correct json format?")
             sys.stdout.write("Invalid data: " + str(stdin_input))
             sys.exit(-3)
 
@@ -184,6 +183,11 @@ if args.compile or args.run:
         sys.exit(0)
 
     resp_json = response.json()
+    if "error" in resp_json:
+        s = ""
+        if "traceback" in resp_json:
+            s += resp_json["traceback"]
+        raise ValueError(s + resp_json["error"])
 
     def dict_scanner(d, nometa=False):
         if not isinstance(d, dict):

@@ -4,7 +4,7 @@ import copy
 import itertools
 
 import dace
-from dace import data, types, sdfg as sd, subsets, symbolic
+from dace import data, dtypes, sdfg as sd, subsets, symbolic
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -132,9 +132,9 @@ class DoubleBuffering(pattern_matching.Transformation):
                     body.add_nodes_from([first_node, second_node])
                     dace.graph.nxutil.change_edge_dest(body, dst, first_node)
                     dace.graph.nxutil.change_edge_src(body, dst, second_node)
-                    for src, _, dest, _, mem in body.edges():
+                    for src, _, dest, _, memm in body.edges():
                         if src is node and dest is first_node:
-                            old_index = mem.other_subset
+                            old_index = memm.other_subset
                             idx = (sym_var + 1) % 2
                             if isinstance(old_index, dace.subsets.Range):
                                 new_ranges = [(idx, idx, 1)] + old_index.ranges
@@ -142,9 +142,9 @@ class DoubleBuffering(pattern_matching.Transformation):
                                 new_ranges = [(idx, idx, 1)]
                                 for index in old_index.indices:
                                     new_ranges.append((index, index, 1))
-                            mem.other_subset = dace.subsets.Range(new_ranges)
-                        elif mem.data == dst.data:
-                            old_index = mem.subset
+                            memm.other_subset = dace.subsets.Range(new_ranges)
+                        elif memm.data == dst.data:
+                            old_index = memm.subset
                             idx = sym_var % 2
                             if isinstance(old_index, dace.subsets.Range):
                                 new_ranges = [(idx, idx, 1)] + old_index.ranges
@@ -152,8 +152,8 @@ class DoubleBuffering(pattern_matching.Transformation):
                                 new_ranges = [(idx, idx, 1)]
                                 for index in old_index.indices:
                                     new_ranges.append((index, index, 1))
-                            mem.subset = dace.subsets.Range(new_ranges)
-                            mem.data = first_node.data
+                            memm.subset = dace.subsets.Range(new_ranges)
+                            memm.data = first_node.data
                     body.remove_node(dst)
 
 

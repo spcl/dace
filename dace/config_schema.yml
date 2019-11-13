@@ -44,13 +44,19 @@ required:
                 title: Visualize SDFG
                 description: Open a GraphViz window after every transformation.
 
+            visualize_sdfv:
+                type: bool
+                default: false
+                title: Visualize SDFG
+                description: Open a SDFV in browser every transformation.
+
             savedots:
                 type: bool
                 default: false
                 title: Save dot files
                 description: Save GraphViz .dot files after every transformation.
 
-            automatic_state_fusion:
+            automatic_strict_transformations:
                 type: bool
                 default: true
                 title: Automatic strict transformations
@@ -425,7 +431,7 @@ required:
                         title: Check arguments 
                         description: >
                             Do strict verification that arguments passed when
-                            calling a DaCe program match the expected types.
+                            calling a DaCe program match the expected dtypes.
 
                     execcmd:
                         type: str
@@ -687,7 +693,22 @@ required:
                 default: "perfdata.db"
                 description: "Output target sqlite3 file path"
             
-            
+    #############################################
+    # Frontend settings
+
+    frontend:
+        type: dict
+        title: Frontend
+        description: Python frontend preferences
+        required:
+            implementation:
+                type: str
+                default: "sdfg"
+                title: Default operator implementation
+                description: >
+                    Sets the default operator implementation when parsing Python code into
+                    subgraphs or tasklets (can be sdfg, mkl, cublas).
+
     #############################################
     # General settings
     debugprint:

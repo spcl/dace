@@ -1,38 +1,14 @@
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
-from collections import OrderedDict
-from functools import wraps
 import inspect
-import ast
 import copy
-import sys
-import numpy
+import os
 
-from dace import data, symbolic, types
+from dace import symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import astparser, astutils, depanalysis
+from dace.frontend.python import newast
 from dace.sdfg import SDFG
-from dace.graph import labeling
-
-
-def _create_datadescriptor(obj):
-    """ Creates a data descriptor from various types of objects.
-        @see: dace.data.Data
-    """
-    if isinstance(obj, data.Data):
-        return obj
-
-    try:
-        return obj.descriptor
-    except AttributeError:
-        if isinstance(obj, numpy.ndarray):
-            return data.Array(
-                dtype=types.typeclass(obj.dtype.type), shape=obj.shape)
-        if symbolic.issymbolic(obj):
-            return data.Scalar(symbolic.symtype(obj))
-        if isinstance(obj, types.typeclass):
-            return data.Scalar(obj)
-        return data.Scalar(types.typeclass(type(obj)))
+from dace.data import create_datadescriptor
 
 
 def _get_type_annotations(f, f_argnames, decorator_args):
@@ -61,7 +37,7 @@ def _get_type_annotations(f, f_argnames, decorator_args):
                 'program parameters (expecting ' + str(len(f_argnames)) + ')')
         # Return arguments and their matched decorator annotation
         return {
-            k: _create_datadescriptor(v)
+            k: create_datadescriptor(v)
             for k, v in zip(f_argnames, decorator_args)
         }
     elif has_annotations:
@@ -70,7 +46,7 @@ def _get_type_annotations(f, f_argnames, decorator_args):
             raise SyntaxError(
                 'Either none or all DaCe program parameters must ' +
                 'have type annotations')
-    return {k: _create_datadescriptor(v) for k, v in type_annotations.items()}
+    return {k: create_datadescriptor(v) for k, v in type_annotations.items()}
 
 
 def _get_argnames(f):
@@ -118,7 +94,7 @@ def parse_from_function(function, *compilation_args, strict=None):
         that corresponds to it.
         @param function: DaceProgram object (obtained from the `@dace.program`
                          decorator).
-        @param compilation_args: Various compilation arguments e.g. types.
+        @param compilation_args: Various compilation arguments e.g. dtypes.
         @param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
         @return: The generated SDFG object.
@@ -127,94 +103,44 @@ def parse_from_function(function, *compilation_args, strict=None):
         raise TypeError(
             'Function must be of type dace.frontend.python.DaceProgram')
 
-    # Obtain parsed DaCe program
-    pdp, modules = function.generate_pdp(*compilation_args)
+    # Obtain DaCe program as SDFG
+    sdfg = function.generate_pdp(*compilation_args)
 
-    # Create an empty SDFG
-    sdfg = SDFG(pdp.name, pdp.argtypes)
-
-    sdfg.set_sourcecode(pdp.source, 'python')
-
-    # Populate SDFG with states and nodes, according to the parsed DaCe program
-
-    # 1) Inherit dependencies and inject tasklets
-    # 2) Traverse program graph and recursively split into states,
-    #    annotating edges with their transition conditions.
-    # 3) Add arrays, streams, and scalars to the SDFG array store
-    # 4) Eliminate empty states with no conditional outgoing transitions
-    # 5) Label states in topological order
-    # 6) Construct dataflow graph for each state
-
-    # Step 1)
-    for primitive in pdp.children:
-        depanalysis.inherit_dependencies(primitive)
-
-    # Step 2)
-    state_primitives = depanalysis.create_states_simple(pdp, sdfg)
-
-    # Step 3)
-    for dataname, datadesc in pdp.all_arrays().items():
-        sdfg.add_datadesc(dataname, datadesc)
-
-    # Step 4) Absorb next state into current, if possible
-    oldstates = list(sdfg.topological_sort(sdfg.start_state))
-    for state in oldstates:
-        if state not in sdfg.nodes():  # State already removed
-            continue
-        if sdfg.out_degree(state) == 1:
-            edge = sdfg.out_edges(state)[0]
-            nextState = edge.dst
-            if not edge.data.is_unconditional():
-                continue
-            if sdfg.in_degree(nextState) > 1:  # If other edges point to state
-                continue
-            if len(state_primitives[nextState]) > 0:  # Don't fuse full states
-                continue
-
-            outEdges = list(sdfg.out_edges(nextState))
-            for e in outEdges:
-                # Construct new edge from the current assignments, new
-                # assignments, and new conditions
-                newEdge = copy.deepcopy(edge.data)
-                newEdge.assignments.update(e.data.assignments)
-                newEdge.condition = e.data.condition
-                sdfg.add_edge(state, e.dst, newEdge)
-            sdfg.remove_node(nextState)
-
-    # Step 5)
-    stateList = sdfg.topological_sort(sdfg.start_state)
-    for i, state in enumerate(stateList):
-        if state.label is None or state.label == "":
-            state.set_label("s" + str(i))
-
-    # Step 6)
-    for i, state in enumerate(stateList):
-        depanalysis.build_dataflow_graph(sdfg, state, state_primitives[state],
-                                         modules)
-
+    # No need at this point
     # Fill in scope entry/exit connectors
-    sdfg.fill_scope_connectors()
-
+    #sdfg.fill_scope_connectors()
     # Memlet propagation
-    if sdfg.propagate:
-        labeling.propagate_labels_sdfg(sdfg)
-
-    # Drawing the SDFG before strict transformations
-    sdfg.draw_to_file(recursive=True)
+    #if sdfg.propagate:
+    #    labeling.propagate_labels_sdfg(sdfg)
+    ########################
 
     # Apply strict transformations automatically
-    if (strict == True
-            or (strict is None
-                and Config.get_bool('optimizer', 'automatic_state_fusion'))):
+    if (strict == True or (strict is None and Config.get_bool(
+            'optimizer', 'automatic_strict_transformations'))):
         sdfg.apply_strict_transformations()
 
     # Drawing the SDFG (again) to a .dot file
     sdfg.draw_to_file(recursive=True)
+    sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()
 
     return sdfg
+
+
+def _get_locals_and_globals():
+    """ Retrieves a list of local and global variables four steps up in the
+        stack. This is used to retrieve variables around and defined before
+        @dace.programs for adding symbols. """
+    frame = inspect.currentframe()
+    outer_frame = frame.f_back.f_back.f_back.f_back
+    result = {}
+    # Update globals, then locals
+    result.update(outer_frame.f_globals)
+    result.update(outer_frame.f_locals)
+
+    return result
 
 
 class DaceProgram:
@@ -226,6 +152,17 @@ class DaceProgram:
         self.args = args
         self.kwargs = kwargs
         self._name = f.__name__
+        self.argnames = _get_argnames(f)
+
+        # NOTE: Important to call this outside list/dict comprehensions
+        global_vars = _get_locals_and_globals()
+
+        self.global_vars = {
+            k: v
+            for k, v in global_vars.items() if dtypes.isallowed(v)
+        }
+        if self.argnames is None:
+            self.argnames = []
 
     @property
     def name(self):
@@ -240,15 +177,35 @@ class DaceProgram:
         sdfg = parse_from_function(self, *args, strict=strict)
         return sdfg.compile(specialize=specialize)
 
-    def __call__(self, *args, strict=None, specialize=None):
+    def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
-        binaryobj = self.compile(*args, strict=strict, specialize=specialize)
-        return binaryobj(*args)
+        binaryobj = self.compile(*args)
+        # Add named arguments to the call
+        kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        # Update arguments with symbols in data shapes
+        kwargs.update({
+            sym: symbolic.symbol(sym).get()
+            for arg in args
+            for sym in (symbolic.symlist(arg.descriptor.shape) if hasattr(
+                arg, 'descriptor') else [])
+        })
+        # Update arguments with symbol values
+        for aname in self.argnames:
+            if aname in binaryobj.sdfg.arrays:
+                sym_shape = binaryobj.sdfg.arrays[aname].shape
+                for sym in (sym_shape):
+                    if symbolic.issymbolic(sym):
+                        try:
+                            kwargs[str(sym)] = sym.get()
+                        except:
+                            pass
+
+        return binaryobj(**kwargs)
 
     def generate_pdp(self, *compilation_args):
         """ Generates the parsed AST representation of a DaCe program.
-            @param compilation_args: Various compilation arguments e.g., types.
+            @param compilation_args: Various compilation arguments e.g., dtypes.
             @return: A 2-tuple of (program, modules), where `program` is a 
                      `dace.astnodes._ProgramNode` representing the parsed DaCe 
                      program, and `modules` is a dictionary mapping imported 
@@ -257,43 +214,41 @@ class DaceProgram:
         """
         dace_func = self.f
         args = self.args
-        argnames = _get_argnames(dace_func)
-
-        if not argnames:
-            raise SyntaxError(
-                'DaCe program must contain at least one parameter')
 
         # If exist, obtain type annotations (for compilation)
-        argtypes = _get_type_annotations(dace_func, argnames, args)
+        argtypes = _get_type_annotations(dace_func, self.argnames, args)
 
         # Parse argument types from call
-        if not argtypes:
-            if not compilation_args:
-                raise SyntaxError(
-                    'DaCe program compilation requires either type annotations '
-                    'or arrays')
+        if len(inspect.getfullargspec(dace_func).args) > 0:
+            if not argtypes:
+                if not compilation_args:
+                    raise SyntaxError(
+                        'DaCe program compilation requires either type annotations '
+                        'or arrays')
 
-            # Parse compilation arguments
-            if len(compilation_args) != len(argnames):
-                raise SyntaxError(
-                    'Arguments must match DaCe program parameters (expecting '
-                    + str(len(argnames)) + ')')
-            argtypes = {
-                k: _create_datadescriptor(v)
-                for k, v in zip(argnames, compilation_args)
-            }
+                # Parse compilation arguments
+                if len(compilation_args) != len(self.argnames):
+                    raise SyntaxError(
+                        'Arguments must match DaCe program parameters (expecting '
+                        '%d)' % len(self.argnames))
+                argtypes = {
+                    k: create_datadescriptor(v)
+                    for k, v in zip(self.argnames, compilation_args)
+                }
+        for k, v in argtypes.items():
+            if v.transient:  # Arguments to (nested) SDFGs cannot be transient
+                v_cpy = copy.deepcopy(v)
+                v_cpy.transient = False
+                argtypes[k] = v_cpy
         #############################################
 
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
-        global_vars = {
-            k: v
-            for k, v in dace_func.__globals__.items() if types.isallowed(v)
-        }
+        global_vars = copy.copy(self.global_vars)
+
         modules = {
             k: v.__name__
-            for k, v in dace_func.__globals__.items()
-            if types.ismodule_and_allowed(v)
+            for k, v in global_vars.items() if dtypes.ismodule(v)
         }
         modules['builtins'] = ''
 
@@ -303,18 +258,14 @@ class DaceProgram:
             for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
 
-        # Add keyword arguments as additional globals
-        global_vars.update(
-            {k: v
-             for k, v in self.kwargs.items() if types.isallowed(v)})
-
-        argtypes_ordered = OrderedDict()
-        for param in argnames:
-            argtypes_ordered[param] = argtypes[param]
+        # Allow SDFGs and DaceProgram objects
+        # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
+        other_sdfgs = {
+            k: v
+            for k, v in dace_func.__globals__.items()
+            if isinstance(v, (SDFG, DaceProgram))
+        }
 
         # Parse AST to create the SDFG
-        pdp = astparser.parse_dace_program(dace_func, argtypes_ordered,
-                                           global_vars, modules)
-
-        # Transform parsed DaCe code into a DaCe program (Stateful DFG)
-        return pdp, modules
+        return newast.parse_dace_program(dace_func, argtypes, global_vars,
+                                         modules, other_sdfgs, self.kwargs)
