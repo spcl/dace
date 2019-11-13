@@ -941,9 +941,9 @@ class FPGACodeGen(TargetCodeGenerator):
                             # if we are able to determine it
                             end_type = dace.symbolic.symbol.s_types.get(cpu.sym2cpp(end+1))
                             if end_type is not None:
-                                if end_type.dtype.type > np.dtype('uint32'):
+                                if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
                                     loop_var_type = end.ctype
-                                elif np.issubdtype(end_type.dtype.type, np.unsignedinteger):
+                                elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except UnboundLocalError:
                         pass

@@ -868,9 +868,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
         defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()[node]].defined_vars
-        #defined_symbols = dace.symbolic.symbol.s_types
 
-        #Dtypes is a dictionary containing associations name -> type (ctypes)
+        # Dtypes is a dictionary containing associations name -> type (ctypes)
         # Add defined variables
         defined_symbols = {str(x): x.dtype for x in defined_symbols}
         # This could be problematic for numeric constants that have no dtype
@@ -879,11 +878,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         for connector, (memlet,_,_) in memlets.items():
             if connector is not None:
                 defined_symbols.update({connector: sdfg.arrays[memlet.data].dtype})
-
-
-        # Add connectors
-        # symbols_ctypes.update({connector: sdfg.arrays[memlet.data].dtype
-        #                for connector, (memlet,_,_) in memlets.items()})
 
         for stmt in body:  # for each statement in tasklet body
             if isinstance(stmt, ast.Expr):
@@ -894,7 +888,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                               memlets, sdfg.constants).visit(stmt)
             if rk is not None:
                 result = StringIO()
-                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols, do_type_inference=True)
+                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result,
+                                       defined_symbols=defined_symbols, type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
@@ -927,6 +922,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
+        self._nptypes = {'float64' : 'double'}
         self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
                         'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
                         'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double', 'float64']
@@ -1017,10 +1013,17 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def visit_Call(self, node):
         # enforce compliance to OpenCL
         # type casting
+
         if (isinstance(node.func, ast.Name)  and node.func.id in self._ctypes):
+
             node.func.id = "({})".format(node.func.id)
+        elif (isinstance(node.func, ast.Name)  and node.func.id in self._nptypes):
+            #if it as numpy type, convert to C type
+            node.func.id = "({})".format(self._nptypes(node.func.id))
         elif ((isinstance(node.func, ast.Num) and node.func.n.to_string() in self._ctypes)):
-            node.func.n = "({})".format(node.func.n)
+            new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)
+            new_node = ast.copy_location(new_node, node)
+            node.func = new_node
 
 
         return self.generic_visit(node)

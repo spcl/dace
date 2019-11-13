@@ -85,7 +85,7 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "float64": "(double)"}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
 
 
 _py2c_typeconversion = {"uint": dace.dtypes.typeclass(np.uint32), "int": dace.dtypes.typeclass(np.int32),
@@ -182,7 +182,7 @@ class CPPUnparser:
                  indent_output=True,
                  expr_semicolon=True,
                  indent_offset=0,
-                 do_type_inference=False,
+                 type_inference=False,
                  defined_symbols=None):
 
 
@@ -193,7 +193,7 @@ class CPPUnparser:
         self.indent_offset = indent_offset
         self.expr_semicolon = expr_semicolon
         self.defined_symbols = defined_symbols
-        self.do_type_inference = do_type_inference
+        self.type_inference = type_inference
         self.dtype = None
         if not isinstance(locals, LocalScheme):
             raise TypeError('Locals must be a LocalScheme object')
@@ -271,7 +271,7 @@ class CPPUnparser:
         self.fill()
         self.dispatch(tree.value, infer_type)
         if self.expr_semicolon:
-            self.write(';',infer_type)
+            self.write(';', infer_type)
 
     def _Import(self, t):
         raise SyntaxError('Invalid C++')
@@ -330,10 +330,10 @@ class CPPUnparser:
                 target.id, self._indent):
 
                 # the target is not already defined: we should try to infer the type
-                if self.do_type_inference is True:
-                    wannabe_type = self.dispatch(t.value, True)
-                    self.locals.define(target.id, t.lineno, self._indent, wannabe_type)
-                    self.write(dace.dtypes._CTYPES[wannabe_type.type] + " ")
+                if self.type_inference is True:
+                    inferred_type = self.dispatch(t.value, True)
+                    self.locals.define(target.id, t.lineno, self._indent, inferred_type)
+                    self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                 else:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")
@@ -378,10 +378,10 @@ class CPPUnparser:
 
         # Assignment of the form x: int = 0 is converted to int x = (int)0;
         if not self.locals.is_defined(target.id, self._indent):
-            if self.do_type_inference is True:
+            if self.type_inference is True:
                 # get the type indicated into the annotation
-                wannabe_type = self.dispatch(t.annotation, True)
-                self.locals.define(target.id, t.lineno, self._indent, wannabe_type)
+                inferred_type = self.dispatch(t.annotation, True)
+                self.locals.define(target.id, t.lineno, self._indent, inferred_type)
             else:
                 self.locals.define(target.id, t.lineno, self._indent)
 
@@ -715,10 +715,11 @@ class CPPUnparser:
                 result = repr(tree.s).lstrip("u")
             else:
                 assert False, "shouldn't get here"
-
-        self.write(result.replace('\'', '\"'))
+        self.write(result.replace('\'', '\"'), infer_type)
+        return dace.pointer(dace.int8) if infer_type else None
 
     format_conversions = {97: 'a', 114: 'r', 115: 's'}
+
 
     def _FormattedValue(self, t, infer_type=False):
         # FormattedValue(expr value, int? conversion, expr? format_spec)
@@ -738,18 +739,19 @@ class CPPUnparser:
 
     def _JoinedStr(self, t, infer_type=False):
         # JoinedStr(expr* values)
-        self.write("f'''")
+        self.write("f'''", infer_type)
         for value in t.values:
             if isinstance(value, ast.Str):
-                self.write(value.s)
+                self.write(value.s, infer_type)
             else:
                 self.dispatch(value, infer_type)
-        self.write("'''")
+        self.write("'''", infer_type)
+        return dace.pointer(dace.int8) if infer_type else None
 
     def _Name(self, t, infer_type=False):
         if t.id in _py2c_reserved:
             self.write(_py2c_reserved[t.id], infer_type)
-            return np.result_type(t.id) if infer_type else None
+            return dace.dtypes.typeclass(np.result_type(t.id)) if infer_type else None
         else:
             self.write(t.id, infer_type)
 
@@ -771,7 +773,7 @@ class CPPUnparser:
 
     def _NameConstant(self, t, infer_type=False):
         self.write(_py2c_nameconst[t.value], infer_type)
-        return np.result_type(t.id) if infer_type else None
+        return dace.dtypes.typeclass(np.result_type(t.id)) if infer_type else None
 
     def _Repr(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
@@ -789,10 +791,7 @@ class CPPUnparser:
                 self.write(
                     "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
-                if isinstance(t.n, str): # TODO Temporary fix for handling cases in which type are treated as Num in ast
-                    self.write(t.n,infer_type)
-                else:
-                    self.write(repr_n.replace("inf", INFSTR), infer_type)
+                self.write(repr_n.replace("inf", INFSTR), infer_type)
                 # If the number has a type, use it
                 if isinstance(t.n, np.uint):
                     return dace.dtypes.typeclass(np.uint32) if infer_type else None
@@ -1024,6 +1023,7 @@ class CPPUnparser:
         s = " %s " % self.boolops[t.op.__class__]
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")", infer_type)
+        return dace.dtypes.typeclass(np.bool) if infer_type else None
 
     def _Attribute(self, t):
         self.dispatch(t.value)
@@ -1059,10 +1059,11 @@ class CPPUnparser:
         return inf_type
 
     def _Subscript(self, t, infer_type=False):
-        self.dispatch(t.value,infer_type)
-        self.write("[",infer_type)
-        self.dispatch(t.slice, infer_type)
-        self.write("]",infer_type)
+        self.dispatch(t.value, infer_type)
+        self.write("[", infer_type)
+        inferred_type = self.dispatch(t.slice, infer_type)
+        self.write("]", infer_type)
+        return inferred_type
 
     def _Starred(self, t):
         raise SyntaxError('Invalid C++')

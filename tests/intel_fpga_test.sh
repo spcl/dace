@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Executes a bunch of small test for the intel fpga backend
-# This are not intended to be performance test: they just check that everything compiles
+# Executes a bunch of small test for the Intel FPGA backend
+# These are not intended to be performance test: they just check that everything compiles
 # and the correct result is produced
 
 set -a

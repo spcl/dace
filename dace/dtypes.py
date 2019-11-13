@@ -268,7 +268,7 @@ class typeclass(object):
     def __repr__(self):
         return self.ctype
 
-# _CTYPES_RULES: returns the biggest between two types (dace.types.typeclass) according to C semantic
+# _CTYPES_RULES: returns the largest between two types (dace.types.typeclass) according to C semantic
 _CTYPES_RULES = {
 
     # Both operands are integers
