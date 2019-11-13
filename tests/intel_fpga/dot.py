@@ -9,7 +9,7 @@ import argparse
 import dace
 import numpy as np
 
-N = dace.symbol()
+N = dace.symbol("N")
 
 
 @dace.program
@@ -28,11 +28,11 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=64)
     args = vars(parser.parse_args())
 
+    N.set(args["N"])
     A = dace.ndarray([N], dtype=dace.float32)
     B = dace.ndarray([N], dtype=dace.float32)
     out_AB = dace.scalar(dace.float32)
 
-    N.set(args["N"])
 
     print('Dot product %d' % (N.get()))
 

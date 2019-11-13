@@ -37,7 +37,6 @@ def draw_edge_explicit(srcName, dstName, edge, sdfg, graph, **extraOpts):
 def draw_edge(sdfg, graph, edge, **extraOpts):
     srcName = 's%d_%d' % (sdfg.node_id(graph), graph.node_id(edge.src))
     dstName = 's%d_%d' % (sdfg.node_id(graph), graph.node_id(edge.dst))
-
     return draw_edge_explicit(srcName, dstName, edge, sdfg, graph)
 
 

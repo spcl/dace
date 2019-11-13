@@ -281,9 +281,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 data, dataname, self._memory_widths[dataname], is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
-        # kernel_args += [
-        #     arg.signature(with_types=True, name=argname)
-        #     for argname, arg in  symbol_parameters.items()]
+
 
         kernel_args += ([
                 arg.signature(with_types=True, name=argname)
@@ -360,6 +358,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_args_call = []
         kernel_args_module = []
         added = set()
+
         for is_output, pname, p in parameters:
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")

@@ -934,16 +934,19 @@ class FPGACodeGen(TargetCodeGenerator):
                     begin, end, skip = r
                     # decide type of loop variable
                     loop_var_type = "int"
-
-                    #TODO restore this
-                    # if dace.symbolic.eval(begin) >= 0 and dace.symbolic.eval(skip) > 0:
-                    #     # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
-                    #     # if we are able to determine it
-                    #     end_type = dace.symbolic.symbol.s_types.get(cpu.sym2cpp(end+1))
-                    #     if end_type is not None and end_type.dtype.type > np.dtype('uint32'):
-                    #         loop_var_type = end.ctype
-                    #     elif np.issubdtype(end_type.dtype.type, np.unsignedinteger):
-                    #         loop_var_type = "size_t"
+                    # try to decide type of loop variable
+                    try:
+                        if dace.symbolic.eval(begin) >= 0 and dace.symbolic.eval(skip) > 0:
+                            # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
+                            # if we are able to determine it
+                            end_type = dace.symbolic.symbol.s_types.get(cpu.sym2cpp(end+1))
+                            if end_type is not None:
+                                if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
+                                    loop_var_type = end.ctype
+                                elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
+                                    loop_var_type = "size_t"
+                    except UnboundLocalError:
+                        pass
 
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(loop_var_type,

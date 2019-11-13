@@ -73,8 +73,10 @@ import inspect
 import six
 import sys
 import ast
+import numpy as np
 import os
 import tokenize
+import dace
 from six import StringIO
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -84,6 +86,10 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
+
+
+_py2c_typeconversion = {"uint": dace.dtypes.typeclass(np.uint32), "int": dace.dtypes.typeclass(np.int32),
+                        "float": dace.dtypes.typeclass(np.float32), "float64" : dace.dtypes.typeclass(np.float64)}
 
 
 def interleave(inter, f, seq):
@@ -113,7 +119,7 @@ class LocalScheme(object):
 
 class CPPLocals(LocalScheme):
     def __init__(self):
-        # Maps local name to a 2-tuple of line number and scope (measured in indentation)
+        # Maps local name to a 3-tuple of line number, scope (measured in indentation) and type
         self.locals = {}
 
     def is_defined(self, local_name, current_depth):
@@ -175,7 +181,10 @@ class CPPUnparser:
                  file=sys.stdout,
                  indent_output=True,
                  expr_semicolon=True,
-                 indent_offset=0):
+                 indent_offset=0,
+                 type_inference=False,
+                 defined_symbols=None):
+
 
         self.f = file
         self.future_imports = []
@@ -183,6 +192,8 @@ class CPPUnparser:
         self.indent_output = indent_output
         self.indent_offset = indent_offset
         self.expr_semicolon = expr_semicolon
+        self.defined_symbols = defined_symbols
+        self.type_inference = type_inference
         self.dtype = None
         if not isinstance(locals, LocalScheme):
             raise TypeError('Locals must be a LocalScheme object')
@@ -193,7 +204,7 @@ class CPPUnparser:
         print("", file=self.f)
         self.f.flush()
 
-    def fill(self, text=""):
+    def fill(self, text="", infer_type=False):
         """Indent a piece of text, according to the current indentation level"""
         if self.firstfill:
             if self.indent_output:
@@ -209,13 +220,14 @@ class CPPUnparser:
             else:
                 self.f.write("\n" + text)
 
-    def write(self, text):
-        """Append a piece of text to the current line."""
-        self.f.write(six.text_type(text))
+    def write(self, text, infer_type=False):
+        """Append a piece of text to the current line if infer_type is False. Does nothing otherwise"""
+        if not infer_type:
+            self.f.write(six.text_type(text))
 
-    def enter(self):
+    def enter(self, infer_type=False):
         """Print '{', and increase the indentation."""
-        self.write(" {\n")
+        self.write(" {\n", infer_type)
         self._indent += 1
 
     def leave(self):
@@ -226,7 +238,7 @@ class CPPUnparser:
         # Clear locals defined inside scope
         self.locals.clear_scope(self._indent + 1)
 
-    def dispatch(self, tree):
+    def dispatch(self, tree, infer_type = False):
         """Dispatcher function, dispatching tree type T to method _T."""
         try:
             tree = iter(tree)
@@ -234,7 +246,7 @@ class CPPUnparser:
                 self.dispatch(t)
         except TypeError:
             meth = getattr(self, "_" + tree.__class__.__name__)
-            meth(tree)
+            return meth(tree, infer_type)
 
     ############### Unparsing methods ######################
     # There should be one method per concrete grammar type #
@@ -243,9 +255,9 @@ class CPPUnparser:
     # currently doesn't.                                   #
     ########################################################
 
-    def _Module(self, tree):
+    def _Module(self, tree, infer_type=False):
         for stmt in tree.body:
-            self.dispatch(stmt)
+            self.dispatch(stmt,infer_type)
 
     def _Interactive(self, tree):
         for stmt in tree.body:
@@ -255,11 +267,11 @@ class CPPUnparser:
         self.dispatch(tree.body)
 
     # stmt
-    def _Expr(self, tree):
+    def _Expr(self, tree, infer_type=False):
         self.fill()
-        self.dispatch(tree.value)
+        self.dispatch(tree.value, infer_type)
         if self.expr_semicolon:
-            self.write(';')
+            self.write(';', infer_type)
 
     def _Import(self, t):
         raise SyntaxError('Invalid C++')
@@ -299,7 +311,7 @@ class CPPUnparser:
         else:
             self.write(")")
 
-    def _Assign(self, t):
+    def _Assign(self, t, infer_type=False):
         self.fill()
 
         # Handle the case of a tuple output
@@ -314,38 +326,46 @@ class CPPUnparser:
 
             if not isinstance(
                     target,
-                (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
-                    target.id, self._indent):
-                self.locals.define(target.id, t.lineno, self._indent, None)
-                self.write('auto ')
-            self.dispatch(target)
+                    (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
+                target.id, self._indent):
+
+                # the target is not already defined: we should try to infer the type
+                if self.type_inference is True:
+                    inferred_type = self.dispatch(t.value, True)
+                    self.locals.define(target.id, t.lineno, self._indent, inferred_type)
+                    self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                else:
+                    self.locals.define(target.id, t.lineno, self._indent)
+                    self.write("auto ")
+
+            self.dispatch(target, infer_type)
             if not isinstance(target, ast.Subscript):
                 self.dtype = self.locals.get_type(target.id)
             else:
                 self.dtype = self.locals.get_type(target.value.id)
 
-        self.write(" = ")
-        self.dispatch(t.value)
+        self.write(" = ", infer_type)
+        self.dispatch(t.value, infer_type)
         self.dtype = None
-        self.write(';')
+        self.write(';', infer_type)
 
-    def _AugAssign(self, t):
+    def _AugAssign(self, t, infer_type=False):
         self.fill()
-        self.dispatch(t.target)
+        self.dispatch(t.target, infer_type)
         # Operations that require a function call
         if t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
-            self.write(" = " + func + "(")
-            self.dispatch(t.target)
-            self.write(separator + " ")
-            self.dispatch(t.value)
-            self.write(")")
+            self.write(" = " + func + "(", infer_type)
+            self.dispatch(t.target, infer_type)
+            self.write(separator + " ", infer_type)
+            self.dispatch(t.value, infer_type)
+            self.write(")",infer_type)
         else:
-            self.write(" " + self.binop[t.op.__class__.__name__] + "= ")
-            self.dispatch(t.value)
-        self.write(';')
+            self.write(" " + self.binop[t.op.__class__.__name__] + "= ", infer_type)
+            self.dispatch(t.value, infer_type)
+        self.write(';', infer_type)
 
-    def _AnnAssign(self, t):
+    def _AnnAssign(self, t, infer_type=False):
         self.fill()
 
         if isinstance(t.target, ast.Tuple):
@@ -358,20 +378,26 @@ class CPPUnparser:
 
         # Assignment of the form x: int = 0 is converted to int x = (int)0;
         if not self.locals.is_defined(target.id, self._indent):
-            self.locals.define(target.id, t.lineno, self._indent)
-            self.dispatch(t.annotation)
-            self.write(' ')
+            if self.type_inference is True:
+                # get the type indicated into the annotation
+                inferred_type = self.dispatch(t.annotation, True)
+                self.locals.define(target.id, t.lineno, self._indent, inferred_type)
+            else:
+                self.locals.define(target.id, t.lineno, self._indent)
+
+            self.dispatch(t.annotation, infer_type)
+            self.write(' ', infer_type)
         if not t.simple:
-            self.write("(")
-        self.dispatch(t.target)
+            self.write("(", infer_type)
+        self.dispatch(t.target, infer_type)
         if not t.simple:
-            self.write(")")
+            self.write(")", infer_type)
         if t.value:
-            self.write(" = (")
-            self.dispatch(t.annotation)
-            self.write(")")
-            self.dispatch(t.value)
-        self.write(';')
+            self.write(" = (", infer_type)
+            self.dispatch(t.annotation, infer_type)
+            self.write(")", infer_type)
+            self.dispatch(t.value, infer_type)
+        self.write(';', infer_type)
 
     def _Return(self, t):
         self.fill("return")
@@ -620,37 +646,37 @@ class CPPUnparser:
         if t.orelse:
             raise SyntaxError('Invalid C++')
 
-    def _For(self, t):
+    def _For(self, t, infer_type=False):
         self._generic_For(t)
 
     def _AsyncFor(self, t):
         self._generic_For(t, is_async=True)
 
-    def _If(self, t):
-        self.fill("if (")
-        self.dispatch(t.test)
-        self.write(')')
+    def _If(self, t, infer_type=False):
+        self.fill("if (", infer_type)
+        self.dispatch(t.test, infer_type)
+        self.write(')', infer_type)
         self.enter()
-        self.dispatch(t.body)
+        self.dispatch(t.body, infer_type)
         self.leave()
         # collapse nested ifs into equivalent elifs.
         while (t.orelse and len(t.orelse) == 1
                and isinstance(t.orelse[0], ast.If)):
             t = t.orelse[0]
-            self.fill("else if (")
-            self.dispatch(t.test)
-            self.write(')')
+            self.fill("else if (", infer_type)
+            self.dispatch(t.test, infer_type)
+            self.write(')', infer_type)
             self.enter()
-            self.dispatch(t.body)
+            self.dispatch(t.body, infer_type)
             self.leave()
         # final else
         if t.orelse:
-            self.fill("else")
+            self.fill("else", infer_type)
             self.enter()
-            self.dispatch(t.orelse)
+            self.dispatch(t.orelse,infer_type)
             self.leave()
 
-    def _While(self, t):
+    def _While(self, t, infer_type=False):
         self.fill("while (")
         self.dispatch(t.test)
         self.write(')')
@@ -673,7 +699,7 @@ class CPPUnparser:
     def _Bytes(self, t):
         self.write(repr(t.s))
 
-    def _Str(self, tree):
+    def _Str(self, tree, infer_type=False):
         result = ''
         if six.PY3:
             result = repr(tree.s)
@@ -689,15 +715,16 @@ class CPPUnparser:
                 result = repr(tree.s).lstrip("u")
             else:
                 assert False, "shouldn't get here"
-
-        self.write(result.replace('\'', '\"'))
+        self.write(result.replace('\'', '\"'), infer_type)
+        return dace.pointer(dace.int8) if infer_type else None
 
     format_conversions = {97: 'a', 114: 'r', 115: 's'}
 
-    def _FormattedValue(self, t):
+
+    def _FormattedValue(self, t, infer_type=False):
         # FormattedValue(expr value, int? conversion, expr? format_spec)
         self.write("{")
-        self.dispatch(t.value)
+        self.dispatch(t.value, infer_type)
         if t.conversion is not None and t.conversion != -1:
             self.write("!")
             self.write(self.format_conversions[t.conversion])
@@ -707,33 +734,53 @@ class CPPUnparser:
             if isinstance(t.format_spec, ast.Str):
                 self.write(t.format_spec.s)
             else:
-                self.dispatch(t.format_spec)
+                self.dispatch(t.format_spec, infer_type)
         self.write("}")
 
-    def _JoinedStr(self, t):
+    def _JoinedStr(self, t, infer_type=False):
         # JoinedStr(expr* values)
-        self.write("f'''")
+        self.write("f'''", infer_type)
         for value in t.values:
             if isinstance(value, ast.Str):
-                self.write(value.s)
+                self.write(value.s, infer_type)
             else:
-                self.dispatch(value)
-        self.write("'''")
+                self.dispatch(value, infer_type)
+        self.write("'''", infer_type)
+        return dace.pointer(dace.int8) if infer_type else None
 
-    def _Name(self, t):
+    def _Name(self, t, infer_type=False):
         if t.id in _py2c_reserved:
-            self.write(_py2c_reserved[t.id])
+            self.write(_py2c_reserved[t.id], infer_type)
+            return dace.dtypes.typeclass(np.result_type(t.id)) if infer_type else None
         else:
-            self.write(t.id)
+            self.write(t.id, infer_type)
 
-    def _NameConstant(self, t):
-        self.write(_py2c_nameconst[t.value])
+            # check if this name is a python type, it is in defined_symbols or in local symbols.
+            # If yes, take the type
+            inferred_type = None
+            if infer_type:
+                if t.id.strip("()") in  _py2c_typeconversion:
+                    inferred_type = _py2c_typeconversion[t.id.strip("()")]
+                elif self.defined_symbols.get(t.id) is not None:
+                    # defined symbols could have dtypes, in case convert it to typeclass
+                    inferred_type = self.defined_symbols.get(t.id)
+                    if isinstance(inferred_type, np.dtype):
+                        inferred_type = dace.dtypes.typeclass(inferred_type.type)
+                elif self.locals.is_defined(t.id, self._indent):
+                    inferred_type = self.locals.get_type(t.id) if self.locals.get_type(t.id) is not None else None
+            return inferred_type
 
-    def _Repr(self, t):
+
+    def _NameConstant(self, t, infer_type=False):
+        self.write(_py2c_nameconst[t.value], infer_type)
+        return dace.dtypes.typeclass(np.result_type(t.id)) if infer_type else None
+
+    def _Repr(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
 
-    def _Num(self, t):
+    def _Num(self, t, infer_type=False):
         repr_n = repr(t.n)
+
 
         # For complex values, use type of assignment (if exists), or
         # double-complex (128-bit) otherwise
@@ -744,7 +791,18 @@ class CPPUnparser:
                 self.write(
                     "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
-                self.write(repr_n.replace("inf", INFSTR))
+                self.write(repr_n.replace("inf", INFSTR), infer_type)
+                # If the number has a type, use it
+                if isinstance(t.n, np.uint):
+                    return dace.dtypes.typeclass(np.uint32) if infer_type else None
+                elif isinstance(t.n, np.int):
+                    return dace.dtypes.typeclass(np.int32) if infer_type else None
+                elif isinstance(t.n, np.float):
+                    return dace.dtypes.typeclass(np.float32) if infer_type else None
+                elif isinstance(t.n, np.float64):
+                    return dace.dtypes.typeclass(np.float64) if infer_type else None
+                elif infer_type:
+                    raise TypeError('Unable to convert number')
         else:
             # Parenthesize negative numbers, to avoid turning (-1)**2 into -1**2.
             if repr_n.startswith("-"):
@@ -762,13 +820,13 @@ class CPPUnparser:
             if repr_n.startswith("-"):
                 self.write(")")
 
-    def _List(self, t):
+    def _List(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
         #self.write("[")
         #interleave(lambda: self.write(", "), self.dispatch, t.elts)
         #self.write("]")
 
-    def _ListComp(self, t):
+    def _ListComp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
         #self.write("[")
         #self.dispatch(t.elt)
@@ -776,7 +834,7 @@ class CPPUnparser:
         #    self.dispatch(gen)
         #self.write("]")
 
-    def _GeneratorExp(self, t):
+    def _GeneratorExp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
         #self.write("(")
         #self.dispatch(t.elt)
@@ -784,7 +842,7 @@ class CPPUnparser:
         #    self.dispatch(gen)
         #self.write(")")
 
-    def _SetComp(self, t):
+    def _SetComp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
         #self.write("{")
         #self.dispatch(t.elt)
@@ -792,7 +850,7 @@ class CPPUnparser:
         #    self.dispatch(gen)
         #self.write("}")
 
-    def _DictComp(self, t):
+    def _DictComp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
         #self.write("{")
         #self.dispatch(t.key)
@@ -802,7 +860,7 @@ class CPPUnparser:
         #    self.dispatch(gen)
         #self.write("}")
 
-    def _comprehension(self, t):
+    def _comprehension(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
         #if getattr(t, 'is_async', False):
         #    self.write(" async")
@@ -814,14 +872,14 @@ class CPPUnparser:
         #    self.write(" if ")
         #    self.dispatch(if_clause)
 
-    def _IfExp(self, t):
-        self.write("(")
-        self.dispatch(t.test)
-        self.write(" ? ")
-        self.dispatch(t.body)
-        self.write(" : ")
-        self.dispatch(t.orelse)
-        self.write(")")
+    def _IfExp(self, t, infer_type=False):
+        self.write("(", infer_type)
+        self.dispatch(t.test, infer_type)
+        self.write(" ? ", infer_type)
+        self.dispatch(t.body, infer_type)
+        self.write(" : ", infer_type)
+        self.dispatch(t.orelse, infer_type)
+        self.write(")", infer_type)
 
     def _Set(self, t):
         raise SyntaxError('Invalid C++')
@@ -830,7 +888,7 @@ class CPPUnparser:
         #interleave(lambda: self.write(", "), self.dispatch, t.elts)
         #self.write("}")
 
-    def _Dict(self, t):
+    def _Dict(self, t,infer_type=False):
         raise SyntaxError('Invalid C++')
         #self.write("{")
         #def write_pair(pair):
@@ -853,10 +911,10 @@ class CPPUnparser:
 
     unop = {"Invert": "~", "Not": "!", "UAdd": "+", "USub": "-"}
 
-    def _UnaryOp(self, t):
-        self.write("(")
-        self.write(self.unop[t.op.__class__.__name__])
-        self.write(" ")
+    def _UnaryOp(self, t, infer_type=False):
+        self.write("(", infer_type)
+        self.write(self.unop[t.op.__class__.__name__], infer_type)
+        self.write(" ", infer_type)
         if six.PY2 and isinstance(t.op, ast.USub) and isinstance(
                 t.operand, ast.Num):
             # If we're applying unary minus to a number, parenthesize the number.
@@ -868,8 +926,9 @@ class CPPUnparser:
             self.dispatch(t.operand)
             self.write(")")
         else:
-            self.dispatch(t.operand)
-        self.write(")")
+            infer_type = self.dispatch(t.operand, infer_type)
+        self.write(")", infer_type)
+        return infer_type
 
     binop = {
         "Add": "+",
@@ -888,40 +947,51 @@ class CPPUnparser:
         "MatMult": (",", "dace::gemm")
     }
 
-    def _BinOp(self, t):
+    def _BinOp(self, t, infer_type=False):
         # Operations that require a function call
         if t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
-            self.write(func + "(")
-            self.dispatch(t.left)
-            self.write(separator + " ")
-            self.dispatch(t.right)
-            self.write(")")
+            self.write(func + "(", infer_type)
+
+            # get the type of left and right operands for type inference
+            type_left = self.dispatch(t.left, infer_type)
+            self.write(separator + " ", infer_type)
+            type_right = self.dispatch(t.right,infer_type)
+
+            self.write(")", infer_type)
+            #infer type and returns
+            return dace.dtypes._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
         # Special case for integer power
         elif t.op.__class__.__name__ == 'Pow':
             if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
                     and t.right.n >= 0):
-                self.write("(")
+                self.write("(", infer_type)
                 if t.right.n == 0:
-                    self.write("1")
+                    self.write("1", infer_type)
                 else:
-                    self.dispatch(t.left)
+                    type_left = self.dispatch(t.left, infer_type)
                     for i in range(int(t.right.n) - 1):
-                        self.write(" * ")
-                        self.dispatch(t.left)
-                self.write(")")
+                        self.write(" * ", infer_type)
+                        self.dispatch(t.left, infer_type)
+                self.write(")", infer_type)
+                return dace.dtypes._CTYPES_RULES[frozenset((type_left, typeclass(numpy.uint32)))] if infer_type is True else None
             else:
-                self.write("dace::math::pow(")
-                self.dispatch(t.left)
-                self.write(", ")
-                self.dispatch(t.right)
-                self.write(")")
+                self.write("dace::math::pow(", infer_type)
+                type_left = self.dispatch(t.left, infer_type)
+                self.write(", ", infer_type)
+                type_right = self.dispatch(t.right, infer_type)
+                self.write(")", infer_type)
+                return dace.dtypes._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
         else:
-            self.write("(")
-            self.dispatch(t.left)
-            self.write(" " + self.binop[t.op.__class__.__name__] + " ")
-            self.dispatch(t.right)
-            self.write(")")
+            self.write("(", infer_type)
+
+            # get left and right types for type inference
+            type_left = self.dispatch(t.left, infer_type)
+            self.write(" " + self.binop[t.op.__class__.__name__] + " ", infer_type)
+            type_right = self.dispatch(t.right, infer_type)
+
+            self.write(")", infer_type)
+            return dace.dtypes._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
 
     cmpops = {
         "Eq": "==",
@@ -935,24 +1005,25 @@ class CPPUnparser:
         #"In":"in", "NotIn":"not in"
     }
 
-    def _Compare(self, t):
-        self.write("(")
-        self.dispatch(t.left)
+    def _Compare(self, t, infer_type=False):
+        self.write("(", infer_type)
+        self.dispatch(t.left, infer_type)
         for o, e in zip(t.ops, t.comparators):
             if o.__class__.__name__ not in self.cmpops:
                 raise SyntaxError('Invalid C++')
 
-            self.write(" " + self.cmpops[o.__class__.__name__] + " ")
-            self.dispatch(e)
-        self.write(")")
+            self.write(" " + self.cmpops[o.__class__.__name__] + " ", infer_type)
+            self.dispatch(e, infer_type)
+        self.write(")", infer_type)
 
     boolops = {ast.And: '&&', ast.Or: '||'}
 
-    def _BoolOp(self, t):
-        self.write("(")
+    def _BoolOp(self, t, infer_type=False):
+        self.write("(", infer_type)
         s = " %s " % self.boolops[t.op.__class__]
         interleave(lambda: self.write(s), self.dispatch, t.values)
-        self.write(")")
+        self.write(")", infer_type)
+        return dace.dtypes.typeclass(np.bool) if infer_type else None
 
     def _Attribute(self, t):
         self.dispatch(t.value)
@@ -964,30 +1035,35 @@ class CPPUnparser:
         self.write(".")
         self.write(t.attr)
 
-    def _Call(self, t):
-        self.dispatch(t.func)
-        self.write("(")
+    def _Call(self, t, infer_type=False):
+        inf_type = self.dispatch(t.func, infer_type)
+        self.write("(", infer_type)
         comma = False
         for e in t.args:
-            if comma: self.write(", ")
+            if comma:
+                self.write(", ", infer_type)
             else: comma = True
-            self.dispatch(e)
+            self.dispatch(e, infer_type)
         for e in t.keywords:
-            if comma: self.write(", ")
+            if comma:
+                self.write(", ", infer_type)
             else: comma = True
-            self.dispatch(e)
+            self.dispatch(e, infer_type)
         if sys.version_info[:2] < (3, 5):
             if t.starargs:
                 raise SyntaxError('Invalid C++')
             if t.kwargs:
                 raise SyntaxError('Invalid C++')
-        self.write(")")
 
-    def _Subscript(self, t):
-        self.dispatch(t.value)
-        self.write("[")
-        self.dispatch(t.slice)
-        self.write("]")
+        self.write(")", infer_type)
+        return inf_type
+
+    def _Subscript(self, t, infer_type=False):
+        inferred_type = self.dispatch(t.value, infer_type)
+        self.write("[", infer_type)
+        self.dispatch(t.slice, infer_type)
+        self.write("]", infer_type)
+        return inferred_type
 
     def _Starred(self, t):
         raise SyntaxError('Invalid C++')
@@ -996,18 +1072,18 @@ class CPPUnparser:
     def _Ellipsis(self, t):
         self.write("...")
 
-    def _Index(self, t):
-        self.dispatch(t.value)
+    def _Index(self, t, infer_type=False):
+        self.dispatch(t.value, infer_type)
 
-    def _Slice(self, t):
+    def _Slice(self, t, infer_type=False):
         if t.lower:
-            self.dispatch(t.lower)
-        self.write(":")
+            self.dispatch(t.lower, infer_type)
+        self.write(":", infer_type)
         if t.upper:
-            self.dispatch(t.upper)
+            self.dispatch(t.upper, infer_type)
         if t.step:
-            self.write(":")
-            self.dispatch(t.step)
+            self.write(":", infer_type)
+            self.dispatch(t.step, infer_type)
 
     def _ExtSlice(self, t):
         interleave(lambda: self.write(', '), self.dispatch, t.dims)

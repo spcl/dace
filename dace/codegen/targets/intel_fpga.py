@@ -16,6 +16,7 @@ from dace.codegen.targets import cpu, fpga
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
+from dace.sdfg import SDFGState
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "min",
@@ -80,7 +81,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "intel_fpga", "mode")
-
         kernel_file_name = "DACE_BINARY_DIR \"{}".format(self._program_name)
         emulation_flag = ""
         if execution_mode == "emulator":
@@ -314,9 +314,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
                                    node):
-        pass
-        # kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
-        #                     state_id, node)
+        kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
+                             state_id, node)
 
     @staticmethod
     def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
@@ -364,7 +363,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                              host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters, scalar_parameters,
+                              subgraph_parameters, sc_parameters,
                               symbol_parameters, kernel_stream,
                               host_code_header_stream, host_code_body_stream)
 
@@ -378,6 +377,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             (kernel_name, host_code_header_stream.getvalue() +
              host_code_body_stream.getvalue()))
 
+
     @staticmethod
     def generate_host_function_prologue(sdfg, state, host_stream):
         host_stream.write("std::vector<hlslib::ocl::Kernel> kernels;", sdfg,
@@ -387,6 +387,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     def generate_host_function_epilogue(sdfg, state, host_stream):
         host_stream.write(
             """\
+  const auto start = std::chrono::high_resolution_clock::now();
   std::vector<std::future<std::pair<double, double>>> futures;
   for (auto &k : kernels) {
     futures.emplace_back(k.ExecuteTaskAsync());
@@ -394,10 +395,13 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
   for (auto &f : futures) {
     f.wait();
   }
+  const auto end = std::chrono::high_resolution_clock::now();
+  const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        scalar_parameters, symbol_parameters, module_stream,
+                        symbol_parameters, module_stream,
                         host_header_stream, host_body_stream):
 
         state_id = sdfg.node_id(state)
@@ -418,12 +422,17 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             if pname in added:
                 continue
             added.add(pname)
-            arg = self.make_kernel_argument(
-                p, pname, self._memory_widths[pname], is_output, True)
+            if isinstance(p, dace.data.Array):
+                arg = self.make_kernel_argument(
+                    p, pname, self._memory_widths[pname], is_output, True)
+            else:
+                arg = self.make_kernel_argument(
+                    p, pname, 1, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.signature(True, name=pname))
                 kernel_args_call.append(pname)
+
         kernel_args_opencl += symbol_sigs
         kernel_args_host += symbol_sigs
         kernel_args_call += symbol_names
@@ -444,9 +453,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 raise NotImplementedError(
                     "Unrolling of PEs not yet implemented for Intel FPGA.")
 
-        # Add kernel definition to host function
-        # host_header_stream.write("DACE_EXPORTED void {}({});\n\n".format(
-        #     module_function_name, ", ".join(kernel_args_host)))
 
         # Add kernel call host function
         host_body_stream.write(
@@ -590,8 +596,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
-        node.sdfg._parent = sdfg
         state_dfg = sdfg.nodes()[state_id]
+        node.sdfg.parent = state_dfg
+        node.sdfg._parent_sdfg = sdfg
 
         # Take care of nested SDFG I/O
         for edge in state_dfg.in_edges(node):
@@ -609,6 +616,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                               node)
 
         sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
+
 
         # Generate code for internal SDFG
         global_code, local_code, used_targets = \
@@ -815,7 +823,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if node.label is None or node.label == "":
             return ''
 
-        state_dfg = sdfg.nodes()[state_id]
+        state_dfg: SDFGState = sdfg.nodes()[state_id]
 
         # Not [], "" or None
         if not node.code:
@@ -857,6 +865,20 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
 
+        # Build dictionary with all the previously defined symbols
+        # This is used for forward type inference
+        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()[node]].defined_vars
+
+        # Dtypes is a dictionary containing associations name -> type (ctypes)
+        # Add defined variables
+        defined_symbols = {str(x): x.dtype for x in defined_symbols}
+        # This could be problematic for numeric constants that have no dtype
+        defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
+
+        for connector, (memlet,_,_) in memlets.items():
+            if connector is not None:
+                defined_symbols.update({connector: sdfg.arrays[memlet.data].dtype})
+
         for stmt in body:  # for each statement in tasklet body
             if isinstance(stmt, ast.Expr):
                 rk = OpenCLDaceKeywordRemover(
@@ -866,7 +888,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                               memlets, sdfg.constants).visit(stmt)
             if rk is not None:
                 result = StringIO()
-                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
+                cppunparse.CPPUnparser(rk, ldepth + 1, locals, result,
+                                       defined_symbols=defined_symbols, type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
@@ -887,7 +910,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(
-                    "__constant %s %s = %s;\n" % (types._CTYPES[type(val)],
+                    "__constant %s %s = %s;\n" % (dtypes._CTYPES[type(val)],
                                                   name, str(val)), sdfg)
 
 
@@ -899,6 +922,8 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
+        self._nptypes_to_ctypes = {'float64' : 'double'}
+        self._nptypes = ['float64']
         self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
                         'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
                         'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double']
@@ -955,8 +980,6 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(a=target_str, b=unparse(value))
                     code_str = "{} = {};".format(target_str, red_str)
                 else:
-                    # FIXME Don't know if this cover all the cases.
-                    #  we should consider that this could be also a global memory area
                     target_str = "{}[{}]".format(target, subscript)
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
@@ -971,17 +994,38 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
             # updated = ast.Name(id="write_channel_intel({}[{}], {});".format(
             #     target, subscript, cppunparse.cppunparse(value, expr_semicolon=False)))
         elif memlet is not None and memlet.num_accesses != 1:
-            newnode = ast.Name(id="*{} = {};".format(
+            newnode = ast.Name(id="*{} = {}; ".format(
                 target, cppunparse.cppunparse(value, expr_semicolon=False)))
             return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)
 
+    # Replace default modules (e.g., math) with OpenCL Compliant (e.g. "dace::math::"->"")
+    def visit_Attribute(self, node):
+        attrname = rname(node)
+        module_name = attrname[:attrname.rfind(".")]
+        func_name = attrname[attrname.rfind(".") + 1:]
+        if module_name in dtypes._OPENCL_ALLOWED_MODULES:
+            cppmodname = dtypes._OPENCL_ALLOWED_MODULES[module_name]
+            return ast.copy_location(
+                ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
+        return self.generic_visit(node)
+
     def visit_Call(self, node):
         # enforce compliance to OpenCL
-
         # type casting
-        if isinstance(node.func, ast.Name) and node.func.id in self._ctypes:
+
+        if (isinstance(node.func, ast.Name)  and node.func.id in self._ctypes):
+
             node.func.id = "({})".format(node.func.id)
+        elif (isinstance(node.func, ast.Name)  and node.func.id in self._nptypes_to_ctypes):
+            #if it as numpy type, convert to C type
+            node.func.id = "({})".format(self._nptypes_to_ctypes(node.func.id))
+        elif ((isinstance(node.func, ast.Num) and (node.func.n.to_string() in self._ctypes
+               or node.func.n.to_string() in self._nptypes))):
+            new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)
+            new_node = ast.copy_location(new_node, node)
+            node.func = new_node
+
 
         return self.generic_visit(node)
