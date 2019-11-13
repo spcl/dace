@@ -154,10 +154,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
-    return {
-        k: dace.serialize.to_json(v)
-        for k, v in arrays.items() if k is not None
-    }
+    return {k: dace.serialize.to_json(v) for k, v in arrays.items()}
 
 
 def _arrays_from_json(obj, context=None):
@@ -240,7 +237,7 @@ class SDFG(OrderedDiGraph):
             False
         )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
-        self._arrays = {None: None}  # type: Dict[str, dt.Array]
+        self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = ''
         self.init_code = ''
         self.exit_code = ''
@@ -1056,7 +1053,9 @@ subgraph cluster_state_{state} {{
     var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=dace.serialize.dumps(self.to_json()),
+            # Dumping to a string so that Jupyter Javascript can parse it
+            # recursively
+            sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
 
         return result
