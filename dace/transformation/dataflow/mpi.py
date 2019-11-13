@@ -95,24 +95,27 @@ class MPITransformMap(pattern_matching.Transformation):
         map_entry = graph.nodes()[self.subgraph[MPITransformMap._map_entry]]
 
         # Avoiding import loops
-        from dace.transformation.dataflow import StripMining
+        from dace.transformation.dataflow import OrthogonalTiling
         from dace.transformation.dataflow.stream_transient import (
             InLocalStorage)
         from dace.transformation.dataflow.stream_transient import (
             OutLocalStorage)
-        from dace.graph import labeling
 
         rangeexpr = str(map_entry.map.range.num_elements())
 
         stripmine_subgraph = {
-            StripMining._map_entry: self.subgraph[MPITransformMap._map_entry]
+            OrthogonalTiling._map_entry:
+            self.subgraph[MPITransformMap._map_entry]
         }
         sdfg_id = sdfg.sdfg_list.index(sdfg)
-        stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph,
-                                self.expr_index)
-        stripmine.dim_idx = -1
-        stripmine.new_dim_prefix = "mpi"
-        stripmine.tile_size = "(" + rangeexpr + "/__dace_comm_size)"
+        stripmine = OrthogonalTiling(sdfg_id, self.state_id,
+                                     stripmine_subgraph, self.expr_index)
+        tile_size = "(" + rangeexpr + "/__dace_comm_size)"
+        stripmine.tile_sizes = [1] * (len(map_entry.map.params) - 1) + [
+            tile_size
+        ]
+        stripmine.prefix = "mpi"
+
         stripmine.divides_evenly = True
         stripmine.apply(sdfg)
 
