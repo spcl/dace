@@ -1141,6 +1141,11 @@ subgraph cluster_state_{state} {{
                                   description). False or True override current
                                   option, whereas None keeps default
         """
+        try:
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        except (FileNotFoundError, FileExistsError):
+            pass
+
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
@@ -1607,7 +1612,7 @@ subgraph cluster_state_{state} {{
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
             opt = optclass(sdfg)
-            sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+            sdfg = opt.optimize()
 
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
