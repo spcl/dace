@@ -154,10 +154,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
-    return {
-        k: dace.serialize.to_json(v)
-        for k, v in arrays.items() if k is not None
-    }
+    return {k: dace.serialize.to_json(v) for k, v in arrays.items()}
 
 
 def _arrays_from_json(obj, context=None):
@@ -240,7 +237,7 @@ class SDFG(OrderedDiGraph):
             False
         )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
-        self._arrays = {None: None}  # type: Dict[str, dt.Array]
+        self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = ''
         self.init_code = ''
         self.exit_code = ''
