@@ -1319,54 +1319,6 @@ def compile(language):
         return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
 
 
-@app.route('/dace/api/v1.0/decompile/<string:obj>/', methods=['POST'])
-def decompile(obj):
-    """
-        De-compiles (pickles) an SDFG in python binary format.
-
-        POST-Parameters:
-            binary: base64 string. The object to pickle (the URL encodes the expected type).
-    """
-
-    import base64, pickle
-
-    try:
-        b64_data = request.json['binary']
-        decoded = base64.decodebytes(b64_data.encode())
-    except:
-        abort(Response("Invalid input", 400))
-    if obj == "SDFG":
-        loaded_sdfg = ""
-        from dace.sdfg import SDFG
-
-        try:
-            loaded_sdfg = SDFG.from_bytes(decoded)
-        except:
-            abort(Response("The provided file is not a valid SDFG", 400))
-
-        # With the SDFG decoded, we must adhere to the output format of compile() for the best interoperability
-        sdfg_name = loaded_sdfg.name
-        opts = get_transformations({sdfg_name: loaded_sdfg})
-
-        from dace.codegen import codegen
-        gen_code = codegen.generate_code(loaded_sdfg)
-
-        return jsonify({
-            "compounds": {
-                sdfg_name: {
-                    'input_code': loaded_sdfg.sourcecode,
-                    'sdfg': json.dumps(loaded_sdfg.to_json()),
-                    'matching_opts': opts[sdfg_name]['matching_opts'],
-                    'generated_code': [*map(lambda x: x.code, gen_code)]
-                }
-            }
-        })
-
-    else:
-        print("Invalid object type '" + obj + "' specified for decompilation")
-        abort(400)
-
-
 @app.route('/dace/api/v1.0/diode/themes', methods=['GET'])
 def get_available_ace_editor_themes():
     import glob, os.path

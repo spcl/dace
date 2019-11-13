@@ -3638,7 +3638,7 @@ class DIODE {
     openUploader(purpose="") {
         
         w2popup.open({
-            title: purpose == "pickle-sdfg" ? "Upload the pickled SDFG" : "Upload a code file",
+            title: "Upload a code file",
             body: `
 <div class="w2ui-centered upload_flexbox">
     <label for="file-select" style="flex-grow: 1">
@@ -3664,10 +3664,6 @@ class DIODE {
             if(purpose == "code-python") {
                 this.newFile(data);
             }
-            else if(purpose == "pickle-sdfg"){
-                let b64_data = btoa(String.fromCharCode(...new Uint8Array(data)));
-                this.load_from_binary_sdfg(b64_data);
-            }
         };
 
         setup_drag_n_drop(x, (mime, data) => {
@@ -3678,7 +3674,7 @@ class DIODE {
             // Close the popup
             w2popup.close();
         }, null, {
-            readMode: purpose == "pickle-sdfg" ? "binary" : "text"
+            readMode: "text"
         });
 
         let fuploader = $('#file-select');
@@ -3698,47 +3694,7 @@ class DIODE {
                 // Close the popup
                 w2popup.close();
             };
-            if(purpose == "pickle-sdfg") {
-                reader.readAsBinaryString(file);
-            }
-            else {
-                reader.readAsText(file);
-            }
-        });
-    }
-
-    load_from_binary_sdfg(sdfg_data) {
-        // Reset project state
-        this.createNewProject();
-
-        let post_params = {
-            binary: sdfg_data
-        };
-        REST_request("/dace/api/v1.0/decompile/SDFG/", post_params, xhr => {
-            if (xhr.readyState === 4 && xhr.status === 200) {
-                // The reponse is similar to the one of compile()
-                let resp = xhr.response;
-                let respdata = JSON.parse(resp);
-                let compounds = respdata['compounds'];
-
-                let input_code = "";
-
-                for(let x of Object.entries(compounds)) {
-                    let t = x[1].input_code;
-                    if(t != undefined) {
-                        input_code = t;
-                    }
-                }
-
-                console.log("input code: ", input_code);
-                this.project().request(['set-inputcode'], x => {
-                    
-                }, {
-                    params: input_code
-                });
-                this.multiple_SDFGs_available(resp);
-                this.OptGraphs_available(compounds);
-            }
+            reader.readAsText(file);
         });
     }
 
