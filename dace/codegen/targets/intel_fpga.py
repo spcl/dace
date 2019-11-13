@@ -922,10 +922,11 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        self._nptypes = {'float64' : 'double'}
+        self._nptypes_to_ctypes = {'float64' : 'double'}
+        self._nptypes = ['float64']
         self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
                         'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
-                        'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double', 'float64']
+                        'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double']
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
@@ -1017,10 +1018,11 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         if (isinstance(node.func, ast.Name)  and node.func.id in self._ctypes):
 
             node.func.id = "({})".format(node.func.id)
-        elif (isinstance(node.func, ast.Name)  and node.func.id in self._nptypes):
+        elif (isinstance(node.func, ast.Name)  and node.func.id in self._nptypes_to_ctypes):
             #if it as numpy type, convert to C type
-            node.func.id = "({})".format(self._nptypes(node.func.id))
-        elif ((isinstance(node.func, ast.Num) and node.func.n.to_string() in self._ctypes)):
+            node.func.id = "({})".format(self._nptypes_to_ctypes(node.func.id))
+        elif ((isinstance(node.func, ast.Num) and (node.func.n.to_string() in self._ctypes
+               or node.func.n.to_string() in self._nptypes))):
             new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)
             new_node = ast.copy_location(new_node, node)
             node.func = new_node
