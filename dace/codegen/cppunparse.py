@@ -1059,9 +1059,9 @@ class CPPUnparser:
         return inf_type
 
     def _Subscript(self, t, infer_type=False):
-        self.dispatch(t.value, infer_type)
+        inferred_type = self.dispatch(t.value, infer_type)
         self.write("[", infer_type)
-        inferred_type = self.dispatch(t.slice, infer_type)
+        self.dispatch(t.slice, infer_type)
         self.write("]", infer_type)
         return inferred_type
 
