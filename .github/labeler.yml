@@ -20,7 +20,7 @@ external:
   - dace/external/**/*
   
 config:
-  - *.yml
+  - dace/*.yml
 
 # Add '@domain/core' label to any change within the 'core' package
 diode:
