@@ -1037,7 +1037,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             except:
                 return None
 
-        def toJSON(self):
+        def to_json(self):
             return '{{ "node": "{node}",\n"thread": "{thread}",\n"iteration": "{iteration}",\n"flags": {flags},\n"values": [{values}]\n}}\n'.format(
                 node=str(self.nodeid),
                 thread=str(self.coreid),
@@ -1191,13 +1191,13 @@ class PAPIInstrumentation(InstrumentationProvider):
                 ]) + linedelim
             return ret
 
-        def toJSON(self):
+        def to_json(self):
             return '{{ "entry_node": {entry_node}, "static_movement": {datasize}, "input_size": {input_size}, "entry_core": {core}, "entries": ['.format(
                 entry_node=self.nodeid,
                 datasize=self.datasize,
                 input_size=self.input_datasize,
                 core=self.threadid) + ", ".join(
-                    [x.toJSON() for x in self.entries]) + "]}"
+                    [x.to_json() for x in self.entries]) + "]}"
 
         def toSQL(self, conn: sqlite3.Connection, c: sqlite3.Cursor,
                   supersection_id, order):
@@ -1309,10 +1309,10 @@ class PAPIInstrumentation(InstrumentationProvider):
             ret += "ENDSUPERSECTION" + linedelim
             return ret
 
-        def toJSON(self):
+        def to_json(self):
             return '{{ "hint": "supersection", "supernode": {supernode},\n "sections": [{sections}] }}'.format(
                 supernode=self.supernode,
-                sections=",\n".join([x.toJSON() for x in self.getSections()]))
+                sections=",\n".join([x.to_json() for x in self.getSections()]))
 
         def toSQL(self, conn: sqlite3.Connection, c: sqlite3.Cursor, run_id,
                   order):
@@ -1478,7 +1478,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         # Debug
         removed_nodes = [x for x in sections if not (x in collapsed)]
-        print("Removed nodes: " + str([x.toJSON() for x in removed_nodes]))
+        print("Removed nodes: " + str([x.to_json() for x in removed_nodes]))
         print(
             "Reduced from %d sections to %d" % (len(sections), len(collapsed)))
         return collapsed
@@ -2849,7 +2849,7 @@ VALUES
             totstr = '{ "type": "PerfInfo", "payload": [' + ", ".join(
                 [
                     '{"runopts": "%s", "data": [%s]}' % (o, ", ".join(
-                        [x.toJSON() for x in r_supersections if x.is_valid()]))
+                        [x.to_json() for x in r_supersections if x.is_valid()]))
                     for o, r_supersections in multirun_supersections
                 ]
             ) + '], "overhead_percentage": %s, "mode": "%s", "default_depth": %d %s}' % (
@@ -2875,7 +2875,7 @@ VALUES
         # Check if this runs
         try:
             for s in sections:
-                json.loads(s.toJSON())
+                json.loads(s.to_json())
         except:
             print("[Error] JSON contains syntax errors!")
 

@@ -2254,7 +2254,7 @@ def cpp_offset_expr(d: data.Data,
         @param subset: The subset to offset by.
         @param offset: An additional list of offsets or a Subset object
         @param packed_veclen: If packed types are targeted, specifies the
-                              vector length that the final offset should be 
+                              vector length that the final offset should be
                               divided by.
         @return: A string in C++ syntax with the correct offset
     """
@@ -2538,12 +2538,12 @@ def sym2cpp(s):
 
 
 class DaCeKeywordRemover(ExtNodeTransformer):
-    """ Removes memlets and other DaCe keywords from a Python AST, and 
+    """ Removes memlets and other DaCe keywords from a Python AST, and
         converts array accesses to C++ methods that can be generated.
-        
-        Used for unparsing Python tasklets into C++ that uses the DaCe 
+
+        Used for unparsing Python tasklets into C++ that uses the DaCe
         runtime.
-        
+
         @note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """

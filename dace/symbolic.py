@@ -460,7 +460,7 @@ def symbol_name_or_value(val):
 
 
 def sympy_to_dace(exprs, symbol_map=None):
-    """ Convert all `sympy.Symbol`s to DaCe symbols, according to 
+    """ Convert all `sympy.Symbol`s to DaCe symbols, according to
         `symbol_map`. """
     repl = {}
     symbol_map = symbol_map or {}
@@ -519,7 +519,7 @@ def contains_sympy_functions(expr):
 
 
 def sympy_numeric_fix(expr):
-    """ Fix for printing out integers as floats with ".00000000". 
+    """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic):
         if int(expr) == expr:
@@ -532,7 +532,7 @@ def sympy_numeric_fix(expr):
 
 
 def sympy_ceiling_fix(expr):
-    """ Fix for SymPy printing out reciprocal values when they should be 
+    """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
     """
     nexpr = expr
@@ -586,7 +586,7 @@ def sympy_ceiling_fix(expr):
 
 
 def sympy_divide_fix(expr):
-    """ Fix SymPy printouts where integer division such as "tid/2" turns 
+    """ Fix SymPy printouts where integer division such as "tid/2" turns
         into ".5*tid".
     """
     nexpr = expr
@@ -708,7 +708,7 @@ def _sunpickle(obj):
 
 
 class SympyAwarePickler(pickle.Pickler):
-    """ Custom Pickler class that safely saves SymPy expressions 
+    """ Custom Pickler class that safely saves SymPy expressions
         with function definitions in expressions (e.g., int_ceil).
     """
 
@@ -722,7 +722,7 @@ class SympyAwarePickler(pickle.Pickler):
 
 
 class SympyAwareUnpickler(pickle.Unpickler):
-    """ Custom Unpickler class that safely restores SymPy expressions 
+    """ Custom Unpickler class that safely restores SymPy expressions
         with function definitions in expressions (e.g., int_ceil).
     """
 
