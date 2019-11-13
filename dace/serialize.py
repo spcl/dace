@@ -3,7 +3,6 @@ import json
 import numpy as np
 import dace.dtypes
 
-
 JSON_STORE_METADATA = True
 
 
@@ -157,6 +156,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
 
     # Apply properties
     ps = dict(object_with_properties.__properties__)
+    source_properties = set(attrs.keys())
     for prop_name, prop in ps.items():
         try:
             val = attrs[prop_name]
@@ -164,6 +164,9 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
             raise KeyError("Missing property for object of type " +
                            type(object_with_properties).__name__ + ": " +
                            prop_name)
+
+        # Make sure we use all properties
+        source_properties.remove(prop_name)
 
         if isinstance(val, dict):
             val = prop.from_json(val, context)
@@ -184,3 +187,10 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
                 pass
 
         setattr(object_with_properties, prop_name, val)
+
+    if len(source_properties) > 0:
+        # TODO: elevate to error once #28 is fixed.
+        # raise KeyError("Unused properties: {}".format(", ".join(
+        #     sorted(source_properties))))
+        print("WARNING: unused properties: {}".format(", ".join(
+            sorted(source_properties))))
