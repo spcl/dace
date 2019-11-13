@@ -28,6 +28,7 @@ enum_list = [
 ]
 
 es_ref = []
+remote_execution = False
 
 config_lock = threading.Lock()
 
@@ -223,7 +224,7 @@ class ExecutorServer:
                     perfdir = ExecutorServer.getPerfdataDir(cmd['cid'])
                     perfdata_path = os.path.join(perfdir, "perfdata.db")
                     os.remove(perfdata_path)
-                    os.rmdir(perf_tmp_dir)
+                    os.rmdir(perfdir)
 
                 elif cmd['operation'] == 'endgroup':
                     print("Ending group")
@@ -836,8 +837,8 @@ def compileProgram(request, language, perfopts=None):
             in_sdfg = request.json['sdfg']
             if isinstance(in_sdfg, list):
                 if len(in_sdfg) > 1:
-                    print("More than 1 sdfg provided!")
-                    raise Exception("#TODO: Allow multiple sdfg inputs")
+                    # TODO: Allow multiple sdfg inputs
+                    raise NotImplementedError("More than 1 SDFG provided")
 
                 in_sdfg = in_sdfg[0]
 
@@ -1463,10 +1464,10 @@ if __name__ == '__main__':
         help="Bind to localhost only")
 
     parser.add_argument(
-        "-ld",
-        "--localdace",
+        "-r",
+        "--remotedace",
         action="store_true",
-        help="Use local commands instead of ssh")
+        help="Use ssh commands instead of locally running dace")
 
     parser.add_argument(
         "-rd",
@@ -1483,32 +1484,7 @@ if __name__ == '__main__':
         Config.load("./dace.conf.bak")
         Config.save()
 
-    if args.localdace:
-        from dace.config import Config
-        Config.load()
-        Config.save("./dace.conf.bak")
-        Config.load()
-        Config.set(
-            "execution",
-            "general",
-            "execcmd",
-            value='${command}',
-            autosave=True)
-        Config.set(
-            "execution",
-            "general",
-            "copycmd_r2l",
-            value='cp ${srcfile} ${dstfile}',
-            autosave=True)
-        Config.set(
-            "execution",
-            "general",
-            "copycmd_l2r",
-            value='cp ${srcfile} ${dstfile}',
-            autosave=True)
-        if not os.path.isdir("./client_configs"):
-            os.mkdir("./client_configs")
-        Config.save("./client_configs/default.conf")
+    remote_execution = args.remotedace
 
     es = ExecutorServer()
     es_ref.append(es)
