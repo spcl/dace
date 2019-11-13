@@ -238,6 +238,7 @@ class XilinxCodeGen(TargetCodeGenerator):
         data_to_node = {}
 
         global_data_params = []
+        global_data_names = set()
         top_level_local_data = []
         subgraph_params = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
@@ -295,6 +296,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                         else:
                             global_data_params.append((is_output, dataname,
                                                        data))
+                        global_data_names.add(dataname)
                     elif (data.storage == dace.dtypes.StorageType.FPGA_Local
                           or data.storage ==
                           dace.dtypes.StorageType.FPGA_Registers):
@@ -321,8 +323,12 @@ class XilinxCodeGen(TargetCodeGenerator):
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
         top_level_local_data = [data_to_node[n] for n in top_level_local_data]
 
-        # Get scalar parameters
-        scalar_parameters = sdfg.scalar_parameters(False)
+        # Get scalar parameters and deduplicate with respect to scalars with
+        # access nodes (which will be in `global_data_params`).
+        scalar_parameters = [
+            s for s in sdfg.scalar_parameters(False)
+            if s[0] not in global_data_names
+        ]
         symbol_parameters = sdfg.undefined_symbols(False)
 
         return (global_data_params, top_level_local_data, subgraph_params,
