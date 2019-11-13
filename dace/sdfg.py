@@ -2279,11 +2279,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
 
-    def defined_symbols_at(self, sdfg, node):
-        """ Returns all symbols available to a given node, including map and
-           state transition variables. """
-        return sdfg.defined_symbols_at(node, state=self)
-
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """
         return data_symbols(self)
