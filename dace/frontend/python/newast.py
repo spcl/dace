@@ -3395,8 +3395,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         result = func(self, self.sdfg, self.last_state, operand1, operand2)
-        if not isinstance(result, (tuple, list)):
-            return [result]
+        # if not isinstance(result, (tuple, list)):
+        #     return [result]
         return result
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
