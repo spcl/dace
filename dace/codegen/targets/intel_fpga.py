@@ -808,15 +808,18 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
             memlet = edge.data
             data_name = memlet.data
-            data_desc = sdfg.arrays[data_name]
+
             if edge.src == node:
                 memlet_name = edge.src_conn
             elif edge.dst == node:
                 memlet_name = edge.dst_conn
-            if (isinstance(data_desc, dace.data.Stream)
-                    and memlet.num_accesses != 1):
-                callsite_stream.write("#undef {}".format(memlet_name), sdfg,
-                                      sdfg.node_id(dfg), node)
+
+            if data_name is not None:
+                data_desc = sdfg.arrays[data_name]
+                if (isinstance(data_desc, dace.data.Stream)
+                        and memlet.num_accesses != 1):
+                    callsite_stream.write("#undef {}".format(memlet_name), sdfg,
+                                          sdfg.node_id(dfg), node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):

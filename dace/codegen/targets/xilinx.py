@@ -265,7 +265,10 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                                         module_stream, kernel_stream):
 
         # Write header
-        module_stream.write("#include <dace/xilinx/device.h>\n\n", sdfg)
+        module_stream.write(
+            """#include <dace/xilinx/device.h>
+#include <dace/math.h>
+#include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream)
         module_stream.write("\n", sdfg)
 
