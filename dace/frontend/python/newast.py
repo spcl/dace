@@ -588,8 +588,12 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
             or arr1.shape[1] != arr2.shape[0]):
         raise SyntaxError('Matrix sizes must match')
 
+    type1 = arr1.dtype.type
+    type2 = arr2.dtype.type
+    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+
     op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
-                                        arr1.dtype, arr1.storage)
+                                        restype, arr1.storage)
 
     state.add_mapped_tasklet(
         '_MatMult_', {

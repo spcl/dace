@@ -109,6 +109,8 @@ func({args})
             try:
                 self.sdfg = self.sdfgs[0][1]
             except IndexError:
+                if len(self.errors) > 0:
+                    raise self.errors[-1]
                 if len(self.sdfgs) == 0:
                     raise ValueError('No SDFGs found in file. SDFGs are only '
                                      'recognized when @dace.programs or SDFG '

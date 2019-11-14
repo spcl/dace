@@ -173,7 +173,7 @@ class RenderedGraphHTML5:
             if isinstance(sdfg, str):
                 json = sdfg
             else:
-                json = sdfg.toJSON()
+                json = sdfg.to_json()
             await websocket.send(json)
 
         self.render_queue.clear()
@@ -196,7 +196,7 @@ class RenderedGraphHTML5:
                     if isinstance(sdfg, str):
                         json = sdfg
                     else:
-                        json = sdfg.toJSON()
+                        json = sdfg.to_json()
                     await websocket.send(json)
                 self.render_queue.clear()
 

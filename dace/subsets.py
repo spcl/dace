@@ -1,3 +1,4 @@
+import dace.serialize
 from dace import data, symbolic, dtypes
 import re
 import sympy as sp
@@ -43,6 +44,7 @@ def _tuple_to_symexpr(val):
             if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
 
 
+@dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
 
@@ -62,8 +64,7 @@ class Range(Subset):
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
-    def toJSON(self):
-        import json
+    def to_json(self):
         ret = []
 
         def a2s(obj):
@@ -81,21 +82,16 @@ class Range(Subset):
                 'tile': a2s(tile)
             })
 
-        return json.dumps({'type': 'subsets.Range', 'ranges': ret})
+        return {'type': 'Range', 'ranges': ret}
 
     @staticmethod
-    def fromJSON(obj, context=None):
-        import json
-        obj = json.loads(obj)
-
-        return Range.fromJSON_object(obj, context)
-
-    @staticmethod
-    def fromJSON_object(obj, context=None):
-        if obj['type'] != 'subsets.Range':
+    def from_json(obj, context=None):
+        if not isinstance(obj, dict):
+            raise TypeError("Expected dict, got {}".format(type(obj)))
+        if obj['type'] != 'Range':
             raise TypeError(
-                "fromJSON of class `Range` called on json with type %s (expected 'subsets.Range')"
-                % obj['type'])
+                "from_json of class \"Range\" called on json "
+                "with type %s (expected 'Range')" % obj['type'])
 
         ranges = obj['ranges']
         tuples = []
@@ -115,7 +111,7 @@ class Range(Subset):
 
     @staticmethod
     def from_array(array):
-        """ Constructs a range that covers the full array given as input. 
+        """ Constructs a range that covers the full array given as input.
             @type array: dace.data.Data """
         return Range([(0, s - 1, 1) for s in array.shape])
 
@@ -177,9 +173,9 @@ class Range(Subset):
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
-            
+
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            
+
             @param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
             @return: Absolute coordinates for index i (length equal to
@@ -203,13 +199,13 @@ class Range(Subset):
     def at(self, i, global_shape):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
-            
+
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            
+
             @param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            @param global_shape: The full size of the set that we are 
-                                 subsetting (e.g., full array strides/padded 
+            @param global_shape: The full size of the set that we are
+                                 subsetting (e.g., full array strides/padded
                                  shape).
             @return: Absolute 1D index at coordinate i.
         """
@@ -526,6 +522,7 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
 
+@dace.serialize.serializable
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
@@ -542,8 +539,7 @@ class Indices(Subset):
             self.indices = symbolic.pystr_to_symbolic(indices)
         self.tile_sizes = [1]
 
-    def toJSON(self):
-        import json
+    def to_json(self):
 
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
@@ -551,24 +547,17 @@ class Indices(Subset):
             else:
                 return str(obj)
 
-        return json.dumps({
-            'type': 'subsets.Indices',
-            'indices': [*map(a2s, self.indices)]
-        })
+        return {
+            'type': 'Indices',
+            'indices': list(map(a2s, self.indices))
+        }
 
     @staticmethod
-    def fromJSON(obj, context=None):
-        import json
-        obj = json.loads(obj)
-
-        return Indices.fromJSON_object(obj, context)
-
-    @staticmethod
-    def fromJSON_object(obj, context=None):
-        if obj['type'] != 'subsets.Indices':
+    def from_json(obj, context=None):
+        if obj['type'] != 'Indices':
             raise TypeError(
-                "fromJSON of class `Indices` called on json with type %s (expected 'subsets.Indices')"
-                % obj['type'])
+                "from_json of class \"Indices\" called on json "
+                "with type %s (expected 'Indices')" % obj['type'])
 
         #return Indices(symbolic.SymExpr(obj['indices']))
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
@@ -630,8 +619,8 @@ class Indices(Subset):
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
             @param i: A tuple of the same dimensionality as subset.dims().
-            @param global_shape: The full size of the set that we are 
-                                 subsetting (e.g., full array strides/padded 
+            @param global_shape: The full size of the set that we are
+                                 subsetting (e.g., full array strides/padded
                                  shape).
             @return: Absolute 1D index at coordinate i.
         """
