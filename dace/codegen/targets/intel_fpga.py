@@ -749,16 +749,12 @@ __kernel void \\
                     result += "{} {}{};".format(memlet_type, connector, init)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
-            elif memlet.num_accesses == -1:
+            else:
                 # Variable number of reads or writes
                 result += "{} *{} = &{};".format(memlet_type, connector,
                                                  data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Pointer)
-            else:
-                raise dace.codegen.codegen.CodegenError(
-                    "Unsupported number of accesses {} for scalar {}".format(
-                        memlet.num_accesses, connector))
         elif def_type == DefinedType.Pointer:
             if memlet.num_accesses == 1:
                 if is_output:

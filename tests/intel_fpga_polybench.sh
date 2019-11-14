@@ -111,7 +111,7 @@ run_all() {
     run_sample doitgen doitgen 1
     run_sample durbin durbin 0
     run_sample fdtd-2d fdtd2d 0
-    run_sample  floyd-warshall floyd_warshall 0
+    run_sample floyd-warshall floyd_warshall 0
     run_sample gemm gemm 0
     run_sample gemver gemver 0
     run_sample gesummv gesummv 0
