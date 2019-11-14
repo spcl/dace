@@ -191,10 +191,13 @@ def make_compute_sdfg():
         toplevel=True)
 
     code = """\
+res = 0.0
 if y >= 3 and x >= 3 and y < H - 1 and x < W - 1:
-    result = float(0.2) * (window[0, 1] + window[1, 0] + window[1, 1] + window[1, 2] + window[2, 1])
+    res = float(0.2) * (window[0, 1] + window[1, 0] + window[1, 1] + window[1, 2] + window[2, 1])
 elif y >= 2 and x >= 2:
-    result = window[1, 1]"""
+    res = window[1, 1]
+if (y >= 3 and x >= 3 and y < H - 1 and x < W - 1) or (y >= 2 and x >= 2):
+    result =res"""
 
     tasklet = loop_body.add_tasklet("compute", {"window"}, {"result"}, code)
 

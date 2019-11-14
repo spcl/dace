@@ -101,8 +101,8 @@ run_all() {
 
     # #### SYSTOLIC ARRAY ###
     run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
-    run_sample intel_fpga/gemm_systolic_array gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
-
+    run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
+    run_sample ../samples/fpga/jacobi_fpga_systolic jacobi_fpga_systolic_8_Hx8192xT "\n"
 
 
     # #### MISCELLANEA ####
