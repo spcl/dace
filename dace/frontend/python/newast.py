@@ -279,7 +279,7 @@ def _real(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
         op = args
     inpname = until(op, '[')
     inptype = sdfg.arrays[inpname].dtype
-    return _simple_call(sdfg, state, op, 'real',
+    return _simple_call(sdfg, state, inpname, 'real',
                         _complex_to_scalar(inptype))
 
 
@@ -293,7 +293,7 @@ def _imag(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
         op = args
     inpname = until(op, '[')
     inptype = sdfg.arrays[inpname].dtype
-    return _simple_call(sdfg, state, op, 'imag',
+    return _simple_call(sdfg, state, inpname, 'imag',
                         _complex_to_scalar(inptype))
 
 
