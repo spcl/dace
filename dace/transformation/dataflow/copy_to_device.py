@@ -25,7 +25,7 @@ class CopyToDevice(pattern_matching.Transformation):
     """ Implements the copy-to-device transformation, which copies a nested
         SDFG and its dependencies to a given device.
 
-        The transformation changes all data storage types of a nested SDFG to 
+        The transformation changes all data storage types of a nested SDFG to
         the given `storage` property, and creates new arrays and copies around
         the nested SDFG to that storage.
     """
@@ -35,7 +35,7 @@ class CopyToDevice(pattern_matching.Transformation):
     storage = properties.Property(
         dtype=dtypes.StorageType,
         desc="Nested SDFG storage",
-        enum=dtypes.StorageType,
+        choices=dtypes.StorageType,
         from_string=lambda x: dtypes.StorageType[x],
         default=dtypes.StorageType.Default)
 

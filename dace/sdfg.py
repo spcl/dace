@@ -16,6 +16,7 @@ import numpy as np
 import sympy as sp
 
 import dace
+import dace.serialize
 from dace import data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic
 from dace.config import Config
 from dace.frontend.python import wrappers
@@ -150,6 +151,18 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return "%s (at state %s%s)" % (self.message, str(state.label), edgestr)
 
 
+def _arrays_to_json(arrays):
+    if arrays is None:
+        return None
+    return {k: dace.serialize.to_json(v) for k, v in arrays.items()}
+
+
+def _arrays_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
+
+
 @make_properties
 class SDFG(OrderedDiGraph):
     """ The main intermediate representation of code in DaCe.
@@ -161,16 +174,20 @@ class SDFG(OrderedDiGraph):
         assignments (see the `InterstateEdge` class documentation). The nested
         acyclic multigraphs represent dataflow, where nodes may represent data
         regions in memory, tasklets, or parametric graph scopes (see
-        `dace.graph.nodes` for a full list of available node types); edges in the multigraph represent data movement using memlets, as described in the `Memlet` class documentation.
+        `dace.graph.nodes` for a full list of available node types); edges in
+        the multigraph represent data movement using memlets, as described in
+        the `Memlet` class documentation.
     """
 
     #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
-                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k is not None}, default=Property.json_dumper) if x is not None else "null",
-                        from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
+    _arrays = Property(
+        dtype=dict,
+        desc="Data descriptors for this SDFG",
+        to_json=_arrays_to_json,
+        from_json=_arrays_from_json)
 
     global_code = CodeProperty(
         desc=
@@ -220,7 +237,7 @@ class SDFG(OrderedDiGraph):
             False
         )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
-        self._arrays = {None: None}  # type: Dict[str, dt.Array]
+        self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = ''
         self.init_code = ''
         self.exit_code = ''
@@ -232,25 +249,27 @@ class SDFG(OrderedDiGraph):
         self._orig_name = name
         self._num = 0
 
-    def toJSON(self):
+    def to_json(self):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
-        import json
-        tmp = super(SDFG, self).toJSON()
-        tmp = json.loads(tmp)
+        tmp = super().to_json()
 
         # Inject the undefined symbols
-        tmp['undefined_symbols'] = self.undefined_symbols(True)
-        tmp['scalar_parameters'] = self.scalar_parameters(True)
+        tmp['undefined_symbols'] = [
+            (k, v.to_json())
+            for k, v in sorted(self.undefined_symbols(True).items())
+        ]
+        tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
+            self.scalar_parameters(True), key=lambda x: x[0])]
 
         tmp['attributes']['name'] = self.name
 
-        # Re-encode
-        return json.dumps(tmp, default=Property.json_dumper)
+        return tmp
 
     @classmethod
-    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context_info={'sdfg': None}):
+
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -259,39 +278,34 @@ class SDFG(OrderedDiGraph):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        import json
-
         ret = SDFG(
             name=attrs['name'],
-            arg_types=json.loads(
-                json.dumps(attrs['arg_types']),
-                object_hook=properties.Property.json_loader),
-            constants=json.loads(
-                json.dumps(attrs['constants_prop']),
-                object_hook=properties.Property.json_loader),
+            arg_types=dace.serialize.loads(
+                dace.serialize.dumps(attrs['arg_types'])),
+            constants=dace.serialize.loads(
+                dace.serialize.dumps(attrs['constants_prop'])),
             parent=context_info['sdfg'])
 
-        Property.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj)
 
-        import copy
         for n in nodes:
             nci = copy.deepcopy(context_info)
             nci['sdfg'] = ret
 
-            state = SDFGState.fromJSON_object(n, nci)
+            state = SDFGState.from_json(n, context=nci)
             ret.add_node(state)
 
         for e in edges:
-            e = json.loads(json.dumps(e), object_hook=Property.json_loader)
+            e = dace.serialize.loads(dace.serialize.dumps(e))
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         # Redefine symbols
-        for k, v in json_obj['undefined_symbols'].items():
-            v = Property.known_types()[v['type']].fromJSON_object(v)
+        for k, v in json_obj['undefined_symbols']:
+            v = dace.serialize.from_json(v)
             symbolic.symbol(k, v.dtype)
 
         for k, v in json_obj['scalar_parameters']:
-            v = Property.known_types()[v['type']].fromJSON_object(v)
+            v = dace.serialize.from_json(v)
             ret.add_symbol(k, v.dtype)
 
         ret.validate()
@@ -646,6 +660,12 @@ class SDFG(OrderedDiGraph):
             a, u = state.interstate_symbols()
             assigned.update(a)
             used.update(u)
+
+        assigned = collections.OrderedDict([(k, v)
+                                            for k, v in assigned.items()
+                                            if not k.startswith('__dace')])
+        used = collections.OrderedDict(
+            [(k, v) for k, v in used.items() if not k.startswith('__dace')])
 
         return assigned, used
 
@@ -1030,10 +1050,12 @@ subgraph cluster_state_{state} {{
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
-    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}), 
+    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=json.dumps(self.toJSON()),
+            # Dumping to a string so that Jupyter Javascript can parse it
+            # recursively
+            sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
 
         return result
@@ -1119,17 +1141,22 @@ subgraph cluster_state_{state} {{
                                   description). False or True override current
                                   option, whereas None keeps default
         """
+        try:
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        except (FileNotFoundError, FileExistsError):
+            pass
+
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
         else:
             if with_metadata is not None:
-                old_meta = dace.properties.json_store_metadata
-                dace.properties.json_store_metadata = with_metadata
+                old_meta = dace.serialize.JSON_STORE_METADATA
+                dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                fp.write(self.toJSON())
+                fp.write(dace.serialize.dumps(self.to_json()))
             if with_metadata is not None:
-                dace.properties.json_store_metadata = old_meta
+                dace.serialize.JSON_STORE_METADATA = old_meta
 
     @staticmethod
     def from_file(filename: str):
@@ -1142,7 +1169,7 @@ subgraph cluster_state_{state} {{
             fp.seek(0)
             if firstbyte == b'{':  # JSON file
                 sdfg_json = json.load(fp)
-                sdfg = SDFG.fromJSON_object(sdfg_json)
+                sdfg = SDFG.from_json(sdfg_json)
             else:  # Pickle
                 sdfg = symbolic.SympyAwareUnpickler(fp).load()
 
@@ -1402,7 +1429,7 @@ subgraph cluster_state_{state} {{
             increment_expr: str,
             loop_end_state=None,
     ):
-        """ Helper function that adds a looping state machine around a 
+        """ Helper function that adds a looping state machine around a
             given state (or sequence of states).
             @param before_state: The state after which the loop should
                                  begin, or None if the loop is the first
@@ -1410,7 +1437,7 @@ subgraph cluster_state_{state} {{
             @param loop_state: The state that begins the loop. See also
                                `loop_end_state` if the loop is multi-state.
             @param after_state: The state that should be invoked after
-                                the loop ends, or None if the program 
+                                the loop ends, or None if the program
                                 should terminate (creates an empty state).
             @param loop_var: A name of an inter-state variable to use
                              for the loop. If None, `initialize_expr`
@@ -1419,14 +1446,14 @@ subgraph cluster_state_{state} {{
                                     to `loop_var` before the loop begins.
                                     If None, does not define an expression.
             @param condition_expr: A string condition that occurs every
-                                   loop iteration. If None, loops forever 
+                                   loop iteration. If None, loops forever
                                    (undefined behavior).
             @param increment_expr: A string expression that is assigned to
                                    `loop_var` after every loop iteration.
                                     If None, does not define an expression.
             @param loop_end_state: If the loop wraps multiple states, the
                                    state where the loop iteration ends.
-                                   If None, sets the end state to 
+                                   If None, sets the end state to
                                    `loop_state` as well.
             @return: A 3-tuple of (`before_state`, generated loop guard state,
                                    `after_state`).
@@ -1585,7 +1612,7 @@ subgraph cluster_state_{state} {{
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
             opt = optclass(sdfg)
-            sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+            sdfg = opt.optimize()
 
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
@@ -1878,7 +1905,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
-    
+
             @note: Behavior is undefined when there is more than one path
                    involving this edge.
             @param edge: An edge within this state.
@@ -1934,7 +1961,7 @@ class MemletTrackingView(object):
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a tree
             between its node source(s) and sink(s). Used for memlet tracking.
-    
+
             @param edge: An edge within this state.
             @return: A list of edges from source nodes to destination nodes
                      (in arbitrary order) that pass through the given edge.
@@ -2136,7 +2163,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         desc="Do not synchronize at the end of the state")
 
     instrument = Property(
-        enum=dtypes.InstrumentationType,
+        choices=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
@@ -2257,11 +2284,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
 
-    def defined_symbols_at(self, sdfg, node):
-        """ Returns all symbols available to a given node, including map and
-           state transition variables. """
-        return sdfg.defined_symbols_at(node, state=self)
-
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """
         return data_symbols(self)
@@ -2288,8 +2310,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def draw_node(self, graph):
         return dot.draw_node(graph, self, shape="Msquare")
 
-    def toJSON(self, parent=None):
-        import json
+    def to_json(self, parent=None):
         ret = {
             'type':
             type(self).__name__,
@@ -2305,20 +2326,20 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     self.scope_dict(node_to_children=True, return_ids=True)
                     .items())
             },
-            'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
+            'nodes': [n.to_json(self) for n in self.nodes()],
             'edges': [
-                json.loads(e.toJSON(self)) for e in sorted(
+                e.to_json(self) for e in sorted(
                     self.edges(),
                     key=lambda e: (e.src_conn or '', e.dst_conn or ''))
             ],
             'attributes':
-            json.loads(Property.all_properties_to_json(self)),
+            dace.serialize.all_properties_to_json(self),
         }
 
-        return json.dumps(ret)
+        return ret
 
     @classmethod
-    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context={'sdfg': None}):
         """ Loads the node properties, label and type into a dict.
             @param json_obj: The object containing information about this node.
                              NOTE: This may not be a string!
@@ -2334,30 +2355,24 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         edges = json_obj['edges']
 
         ret = SDFGState(
-            label=json_obj['label'], sdfg=context_info['sdfg'], debuginfo=None)
+            label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
 
         rec_ci = {
-            'sdfg':
-            context_info['sdfg'],
-            'sdfg_state':
-            ret,
-            'callback':
-            context_info['callback'] if 'callback' in context_info else None
+            'sdfg': context['sdfg'],
+            'sdfg_state': ret,
+            'callback': context['callback'] if 'callback' in context else None
         }
-        Property.set_properties_from_json(ret, json_obj, rec_ci)
+        dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
-        import json
         for n in nodes:
-            nret = json.loads(
-                json.dumps(n),
-                object_hook=lambda x: Property.json_loader(x, rec_ci))
+            nret = dace.serialize.loads(
+                dace.serialize.dumps(n), context=rec_ci)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            eret = json.loads(
-                json.dumps(e),
-                object_hook=lambda x: Property.json_loader(x, rec_ci))
+            eret = dace.serialize.loads(
+                dace.serialize.dumps(e), context=rec_ci)
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)
@@ -3953,7 +3968,8 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
             scope.parent is None and n.desc(scope).transient or scope.parent))
     }
     symbols = collections.OrderedDict(
-        (key, value) for key, value in symbols.items() if key not in defined)
+        (key, value) for key, value in symbols.items()
+        if key not in defined and not key.startswith('__dace'))
     return symbols
 
 

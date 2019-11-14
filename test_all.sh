@@ -91,12 +91,6 @@ runtest_cu() {
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
-runtest_optscript() {
-    test_start $1
-    testcmd python3 $SCRIPTPATH/diode/diode1.py --local --headless --optscript=$1
-    if [ $? -ne 0 ]; then bail $1; fi
-}
-
 runtest_octave() {
     test_start $1
     testcmd $SCRIPTPATH/scripts/dacelab $1
@@ -148,8 +142,6 @@ if [ $# -ne 0 ]; then
             runtest_cpp $arg
         elif [[ $arg == *_test.cu ]]; then
             runtest_cu $arg
-        elif [[ $arg == *_test_opt.py ]]; then
-            runtest_optscript $arg
         elif [[ $arg == *_test.py ]]; then
             runtest_py $arg
         elif [[ $arg == *.m ]]; then
