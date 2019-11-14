@@ -16,7 +16,7 @@ from dace.transformation import pattern_matching
 from dace.transformation import dataflow, interstate
 
 
-class SDFGOptimizer(object):
+class Optimizer(object):
     """ Implements methods for optimizing a DaCe program stateful dataflow
         graph representation, by matching patterns and applying 
         transformations on it.
@@ -40,7 +40,15 @@ class SDFGOptimizer(object):
         )
         self.applied_patterns = set()
 
-    def get_pattern_matches(self, strict=False, states=None, patterns=None):
+    def optimize(self):
+        # Should be implemented by subclass
+        raise NotImplementedError
+
+    def get_pattern_matches(self,
+                            strict=False,
+                            states=None,
+                            patterns=None,
+                            sdfg=None):
         """ Returns all possible transformations for the current SDFG.
             @param strict: Only consider strict transformations (i.e., ones
                            that surely increase performance or enhance
@@ -50,11 +58,11 @@ class SDFGOptimizer(object):
             @param patterns: An iterable of transformation classes to consider
                              when matching. If None, considers all registered
                              transformations in `Transformation`.
+            @param sdfg: If not None, searches for patterns on given SDFG.
             @return: List of matching `Transformation` objects.
             @see: Transformation
         """
-
-        matches = []
+        sdfg = sdfg or self.sdfg
 
         if states is None:
             if patterns is None:
@@ -66,15 +74,15 @@ class SDFGOptimizer(object):
 
             for pattern in _patterns:
                 yield from pattern_matching.match_stateflow_pattern(
-                    self.sdfg, pattern, strict=strict)
+                    sdfg, pattern, strict=strict)
 
         state_enum = []
         if states is None:
-            for state_id, state in enumerate(self.sdfg.nodes()):
+            for state_id, state in enumerate(sdfg.nodes()):
                 state_enum.append((state_id, state))
         else:
             for state in states:
-                state_id = self.sdfg.nodes().index(state)
+                state_id = sdfg.nodes().index(state)
                 state_enum.append((state_id, state))
 
         if patterns is None:
@@ -84,12 +92,108 @@ class SDFGOptimizer(object):
         for state_id, state in state_enum:
             for pattern in _patterns:
                 yield from pattern_matching.match_pattern(
-                    state_id, state, pattern, self.sdfg, strict=strict)
+                    state_id, state, pattern, sdfg, strict=strict)
 
-    def optimize(self, debugprint=True):
+    def optimization_space(self):
+        """ Returns the optimization space of the current SDFG """
+
+        def get_actions(actions, graph, match):
+            subgraph_node_ids = match.subgraph.values()
+            subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
+            for node in subgraph_nodes:
+                version = 0
+                while (node, type(match).__name__, match.expr_index,
+                       version) in actions.keys():
+                    version += 1
+                actions[(node, type(match).__name__, match.expr_index,
+                         version)] = match
+            subgraph = SubgraphView(graph, subgraph_nodes)
+            for edge in subgraph.edges():
+                version = 0
+                while (edge, type(match).__name__, match.expr_index,
+                       version) in actions.keys():
+                    version += 1
+                actions[(edge, type(match).__name__, match.expr_index,
+                         version)] = match
+            return actions
+
+        def get_dataflow_actions(actions, sdfg, match):
+            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
+            return get_actions(actions, graph, match)
+
+        def get_stateflow_actions(actions, sdfg, match):
+            graph = sdfg.sdfg_list[match.sdfg_id]
+            return get_actions(actions, graph, match)
+
+        actions = dict()
+
+        for match in self.get_pattern_matches():
+            if match.state_id >= 0:
+                actions = get_dataflow_actions(actions, self.sdfg, match)
+            else:
+                actions = get_stateflow_actions(actions, self.sdfg, match)
+
+        return actions
+
+
+def _parse_cli_input(line):
+    """ Parses a command line input, which may include a transformation name
+        (optional), its occurrence ID, and its parameters (optional).
+        Syntax Examples:
+            * 5                  - Chooses the fifth transformation
+            * MapReduceFusion$0  - First occurrence of MapReduceFusion
+            * 4(array='A')       - Transformation number 4 with one parameter
+            * StripMining$1(param='i', tile_size=64) - Strip mining #2 with
+                                                       parameters
+        @param line: Input line string
+        @return: A tuple with (transformation name or None if not given,
+                                      occurrence or -1 if not given,
+                                      parameter dictionary or {} if not given)
+    """
+    # First try matching explicit all-inclusive string "A$num(values)"
+    match = re.findall(r'(.*)\$(\d+)\((.*)\)', line)
+    if len(match) == 1:
+        trans_name, occurrence, param_dict = match[0]
+    else:
+        # Then, try to match "num(values)"
+        match = re.findall(r'(\d+)\((.*)\)', line)
+        if len(match) == 1:
+            trans_name = None
+            occurrence, param_dict = match[0]
+        else:
+            # After that, try to match "A$num"
+            match = re.findall(r'(.*)\$(\d+)', line)
+            if len(match) == 1:
+                trans_name, occurrence = match[0]
+                param_dict = {}
+            else:
+                # Finally, try to match "num"
+                match = re.findall(r'(\d+)', line)
+                if len(match) == 1:
+                    trans_name = None
+                    occurrence = match[0]
+                    param_dict = {}
+                else:
+                    return (None, -1, {})
+
+    # Try to parse the results
+    try:
+        occurrence = int(occurrence)
+    except ValueError:
+        occurrence = -1
+    try:
+        if isinstance(param_dict, str):
+            param_dict = eval('dict(' + param_dict + ')')
+    except:  # Here we have to catch ANY exception since literally anything
+        # can happen
+        param_dict = {}
+
+    return trans_name, occurrence, param_dict
+
+
+class SDFGOptimizer(Optimizer):
+    def optimize(self):
         """ A command-line UI for applying patterns on the SDFG.
-            @param debugprint: Whether to print verbose information to the 
-                               console.
             @return: An optimized SDFG object
         """
         sdfg_file = self.sdfg.name + '.sdfg'
@@ -198,99 +302,3 @@ class SDFGOptimizer(object):
                             (pattern_counter, type(pattern_match).__name__))
 
         return self.sdfg
-
-    def optimization_space(self):
-        """ Returns the optimization space of the current SDFG """
-
-        def get_actions(actions, graph, match):
-            subgraph_node_ids = match.subgraph.values()
-            subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
-            for node in subgraph_nodes:
-                version = 0
-                while (node, type(match).__name__,
-                       match.expr_index, version) in actions.keys():
-                    version += 1
-                actions[(node, type(match).__name__,
-                         match.expr_index, version)] = match
-            subgraph = SubgraphView(graph, subgraph_nodes)
-            for edge in subgraph.edges():
-                version = 0
-                while (edge, type(match).__name__,
-                       match.expr_index, version) in actions.keys():
-                    version += 1
-                actions[(edge, type(match).__name__,
-                         match.expr_index, version)] = match
-            return actions
-
-        def get_dataflow_actions(actions, sdfg, match):
-            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
-            return get_actions(actions, graph, match)
-        
-        def get_stateflow_actions(actions, sdfg, match):
-            graph = sdfg.sdfg_list[match.sdfg_id]
-            return get_actions(actions, graph, match)
-
-        actions = dict()
-
-        for match in self.get_pattern_matches():
-            if match.state_id >= 0:
-                actions = get_dataflow_actions(actions, self.sdfg, match)
-            else:
-                actions = get_stateflow_actions(actions, self.sdfg, match)
-        
-        return actions           
-
-
-def _parse_cli_input(line):
-    """ Parses a command line input, which may include a transformation name
-        (optional), its occurrence ID, and its parameters (optional).
-        Syntax Examples:
-            * 5                  - Chooses the fifth transformation
-            * MapReduceFusion$0  - First occurrence of MapReduceFusion
-            * 4(array='A')       - Transformation number 4 with one parameter
-            * StripMining$1(param='i', tile_size=64) - Strip mining #2 with
-                                                       parameters
-        @param line: Input line string
-        @return: A tuple with (transformation name or None if not given,
-                                      occurrence or -1 if not given,
-                                      parameter dictionary or {} if not given)
-    """
-    # First try matching explicit all-inclusive string "A$num(values)"
-    match = re.findall(r'(.*)\$(\d+)\((.*)\)', line)
-    if len(match) == 1:
-        trans_name, occurrence, param_dict = match[0]
-    else:
-        # Then, try to match "num(values)"
-        match = re.findall(r'(\d+)\((.*)\)', line)
-        if len(match) == 1:
-            trans_name = None
-            occurrence, param_dict = match[0]
-        else:
-            # After that, try to match "A$num"
-            match = re.findall(r'(.*)\$(\d+)', line)
-            if len(match) == 1:
-                trans_name, occurrence = match[0]
-                param_dict = {}
-            else:
-                # Finally, try to match "num"
-                match = re.findall(r'(\d+)', line)
-                if len(match) == 1:
-                    trans_name = None
-                    occurrence = match[0]
-                    param_dict = {}
-                else:
-                    return (None, -1, {})
-
-    # Try to parse the results
-    try:
-        occurrence = int(occurrence)
-    except ValueError:
-        occurrence = -1
-    try:
-        if isinstance(param_dict, str):
-            param_dict = eval('dict(' + param_dict + ')')
-    except:  # Here we have to catch ANY exception since literally anything
-        # can happen
-        param_dict = {}
-
-    return trans_name, occurrence, param_dict
