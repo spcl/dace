@@ -206,62 +206,94 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('exp')
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
-def _exp(sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'exp')
+def _exp(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    return _simple_call(sdfg, state, op, 'exp')
 
 
 @oprepo.replaces('sin')
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
-def _sin(sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'sin')
+def _sin(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    return _simple_call(sdfg, state, op, 'sin')
 
 
 @oprepo.replaces('cos')
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
-def _cos(sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'cos')
+def _cos(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    return _simple_call(sdfg, state, op, 'cos')
 
 
 @oprepo.replaces('sqrt')
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
-def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'sqrt')
+def _sqrt(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    return _simple_call(sdfg, state, op, 'sqrt')
 
 
 @oprepo.replaces('log')
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
-def _log(sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'log')
+def _log(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    return _simple_call(sdfg, state, op, 'log')
 
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
 @oprepo.replaces('numpy.conj')
-def _conj(sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'conj')
+def _conj(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    return _simple_call(sdfg, state, op, 'conj')
 
 
 @oprepo.replaces('real')
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
-def _real(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
+def _real(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    inpname = until(op, '[')
     inptype = sdfg.arrays[inpname].dtype
-    return _simple_call(sdfg, state, input, 'real',
+    return _simple_call(sdfg, state, op, 'real',
                         _complex_to_scalar(inptype))
 
 
 @oprepo.replaces('imag')
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
-def _imag(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
+def _imag(sdfg: SDFG, state: SDFGState, args: Union[str, List[str]]):
+    if isinstance(args, list):
+        op = args[0]
+    else:
+        op = args
+    inpname = until(op, '[')
     inptype = sdfg.arrays[inpname].dtype
-    return _simple_call(sdfg, state, input, 'imag',
+    return _simple_call(sdfg, state, op, 'imag',
                         _complex_to_scalar(inptype))
 
 
@@ -3395,8 +3427,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         result = func(self, self.sdfg, self.last_state, operand1, operand2)
-        # if not isinstance(result, (tuple, list)):
-        #     return [result]
+        if not isinstance(result, (tuple, list)):
+            return [result]
         return result
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
