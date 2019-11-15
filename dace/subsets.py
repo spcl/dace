@@ -689,7 +689,7 @@ class Indices(Subset):
     def squeeze(self):
         num_dim = len(self.indices)
         self.indices = [0]
-        return num_dim - 1
+        return [num_dim - 1]
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
