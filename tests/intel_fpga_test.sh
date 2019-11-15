@@ -34,17 +34,15 @@ run_sample() {
     # Args:
     #  1 - Relative path of FPGA test starting from test folder
     #  2 - Name of the DAPP program
-    #  3 - a string indicating the list of input to pass to the python program (command line inputs)
+    #  3 - a string indicating the list of input to pass to the python program (the transformation sequence)
     #  4 - program command line argument (if any)
 
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
     #1: generate the opencl
-    #dirty trick: use type scripting to mask the first segfault due to the missing aocx file
-    command='echo -e "'"${3}"'" |python3 '"${1}"'.py '"${@:4}"''
-    script -c  "$command" /tmp/test_intelfpga > /dev/null
-    #echo -e $3 | python3 $1.py ${@:5} &> /dev/null
+    # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
+    echo -e ${3} | python3 ${1}.py ${@:4} 2> /dev/null|:
 
     #2: compile for emulation
     cd .dacecache/$2/build
@@ -99,6 +97,12 @@ run_all() {
 
     # type inference for statements with annotation
     run_sample intel_fpga/type_inference type_inference "1\n"
+
+
+    # #### SYSTOLIC ARRAY ###
+    run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
+    run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
+    run_sample ../samples/fpga/jacobi_fpga_systolic jacobi_fpga_systolic_8_Hx8192xT "\n"
 
 
     # #### MISCELLANEA ####

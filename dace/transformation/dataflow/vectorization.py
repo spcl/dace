@@ -96,10 +96,6 @@ class Vectorization(pattern_matching.Transformation):
             str(node) for node in [map_entry, tasklet, map_exit])
 
     def apply(self, sdfg):
-        #print(str(sdfg.nodes()))
-        sdfg.draw_to_file("vecto.dot")
-        for n in sdfg.nodes():
-            print(str(n))
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
         tasklet = graph.nodes()[self.subgraph[Vectorization._tasklet]]

@@ -165,7 +165,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         elif len(shape) > 1:
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "block factor={}\n".format(
-                                    var_name, shape[-2]))
+                var_name, shape[-2]))
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
@@ -285,11 +285,10 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             if kernel_arg:
                 kernel_args.append(kernel_arg)
 
-
         kernel_args += ([
-                arg.signature(with_types=True, name=argname)
-                for argname, arg in scalar_parameters
-            ] + symbol_params)
+                            arg.signature(with_types=True, name=argname)
+                            for argname, arg in scalar_parameters
+                        ] + symbol_params)
 
         # Write kernel signature
         kernel_stream.write(
@@ -311,7 +310,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             var_name = re.findall("\w+", arg)[-1]
             kernel_stream.write(
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".
-                format(var_name))
+                    format(var_name))
 
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
@@ -328,7 +327,6 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_args = [
             p.signature(False, name=name) for is_output, name, p in parameters
         ]
-
 
         kernel_args += symbol_parameters.keys()
 
@@ -357,7 +355,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         # outputs
         symbol_sigs = [
             v.signature(with_types=True, name=k) for k, v in symbol_parameters.items()]
-        symbol_names =  symbol_parameters.keys()
+        symbol_names = symbol_parameters.keys()
         kernel_args_call = []
         kernel_args_module = []
         added = set()
@@ -428,9 +426,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         for _ in range(unrolled_loops):
             entry_stream.write("}")
 
-        #----------------------------------------------------------------------
+        # ----------------------------------------------------------------------
         # Generate kernel code
-        #----------------------------------------------------------------------
+        # ----------------------------------------------------------------------
 
         self._dispatcher.defined_vars.enter_scope(subgraph)
 
@@ -507,13 +505,13 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
     @staticmethod
     def make_reduction(sdfg, state_id, node, output_memlet, dtype, vector_length_in, vector_length_out, output_type,
-                       reduction_type, callsite_stream,iterators_inner, input_subset, identity,out_var,in_var):
+                       reduction_type, callsite_stream, iterators_inner, input_subset, identity, out_var, in_var):
         """
         Generates reduction loop body
         """
         axes = node.axes
 
-        #generate library call
+        # generate library call
         reduction_cpp = "dace::Reduce<{}, {}, {}, {}<{}>>".format(
             dtype.ctype, vector_length_in, vector_length_out,
             REDUCTION_TYPE_TO_HLSLIB[reduction_type], dtype.ctype)
@@ -552,7 +550,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
          nested_global_transients) = self.make_parameters(
-             sdfg, state, subgraphs)
+            sdfg, state, subgraphs)
 
         # Scalar parameters are never output
         sc_parameters = [(False, pname, param)
@@ -564,7 +562,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         self.generate_host_header(sdfg, kernel_name, global_data_parameters + sc_parameters, symbol_parameters,
                                   host_code_stream)
         self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters + sc_parameters, symbol_parameters, nested_global_transients,
+            sdfg, state, kernel_name, global_data_parameters + sc_parameters, symbol_parameters,
+            nested_global_transients,
             host_code_stream, function_stream, callsite_stream)
         self.generate_host_function_body(
             sdfg, state, kernel_name, global_data_parameters + sc_parameters, symbol_parameters, host_code_stream)
@@ -617,9 +616,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 seen.add(name)
                 kernel_args.append(arg.signature(with_types=True, name=name))
 
-
         kernel_args += [
-            v.signature(with_types=True, name=k) for k, v in  symbol_parameters.items()]
+            v.signature(with_types=True, name=k) for k, v in symbol_parameters.items()]
 
         host_code_stream.write(
             """\
@@ -711,8 +709,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
+                    (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
+                     or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and edge.data.wcr is None):
                 self.generate_no_dependence_post(
                     edge.src_conn, callsite_stream, sdfg, state_id, node)

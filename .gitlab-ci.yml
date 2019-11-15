@@ -4,7 +4,7 @@ image: python:3-stretch
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
   GIT_CLONE_PATH: $CI_BUILDS_DIR/$CI_CONCURRENT_ID/$CI_PROJECT_PATH
-   
+
 setup_dace:
   stage: build
   tags:
@@ -58,6 +58,15 @@ test_xilinx:
     - export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
     - tests/xilinx_test.sh 0
 
+test_intel_fpga:
+  stage: test
+  tags:
+    - intel_fpga
+    - linux
+  script:
+    - source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
+    - tests/intel_fpga_test.sh
+
 test_polybench:
   stage: test
   tags:
@@ -94,3 +103,4 @@ test_all_nostrict:on-schedule:
     - export CUDA_ROOT=/usr/local/cuda
     - export DACE_optimizer_automatic_strict_transformations=0
     - NOSTATUSBAR=1 ./test_all.sh
+
