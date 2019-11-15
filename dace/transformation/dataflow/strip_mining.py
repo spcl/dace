@@ -35,7 +35,7 @@ def calc_set_image_range(map_idx, map_set, array_range):
             new_range = [
                 new_range[i].subs(symbol,
                                   dace.symbolic.overapproximate(m_range[i]))
-                if isinstance(new_range[i], dace.symbol) else new_range[i]
+                if dace.symbolic.issymbolic(new_range[i]) else new_range[i]
                 for i in range(0, 3)
             ]
         image.append(new_range)
