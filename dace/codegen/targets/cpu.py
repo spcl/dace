@@ -1528,6 +1528,16 @@ class CPUCodeGen(TargetCodeGenerator):
         result = callsite_stream
         map_header = ""
 
+        # Encapsulate map with a C scope
+        callsite_stream.write('{', sdfg, state_id, node)
+
+        # Define all input connectors of this map entry
+        for e in state_dfg.in_edges(node):
+            if not e.dst_conn.startswith('IN_'):
+                callsite_stream.write(
+                    self.memlet_definition(sdfg, e.data, False, e.dst_conn),
+                    sdfg, state_id, node)
+
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
@@ -1711,6 +1721,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         if outer_stream is not None:
             result.write(outer_stream.getvalue())
+
+        callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_ConsumeEntry(
             self,
