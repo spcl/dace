@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict, namedtuple
 import copy
+from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
 
@@ -150,43 +151,39 @@ def _simple_call(sdfg: SDFG,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
-    input_subset = _parse_memlet_subset(sdfg.arrays[inpname],
-                                        ast.parse(input).body[0].value, {})
-    output_shape = input_subset.size()
+    inparr = sdfg.arrays[inpname]
     if restype is None:
         restype = sdfg.arrays[inpname].dtype
-    outname, outarr = sdfg.add_temp_transient(output_shape, restype,
-                                              sdfg.arrays[inpname].storage)
-    if input_subset.num_elements() == 1:
+    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
+                                              inparr.storage)
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)                                       
+    if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
         tasklet = state.add_tasklet(
             func, {'__inp'}, {'__out'}, '__out = {f}(__inp)'.format(f=func))
         state.add_edge(inp, None, tasklet, '__inp',
-                       Memlet.simple(inpname, str(input_subset)))
+                       Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None,
                        Memlet.from_array(outname, outarr))
     else:
         state.add_mapped_tasklet(
             name=func,
             map_ranges={
-                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                for i, (s, e, t) in enumerate(input_subset)
+                '__i%d' % i: '0:%s' % n for i, n in enumerate(inparr.shape)
             },
             inputs={
                 '__inp':
                 Memlet.simple(
                     inpname,
-                    ','.join(['__i%d' % i for i in range(len(input_subset))]))
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             code='__out = {f}(__inp)'.format(f=func),
             outputs={
                 '__out':
                 Memlet.simple(
                     outname, ','.join([
-                        '__i%d - %s' % (i, s)
-                        for i, (s, _, _) in enumerate(input_subset)
-                    ]))
+                        '__i%d' % i for i in range(len(inparr.shape))]))
             },
             external_edges=True)
 
