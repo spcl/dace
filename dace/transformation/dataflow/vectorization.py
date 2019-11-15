@@ -122,8 +122,6 @@ class Vectorization(pattern_matching.Transformation):
                 symbols = symbolic.pystr_to_symbolic(
                     memlet.subset[-1]).free_symbols
 
-            # Johannes-CR: start. Propagation of vectorization info
-
             if param in symbols:
                 try:
                     # propagate vector length inside this SDFG
@@ -149,11 +147,6 @@ class Vectorization(pattern_matching.Transformation):
 
                 except AttributeError:
                     raise
-
-            # Johannes-CR: end
-
-        # TODO: Create new map for non-vectorizable part.
-
         return
 
     def modifies_graph(self):
