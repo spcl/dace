@@ -90,7 +90,7 @@ def _reduce(sdfg: SDFG,
             identity=None):
     # TODO(later): If output is None, derive the output size from the input and create a new node
     if output is None:
-        inarr = until(input, '[')
+        inarr = input
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
@@ -111,8 +111,8 @@ def _reduce(sdfg: SDFG,
             output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
-        inarr = until(input, '[')
-        outarr = until(output, '[')
+        inarr = input
+        outarr = output
 
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
@@ -146,11 +146,10 @@ def _reduce(sdfg: SDFG,
 
 def _simple_call(sdfg: SDFG,
                  state: SDFGState,
-                 input: str,
+                 inpname: str,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
-    inpname = until(input, '[')
     input_subset = _parse_memlet_subset(sdfg.arrays[inpname],
                                         ast.parse(input).body[0].value, {})
     output_shape = input_subset.size()
@@ -249,8 +248,7 @@ def _conj(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
 def _real(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
-    inptype = sdfg.arrays[inpname].dtype
+    inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'real',
                         _complex_to_scalar(inptype))
 
@@ -259,8 +257,7 @@ def _real(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
 def _imag(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
-    inptype = sdfg.arrays[inpname].dtype
+    inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'imag',
                         _complex_to_scalar(inptype))
 
