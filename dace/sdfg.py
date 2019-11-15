@@ -1814,7 +1814,8 @@ subgraph cluster_state_{state} {{
                               patterns,
                               validate=True,
                               strict=False,
-                              states=None):
+                              states=None,
+                              apply_once=False):
         """ This function applies transformations as given in the argument
             patterns. """
         # Avoiding import loops
@@ -1836,6 +1837,8 @@ subgraph cluster_state_{state} {{
                     self.fill_scope_connectors()
                     self.validate()
                 applied = True
+                break
+            if apply_once and applied:
                 break
 
         if Config.get_bool('debugprint'):
