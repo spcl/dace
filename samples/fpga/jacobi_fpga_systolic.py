@@ -24,7 +24,6 @@ def add_tmp(state):
 
 
 def make_init_state(sdfg):
-
     state = sdfg.add_state("init")
 
     a0 = state.add_array("A", (H, W), dtype)
@@ -41,7 +40,6 @@ def make_init_state(sdfg):
 
 
 def make_finalize_state(sdfg, even):
-
     state = sdfg.add_state("finalize_" + ("even" if even else "odd"))
 
     tmp = add_tmp(state)
@@ -56,7 +54,6 @@ def make_finalize_state(sdfg, even):
 
 
 def make_compute_sdfg():
-
     sdfg = dace.SDFG("compute")
 
     time_begin = sdfg.add_state("time_begin")
@@ -197,7 +194,7 @@ if y >= 3 and x >= 3 and y < H - 1 and x < W - 1:
 elif y >= 2 and x >= 2:
     res = window[1, 1]
 if (y >= 3 and x >= 3 and y < H - 1 and x < W - 1) or (y >= 2 and x >= 2):
-    result =res"""
+    result = res"""
 
     tasklet = loop_body.add_tasklet("compute", {"window"}, {"result"}, code)
 
@@ -267,7 +264,6 @@ if (y >= 3 and x >= 3 and y < H - 1 and x < W - 1) or (y >= 2 and x >= 2):
 
 
 def make_read_sdfg():
-
     sdfg = dace.SDFG("read_memory_sdfg")
 
     time_begin = sdfg.add_state("time_begin")
@@ -368,7 +364,6 @@ def make_read_sdfg():
 
 
 def make_write_sdfg():
-
     sdfg = dace.SDFG("write_memory_sdfg")
 
     time_begin = sdfg.add_state("time_begin")
@@ -470,7 +465,6 @@ def make_write_sdfg():
 
 
 def make_outer_compute_state(sdfg):
-
     state = sdfg.add_state("fpga_outer_state")
 
     tmp_in = add_tmp(state)
@@ -479,28 +473,28 @@ def make_outer_compute_state(sdfg):
         dtype,
         1,
         transient=True,
-        shape=(P + 1, ),
+        shape=(P + 1,),
         storage=dace.dtypes.StorageType.FPGA_Local)
     pipes_read = state.add_stream(
         "pipes",
         dtype,
         1,
         transient=True,
-        shape=(P + 1, ),
+        shape=(P + 1,),
         storage=dace.dtypes.StorageType.FPGA_Local)
     pipes_write = state.add_stream(
         "pipes",
         dtype,
         1,
         transient=True,
-        shape=(P + 1, ),
+        shape=(P + 1,),
         storage=dace.dtypes.StorageType.FPGA_Local)
     pipes_memory_write = state.add_stream(
         "pipes",
         dtype,
         1,
         transient=True,
-        shape=(P + 1, ),
+        shape=(P + 1,),
         storage=dace.dtypes.StorageType.FPGA_Local)
 
     read_sdfg = make_read_sdfg()
@@ -568,7 +562,6 @@ def make_outer_compute_state(sdfg):
 
 
 def make_sdfg(specialize_all):
-
     name = "jacobi_fpga_systolic_{}_{}x{}x{}".format(
         P.get(), ("H" if not specialize_all else H.get()), W.get(),
         ("T" if not specialize_all else T.get()))
@@ -684,6 +677,7 @@ if __name__ == "__main__":
         if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
             print("Entering debugger...")
             import pdb
+
             pdb.set_trace()
         else:
             print("Exiting...")

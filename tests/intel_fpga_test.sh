@@ -34,14 +34,14 @@ run_sample() {
     # Args:
     #  1 - Relative path of FPGA test starting from test folder
     #  2 - Name of the DAPP program
-    #  3 - a string indicating the list of input to pass to the python program (the trasnformation sequence)
+    #  3 - a string indicating the list of input to pass to the python program (the transformation sequence)
     #  4 - program command line argument (if any)
 
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
     #1: generate the opencl
-    #this will generate excpetion: masks it
+    # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
     echo -e ${3} | python3 ${1}.py ${@:4} 2> /dev/null|:
 
     #2: compile for emulation

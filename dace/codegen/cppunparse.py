@@ -87,9 +87,8 @@ _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
 
-
 _py2c_typeconversion = {"uint": dace.dtypes.typeclass(np.uint32), "int": dace.dtypes.typeclass(np.int32),
-                        "float": dace.dtypes.typeclass(np.float32), "float64" : dace.dtypes.typeclass(np.float64)}
+                        "float": dace.dtypes.typeclass(np.float32), "float64": dace.dtypes.typeclass(np.float64)}
 
 
 def interleave(inter, f, seq):
@@ -185,7 +184,6 @@ class CPPUnparser:
                  type_inference=False,
                  defined_symbols=None):
 
-
         self.f = file
         self.future_imports = []
         self._indent = depth
@@ -238,7 +236,7 @@ class CPPUnparser:
         # Clear locals defined inside scope
         self.locals.clear_scope(self._indent + 1)
 
-    def dispatch(self, tree, infer_type = False):
+    def dispatch(self, tree, infer_type=False):
         """Dispatcher function, dispatching tree type T to method _T."""
         try:
             tree = iter(tree)
@@ -257,7 +255,7 @@ class CPPUnparser:
 
     def _Module(self, tree, infer_type=False):
         for stmt in tree.body:
-            self.dispatch(stmt,infer_type)
+            self.dispatch(stmt, infer_type)
 
     def _Interactive(self, tree):
         for stmt in tree.body:
@@ -359,7 +357,7 @@ class CPPUnparser:
             self.dispatch(t.target, infer_type)
             self.write(separator + " ", infer_type)
             self.dispatch(t.value, infer_type)
-            self.write(")",infer_type)
+            self.write(")", infer_type)
         else:
             self.write(" " + self.binop[t.op.__class__.__name__] + "= ", infer_type)
             self.dispatch(t.value, infer_type)
@@ -439,8 +437,10 @@ class CPPUnparser:
             self.fill("printf(")
 
         for e in t.values:
-            if do_comma: self.write(", ")
-            else: do_comma = True
+            if do_comma:
+                self.write(", ")
+            else:
+                do_comma = True
             self.dispatch(e)
         if not t.nl:
             self.write(",")
@@ -540,12 +540,12 @@ class CPPUnparser:
         raise NotImplementedError('Classes are unsupported')
 
         # Original class definition from astunparse
-        #self.write("\n")
-        #for deco in t.decorator_list:
+        # self.write("\n")
+        # for deco in t.decorator_list:
         #    self.fill("@")
         #    self.dispatch(deco)
-        #self.fill("class "+t.name)
-        #if six.PY3:
+        # self.fill("class "+t.name)
+        # if six.PY3:
         #    self.write("(")
         #    comma = False
         #    for e in t.bases:
@@ -568,15 +568,15 @@ class CPPUnparser:
         #            self.write("**")
         #            self.dispatch(t.kwargs)
         #    self.write(")")
-        #elif t.bases:
+        # elif t.bases:
         #        self.write("(")
         #        for a in t.bases:
         #            self.dispatch(a)
         #            self.write(", ")
         #        self.write(")")
-        #self.enter()
-        #self.dispatch(t.body)
-        #self.leave()
+        # self.enter()
+        # self.dispatch(t.body)
+        # self.leave()
 
     def _generic_FunctionDef(self, t, is_async=False):
         self.write("\n")
@@ -620,7 +620,7 @@ class CPPUnparser:
         if isinstance(t.target, ast.Tuple):
             self.write("auto ")
             if len(t.target.elts) == 1:
-                (elt, ) = t.target.elts
+                (elt,) = t.target.elts
                 self.locals.define(elt.id, t.lineno, self._indent + 1)
                 self.dispatch(elt)
             else:
@@ -673,7 +673,7 @@ class CPPUnparser:
         if t.orelse:
             self.fill("else", infer_type)
             self.enter()
-            self.dispatch(t.orelse,infer_type)
+            self.dispatch(t.orelse, infer_type)
             self.leave()
 
     def _While(self, t, infer_type=False):
@@ -720,7 +720,6 @@ class CPPUnparser:
 
     format_conversions = {97: 'a', 114: 'r', 115: 's'}
 
-
     def _FormattedValue(self, t, infer_type=False):
         # FormattedValue(expr value, int? conversion, expr? format_spec)
         self.write("{")
@@ -728,7 +727,7 @@ class CPPUnparser:
         if t.conversion is not None and t.conversion != -1:
             self.write("!")
             self.write(self.format_conversions[t.conversion])
-            #raise NotImplementedError(ast.dump(t, True, True))
+            # raise NotImplementedError(ast.dump(t, True, True))
         if t.format_spec is not None:
             self.write(":")
             if isinstance(t.format_spec, ast.Str):
@@ -759,7 +758,7 @@ class CPPUnparser:
             # If yes, take the type
             inferred_type = None
             if infer_type:
-                if t.id.strip("()") in  _py2c_typeconversion:
+                if t.id.strip("()") in _py2c_typeconversion:
                     inferred_type = _py2c_typeconversion[t.id.strip("()")]
                 elif self.defined_symbols.get(t.id) is not None:
                     # defined symbols could have dtypes, in case convert it to typeclass
@@ -770,7 +769,6 @@ class CPPUnparser:
                     inferred_type = self.locals.get_type(t.id) if self.locals.get_type(t.id) is not None else None
             return inferred_type
 
-
     def _NameConstant(self, t, infer_type=False):
         self.write(_py2c_nameconst[t.value], infer_type)
         return dace.dtypes.typeclass(np.result_type(t.id)) if infer_type else None
@@ -780,7 +778,6 @@ class CPPUnparser:
 
     def _Num(self, t, infer_type=False):
         repr_n = repr(t.n)
-
 
         # For complex values, use type of assignment (if exists), or
         # double-complex (128-bit) otherwise
@@ -822,53 +819,53 @@ class CPPUnparser:
 
     def _List(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #self.write("[")
-        #interleave(lambda: self.write(", "), self.dispatch, t.elts)
-        #self.write("]")
+        # self.write("[")
+        # interleave(lambda: self.write(", "), self.dispatch, t.elts)
+        # self.write("]")
 
     def _ListComp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #self.write("[")
-        #self.dispatch(t.elt)
-        #for gen in t.generators:
+        # self.write("[")
+        # self.dispatch(t.elt)
+        # for gen in t.generators:
         #    self.dispatch(gen)
-        #self.write("]")
+        # self.write("]")
 
     def _GeneratorExp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #self.write("(")
-        #self.dispatch(t.elt)
-        #for gen in t.generators:
+        # self.write("(")
+        # self.dispatch(t.elt)
+        # for gen in t.generators:
         #    self.dispatch(gen)
-        #self.write(")")
+        # self.write(")")
 
     def _SetComp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #self.write("{")
-        #self.dispatch(t.elt)
-        #for gen in t.generators:
+        # self.write("{")
+        # self.dispatch(t.elt)
+        # for gen in t.generators:
         #    self.dispatch(gen)
-        #self.write("}")
+        # self.write("}")
 
     def _DictComp(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #self.write("{")
-        #self.dispatch(t.key)
-        #self.write(": ")
-        #self.dispatch(t.value)
-        #for gen in t.generators:
+        # self.write("{")
+        # self.dispatch(t.key)
+        # self.write(": ")
+        # self.dispatch(t.value)
+        # for gen in t.generators:
         #    self.dispatch(gen)
-        #self.write("}")
+        # self.write("}")
 
     def _comprehension(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #if getattr(t, 'is_async', False):
+        # if getattr(t, 'is_async', False):
         #    self.write(" async")
-        #self.write(" for ")
-        #self.dispatch(t.target)
-        #self.write(" in ")
-        #self.dispatch(t.iter)
-        #for if_clause in t.ifs:
+        # self.write(" for ")
+        # self.dispatch(t.target)
+        # self.write(" in ")
+        # self.dispatch(t.iter)
+        # for if_clause in t.ifs:
         #    self.write(" if ")
         #    self.dispatch(if_clause)
 
@@ -883,26 +880,26 @@ class CPPUnparser:
 
     def _Set(self, t):
         raise SyntaxError('Invalid C++')
-        #assert(t.elts) # should be at least one element
-        #self.write("{")
-        #interleave(lambda: self.write(", "), self.dispatch, t.elts)
-        #self.write("}")
+        # assert(t.elts) # should be at least one element
+        # self.write("{")
+        # interleave(lambda: self.write(", "), self.dispatch, t.elts)
+        # self.write("}")
 
-    def _Dict(self, t,infer_type=False):
+    def _Dict(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
-        #self.write("{")
-        #def write_pair(pair):
+        # self.write("{")
+        # def write_pair(pair):
         #    (k, v) = pair
         #    self.dispatch(k)
         #    self.write(": ")
         #    self.dispatch(v)
-        #interleave(lambda: self.write(", "), write_pair, zip(t.keys, t.values))
-        #self.write("}")
+        # interleave(lambda: self.write(", "), write_pair, zip(t.keys, t.values))
+        # self.write("}")
 
     def _Tuple(self, t):
         self.write("std::make_tuple(")
         if len(t.elts) == 1:
-            (elt, ) = t.elts
+            (elt,) = t.elts
             self.dispatch(elt)
             self.write(",")
         else:
@@ -956,10 +953,10 @@ class CPPUnparser:
             # get the type of left and right operands for type inference
             type_left = self.dispatch(t.left, infer_type)
             self.write(separator + " ", infer_type)
-            type_right = self.dispatch(t.right,infer_type)
+            type_right = self.dispatch(t.right, infer_type)
 
             self.write(")", infer_type)
-            #infer type and returns
+            # infer type and returns
             return dace.dtypes._CTYPES_RULES[frozenset((type_left, type_right))] if infer_type is True else None
         # Special case for integer power
         elif t.op.__class__.__name__ == 'Pow':
@@ -974,7 +971,8 @@ class CPPUnparser:
                         self.write(" * ", infer_type)
                         self.dispatch(t.left, infer_type)
                 self.write(")", infer_type)
-                return dace.dtypes._CTYPES_RULES[frozenset((type_left, typeclass(numpy.uint32)))] if infer_type is True else None
+                return dace.dtypes._CTYPES_RULES[
+                    frozenset((type_left, typeclass(numpy.uint32)))] if infer_type is True else None
             else:
                 self.write("dace::math::pow(", infer_type)
                 type_left = self.dispatch(t.left, infer_type)
@@ -1002,7 +1000,7 @@ class CPPUnparser:
         "GtE": ">=",
         "Is": "==",
         "IsNot": "!=",
-        #"In":"in", "NotIn":"not in"
+        # "In":"in", "NotIn":"not in"
     }
 
     def _Compare(self, t, infer_type=False):
@@ -1042,12 +1040,14 @@ class CPPUnparser:
         for e in t.args:
             if comma:
                 self.write(", ", infer_type)
-            else: comma = True
+            else:
+                comma = True
             self.dispatch(e, infer_type)
         for e in t.keywords:
             if comma:
                 self.write(", ", infer_type)
-            else: comma = True
+            else:
+                comma = True
             self.dispatch(e, infer_type)
         if sys.version_info[:2] < (3, 5):
             if t.starargs:
@@ -1104,8 +1104,10 @@ class CPPUnparser:
         # normal arguments
         defaults = [None] * (len(t.args) - len(t.defaults)) + t.defaults
         for a, d in zip(t.args, defaults):
-            if first: first = False
-            else: self.write(", ")
+            if first:
+                first = False
+            else:
+                self.write(", ")
 
             # ast.arg does not exist in python2
             if six.PY2:

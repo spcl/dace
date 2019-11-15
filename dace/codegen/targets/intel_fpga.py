@@ -213,7 +213,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
-            expr=expr.replace("[0]", "")
+            expr = expr.replace("[0]", "")
             return "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
             return "*({}{})".format(expr, " + " + index if index else "")
@@ -302,7 +302,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                     "{} = {}{}({}, {});".format(out_var,
                                                 ("f" if output_type == "float" or output_type == "double" else ""),
                                                 REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var, in_var), sdfg,
-                                                state_id, node)
+                    state_id, node)
 
         else:
             # If this is the first iteration, assign the value read from the
@@ -323,7 +323,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
                                    node):
         kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
-                             state_id, node)
+                            state_id, node)
 
     @staticmethod
     def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
@@ -384,7 +384,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         self._host_codes.append(
             (kernel_name, host_code_header_stream.getvalue() +
              host_code_body_stream.getvalue()))
-
 
     @staticmethod
     def generate_host_function_prologue(sdfg, state, host_stream):
@@ -458,12 +457,11 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         if len(top_scopes) == 1:
             scope = top_scopes[0]
             if scope.unroll:
-                #Unrolled processing elements
+                # Unrolled processing elements
                 self._unrolled_pes.add(scope.map)
-                kernel_args_opencl += ["const int " + p for p in scope.params] # PE id will be a macro defined constant
+                kernel_args_opencl += ["const int " + p for p in scope.params]  # PE id will be a macro defined constant
                 kernel_args_call += [p for p in scope.params]
                 unrolled_loops += 1
-
 
         # Add kernel call host function
         if unrolled_loops == 0:
@@ -480,18 +478,17 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 skip_idx = dace.symbolic.eval(skip)
                 # Due to restrictions on channel indexing, PE IDs must start from zero
                 # and skip index must be 1
-                if start_idx != 0 or skip_idx !=1:
+                if start_idx != 0 or skip_idx != 1:
                     raise dace.codegen.codegen.CodegenError(
-                    "Unrolled Map in {} should start from 0 and have skip equal to 1".format(
-                        sdfg.name))
-                for p in range(start_idx,stop_idx+1,skip_idx):
+                        "Unrolled Map in {} should start from 0 and have skip equal to 1".format(
+                            sdfg.name))
+                for p in range(start_idx, stop_idx + 1, skip_idx):
                     # last element in list kernel_args_call is the PE ID, but this is
                     # already written in stone in the OpenCL generated code
                     host_body_stream.write(
                         "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));".format(
                             module_function_name, p, ", ".join([""] + kernel_args_call[:-1])
                             if len(kernel_args_call) > 1 else ""), sdfg, state_id)
-
 
         # ----------------------------------------------------------------------
         # Generate kernel code
@@ -509,11 +506,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
-            # import pdb
-            # pdb.set_trace()
             module_body_stream.write(
                 "inline void {}_func({}) {{".format(name,
-                                                 ", ".join(kernel_args_opencl)),
+                                                    ", ".join(kernel_args_opencl)),
                 sdfg, state_id)
 
         # Allocate local transients
@@ -548,14 +543,15 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             # Since OpenCL is "funny", it does not support variadic macros
             # One of the argument is for sure the PE_ID, which is also the last one in kernel_args lists:
             # it will be not passed by the host but code-generated
-            module_stream.write("""#define PEkern(PE_ID{}{}) \\
+            module_stream.write("""#define _DACE_FPGA_KERNEL_{}(PE_ID{}{}) \\
 __kernel void \\
 {}_##PE_ID({}) \\
 {{ \\
   {}_func({}{}PE_ID); \\
-}}\\\n\n""".format(", " if len(kernel_args_call) >1 else "", ",".join(kernel_args_call[:-1]), module_function_name,
-                   ", ".join(kernel_args_opencl[:-1]), name,", ".join(kernel_args_call[:-1]),
-                   ", " if len(kernel_args_call)>1 else ""))
+}}\\\n\n""".format(module_function_name, ", " if len(kernel_args_call) > 1 else "", ",".join(kernel_args_call[:-1]),
+                   module_function_name,
+                   ", ".join(kernel_args_opencl[:-1]), name, ", ".join(kernel_args_call[:-1]),
+                   ", " if len(kernel_args_call) > 1 else ""))
 
         for ul in self._unrolled_pes:
             # create PE kernels by using the previously defined macro
@@ -565,9 +561,10 @@ __kernel void \\
             skip_idx = dace.symbolic.eval(skip)
             # First macro argument is the processing element id
             for p in range(start_idx, stop_idx + 1, skip_idx):
-                module_stream.write("PEkern({}{}{})\n".format(p, ", " if len(kernel_args_call)>1 else "",
-                                                              ", ".join(kernel_args_call[:-1])))
-            module_stream.write("#undef kern")
+                module_stream.write("_DACE_FPGA_KERNEL_{}({}{}{})\n".format(module_function_name, p,
+                                                                            ", " if len(kernel_args_call) > 1 else "",
+                                                                            ", ".join(kernel_args_call[:-1])))
+            module_stream.write("#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
     def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
@@ -686,7 +683,6 @@ __kernel void \\
 
         sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
 
-
         # Generate code for internal SDFG
         global_code, local_code, used_targets = \
             self._frame.generate_code(node.sdfg, node.schedule, sdfg_label)
@@ -783,8 +779,8 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
             else:
-                # Desperate diseases need desperate remedies
-                result += "#define {} {}".format(
+                # Desperate times call for desperate measures
+                result += "#define {} {} // God save us".format(
                     connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Stream)
@@ -957,7 +953,7 @@ __kernel void \\
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
-        for connector, (memlet,_,_) in memlets.items():
+        for connector, (memlet, _, _) in memlets.items():
             if connector is not None:
                 defined_symbols.update({connector: sdfg.arrays[memlet.data].dtype})
 
@@ -1013,12 +1009,12 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        self._nptypes_to_ctypes = {'float64' : 'double'}
+        self._nptypes_to_ctypes = {'float64': 'double'}
         self._nptypes = ['float64']
         self._ctypes = ['bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar', 'short', 'cl_short',
                         'unsigned short', 'ushort', 'int', 'unsigned int', 'uint', 'long', 'unsigned long', 'ulong',
                         'float', 'half', 'size_t', 'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double']
-        self.used_streams = [] # keep track of the different streams used in a tasklet
+        self.used_streams = []  # keep track of the different streams used in a tasklet
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
@@ -1075,8 +1071,8 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     target_str = "{}[{}]".format(target, subscript)
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
-            else: # target has no subscript
-                updated = ast.Name (id="{} = {};".format(target, unparse(value)))
+            else:  # target has no subscript
+                updated = ast.Name(id="{} = {};".format(target, unparse(value)))
 
         elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
             if memlet.num_accesses != 1:
@@ -1108,7 +1104,7 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
             # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)
-        elif defined_type == DefinedType.Pointer and memlet.num_accesses !=1:
+        elif defined_type == DefinedType.Pointer and memlet.num_accesses != 1:
             # if this has a variable number of access, it has been declared
             # as a pointer. We need to deference it
             if isinstance(node.id, ast.Subscript):
@@ -1117,17 +1113,11 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)
-                updated = ast.Name(id="{}[{}]".format(node.id,subscript))
-            else: # no subscript
-                updated = ast.Name (id="*{}".format(node.id))
-
+                updated = ast.Name(id="{}[{}]".format(node.id, subscript))
+            else:  # no subscript
+                updated = ast.Name(id="*{}".format(node.id))
 
         return ast.copy_location(updated, node)
-
-    def visit_Expr(self, node):
-        import pdb
-        pdb.set_trace()
-
 
     # Replace default modules (e.g., math) with OpenCL Compliant (e.g. "dace::math::"->"")
     def visit_Attribute(self, node):
@@ -1142,19 +1132,16 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
     def visit_Call(self, node):
         # enforce compliance to OpenCL
-
-        # type casting
-
-        if (isinstance(node.func, ast.Name)  and node.func.id in self._ctypes):
+        # Type casting:
+        if (isinstance(node.func, ast.Name) and node.func.id in self._ctypes):
             node.func.id = "({})".format(node.func.id)
-        elif (isinstance(node.func, ast.Name)  and node.func.id in self._nptypes_to_ctypes):
-            #if it as numpy type, convert to C type
+        elif (isinstance(node.func, ast.Name) and node.func.id in self._nptypes_to_ctypes):
+            # if it as numpy type, convert to C type
             node.func.id = "({})".format(self._nptypes_to_ctypes(node.func.id))
         elif ((isinstance(node.func, ast.Num) and (node.func.n.to_string() in self._ctypes
-               or node.func.n.to_string() in self._nptypes))):
+                                                   or node.func.n.to_string() in self._nptypes))):
             new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)
             new_node = ast.copy_location(new_node, node)
             node.func = new_node
-
 
         return self.generic_visit(node)
