@@ -118,10 +118,36 @@ class OrthogonalTiling(pattern_matching.Transformation):
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        # Tile map.
-        target_dim, new_dim, new_map = self.__stripmine(
-            sdfg, graph, self.subgraph)
-        return new_map
+        # Retrieve map entry and exit nodes.
+        map_entry = graph.nodes()[self.subgraph[OrthogonalTiling._map_entry]]
+        from dace.transformation.dataflow.map_collapse import MapCollapse
+        from dace.transformation.dataflow.strip_mining import StripMining
+        stripmine_subgraph = {
+            StripMining._map_entry: self.subgraph[OrthogonalTiling._map_entry]}
+        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        last_map_entry = None
+        for dim_idx in range(len(map_entry.map.params)):
+            if dim_idx >= len(self.tile_sizes):
+                tile_size = self.tile_sizes[-1]
+            else:
+                tile_size = self.tile_sizes[dim_idx]
+            stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph,
+                                    self.expr_index)
+            stripmine.dim_idx = dim_idx
+            stripmine.new_dim_prefix = self.prefix
+            stripmine.tile_size = str(tile_size)
+            stripmine.divides_evenly = self.divides_evenly
+            stripmine.apply(sdfg)
+            if last_map_entry:
+                new_map_entry = graph.in_edges(map_entry)[0].src
+                mapcollapse_subgraph = {
+                    MapCollapse._outer_map_entry: graph.node_id(last_map_entry),
+                    MapCollapse._inner_map_entry: graph.node_id(new_map_entry)
+                }
+                mapcollapse = MapCollapse(sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                mapcollapse.apply(sdfg)
+            last_map_entry = graph.in_edges(map_entry)[0].src
+
 
     def __stripmine(self, sdfg, graph, candidate):
         # Retrieve map entry and exit nodes.
