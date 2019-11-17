@@ -50,4 +50,4 @@ WORKDIR /home/daceuser/rundir
 # Adjust the default linker flags (add libpapi to default)
 RUN python3 ../diode/adjust_settings.py
 
-ENTRYPOINT sudo sh -c "echo -1 > /proc/sys/kernel/perf_event_paranoid"; sudo service ssh start && cd ~/rundir && python3 ~/diode/diode_rest.py
+ENTRYPOINT sudo sh -c "echo -1 > /proc/sys/kernel/perf_event_paranoid"; sudo service ssh start && cd ~/rundir && python3 ~/diode/diode_server.py

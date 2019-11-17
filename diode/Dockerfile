@@ -2,7 +2,7 @@ FROM httpd:2.4
 COPY ./diode/client/ /usr/local/apache2/htdocs/client/
 COPY ./diode/ /usr/local/apache2/htdocs/client/renderer_dir/
 COPY ./diode/diode.wsgi /usr/local/apache2/htdocs/diode.wsgi
-COPY ./diode/diode_rest.py /usr/local/apache2/htdocs/diode_rest.py
+COPY ./diode/diode_server.py /usr/local/apache2/htdocs/diode_server.py
 
 COPY . /usr/local/apache2/htdocs/installer/
 

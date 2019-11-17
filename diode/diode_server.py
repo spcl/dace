@@ -3,20 +3,20 @@
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
-import dace.frontend.python.parser as python_frontend
 from diode.optgraph.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory, send_file
-import json, copy
+import json
+import copy
 import re
-from diode.remote_execution import Executor, AsyncExecutor
+from diode.remote_execution import AsyncExecutor
 
-import traceback, os, threading, queue, time
-
-# Enum imports
-from dace.dtypes import AccessType
-from dace import ScheduleType, Language, StorageType
+import traceback
+import os
+import threading
+import queue
+import time
 
 app = Flask(__name__)
 
@@ -138,7 +138,6 @@ class ExecutorServer:
             return ret
 
     def addCommand(self, cmd):
-        import random
         with self._oplock:
             cmd['ticket'] = self._ticket_counter
             self._ticket_counter += 1
@@ -151,7 +150,6 @@ class ExecutorServer:
         try:
             cmd = self._executor_queue.get(timeout=3)
 
-            #print("cmd: " + str(cmd))
 
             if cmd['cmd'] == "run":
                 while True:
@@ -734,7 +732,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
 def create_DaceState(code, sdfg_dict, errors):
     dace_state = None
     try:
-        dace_state = DaceState(code, "fake.py", headless=True)
+        dace_state = DaceState(code, "fake.py", remote=remote_execution)
         for x in dace_state.sdfgs:
             name, sdfg = x
             sdfg_dict[name] = sdfg
@@ -932,7 +930,7 @@ def compileProgram(request, language, perfopts=None):
                 in_code = request.json['code']
             else:
                 in_code = ""
-            dace_state = DaceState(in_code, "tmp.py", headless=True)
+            dace_state = DaceState(in_code, "tmp.py", remote=remote_execution)
             dace_state.set_sdfg(
                 list(codegen_sdfgs_dace_state.values())[0],
                 list(codegen_sdfgs_dace_state.keys())[0])

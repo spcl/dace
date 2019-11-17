@@ -8,7 +8,7 @@ PORT=5002
 # Remove old config files if they exist
 rm ./client_configs/default.conf
 # Start the REST server
-python3 $DIODEBASEPATH/diode_rest.py --localhost --port=$PORT &
+python3 $DIODEBASEPATH/diode_server.py --localhost --port=$PORT &
 SERVPID=$!
 RETVAL=0
 
