@@ -16,7 +16,7 @@ RUN apt update && apt install libpapi-dev libomp-dev -y
 
 COPY . /home/daceuser
 
-COPY ./diode/ /home/daceuser/diode/client/renderer_dir
+COPY ./diode/ /home/daceuser/diode/webclient/renderer_dir
 
 RUN echo "daceuser ALL = NOPASSWD: ALL" >> /etc/sudoers
 

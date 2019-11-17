@@ -12,12 +12,8 @@ runtime_files = [
 ]
 diode_files = [
     f[len(diode_path):]
-    for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
-              glob.glob(diode_path + '**/*.css', recursive=True) +
-              glob.glob(diode_path + '**/*.html', recursive=True) +
-              glob.glob(diode_path + '**/LICENSE', recursive=True) +
-              glob.glob(diode_path + 'client/external_lib/material/*') +
-              glob.glob(diode_path + 'db_scripts/*', recursive=True))
+    for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
+              glob.glob(diode_path + '**/LICENSE', recursive=True))
 ]
 cub_files = [
     f[len(dace_path):]

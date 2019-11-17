@@ -3,10 +3,10 @@
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
-from diode.optgraph.DaceState import DaceState
+from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 import inspect
-from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory, send_file
+from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
 import copy
 import re
@@ -149,7 +149,6 @@ class ExecutorServer:
 
         try:
             cmd = self._executor_queue.get(timeout=3)
-
 
             if cmd['cmd'] == "run":
                 while True:
@@ -362,7 +361,6 @@ class ExecutorServer:
 
     @staticmethod
     def getPerfdataDir(client_id):
-        import tempfile
 
         if not os.path.isdir("perfdata-dir/"):
             os.mkdir("perfdata-dir")
@@ -541,14 +539,14 @@ def redirect_base():
     return redirect(url_for("index", path="index.html"), code=301)
 
 
-@app.route('/client/<path:path>', methods=['GET'])
+@app.route('/webclient/<path:path>', methods=['GET'])
 def index(path):
     """
         This is an http server (on the same port as the REST API).
-        It serves the files from the 'client'-directory to user agents.
+        It serves the files from the 'webclient'-directory to user agents.
         Note: This is NOT intended for production environments and security is disregarded!
     """
-    return send_from_directory("client", path)
+    return send_from_directory("webclient", path)
 
 
 @app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
@@ -1320,7 +1318,7 @@ def compile(language):
 @app.route('/dace/api/v1.0/diode/themes', methods=['GET'])
 def get_available_ace_editor_themes():
     import glob, os.path
-    path = "./client/external_lib/ace/"
+    path = "./webclient/external_lib/ace/"
 
     files = [f for f in glob.glob(path + "theme-*.js")]
 
