@@ -54,8 +54,8 @@ setup(
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
-            '../diode/main.glade', 'external/moodycamel/*.h',
-            'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
+            'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
+            'codegen/Xilinx_HLS.tcl.in'
         ] + runtime_files + cub_files + diode_files + hlslib_files
     },
     include_package_data=True,

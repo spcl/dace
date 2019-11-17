@@ -2,6 +2,7 @@ import os
 import sys
 import stat
 import tempfile
+import time
 import traceback
 import subprocess
 import dace.dtypes
@@ -444,15 +445,12 @@ class AsyncExecutor:
                 func()
             return False
 
-        from gi.repository import GObject
-        GObject.idle_add(deferred)
+        deferred()
 
     def notify(self, message):
 
         if self.diode is None:
             return
-
-        import time
 
         print("Got message " + str(message))
 
@@ -463,8 +461,7 @@ class AsyncExecutor:
             status_text.set_text(message)
             return False
 
-        from gi.repository import GObject
-        GObject.idle_add(deferred)
+        deferred()
 
         if (message == "All done"):
             self.to_thread_message_queue.put("quit")
