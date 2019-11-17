@@ -5962,6 +5962,11 @@ class DIODE {
                 // #TODO: Show success/error depending on the exit code
 
                 this.toast("Execution ended", "The execution of the last run has ended", 'info');
+
+                // Flush remaining outputs
+                let newdata = xhr.response.substr(xhr.seenBytes);
+                this.goldenlayout.eventHub.emit(terminal_identifier, newdata);
+                xhr.seenBytes = xhr.responseText.length;
             }
             if (xhr.readyState === 3) {
                 let newdata = xhr.response.substr(xhr.seenBytes);

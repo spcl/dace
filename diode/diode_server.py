@@ -466,7 +466,7 @@ class ExecutorServer:
         def runner():
             print("Trying to get lock")
             with self._run_cv:
-                print("Run starting")
+                output_feeder("Run starting\n")
 
                 perfmode = perfopts['mode']
                 perfcores = perfopts['core_counts']
@@ -509,10 +509,10 @@ class ExecutorServer:
                 self._slot_available = False
                 dace_state.set_is_compiled(False)
 
-                async_executor = AsyncExecutor(None, True, None, None)
+                async_executor = AsyncExecutor(remote=remote_execution)
                 async_executor.autoquit = True
                 async_executor.executor.output_generator = output_feeder
-                async_executor.executor.setConfig(copied_config)
+                async_executor.executor.set_config(copied_config)
                 async_executor.run_async(dace_state)
                 async_executor.to_thread_message_queue.put("forcequit")
 
@@ -523,6 +523,11 @@ class ExecutorServer:
                     except:
                         # Check if the thread is still running
                         continue
+
+                # Flush remaining outputs
+                while not terminal_queue.empty():
+                    new = terminal_queue.get(block=True, timeout=1)
+                    yield new
 
                 with self._oplock:
                     # Delete from the tasklist
