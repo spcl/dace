@@ -36,8 +36,8 @@ if __name__ == "__main__":
         func1 = dace.compile(prog_one)
         func2 = dace.compile(prog_two)
 
-        func1(array_one, output_one)
-        func2(array_two, output_two)
+        func1(input=array_one, output=output_one)
+        func2(input=array_two, output=output_two)
 
         diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
         diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0

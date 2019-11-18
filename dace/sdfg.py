@@ -154,10 +154,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
-    return {
-        k: dace.serialize.to_json(v)
-        for k, v in arrays.items() if k is not None
-    }
+    return {k: dace.serialize.to_json(v) for k, v in arrays.items()}
 
 
 def _arrays_from_json(obj, context=None):
@@ -240,7 +237,7 @@ class SDFG(OrderedDiGraph):
             False
         )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
-        self._arrays = {None: None}  # type: Dict[str, dt.Array]
+        self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = ''
         self.init_code = ''
         self.exit_code = ''
@@ -1144,6 +1141,11 @@ subgraph cluster_state_{state} {{
                                   description). False or True override current
                                   option, whereas None keeps default
         """
+        try:
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        except (FileNotFoundError, FileExistsError):
+            pass
+
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
@@ -1610,7 +1612,7 @@ subgraph cluster_state_{state} {{
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
             opt = optclass(sdfg)
-            sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+            sdfg = opt.optimize()
 
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
@@ -1820,7 +1822,8 @@ subgraph cluster_state_{state} {{
                               patterns,
                               validate=True,
                               strict=False,
-                              states=None):
+                              states=None,
+                              apply_once=False):
         """ This function applies transformations as given in the argument
             patterns. """
         # Avoiding import loops
@@ -1842,6 +1845,8 @@ subgraph cluster_state_{state} {{
                     self.fill_scope_connectors()
                     self.validate()
                 applied = True
+                break
+            if apply_once and applied:
                 break
 
         if Config.get_bool('debugprint'):
@@ -2312,11 +2317,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if isinstance(node, dace.graph.nodes.NestedSDFG):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
-
-    def defined_symbols_at(self, sdfg, node):
-        """ Returns all symbols available to a given node, including map and
-           state transition variables. """
-        return sdfg.defined_symbols_at(node, state=self)
 
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """

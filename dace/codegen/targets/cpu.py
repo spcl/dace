@@ -914,7 +914,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     local_name,
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
-            elif memlet.num_accesses == -1:
+            else:
                 if output:
                     # Variable number of writes: get reference to the target of
                     # the view to reflect writes at the data
@@ -929,10 +929,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     local_name,
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
-            else:
-                raise dace.codegen.codegen.CodegenError(
-                    "Unsupported number of accesses {} for scalar {}".format(
-                        memlet.num_accesses, local_name))
         elif var_type == DefinedType.Pointer:
             if memlet.num_accesses == 1 and memlet.subset.num_elements() == 1:
                 if output:

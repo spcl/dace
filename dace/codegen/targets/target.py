@@ -628,7 +628,7 @@ class TargetDispatcher(object):
 def make_absolute(path):
     if os.path.isfile(path):
         if os.path.isabs(path):
-            # Path is abolute, we're happy
+            # Path is absolute, we're happy
             return path
         else:
             # Path is relative: make it absolute

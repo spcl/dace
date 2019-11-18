@@ -686,6 +686,11 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
+    def squeeze(self):
+        num_dim = len(self.indices)
+        self.indices = [0]
+        return [num_dim - 1]
+
     def unsqueeze(self, axes):
         for axis in sorted(axes):
             self.indices.insert(axis, 0)
