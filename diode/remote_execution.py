@@ -109,12 +109,14 @@ class Executor(object):
         # Catching all exceptions, including SystemExit
         except (Exception, SystemExit) as ex:
             # Corner case: If exited with error code 0, it is a success
-            if isinstance(ex, SystemExit) and ex.code == 0:
-                pass
+            if isinstance(ex, SystemExit):
+                # If the exit code is nonzero, "raise" will not trigger a
+                # printout on the server
+                if ex.code != 0:
+                    traceback.print_exc()
+                    raise
             else:
-                traceback.print_exc()
-                self.show_output(traceback.format_exc())
-                sys.exit(1)
+                raise
 
         self.show_output("Execution Terminated\n")
 
@@ -209,9 +211,10 @@ class Executor(object):
 
             self.remote_delete_file(remote_dace_file)
             self.remote_delete_dir(remote_dace_dir)
-        except:  # Literally anything can happen here
+        except:  # Running a custom script (the driver file), which can raise
+            # any exception
             self.show_output(traceback.format_exc())
-            sys.exit(1)
+            raise
 
         self.counter += 1
 
