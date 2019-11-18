@@ -7,20 +7,16 @@ from __future__ import print_function
 
 import ctypes
 import os
-import re
 import six
 import shutil
 import subprocess
-import string
-import subprocess as sp
 import re
 from typing import List
 import numpy as np
 
 import dace
 from dace.frontend import operations
-from dace.frontend.python import wrappers
-from dace import symbolic, dtypes, data as dt
+from dace import symbolic, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -155,7 +151,7 @@ class CompiledSDFG(object):
         return self._sdfg
 
     def __del__(self):
-        if self._initialized == True:
+        if self._initialized is True:
             self.finalize(*self._lastargs)
             self._initialized = False
         self._lib.unload()
@@ -275,18 +271,23 @@ class CompiledSDFG(object):
             self._exit(*argtuple)
 
     def __call__(self, **kwargs):
-        argtuple = self._construct_args(**kwargs)
+        try:
+            argtuple = self._construct_args(**kwargs)
 
-        # Call initializer function if necessary, then SDFG
-        if self._initialized == False:
-            self.initialize(*argtuple)
+            # Call initializer function if necessary, then SDFG
+            if self._initialized is False:
+                self.initialize(*argtuple)
 
-        # PROFILING
-        if Config.get_bool('profiling'):
-            operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
-                                *argtuple)
-        else:
-            return self._cfunc(*argtuple)
+            # PROFILING
+            if Config.get_bool('profiling'):
+                operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
+                                    *argtuple)
+            else:
+                return self._cfunc(*argtuple)
+        except (RuntimeError, TypeError, UnboundLocalError, KeyError,
+                DuplicateDLLError, ReferenceError):
+            self._lib.unload()
+            raise
 
 
 def unique_flags(flags):
