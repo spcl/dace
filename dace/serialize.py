@@ -38,7 +38,8 @@ _DACE_SERIALIZE_TYPES = {
     "pointer": dace.dtypes.pointer,
     "callback": dace.dtypes.callback,
     "struct": dace.dtypes.struct,
-    "ndarray": NumpySerializer
+    "ndarray": NumpySerializer,
+    "DebugInfo": dace.dtypes.DebugInfo
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }

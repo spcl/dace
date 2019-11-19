@@ -629,20 +629,12 @@ class DebugInfoProperty(Property):
     def to_json(self, s):
         if not isinstance(s, DebugInfo):
             return None
-        nval = {
-            "filename": s.filename,
-            "start_line": s.start_line,
-            "end_line": s.end_line,
-            "start_col": s.start_column,
-            "end_col": s.end_column
-        }
-        return nval
+        return s.to_json()
 
     def from_json(self, s, sdfg=None):
         if s is None: return None
 
-        return DebugInfo(s['start_line'], s['start_col'], s['end_line'],
-                         s['end_col'], s['filename'])
+        return s
 
 
 class ParamsProperty(Property):
