@@ -166,6 +166,8 @@ def set_properties_from_json(object_with_properties,
         except KeyError:
             if fill_defaults:
                 val = prop.default
+                setattr(object_with_properties, prop_name, val)
+                continue
             else:
                 raise KeyError("Missing property for object of type " +
                                type(object_with_properties).__name__ + ": " +
