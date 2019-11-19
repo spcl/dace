@@ -1,8 +1,8 @@
 FROM httpd:2.4
-COPY ./diode/client/ /usr/local/apache2/htdocs/client/
-COPY ./diode/ /usr/local/apache2/htdocs/client/renderer_dir/
+COPY ./diode/webclient/ /usr/local/apache2/htdocs/webclient/
+COPY ./diode/ /usr/local/apache2/htdocs/webclient/renderer_dir/
 COPY ./diode/diode.wsgi /usr/local/apache2/htdocs/diode.wsgi
-COPY ./diode/diode_rest.py /usr/local/apache2/htdocs/diode_rest.py
+COPY ./diode/diode_server.py /usr/local/apache2/htdocs/diode_server.py
 
 COPY . /usr/local/apache2/htdocs/installer/
 
@@ -18,7 +18,7 @@ RUN echo "WSGIApplicationGroup %{GLOBAL}" >> /usr/local/apache2/conf/httpd.conf
 RUN echo "WSGIScriptAlias /system /usr/local/apache2/htdocs/diode.wsgi" >> /usr/local/apache2/conf/httpd.conf
 
 # There is a difference to the development server: The base url changed (added /system) - adjust that in the config
-RUN sed -i -e "s/window.location.host;/window.location.host + \"\/system\";/g" /usr/local/apache2/htdocs/client/main.js && cat /usr/local/apache2/htdocs/client/main.js
+RUN sed -i -e "s/window.location.host;/window.location.host + \"\/system\";/g" /usr/local/apache2/htdocs/webclient/main.js && cat /usr/local/apache2/htdocs/webclient/main.js
 
 # There is more config in some cases - #TODO: Check if those are actually necessary
 
