@@ -139,7 +139,7 @@ class Property:
                 _default = self.to_json(self.default)
 
                 mdict = {
-                    "type": typestr,
+                    "metatype": typestr,
                     "desc": self.desc,
                     "category": self.category,
                     "default": _default,
@@ -203,7 +203,8 @@ class Property:
                     type(val).__name__, self.attr_name, self.dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None and isinstance(self.choices, (list, tuple, set)):
+        if self.choices is not None and isinstance(self.choices,
+                                                   (list, tuple, set)):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(
                     val, self.choices))
@@ -629,20 +630,12 @@ class DebugInfoProperty(Property):
     def to_json(self, s):
         if not isinstance(s, DebugInfo):
             return None
-        nval = {
-            "filename": s.filename,
-            "start_line": s.start_line,
-            "end_line": s.end_line,
-            "start_col": s.start_column,
-            "end_col": s.end_column
-        }
-        return nval
+        return s.to_json()
 
     def from_json(self, s, sdfg=None):
         if s is None: return None
 
-        return DebugInfo(s['start_line'], s['start_col'], s['end_line'],
-                         s['end_col'], s['filename'])
+        return s
 
 
 class ParamsProperty(Property):
