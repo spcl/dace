@@ -710,15 +710,20 @@ class DebugInfo:
         self.filename = filename
 
     def to_json(self):
-        return dict(type='DebugInfo', start_line=self.start_line,
-                    end_line=self.end_line, start_column=self.start_column,
-                    end_column=self.end_column, filename=self.filename)
+        return dict(
+            type='DebugInfo',
+            start_line=self.start_line,
+            end_line=self.end_line,
+            start_column=self.start_column,
+            end_column=self.end_column,
+            filename=self.filename)
 
     @staticmethod
     def from_json(json_obj, context=None):
         return DebugInfo(json_obj['start_line'], json_obj['start_column'],
                          json_obj['end_line'], json_obj['end_column'],
                          json_obj['filename'])
+
 
 ######################################################
 # Static (utility) functions

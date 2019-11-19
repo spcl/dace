@@ -139,7 +139,7 @@ class Property:
                 _default = self.to_json(self.default)
 
                 mdict = {
-                    "type": typestr,
+                    "metatype": typestr,
                     "desc": self.desc,
                     "category": self.category,
                     "default": _default,
@@ -203,7 +203,8 @@ class Property:
                     type(val).__name__, self.attr_name, self.dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None and isinstance(self.choices, (list, tuple, set)):
+        if self.choices is not None and isinstance(self.choices,
+                                                   (list, tuple, set)):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(
                     val, self.choices))
