@@ -142,6 +142,8 @@ def all_properties_to_json(object_with_properties):
 
         # Add the meta elements decoupled from key/value to facilitate value usage
         # (The meta is only used when rendering the values)
+        # TODO: Remove when DIODE server is rewritten to ask for metadata
+        #       separately.
         if JSON_STORE_METADATA:
             retdict['_meta_' + x.attr_name] = x.meta_to_json(x)
 

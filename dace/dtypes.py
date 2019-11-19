@@ -709,6 +709,9 @@ class DebugInfo:
         self.end_column = end_column
         self.filename = filename
 
+    # NOTE: Manually marking as serializable to avoid an import loop
+    # The data structure is a property on its own (pointing to a range of code),
+    # so it is serialized as a dictionary directly.
     def to_json(self):
         return dict(
             type='DebugInfo',
