@@ -503,7 +503,10 @@ class TFSession:
             ############################
             # Compile the SDFG
             if gpu:
-                #    self.graph.apply_gpu_transformations()
+                from dace.transformation.interstate import GPUTransformSDFG
+                self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
+                
+                #self.graph.apply_gpu_transformations()
                 for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
@@ -2039,9 +2042,6 @@ class TFSession:
                 inputs={'x', 'f'},
                 outputs={'y'},
                 code='''
-
-                         //cudnnSetStream(cudnn_handle, __dace_current_stream);          
-
                          #define checkCUDNN(expression)                           \\
                          {{                                                       \\
                            cudnnStatus_t status = (expression);                   \\
@@ -2137,14 +2137,19 @@ class TFSession:
 
             )
             code_global = ''' #include <cudnn.h>
-                                 #include <iostream>
-                                 cudnnHandle_t cudnn_handle;'''
+                              #include <iostream>
+                              cudnnHandle_t cudnn_handle;
+                              
+                              '''         
             if not tasklet.code_global == code_global:
                 tasklet.code_global = code_global
-                self.graph.set_init_code(
-                    'cudnnCreate(&cudnn_handle);')
-                self.graph.set_exit_code(
-                    'cudnnDestroy(cudnn_handle);')
+                tasklet.code_init = '''cudnnCreate(&cudnn_handle);
+                       //int __dace_current_stream_id = 0;
+                       //cudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];
+                       //s = cudnnSetStream(cudnn_handle, __dace_current_stream);
+                       //printf(\"\\n\\n ERROR: %s\\n\", s);
+                    '''
+                tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
 
             state.add_edge(image, None, tasklet, 'x', Memlet.from_array(image.label, image.desc(self.graph)))
             state.add_edge(filter, None, tasklet, 'f', Memlet.from_array(filter.label, filter.desc(self.graph)))
@@ -2159,7 +2164,7 @@ class TFSession:
             state.add_edge(filter, None, gpu_fil, None, Memlet.from_array(filter.label, filter.desc(self.graph)))
             state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
             '''
-         '''   local_ctr = str(next(_atomic_count))
+            '''   local_ctr = str(next(_atomic_count))
             inputList = []
             inputNodes = []
             ndims = 0
