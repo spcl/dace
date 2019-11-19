@@ -3,7 +3,6 @@ import json
 import numpy as np
 import dace.dtypes
 
-
 JSON_STORE_METADATA = True
 
 
@@ -136,15 +135,15 @@ def dumps(*args, **kwargs):
     return json.dumps(*args, default=to_json, **kwargs)
 
 
-def all_properties_to_json(object_with_properties, store_metadata=False):
+def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():
         retdict[x.attr_name] = x.to_json(v)
 
         # Add the meta elements decoupled from key/value to facilitate value usage
         # (The meta is only used when rendering the values)
-        if store_metadata:
-            retdict['_meta_' + x.attr_name] = json.loads(x.meta_to_json(x))
+        if JSON_STORE_METADATA:
+            retdict['_meta_' + x.attr_name] = x.meta_to_json(x)
 
     return retdict
 
