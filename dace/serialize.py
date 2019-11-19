@@ -148,7 +148,10 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
-def set_properties_from_json(object_with_properties, json_obj, context=None):
+def set_properties_from_json(object_with_properties,
+                             json_obj,
+                             context=None,
+                             fill_defaults=True):
 
     try:
         attrs = json_obj['attributes']
@@ -161,9 +164,12 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
         try:
             val = attrs[prop_name]
         except KeyError:
-            raise KeyError("Missing property for object of type " +
-                           type(object_with_properties).__name__ + ": " +
-                           prop_name)
+            if fill_defaults:
+                val = prop.default
+            else:
+                raise KeyError("Missing property for object of type " +
+                               type(object_with_properties).__name__ + ": " +
+                               prop_name)
 
         if isinstance(val, dict):
             val = prop.from_json(val, context)

@@ -89,6 +89,20 @@ class Property:
         self._dtype = dtype
         self._default = default
 
+        if allow_none is False and default is None:
+            try:
+                self._default = dtype()
+            except TypeError:
+                if hasattr(self, 'dtype'):
+                    try:
+                        self._default = self.dtype()
+                    except TypeError:
+                        raise TypeError(
+                            'Default not properly defined for property')
+                else:
+                    raise TypeError(
+                        'Default not properly defined for property')
+
         if choices is not None:
             for choice in choices:
                 if dtype is None:
@@ -568,6 +582,11 @@ class RangeProperty(Property):
 class DebugInfoProperty(Property):
     """ Custom Property type for DebugInfo members. """
 
+    def __init__(self, **kwargs):
+        if 'default' not in kwargs:
+            kwargs['default'] = DebugInfo(0, 0, 0, 0)
+        super().__init__(dtype=DebugInfo, **kwargs)
+
     @property
     def dtype(self):
         return DebugInfo
@@ -742,7 +761,7 @@ class LambdaProperty(Property):
 
     @property
     def dtype(self):
-        return str
+        return None
 
     @staticmethod
     def from_string(s):

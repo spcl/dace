@@ -23,8 +23,8 @@ class Memlet(object):
 
     # Properties
     veclen = Property(dtype=int, desc="Vector length")
-    num_accesses = SymbolicProperty()
-    subset = SubsetProperty()
+    num_accesses = SymbolicProperty(default=0)
+    subset = SubsetProperty(default=subsets.Range([]))
     other_subset = SubsetProperty(allow_none=True)
     data = DataProperty()
     debuginfo = DebugInfoProperty()
