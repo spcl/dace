@@ -302,7 +302,7 @@ class SDFG(OrderedDiGraph):
         # Redefine symbols
         for k, v in json_obj['undefined_symbols']:
             v = dace.serialize.from_json(v)
-            symbolic.symbol(k, v.dtype)
+            symbolic.symbol(k, v.dtype, override_dtype=True)
 
         for k, v in json_obj['scalar_parameters']:
             v = dace.serialize.from_json(v)
