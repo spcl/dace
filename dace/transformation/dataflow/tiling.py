@@ -80,7 +80,7 @@ def calc_set_union(aname, array, set_a, set_b):
 
 
 @make_properties
-class OrthogonalTiling(pattern_matching.Transformation):
+class MapTiling(pattern_matching.Transformation):
     """ Implements the orthogonal tiling transformation.
 
         Orthogonal tiling is a type of nested map fission that creates tiles
@@ -105,7 +105,7 @@ class OrthogonalTiling(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(OrthogonalTiling._map_entry)]
+        return [nxutil.node_path_graph(MapTiling._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -113,17 +113,18 @@ class OrthogonalTiling(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[OrthogonalTiling._map_entry]]
+        map_entry = graph.nodes()[candidate[MapTiling._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[self.subgraph[OrthogonalTiling._map_entry]]
+        map_entry = graph.nodes()[self.subgraph[MapTiling._map_entry]]
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
         stripmine_subgraph = {
-            StripMining._map_entry: self.subgraph[OrthogonalTiling._map_entry]}
+            StripMining._map_entry: self.subgraph[MapTiling._map_entry]
+        }
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         last_map_entry = None
         for dim_idx in range(len(map_entry.map.params)):
@@ -141,17 +142,18 @@ class OrthogonalTiling(pattern_matching.Transformation):
             if last_map_entry:
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
-                    MapCollapse._outer_map_entry: graph.node_id(last_map_entry),
+                    MapCollapse._outer_map_entry:
+                    graph.node_id(last_map_entry),
                     MapCollapse._inner_map_entry: graph.node_id(new_map_entry)
                 }
-                mapcollapse = MapCollapse(sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                mapcollapse = MapCollapse(sdfg_id, self.state_id,
+                                          mapcollapse_subgraph, 0)
                 mapcollapse.apply(sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
 
-
     def __stripmine(self, sdfg, graph, candidate):
         # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[candidate[OrthogonalTiling._map_entry]]
+        map_entry = graph.nodes()[candidate[MapTiling._map_entry]]
         map_exit = graph.exit_nodes(map_entry)[0]
 
         # Map subgraph
@@ -363,7 +365,7 @@ class OrthogonalTiling(pattern_matching.Transformation):
 
     @staticmethod
     def __modify_edges(sdfg, graph, candidate, target_dim, new_dim):
-        map_entry = graph.nodes()[candidate[OrthogonalTiling._map_entry]]
+        map_entry = graph.nodes()[candidate[MapTiling._map_entry]]
 
         processed = []
         for src, _dest, memlet, _scope in nxutil.traverse_sdfg_scope(
@@ -397,4 +399,4 @@ class OrthogonalTiling(pattern_matching.Transformation):
         return
 
 
-pattern_matching.Transformation.register_pattern(OrthogonalTiling)
+pattern_matching.Transformation.register_pattern(MapTiling)

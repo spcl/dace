@@ -10,7 +10,7 @@ from .map_fusion import MapFusion
 
 # Data movement
 from .strip_mining import StripMining
-from .tiling import OrthogonalTiling
+from .tiling import MapTiling
 from .vectorization import Vectorization
 
 # Data-related

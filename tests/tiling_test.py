@@ -3,7 +3,7 @@ from __future__ import print_function
 
 import argparse
 import dace
-from dace.transformation.dataflow import OrthogonalTiling
+from dace.transformation.dataflow import MapTiling
 from dace.transformation.optimizer import SDFGOptimizer
 import numpy as np
 from scipy import ndimage
@@ -24,31 +24,25 @@ def create_sdfg():
     body = sdfg.add_state('body')
     end = sdfg.add_state('end')
 
-    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i':'0'}))
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '0'}))
     sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i<MAXITER'))
-    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i':'i+1'}))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i+1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i>=MAXITER'))
 
     init.add_mapped_tasklet(
-        'reset_tmp',
-        {'y':'0:W', 'x':'0:H'},
-        {},
-        'out = dace.float32(0)',
-        {'out': dace.Memlet.simple('tmp', 'y, x')},
-        external_edges=True
-    )
-
+        'reset_tmp', {
+            'y': '0:W',
+            'x': '0:H'
+        }, {},
+        'out = dace.float32(0)', {'out': dace.Memlet.simple('tmp', 'y, x')},
+        external_edges=True)
 
     inp = body.add_read('A')
     tmp = body.add_access('tmp')
     out = body.add_write('A')
-    me1, mx1 = body.add_map('stencil1', {'y':'1:W-1', 'x':'1:H-1'})
-    task1 = body.add_tasklet(
-        'stencil1',
-        {'n', 's', 'w', 'e', 'c'},
-        {'o'},
-        'o = (n + s + w + e + c) * dace.float32(0.2)'
-    )
+    me1, mx1 = body.add_map('stencil1', {'y': '1:W-1', 'x': '1:H-1'})
+    task1 = body.add_tasklet('stencil1', {'n', 's', 'w', 'e', 'c'}, {'o'},
+                             'o = (n + s + w + e + c) * dace.float32(0.2)')
     body.add_nedge(inp, me1, dace.Memlet.from_array('A', arr))
     body.add_edge(me1, None, task1, 'n', dace.Memlet.simple('A', 'y-1, x'))
     body.add_edge(me1, None, task1, 's', dace.Memlet.simple('A', 'y+1, x'))
@@ -57,13 +51,9 @@ def create_sdfg():
     body.add_edge(me1, None, task1, 'c', dace.Memlet.simple('A', 'y, x'))
     body.add_edge(task1, 'o', mx1, None, dace.Memlet.simple('tmp', 'y, x'))
     body.add_nedge(mx1, tmp, dace.Memlet.simple('tmp', '1:H-1, 1:W-1'))
-    me2, mx2 = body.add_map('stencil2', {'y':'1:W-1', 'x':'1:H-1'})
-    task2 = body.add_tasklet(
-        'stencil2',
-        {'n', 's', 'w', 'e', 'c'},
-        {'o'},
-        'o = (n + s + w + e + c) * dace.float32(0.2)'
-    )
+    me2, mx2 = body.add_map('stencil2', {'y': '1:W-1', 'x': '1:H-1'})
+    task2 = body.add_tasklet('stencil2', {'n', 's', 'w', 'e', 'c'}, {'o'},
+                             'o = (n + s + w + e + c) * dace.float32(0.2)')
     body.add_nedge(tmp, me2, dace.Memlet.from_array('tmp', tmparr))
     body.add_edge(me2, None, task2, 'n', dace.Memlet.simple('tmp', 'y-1, x'))
     body.add_edge(me2, None, task2, 's', dace.Memlet.simple('tmp', 'y+1, x'))
@@ -109,8 +99,8 @@ if __name__ == "__main__":
     sdfg, body = create_sdfg()
     sdfg.fill_scope_connectors()
     optimizer = SDFGOptimizer(sdfg, inplace=True)
-    for match in optimizer.get_pattern_matches(states=[body],
-                                               patterns=[OrthogonalTiling]):
+    for match in optimizer.get_pattern_matches(
+            states=[body], patterns=[MapTiling]):
         match.apply(sdfg)
     for node in body.nodes():
         if (isinstance(node, dace.graph.nodes.MapEntry)
@@ -118,7 +108,7 @@ if __name__ == "__main__":
             if len(body.in_edges(node)) > 1:
                 print(f"Edge union in {node} failed!")
                 exit(1)
-    
+
     sdfg(A=A, H=H.get(), W=W.get(), MAXITER=MAXITER.get())
 
     # Regression
