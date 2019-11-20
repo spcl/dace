@@ -88,6 +88,11 @@ class StripMining(pattern_matching.Transformation):
         dtype=str, default="tile", desc="Prefix for new dimension name")
     tile_size = Property(
         dtype=str, default="64", desc="Tile size of strip-mined dimension")
+    tile_stride = Property(
+        dtype=str,
+        default="",
+        desc="Stride between two tiles of the "
+        "strip-mined dimension")
     divides_evenly = Property(
         dtype=bool,
         default=False,
@@ -120,8 +125,7 @@ class StripMining(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         # Strip-mine selected dimension.
-        _, _, new_map = self.__stripmine(
-            sdfg, graph, self.subgraph)
+        _, _, new_map = self.__stripmine(sdfg, graph, self.subgraph)
         return new_map
 
     # def __init__(self, tag=True):
@@ -164,6 +168,10 @@ class StripMining(pattern_matching.Transformation):
         divides_evenly = self.divides_evenly
         strided = self.strided
 
+        tile_stride = self.tile_stride
+        if tile_stride is None or len(tile_stride) == 0:
+            tile_stride = tile_size
+
         # Retrieve parameter and range of dimension to be strip-mined.
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
@@ -173,7 +181,7 @@ class StripMining(pattern_matching.Transformation):
         nd_from = 0
         nd_to = symbolic.pystr_to_symbolic(
             'int_ceil(%s + 1 - %s, %s) - 1' %
-            (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_size))
+            (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
         new_map = nodes.Map(new_dim + '_' + map_entry.map.label, [new_dim],
@@ -190,14 +198,15 @@ class StripMining(pattern_matching.Transformation):
         else:
             td_from_new = symbolic.pystr_to_symbolic(
                 '%s + %s * %s' % (symbolic.symstr(td_from), str(new_dim),
-                                  tile_size))
+                                  tile_stride))
             td_to_new_exact = symbolic.pystr_to_symbolic(
                 'min(%s + 1, %s + %s * %s + %s) - 1' %
-                (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_size,
+                (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride,
                  str(new_dim), tile_size))
             td_to_new_approx = symbolic.pystr_to_symbolic(
-                '%s + %s * %s + %s - 1' % (symbolic.symstr(td_from), tile_size,
-                                           str(new_dim), tile_size))
+                '%s + %s * %s + %s - 1' % (symbolic.symstr(td_from),
+                                           tile_stride, str(new_dim),
+                                           tile_size))
         if divides_evenly or strided:
             td_to_new = td_to_new_approx
         else:
@@ -206,7 +215,8 @@ class StripMining(pattern_matching.Transformation):
         map_entry.map.range[dim_idx] = (td_from_new, td_to_new, td_step)
 
         # Make internal map's schedule to "not parallel"
-        map_entry.map._schedule = dtypes.ScheduleType.Default
+        new_map.schedule = map_entry.map.schedule
+        map_entry.map.schedule = dtypes.ScheduleType.Sequential
 
         # Redirect edges
         new_map_entry.in_connectors = dcpy(map_entry.in_connectors)
@@ -219,8 +229,8 @@ class StripMining(pattern_matching.Transformation):
         entry_in_conn = set()
         entry_out_conn = set()
         for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
-            if (src_conn[:4] == 'OUT_' and not
-                    isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
+            if (src_conn[:4] == 'OUT_' and not isinstance(
+                    sdfg.arrays[memlet.data], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
@@ -230,8 +240,8 @@ class StripMining(pattern_matching.Transformation):
                 key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
                 if key in new_in_edges.keys():
                     old_subset = new_in_edges[key].subset
-                    new_in_edges[key].subset = calc_set_union(old_subset,
-                                                              new_subset)
+                    new_in_edges[key].subset = calc_set_union(
+                        old_subset, new_subset)
                 else:
                     entry_in_conn.add('IN_' + conn)
                     entry_out_conn.add('OUT_' + conn)
@@ -260,8 +270,8 @@ class StripMining(pattern_matching.Transformation):
         exit_in_conn = set()
         exit_out_conn = set()
         for _src, _, _dst, dst_conn, memlet in graph.in_edges(map_exit):
-            if (dst_conn[:3] == 'IN_' and not
-                    isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
+            if (dst_conn[:3] == 'IN_' and not isinstance(
+                    sdfg.arrays[memlet.data], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
@@ -271,8 +281,8 @@ class StripMining(pattern_matching.Transformation):
                 key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
                 if key in new_out_edges.keys():
                     old_subset = new_out_edges[key].subset
-                    new_out_edges[key].subset = calc_set_union(old_subset,
-                                                               new_subset)
+                    new_out_edges[key].subset = calc_set_union(
+                        old_subset, new_subset)
                 else:
                     exit_in_conn.add('IN_' + conn)
                     exit_out_conn.add('OUT_' + conn)

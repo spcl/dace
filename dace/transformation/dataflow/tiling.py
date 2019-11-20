@@ -23,9 +23,8 @@ class MapTiling(pattern_matching.Transformation):
         dtype=tuple, default=(128, 128, 128), desc="Tile size per dimension")
     strides = ShapeProperty(
         dtype=tuple,
-        default=None,
-        allow_none=True,
-        desc="Tile stride (enables overlapping tiles). If None, matches tile")
+        default=tuple(),
+        desc="Tile stride (enables overlapping tiles). If empty, matches tile")
     divides_evenly = Property(
         dtype=bool,
         default=False,
@@ -50,6 +49,11 @@ class MapTiling(pattern_matching.Transformation):
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
+
+        tile_strides = self.tile_sizes
+        if self.strides is not None and len(self.strides) == len(tile_strides):
+            tile_strides = self.strides
+
         # Retrieve map entry and exit nodes.
         map_entry = graph.nodes()[self.subgraph[MapTiling._map_entry]]
         from dace.transformation.dataflow.map_collapse import MapCollapse
@@ -62,13 +66,17 @@ class MapTiling(pattern_matching.Transformation):
         for dim_idx in range(len(map_entry.map.params)):
             if dim_idx >= len(self.tile_sizes):
                 tile_size = self.tile_sizes[-1]
+                tile_stride = tile_strides[-1]
             else:
                 tile_size = self.tile_sizes[dim_idx]
+                tile_stride = tile_strides[dim_idx]
+
             stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph,
                                     self.expr_index)
             stripmine.dim_idx = dim_idx
             stripmine.new_dim_prefix = self.prefix
             stripmine.tile_size = str(tile_size)
+            stripmine.tile_stride = str(tile_stride)
             stripmine.divides_evenly = self.divides_evenly
             stripmine.apply(sdfg)
             if last_map_entry:
