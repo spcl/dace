@@ -35,7 +35,7 @@ class DaceState:
                  fake_fname,
                  source_code=None,
                  sdfg=None,
-                 headless=False):
+                 remote=False):
 
         # TODO: Due to symbols, only one state per process is supported
         dace.symbolic.symbol.erase_all()
@@ -48,9 +48,9 @@ class DaceState:
         self.generated_code = []
         self.generated_code_files = None
         self.matching_patterns = []
-        self.headless = headless
         self.dace_code = dace_code
         self.source_code = source_code
+        self.remote = remote
         self.repetitions = None
         self.errors = [
         ]  # Any errors that arise from compilation are placed here to show
@@ -109,6 +109,8 @@ func({args})
             try:
                 self.sdfg = self.sdfgs[0][1]
             except IndexError:
+                if len(self.errors) > 0:
+                    raise self.errors[-1]
                 if len(self.sdfgs) == 0:
                     raise ValueError('No SDFGs found in file. SDFGs are only '
                                      'recognized when @dace.programs or SDFG '
@@ -171,9 +173,8 @@ func({args})
             exstr.write("Compilation failed:\n%s\n\n" % formatted_lines[-1])
             traceback.print_exc(file=exstr)
             self.generated_code = exstr.getvalue()
-            if self.headless == True:
-                print("Codegen failed!\n" + str(self.generated_code))
-                sys.exit(-1)
+            print("Codegen failed!\n" + str(self.generated_code))
+            sys.exit(-1)
 
     def get_dace_generated_files(self):
         """ Writes the generated code to a temporary file and returns the file

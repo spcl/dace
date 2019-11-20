@@ -302,7 +302,7 @@ class SDFG(OrderedDiGraph):
         # Redefine symbols
         for k, v in json_obj['undefined_symbols']:
             v = dace.serialize.from_json(v)
-            symbolic.symbol(k, v.dtype)
+            symbolic.symbol(k, v.dtype, override_dtype=True)
 
         for k, v in json_obj['scalar_parameters']:
             v = dace.serialize.from_json(v)
@@ -1141,6 +1141,11 @@ subgraph cluster_state_{state} {{
                                   description). False or True override current
                                   option, whereas None keeps default
         """
+        try:
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        except (FileNotFoundError, FileExistsError):
+            pass
+
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
@@ -1607,7 +1612,7 @@ subgraph cluster_state_{state} {{
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
             opt = optclass(sdfg)
-            sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+            sdfg = opt.optimize()
 
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
@@ -1809,7 +1814,8 @@ subgraph cluster_state_{state} {{
                               patterns,
                               validate=True,
                               strict=False,
-                              states=None):
+                              states=None,
+                              apply_once=False):
         """ This function applies transformations as given in the argument
             patterns. """
         # Avoiding import loops
@@ -1831,6 +1837,8 @@ subgraph cluster_state_{state} {{
                     self.fill_scope_connectors()
                     self.validate()
                 applied = True
+                break
+            if apply_once and applied:
                 break
 
         if Config.get_bool('debugprint'):
@@ -2278,11 +2286,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if isinstance(node, dace.graph.nodes.NestedSDFG):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
-
-    def defined_symbols_at(self, sdfg, node):
-        """ Returns all symbols available to a given node, including map and
-           state transition variables. """
-        return sdfg.defined_symbols_at(node, state=self)
 
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """

@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict, namedtuple
 import copy
+from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
 
@@ -90,7 +91,7 @@ def _reduce(sdfg: SDFG,
             identity=None):
     # TODO(later): If output is None, derive the output size from the input and create a new node
     if output is None:
-        inarr = until(input, '[')
+        inarr = input
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
@@ -111,8 +112,8 @@ def _reduce(sdfg: SDFG,
             output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
-        inarr = until(input, '[')
-        outarr = until(output, '[')
+        inarr = input
+        outarr = output
 
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
@@ -146,48 +147,44 @@ def _reduce(sdfg: SDFG,
 
 def _simple_call(sdfg: SDFG,
                  state: SDFGState,
-                 input: str,
+                 inpname: str,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
-    inpname = until(input, '[')
-    input_subset = _parse_memlet_subset(sdfg.arrays[inpname],
-                                        ast.parse(input).body[0].value, {})
-    output_shape = input_subset.size()
+    inparr = sdfg.arrays[inpname]
     if restype is None:
         restype = sdfg.arrays[inpname].dtype
-    outname, outarr = sdfg.add_temp_transient(output_shape, restype,
-                                              sdfg.arrays[inpname].storage)
-    if input_subset.num_elements() == 1:
+    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
+                                              inparr.storage)
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)
+    if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
         tasklet = state.add_tasklet(
             func, {'__inp'}, {'__out'}, '__out = {f}(__inp)'.format(f=func))
         state.add_edge(inp, None, tasklet, '__inp',
-                       Memlet.simple(inpname, str(input_subset)))
+                       Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None,
                        Memlet.from_array(outname, outarr))
     else:
         state.add_mapped_tasklet(
             name=func,
             map_ranges={
-                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                for i, (s, e, t) in enumerate(input_subset)
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
             },
             inputs={
                 '__inp':
                 Memlet.simple(
                     inpname,
-                    ','.join(['__i%d' % i for i in range(len(input_subset))]))
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             code='__out = {f}(__inp)'.format(f=func),
             outputs={
                 '__out':
                 Memlet.simple(
-                    outname, ','.join([
-                        '__i%d - %s' % (i, s)
-                        for i, (s, _, _) in enumerate(input_subset)
-                    ]))
+                    outname,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             external_edges=True)
 
@@ -249,8 +246,7 @@ def _conj(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
 def _real(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
-    inptype = sdfg.arrays[inpname].dtype
+    inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'real',
                         _complex_to_scalar(inptype))
 
@@ -259,8 +255,7 @@ def _real(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
 def _imag(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
-    inptype = sdfg.arrays[inpname].dtype
+    inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'imag',
                         _complex_to_scalar(inptype))
 
@@ -3399,8 +3394,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         result = func(self, self.sdfg, self.last_state, operand1, operand2)
-        if not isinstance(result, (tuple, list)):
-            return [result]
         return result
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
