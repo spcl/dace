@@ -21,6 +21,7 @@ from .reduce_expansion import ReduceExpansion
 from .redundant_array import RedundantArray
 from .redundant_array_copying import (
     RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
+from .merge_arrays import MergeArrays
 
 # TensorFlow-specific transformations
 from .tensorflow_redundant_array import TensorflowRedundantArray
