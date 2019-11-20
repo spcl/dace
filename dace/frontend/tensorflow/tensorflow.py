@@ -596,6 +596,7 @@ class TFSession:
             @return: Tuple or dictionary of values in the same order as `nodes`.
         """
         self.winograd = winograd
+        self.gpu = gpu
         callfunc = self.compile(
             nodes,
             gpu,
@@ -1990,7 +1991,7 @@ class TFSession:
         if (7 in _tensorshape(node.inputs[0])[1:3]
                 and 3 in _tensorshape(node.inputs[1])[0:2] and self.winograd):
             winograd_convolution(self, node)
-        else:
+        elif self.gpu:
             local_ctr = str(next(_atomic_count))
             state = self.state
             data_format = node.get_attr("data_format").decode("utf-8")
@@ -1998,10 +1999,6 @@ class TFSession:
             explicit_paddings = node.get_attr("explicit_paddings")
             padding = node.get_attr("padding").decode("utf-8")
             strides = node.get_attr("strides")
-            print(explicit_paddings)
-            print(padding)
-            # print(strides)
-            # print(dilations)
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
@@ -2009,7 +2006,6 @@ class TFSession:
             image_dims = image.desc(self.graph).shape
             filter_dims = filter.desc(self.graph).shape
             output_dims = output.desc(self.graph).shape
-            print(image_dims, filter_dims, output_dims)
 
             N = image_dims[0]
             H = image_dims[1]
@@ -2018,8 +2014,6 @@ class TFSession:
             K = filter_dims[3]
             R = filter_dims[0]
             S = filter_dims[1]
-            print(N, H, W, C)
-            print(R, S, C, K)
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
@@ -2032,13 +2026,12 @@ class TFSession:
 
             self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
             gpu_out = state.add_access(gpu_out_name)
-            print('output_dims ', output_dims)
             self.graph.add_transient(gpu_img_name, image_dims, dace.float32, dace.StorageType.GPU_Global)
             gpu_img = state.add_access(gpu_img_name)
             self.graph.add_transient(gpu_fil_name, filter_dims, dace.float32, dace.StorageType.GPU_Global)
             gpu_fil = state.add_access(gpu_fil_name)
             tasklet = state.add_tasklet(
-                name='Conv2D',
+                name= string_builder(node.type),
                 inputs={'x', 'f'},
                 outputs={'y'},
                 code='''
@@ -2088,7 +2081,7 @@ class TFSession:
                      int yw = 0;
                      checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, xDesc, fDesc, 
                                                                       &yn, &yc, &yh, &yw));
-                     printf(\"here: %d, %d, %d, %d \\n \", yn, yc, yh, yw);
+                     
                      cudnnTensorDescriptor_t yDesc;
                      cudnnCreateTensorDescriptor(&yDesc);
                      checkCUDNN(cudnnSetTensor4dDescriptor(yDesc,
@@ -2160,7 +2153,7 @@ class TFSession:
             state.add_edge(filter, None, gpu_fil, None, Memlet.from_array(filter.label, filter.desc(self.graph)))
             state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
             
-            '''
+        else:
             local_ctr = str(next(_atomic_count))
             inputList = []
             inputNodes = []
@@ -2251,7 +2244,7 @@ class TFSession:
                     wcr_identity=0)
                 state.add_edge(tasklet, name, mapExit2, None, memlet)
                 state.add_edge(mapExit2, None, reduce_node, None, memlet)
-            '''
+            
 
     def visit_BiasAdd(self, node):
 
@@ -2876,337 +2869,627 @@ class TFSession:
                             inputParams)
 
     def visit_Conv2DBackpropInput(self, node):
-        state = self.state
-        data_format = node.get_attr("data_format").decode("utf-8")
-        dilations = node.get_attr("dilations")
-        explicit_paddings = node.get_attr("explicit_paddings")
-        padding = node.get_attr("padding").decode("utf-8")
-        strides = node.get_attr("strides")
-        filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
-        gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
-        output = self.create_and_add_output_node(node)[0]
+        if self.gpu:
+            state = self.state
+            data_format = node.get_attr("data_format").decode("utf-8")
+            dilations = node.get_attr("dilations")
+            explicit_paddings = node.get_attr("explicit_paddings")
+            padding = node.get_attr("padding").decode("utf-8")
+            strides = node.get_attr("strides")
+            filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
+            gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
+            output = self.create_and_add_output_node(node)[0]
 
-        filter_dims = filter.desc(self.graph).shape
-        gradient_dims = gradient.desc(self.graph).shape
-        output_dims = output.desc(self.graph).shape
+            filter_dims = filter.desc(self.graph).shape
+            gradient_dims = gradient.desc(self.graph).shape
+            output_dims = output.desc(self.graph).shape
 
-        N = output_dims[0]
-        H = output_dims[1]
-        W = output_dims[2]
-        C = filter_dims[2]
-        K = filter_dims[3]
-        R = filter_dims[0]
-        S = filter_dims[1]
-        padh = 0
-        padw = 0
+            N = output_dims[0]
+            H = output_dims[1]
+            W = output_dims[2]
+            C = filter_dims[2]
+            K = filter_dims[3]
+            R = filter_dims[0]
+            S = filter_dims[1]
+            padh = 0
+            padw = 0
 
-        gpu_out_name = 'gpu_out_' + output.label
-        gpu_grad_name = 'gpu_gradient_' + gradient.label
-        gpu_fil_name = 'gpu_fil_' + filter.label
-        self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
-        gpu_out = state.add_access(gpu_out_name)
-        self.graph.add_transient(gpu_grad_name, gradient_dims, dace.float32, dace.StorageType.GPU_Global)
-        gpu_grad = state.add_access(gpu_grad_name)
-        self.graph.add_transient(gpu_fil_name, filter_dims, dace.float32, dace.StorageType.GPU_Global)
-        gpu_fil = state.add_access(gpu_fil_name)
+            gpu_out_name = 'gpu_out_' + output.label
+            gpu_grad_name = 'gpu_gradient_' + gradient.label
+            gpu_fil_name = 'gpu_fil_' + filter.label
+            self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
+            gpu_out = state.add_access(gpu_out_name)
+            self.graph.add_transient(gpu_grad_name, gradient_dims, dace.float32, dace.StorageType.GPU_Global)
+            gpu_grad = state.add_access(gpu_grad_name)
+            self.graph.add_transient(gpu_fil_name, filter_dims, dace.float32, dace.StorageType.GPU_Global)
+            gpu_fil = state.add_access(gpu_fil_name)
 
-        tasklet = state.add_tasklet(
-            name=string_builder(node.type),
-            inputs={'w', 'dy'},
-            outputs={'dx'},
-            code='''
-                cudnnSetStream(cudnn_handle, __dace_current_stream);          
+            tasklet = state.add_tasklet(
+                name=string_builder(node.type),
+                inputs={'w', 'dy'},
+                outputs={'dx'},
+                code='''
+                    cudnnSetStream(cudnn_handle, __dace_current_stream);          
 
-                #define checkCUDNN(expression)                           \\
-                {{                                                       \\
-                  cudnnStatus_t status = (expression);                   \\
-                  if (status != CUDNN_STATUS_SUCCESS) {{                 \\
-                    printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
-                  }}                                                     \\
-                }}
+                    #define checkCUDNN(expression)                           \\
+                    {{                                                       \\
+                      cudnnStatus_t status = (expression);                   \\
+                      if (status != CUDNN_STATUS_SUCCESS) {{                 \\
+                        printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
+                      }}                                                     \\
+                    }}
 
-                cudnnFilterDescriptor_t wDesc;
-                cudnnCreateFilterDescriptor(&wDesc);
-                checkCUDNN(cudnnSetFilter4dDescriptor(wDesc,
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*format=*/CUDNN_TENSOR_{format},
-                                           /*out_channels=*/{K},
-                                           /*in_channels=*/{C},
-                                           /*kernel_height=*/{R},
-                                           /*kernel_width=*/{S}));
+                    cudnnFilterDescriptor_t wDesc;
+                    cudnnCreateFilterDescriptor(&wDesc);
+                    checkCUDNN(cudnnSetFilter4dDescriptor(wDesc,
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*out_channels=*/{K},
+                                               /*in_channels=*/{C},
+                                               /*kernel_height=*/{R},
+                                               /*kernel_width=*/{S}));
 
 
 
-                cudnnTensorDescriptor_t dxDesc;
-                checkCUDNN(cudnnCreateTensorDescriptor(&dxDesc));
-                checkCUDNN(cudnnSetTensor4dDescriptor(dxDesc,
-                                           /*format=*/CUDNN_TENSOR_{format},
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/{N},
-                                           /*channels=*/{C},
-                                           /*height=*/{H},
-                                           /*width=*/{W}));
+                    cudnnTensorDescriptor_t dxDesc;
+                    checkCUDNN(cudnnCreateTensorDescriptor(&dxDesc));
+                    checkCUDNN(cudnnSetTensor4dDescriptor(dxDesc,
+                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*batch_size=*/{N},
+                                               /*channels=*/{C},
+                                               /*height=*/{H},
+                                               /*width=*/{W}));
 
-                cudnnConvolutionDescriptor_t convDesc;
-                cudnnCreateConvolutionDescriptor(&convDesc);
-                checkCUDNN(cudnnSetConvolution2dDescriptor(convDesc,
-                                               /*pad_height=*/{padh},
-                                               /*pad_width=*/{padw},
-                                               /*vertical_stride=*/{vstr},
-                                               /*horizontal_stride=*/{hstr},
-                                               /*dilation_height=*/{dilh},
-                                               /*dilation_width=*/{dilw},
-                                               /*mode=*/CUDNN_CROSS_CORRELATION,
-                                               /*computeType=*/CUDNN_DATA_FLOAT));
+                    cudnnConvolutionDescriptor_t convDesc;
+                    cudnnCreateConvolutionDescriptor(&convDesc);
+                    checkCUDNN(cudnnSetConvolution2dDescriptor(convDesc,
+                                                   /*pad_height=*/{padh},
+                                                   /*pad_width=*/{padw},
+                                                   /*vertical_stride=*/{vstr},
+                                                   /*horizontal_stride=*/{hstr},
+                                                   /*dilation_height=*/{dilh},
+                                                   /*dilation_width=*/{dilw},
+                                                   /*mode=*/CUDNN_CROSS_CORRELATION,
+                                                   /*computeType=*/CUDNN_DATA_FLOAT));
 
-                int yn = 0;
-                int yc = 0;
-                int yh = 0;
-                int yw = 0;
-                checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, dxDesc, wDesc, 
-                                                                 &yn, &yc, &yh, &yw));
+                    int yn = 0;
+                    int yc = 0;
+                    int yh = 0;
+                    int yw = 0;
+                    checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, dxDesc, wDesc, 
+                                                                     &yn, &yc, &yh, &yw));
 
-                cudnnTensorDescriptor_t dyDesc;
-                checkCUDNN(cudnnCreateTensorDescriptor(&dyDesc));
-                checkCUDNN(cudnnSetTensor4dDescriptor(dyDesc,
-                                           /*format=*/CUDNN_TENSOR_{format},
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/yn,
-                                           /*channels=*/yc,
-                                           /*height=*/yh,
-                                           /*width=*/yw));
+                    cudnnTensorDescriptor_t dyDesc;
+                    checkCUDNN(cudnnCreateTensorDescriptor(&dyDesc));
+                    checkCUDNN(cudnnSetTensor4dDescriptor(dyDesc,
+                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*batch_size=*/yn,
+                                               /*channels=*/yc,
+                                               /*height=*/yh,
+                                               /*width=*/yw));
 
-                cudnnConvolutionBwdDataAlgo_t algo;
-                checkCUDNN(cudnnGetConvolutionBackwardDataAlgorithm(cudnn_handle,
-                                                wDesc, dyDesc, convDesc, dxDesc,
-                                                CUDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, &algo));
+                    cudnnConvolutionBwdDataAlgo_t algo;
+                    checkCUDNN(cudnnGetConvolutionBackwardDataAlgorithm(cudnn_handle,
+                                                    wDesc, dyDesc, convDesc, dxDesc,
+                                                    CUDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, &algo));
 
-                size_t workSpaceSizeInBytes = 0;
-                checkCUDNN(cudnnGetConvolutionBackwardDataWorkspaceSize(
-                    cudnn_handle, wDesc, dyDesc, convDesc, dxDesc, algo, &workSpaceSizeInBytes));
+                    size_t workSpaceSizeInBytes = 0;
+                    checkCUDNN(cudnnGetConvolutionBackwardDataWorkspaceSize(
+                        cudnn_handle, wDesc, dyDesc, convDesc, dxDesc, algo, &workSpaceSizeInBytes));
 
-                void* workSpace{{nullptr}};
-                cudaMalloc(&workSpace, workSpaceSizeInBytes);   
+                    void* workSpace{{nullptr}};
+                    cudaMalloc(&workSpace, workSpaceSizeInBytes);   
 
-                float alpha = 1.0, beta = 0.0;
-                checkCUDNN(cudnnConvolutionBackwardData(cudnn_handle, &alpha, wDesc, w,
-                                                        dyDesc, dy, convDesc, algo,
-                                                        workSpace, workSpaceSizeInBytes,
-                                                        &beta, dxDesc, dx));
+                    float alpha = 1.0, beta = 0.0;
+                    checkCUDNN(cudnnConvolutionBackwardData(cudnn_handle, &alpha, wDesc, w,
+                                                            dyDesc, dy, convDesc, algo,
+                                                            workSpace, workSpaceSizeInBytes,
+                                                            &beta, dxDesc, dx));
 
-            '''.format(format=data_format, N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
-                vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
-            language=dace.Language.CPP,
-            location="gpu"
-        )
+                '''.format(format=data_format, N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
+                    vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
+                language=dace.Language.CPP,
+                location="gpu"
+            )
 
-        code_global = ''' 
-            #include <cudnn.h>
-            #include <iostream>
-            cudnnHandle_t cudnn_handle;
-        '''
-        if tasklet.code_global is not code_global:
-            tasklet.code_global = code_global
-            self.graph.set_init_code('cudnnCreate(&cudnn_handle);')
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
+            code_global = ''' 
+                #include <cudnn.h>
+                #include <iostream>
+                cudnnHandle_t cudnn_handle;
+            '''
+            if tasklet.code_global is not code_global:
+                tasklet.code_global = code_global
+                self.graph.set_init_code('cudnnCreate(&cudnn_handle);')
+                self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
 
-        state.add_edge(tasklet, 'dx', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
-        state.add_edge(gpu_grad, None, tasklet, 'dy', Memlet.from_array(gpu_grad_name, gradient.desc(self.graph)))
-        state.add_edge(gpu_fil, None, tasklet, 'w', Memlet.from_array(gpu_fil_name, filter.desc(self.graph)))
+            state.add_edge(tasklet, 'dx', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
+            state.add_edge(gpu_grad, None, tasklet, 'dy', Memlet.from_array(gpu_grad_name, gradient.desc(self.graph)))
+            state.add_edge(gpu_fil, None, tasklet, 'w', Memlet.from_array(gpu_fil_name, filter.desc(self.graph)))
 
-        state.add_edge(gradient, None, gpu_grad, None, Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-        state.add_edge(filter, None, gpu_fil, None, Memlet.from_array(filter.label, filter.desc(self.graph)))
-        state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
-
-        '''
-        inputNodes = []
-        mapParams = []
-        outputParams = []
-        mapRange = []
-        outputDims = []
-        inputParams = []
-        inputDims = []
-        strides = int(node.get_attr("strides")[1])
-        state = self.state
-
-        for count, inp in enumerate(node.inputs):
-            if not count == 0:
-                inputNode, _, dim = self.create_and_add_input_node(inp)
-                inputNodes.append(inputNode)
-                inputDims.append(dim)
-
-        outputList = self.create_and_add_output_node(node)
-        outputParams = [["i0", "i1", "i2", "i4"]]
-        outputDims.append(self.get_default_dims(node.outputs[0]))
-
-        ksize = int(node.inputs[1].shape[0])
-        if str(node.get_attr("padding"))[2:-1] == "SAME":
-            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
-                          ksize - int(outputList[0].desc(self.graph).shape[1]))
+            state.add_edge(gradient, None, gpu_grad, None, Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(filter, None, gpu_fil, None, Memlet.from_array(filter.label, filter.desc(self.graph)))
+            state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
+        
         else:
-            padding = 0
+            inputNodes = []
+            mapParams = []
+            outputParams = []
+            mapRange = []
+            outputDims = []
+            inputParams = []
+            inputDims = []
+            strides = int(node.get_attr("strides")[1])
+            state = self.state
 
-        if padding > 0:
-            # If padding is even (padding is on each side the same)
-            if padding % 2 == 0:
-                paddingUp = padding // 2
-                paddingDown = padding // 2
-            # If padding is uneven, we pad more on the bottom and on the right side
-            # of an image (matching TensorFlow behavior)
+            for count, inp in enumerate(node.inputs):
+                if not count == 0:
+                    inputNode, _, dim = self.create_and_add_input_node(inp)
+                    inputNodes.append(inputNode)
+                    inputDims.append(dim)
+
+            outputList = self.create_and_add_output_node(node)
+            outputParams = [["i0", "i1", "i2", "i4"]]
+            outputDims.append(self.get_default_dims(node.outputs[0]))
+
+            ksize = int(node.inputs[1].shape[0])
+            if str(node.get_attr("padding"))[2:-1] == "SAME":
+                padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
+                              ksize - int(outputList[0].desc(self.graph).shape[1]))
             else:
-                paddingUp = padding // 2
-                paddingDown = paddingUp + 1
-            paddedOutputDims = outputDims[0].copy()
-            paddedOutputDims[1] += "+" + str(padding)
-            paddedOutputDims[2] += "+" + str(padding)
-            paddedOutput = state.add_transient(
-                string_builder(node.outputs[0].name) + "_padded",
-                [
-                    paddedOutputDims[0][2:],
-                    paddedOutputDims[1][2:],
-                    paddedOutputDims[2][2:],
-                    paddedOutputDims[3][2:],
-                ],
-                _tensortype(node.outputs[0]),
-            )
+                padding = 0
 
-        if strides > 1:
-            # Dilate and pad the incoming gradients
-            newShape = [
-                node.inputs[2].shape[0],
-                node.inputs[2].shape[1] + (node.inputs[2].shape[1] - 1) *
-                (strides - 1) + 2 * (ksize - 1),
-                node.inputs[2].shape[2] + (node.inputs[2].shape[2] - 1) *
-                (strides - 1) + 2 * (ksize - 1),
-                node.inputs[2].shape[3],
-            ]
-            if newShape[1] - ksize + 1 < node.outputs[0].shape[1]:
-                newShape[1] = node.outputs[0].shape[1] + ksize - 1
-                newShape[2] = node.outputs[0].shape[2] + ksize - 1
-            expandedGrads = state.add_transient(
-                string_builder(node.inputs[2].name) + "_bigger_strided",
-                newShape,
-                _tensortype(node.inputs[2]),
-            )
-            expandedGrads.setzero = True
-            mapParams = self.get_default_params(node.inputs[2])
-            mapRange = self.get_default_dims(node.inputs[2])
-            mapLabel = string_builder(node.type) + "_grad_expansion"
-            mapEntry, mapExit = state.add_map(mapLabel,
+            if padding > 0:
+                # If padding is even (padding is on each side the same)
+                if padding % 2 == 0:
+                    paddingUp = padding // 2
+                    paddingDown = padding // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = padding // 2
+                    paddingDown = paddingUp + 1
+                paddedOutputDims = outputDims[0].copy()
+                paddedOutputDims[1] += "+" + str(padding)
+                paddedOutputDims[2] += "+" + str(padding)
+                paddedOutput = state.add_transient(
+                    string_builder(node.outputs[0].name) + "_padded",
+                    [
+                        paddedOutputDims[0][2:],
+                        paddedOutputDims[1][2:],
+                        paddedOutputDims[2][2:],
+                        paddedOutputDims[3][2:],
+                    ],
+                    _tensortype(node.outputs[0]),
+                )
+
+            if strides > 1:
+                # Dilate and pad the incoming gradients
+                newShape = [
+                    node.inputs[2].shape[0],
+                    node.inputs[2].shape[1] + (node.inputs[2].shape[1] - 1) *
+                    (strides - 1) + 2 * (ksize - 1),
+                    node.inputs[2].shape[2] + (node.inputs[2].shape[2] - 1) *
+                    (strides - 1) + 2 * (ksize - 1),
+                    node.inputs[2].shape[3],
+                ]
+                if newShape[1] - ksize + 1 < node.outputs[0].shape[1]:
+                    newShape[1] = node.outputs[0].shape[1] + ksize - 1
+                    newShape[2] = node.outputs[0].shape[2] + ksize - 1
+                expandedGrads = state.add_transient(
+                    string_builder(node.inputs[2].name) + "_bigger_strided",
+                    newShape,
+                    _tensortype(node.inputs[2]),
+                )
+                expandedGrads.setzero = True
+                mapParams = self.get_default_params(node.inputs[2])
+                mapRange = self.get_default_dims(node.inputs[2])
+                mapLabel = string_builder(node.type) + "_grad_expansion"
+                mapEntry, mapExit = state.add_map(mapLabel,
+                                                  dict(zip(mapParams, mapRange)))
+                tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"},
+                                                 "out = j0")
+                self.add_in_memlets([inputNodes[1]], mapEntry, tasklet, [mapRange],
+                                    [mapParams])
+                expandedGradParams = [
+                    "i0",
+                    str(ksize - 1) + "+" + "i1*" + str(strides),
+                    str(ksize - 1) + "+" + "i2*" + str(strides),
+                    "i3",
+                ]
+                expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
+                self.add_out_memlets(
+                    [expandedGrads],
+                    mapExit,
+                    tasklet,
+                    [expandedGradDims],
+                    [expandedGradParams],
+                )
+                inputNodes[1] = expandedGrads
+                inputDims[1] = expandedGradDims
+
+            elif ksize > 1:
+                newShape = [
+                    node.inputs[2].shape[0],
+                    node.inputs[2].shape[1] + 2 * (ksize - 1),
+                    node.inputs[2].shape[2] + 2 * (ksize - 1),
+                    node.inputs[2].shape[3],
+                ]
+                if newShape[1] - ksize + 1 < node.outputs[0].shape[1]:
+                    newShape[1] = node.outputs[0].shape[1] + ksize - 1
+                    newShape[2] = node.outputs[0].shape[2] + ksize - 1
+                expandedGrads = state.add_transient(
+                    string_builder(node.inputs[2].name) + "_bigger",
+                    newShape,
+                    _tensortype(node.inputs[2]),
+                )
+                expandedGrads.setzero = True
+                expanderMemlet = Memlet.simple(
+                    inputNodes[1],
+                    ",".join(inputDims[1]),
+                    other_subset_str=",".join([
+                        inputDims[1][0],
+                        str(ksize - 1) + ":" + str(ksize - 1) + "+" + str(
+                            node.inputs[2].shape[1]),
+                        str(ksize - 1) + ":" + str(ksize - 1) + "+" + str(
+                            node.inputs[2].shape[2]),
+                        inputDims[1][3],
+                    ]),
+                )
+                state.add_edge(inputNodes[1], None, expandedGrads, None,
+                               expanderMemlet)
+                expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
+                inputNodes[1] = expandedGrads
+                inputDims[1] = expandedGradDims
+
+            # Kernel params
+            inputParams.append(
+                ["-1-i5+" + str(ksize), "-1-i6+" + str(ksize), "i4", "i3"])
+
+            # Gradient params
+            inputParams.append(["i0", "i1" + "+i5", "i2" + "+i6", "i3"])
+
+            mapLabel = string_builder(node.type)
+            mapParams = ["i0", "i1", "i2", "i4"]
+            mapParams2 = ["i5", "i6", "i3"]
+            mapRange = (paddedOutputDims
+                        if padding > 0 else outputDims[0])  # gradient dimensions
+            mapRange2 = inputDims[0][:-2] + [inputDims[0][-1]]  # Kernel dimensions
+            mapEntry, mapExit = state.add_map(mapLabel + "_outer",
                                               dict(zip(mapParams, mapRange)))
-            tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"},
-                                             "out = j0")
-            self.add_in_memlets([inputNodes[1]], mapEntry, tasklet, [mapRange],
-                                [mapParams])
-            expandedGradParams = [
-                "i0",
-                str(ksize - 1) + "+" + "i1*" + str(strides),
-                str(ksize - 1) + "+" + "i2*" + str(strides),
-                "i3",
-            ]
-            expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
-            self.add_out_memlets(
-                [expandedGrads],
-                mapExit,
-                tasklet,
-                [expandedGradDims],
-                [expandedGradParams],
+            mapEntry2, mapExit2 = state.add_map(mapLabel + "_inner",
+                                                dict(zip(mapParams2, mapRange2)))
+
+            tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
+                                        "out = j0 * j1")
+
+            reduce_node = self.state.add_transient(
+                mapLabel + "_wcr_avoid",
+                [1],
+                outputList[0].desc(self.graph).dtype,
+                storage=dace.StorageType.Register,
             )
-            inputNodes[1] = expandedGrads
-            inputDims[1] = expandedGradDims
 
-        elif ksize > 1:
-            newShape = [
-                node.inputs[2].shape[0],
-                node.inputs[2].shape[1] + 2 * (ksize - 1),
-                node.inputs[2].shape[2] + 2 * (ksize - 1),
-                node.inputs[2].shape[3],
-            ]
-            if newShape[1] - ksize + 1 < node.outputs[0].shape[1]:
-                newShape[1] = node.outputs[0].shape[1] + ksize - 1
-                newShape[2] = node.outputs[0].shape[2] + ksize - 1
-            expandedGrads = state.add_transient(
-                string_builder(node.inputs[2].name) + "_bigger",
-                newShape,
-                _tensortype(node.inputs[2]),
-            )
-            expandedGrads.setzero = True
-            expanderMemlet = Memlet.simple(
-                inputNodes[1],
-                ",".join(inputDims[1]),
-                other_subset_str=",".join([
-                    inputDims[1][0],
-                    str(ksize - 1) + ":" + str(ksize - 1) + "+" + str(
-                        node.inputs[2].shape[1]),
-                    str(ksize - 1) + ":" + str(ksize - 1) + "+" + str(
-                        node.inputs[2].shape[2]),
-                    inputDims[1][3],
-                ]),
-            )
-            state.add_edge(inputNodes[1], None, expandedGrads, None,
-                           expanderMemlet)
-            expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
-            inputNodes[1] = expandedGrads
-            inputDims[1] = expandedGradDims
-
-        # Kernel params
-        inputParams.append(
-            ["-1-i5+" + str(ksize), "-1-i6+" + str(ksize), "i4", "i3"])
-
-        # Gradient params
-        inputParams.append(["i0", "i1" + "+i5", "i2" + "+i6", "i3"])
-
-        mapLabel = string_builder(node.type)
-        mapParams = ["i0", "i1", "i2", "i4"]
-        mapParams2 = ["i5", "i6", "i3"]
-        mapRange = (paddedOutputDims
-                    if padding > 0 else outputDims[0])  # gradient dimensions
-        mapRange2 = inputDims[0][:-2] + [inputDims[0][-1]]  # Kernel dimensions
-        mapEntry, mapExit = state.add_map(mapLabel + "_outer",
-                                          dict(zip(mapParams, mapRange)))
-        mapEntry2, mapExit2 = state.add_map(mapLabel + "_inner",
-                                            dict(zip(mapParams2, mapRange2)))
-
-        tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
-                                    "out = j0 * j1")
-
-        reduce_node = self.state.add_transient(
-            mapLabel + "_wcr_avoid",
-            [1],
-            outputList[0].desc(self.graph).dtype,
-            storage=dace.StorageType.Register,
-        )
-
-        if padding > 0:
-            self.add_out_memlets(
-                [paddedOutput],
-                mapExit,
-                reduce_node,
-                #mapExit2,
-                [paddedOutputDims],
-                outputParams,
-            )
-            nonpaddedsubset = paddedOutputDims.copy()
-            nonpaddedsubset[1] = (
-                str(paddingUp) + ":" +
-                str(outputList[0].desc(self.graph).shape[1] + paddingUp))
-            nonpaddedsubset[2] = (
-                str(paddingUp) + ":" +
-                str(outputList[0].desc(self.graph).shape[2] + paddingUp))
-            self.state.add_edge(
-                paddedOutput,
-                None,
-                outputList[0],
-                None,
-                Memlet.simple(
+            if padding > 0:
+                self.add_out_memlets(
+                    [paddedOutput],
+                    mapExit,
+                    reduce_node,
+                    #mapExit2,
+                    [paddedOutputDims],
+                    outputParams,
+                )
+                nonpaddedsubset = paddedOutputDims.copy()
+                nonpaddedsubset[1] = (
+                    str(paddingUp) + ":" +
+                    str(outputList[0].desc(self.graph).shape[1] + paddingUp))
+                nonpaddedsubset[2] = (
+                    str(paddingUp) + ":" +
+                    str(outputList[0].desc(self.graph).shape[2] + paddingUp))
+                self.state.add_edge(
                     paddedOutput,
-                    ",".join(nonpaddedsubset),
-                    other_subset_str=",".join(outputDims[0]),
-                ),
+                    None,
+                    outputList[0],
+                    None,
+                    Memlet.simple(
+                        paddedOutput,
+                        ",".join(nonpaddedsubset),
+                        other_subset_str=",".join(outputDims[0]),
+                    ),
+                )
+
+            else:
+                self.reinitCR(outputList[0], outputParams, outputDims, "0")
+                self.add_out_memlets(
+                    outputList,
+                    mapExit,
+                    reduce_node,
+                    #mapExit2,
+                    outputDims,
+                    outputParams,
+                )
+
+            self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
+                                inputParams)
+            for i, inp in enumerate(inputNodes):
+                name = "j" + str(i)
+                memlet = Memlet.simple(inp, ",".join(inputParams[i]))
+                state.add_edge(mapEntry2, None, tasklet, name, memlet)
+
+            memlet = Memlet.simple(
+                reduce_node,
+                #paddedOutput if padding > 0 else outputList[0],
+                "0",
+                wcr_str="lambda a,b: a+b",
+                wcr_identity=0,
+            )
+            state.add_edge(tasklet, "out", mapExit2, None, memlet)
+            state.add_edge(mapExit2, None, reduce_node, None, memlet)
+        
+
+    def visit_Conv2DBackpropFilter(self, node):
+        if self.gpu:
+            state = self.state
+            data_format = node.get_attr("data_format").decode("utf-8")
+            dilations = node.get_attr("dilations")
+            explicit_paddings = node.get_attr("explicit_paddings")
+            padding = node.get_attr("padding").decode("utf-8")
+            strides = node.get_attr("strides")
+
+            image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
+            gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
+            output = self.create_and_add_output_node(node)[0]
+
+            image_dims = image.desc(self.graph).shape
+            gradient_dims = gradient.desc(self.graph).shape
+            output_dims = output.desc(self.graph).shape
+            N = image_dims[0]
+            H = image_dims[1]
+            W = image_dims[2]
+            C = image_dims[3]
+            K = output_dims[3]
+            R = output_dims[0]
+            S = output_dims[1]
+            padh = 0
+            padw = 0
+
+            gpu_out_name = 'gpu_out_' + output.label
+            gpu_grad_name = 'gpu_gradient_' + gradient.label
+            gpu_img_name = 'gpu_image_' + image.label
+            self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
+            gpu_out = state.add_access(gpu_out_name)
+            self.graph.add_transient(gpu_grad_name, gradient_dims, dace.float32, dace.StorageType.GPU_Global)
+            gpu_grad = state.add_access(gpu_grad_name)
+            self.graph.add_transient(gpu_img_name, image_dims, dace.float32, dace.StorageType.GPU_Global)
+            gpu_img = state.add_access(gpu_img_name)
+
+            tasklet = state.add_tasklet(
+                name=string_builder(node.type),
+                inputs={'x', 'dy'},
+                outputs={'dw'},
+                code='''
+                    cudnnSetStream(cudnn_handle, __dace_current_stream);          
+
+                    #define checkCUDNN(expression)                           \\
+                    {{                                                       \\
+                      cudnnStatus_t status = (expression);                   \\
+                      if (status != CUDNN_STATUS_SUCCESS) {{                 \\
+                        printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
+                      }}                                                     \\
+                    }}
+
+
+                    cudnnTensorDescriptor_t xDesc;
+                    checkCUDNN(cudnnCreateTensorDescriptor(&xDesc));
+                    checkCUDNN(cudnnSetTensor4dDescriptor(xDesc,
+                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*batch_size=*/{N},
+                                               /*channels=*/{C},
+                                               /*height=*/{H},
+                                               /*width=*/{W}));
+
+
+
+                    cudnnFilterDescriptor_t dwDesc;
+                    cudnnCreateFilterDescriptor(&dwDesc);
+                    checkCUDNN(cudnnSetFilter4dDescriptor(dwDesc,
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*out_channels=*/{K},
+                                               /*in_channels=*/{C},
+                                               /*kernel_height=*/{R},
+                                               /*kernel_width=*/{S}));
+
+                    cudnnConvolutionDescriptor_t convDesc;
+                    cudnnCreateConvolutionDescriptor(&convDesc);
+                    checkCUDNN(cudnnSetConvolution2dDescriptor(convDesc,
+                                                   /*pad_height=*/{padh},
+                                                   /*pad_width=*/{padw},
+                                                   /*vertical_stride=*/{vstr},
+                                                   /*horizontal_stride=*/{hstr},
+                                                   /*dilation_height=*/{dilh},
+                                                   /*dilation_width=*/{dilw},
+                                                   /*mode=*/CUDNN_CROSS_CORRELATION,
+                                                   /*computeType=*/CUDNN_DATA_FLOAT));
+
+                    int yn = 0;
+                    int yc = 0;
+                    int yh = 0;
+                    int yw = 0;
+                    checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, xDesc, dwDesc, 
+                                                                     &yn, &yc, &yh, &yw));
+
+                    cudnnTensorDescriptor_t dyDesc;
+                    checkCUDNN(cudnnCreateTensorDescriptor(&dyDesc));
+                    checkCUDNN(cudnnSetTensor4dDescriptor(dyDesc,
+                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*batch_size=*/yn,
+                                               /*channels=*/yc,
+                                               /*height=*/yh,
+                                               /*width=*/yw));
+
+
+                    cudnnConvolutionBwdFilterAlgo_t algo;
+                    checkCUDNN(cudnnGetConvolutionBackwardFilterAlgorithm(cudnn_handle,
+                                                    xDesc, dyDesc, convDesc, dwDesc,
+                                                    CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &algo));
+
+                    size_t workSpaceSizeInBytes = 0;
+                    checkCUDNN(cudnnGetConvolutionBackwardFilterWorkspaceSize(
+                        cudnn_handle, xDesc, dyDesc, convDesc, dwDesc, algo, &workSpaceSizeInBytes));
+
+                    void* workSpace{{nullptr}};
+                    cudaMalloc(&workSpace, workSpaceSizeInBytes);   
+
+                    float alpha = 1.0, beta = 0.0;
+                    checkCUDNN(cudnnConvolutionBackwardFilter(cudnn_handle, &alpha, xDesc, x,
+                                                            dyDesc, dy, convDesc, algo,
+                                                            workSpace, workSpaceSizeInBytes,
+                                                            &beta, dwDesc, dw));
+
+                '''.format(format=data_format, N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
+                    vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
+                language=dace.Language.CPP,
+                location="gpu"
             )
 
+            code_global = ''' 
+                #include <cudnn.h>
+                #include <iostream>
+                cudnnHandle_t cudnn_handle;
+            '''
+            if tasklet.code_global is not code_global:
+                tasklet.code_global = code_global
+                self.graph.set_init_code('cudnnCreate(&cudnn_handle);')
+                self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
+
+            state.add_edge(tasklet, 'dw', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
+            state.add_edge(gpu_grad, None, tasklet, 'dy', Memlet.from_array(gpu_grad_name, gradient.desc(self.graph)))
+            state.add_edge(gpu_img, None, tasklet, 'x', Memlet.from_array(gpu_img_name, image.desc(self.graph)))
+
+            state.add_edge(gradient, None, gpu_grad, None, Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(image, None, gpu_img, None, Memlet.from_array(image.label, image.desc(self.graph)))
+            state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
+        
         else:
+            # convolve loss over input.
+            # may need to dilate loss and may need to pad input (no correlation)
+
+            state = self.state
+            inputList = []
+            inputNodes = []
+            outputList = []
+            outputParams = []
+            outputDims = []
+            inputParams = []
+            inputDims = []
+            strides = int(node.get_attr("strides")[1])
+            # Input, filtersizes, out_backprop
+            ksize = int(node.outputs[0].shape[0])
+            if str(node.get_attr("padding"))[2:-1] == "SAME":
+                padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
+                              ksize - int(node.inputs[0].shape[1]))
+            else:
+                padding = 0
+
+            for count, inp in enumerate(node.inputs):
+                if count != 1:
+                    inputNode, _, dims = self.create_and_add_input_node(inp)
+                    inputList.append(inputNode.desc(self.graph))
+                    inputNodes.append(inputNode)
+                    inputDims.append(dims)
+            inputParams.append(["i0", "i1+i5", "i2+i6", "i3"])
+            inputParams.append(["i0", "i1", "i2", "i4"])
+
+            # inputNodes looks like [input, out_backprop]
+
+            if padding > 0:
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    inputNodes[0],
+                    inputList[0],
+                    int(node.inputs[2].shape[1]),
+                    ksize,
+                    strides,
+                    inputDims[0],
+                )
+                inputNodes[0] = paddedInput
+                inputDims[0] = paddedDims
+
+            if strides > 1:
+                # Dilate and the incoming gradients
+                newShape = [
+                    node.inputs[2].shape[0],
+                    node.inputs[2].shape[1] +
+                    (node.inputs[2].shape[1] - 1) * (strides - 1),
+                    node.inputs[2].shape[2] +
+                    (node.inputs[2].shape[2] - 1) * (strides - 1),
+                    node.inputs[2].shape[3],
+                ]
+                expandedGrads = state.add_transient(
+                    string_builder(node.inputs[2].name) + "_bigger",
+                    newShape,
+                    _tensortype(node.inputs[2]),
+                )
+                expandedGrads.setzero = True
+                mapParams = self.get_default_params(node.inputs[2])
+                mapRange = self.get_default_dims(node.inputs[2])
+                mapLabel = string_builder(node.type) + "_grad_expansion"
+                mapEntry, mapExit = state.add_map(mapLabel,
+                                                  dict(zip(mapParams, mapRange)))
+                tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"},
+                                                 "out = j0")
+                self.add_in_memlets([inputNodes[1]], mapEntry, tasklet, [mapRange],
+                                    [mapParams])
+                expandedGradParams = [
+                    "i0",
+                    "i1*" + str(strides),
+                    "i2*" + str(strides),
+                    "i3",
+                ]
+                expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
+                self.add_out_memlets(
+                    [expandedGrads],
+                    mapExit,
+                    tasklet,
+                    [expandedGradDims],
+                    [expandedGradParams],
+                )
+                inputNodes[1] = expandedGrads
+                inputDims[1] = expandedGradDims
+
+            outputList = self.create_and_add_output_node(node)
+            for count, out in enumerate(node.outputs):
+                params = ["i5", "i6", "i3", "i4"]
+                dims = self.get_default_dims(out)
+                outputParams.append(params)
+                outputDims.append(dims)
+
+            mapParams = outputParams[0]
+            mapParams2 = inputParams[1][:-1]
+            mapRange = outputDims[0]
+            mapRange2 = inputDims[1][:-1]
+            mapLabel = string_builder(node.type)
+            mapEntry, mapExit = state.add_map(mapLabel + "_outer",
+                                              dict(zip(mapParams, mapRange)))
+            mapEntry2, mapExit2 = state.add_map(mapLabel + "_inner",
+                                                dict(zip(mapParams2, mapRange2)))
+
+            tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
+                                        "out = j0*j1")
+
+            reduce_node = self.state.add_transient(
+                mapLabel + "_wcr_avoid",
+                [1],
+                outputList[0].desc(self.graph).dtype,
+                storage=dace.StorageType.Register,
+            )
+
             self.reinitCR(outputList[0], outputParams, outputDims, "0")
+
             self.add_out_memlets(
                 outputList,
                 mapExit,
@@ -3214,317 +3497,27 @@ class TFSession:
                 #mapExit2,
                 outputDims,
                 outputParams,
+                #"lambda a,b: a+b",
+                #0,
             )
+            self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
+                                inputParams)
 
-        self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
-                            inputParams)
-        for i, inp in enumerate(inputNodes):
-            name = "j" + str(i)
-            memlet = Memlet.simple(inp, ",".join(inputParams[i]))
-            state.add_edge(mapEntry2, None, tasklet, name, memlet)
+            for i, inp in enumerate(inputNodes):
+                name = "j" + str(i)
+                memlet = Memlet.simple(inp, ",".join(inputParams[i]))
+                state.add_edge(mapEntry2, None, tasklet, name, memlet)
 
-        memlet = Memlet.simple(
-            reduce_node,
-            #paddedOutput if padding > 0 else outputList[0],
-            "0",
-            wcr_str="lambda a,b: a+b",
-            wcr_identity=0,
-        )
-        state.add_edge(tasklet, "out", mapExit2, None, memlet)
-        state.add_edge(mapExit2, None, reduce_node, None, memlet)
-        '''
-
-    def visit_Conv2DBackpropFilter(self, node):
-        state = self.state
-        data_format = node.get_attr("data_format").decode("utf-8")
-        dilations = node.get_attr("dilations")
-        explicit_paddings = node.get_attr("explicit_paddings")
-        padding = node.get_attr("padding").decode("utf-8")
-        strides = node.get_attr("strides")
-
-        image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
-        gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
-        output = self.create_and_add_output_node(node)[0]
-
-        image_dims = image.desc(self.graph).shape
-        gradient_dims = gradient.desc(self.graph).shape
-        output_dims = output.desc(self.graph).shape
-        print(image_dims, gradient_dims, output_dims)
-        N = image_dims[0]
-        H = image_dims[1]
-        W = image_dims[2]
-        C = image_dims[3]
-        K = output_dims[3]
-        R = output_dims[0]
-        S = output_dims[1]
-        padh = 0
-        padw = 0
-
-        gpu_out_name = 'gpu_out_' + output.label
-        gpu_grad_name = 'gpu_gradient_' + gradient.label
-        gpu_img_name = 'gpu_image_' + image.label
-        self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
-        gpu_out = state.add_access(gpu_out_name)
-        self.graph.add_transient(gpu_grad_name, gradient_dims, dace.float32, dace.StorageType.GPU_Global)
-        gpu_grad = state.add_access(gpu_grad_name)
-        self.graph.add_transient(gpu_img_name, image_dims, dace.float32, dace.StorageType.GPU_Global)
-        gpu_img = state.add_access(gpu_img_name)
-
-        tasklet = state.add_tasklet(
-            name=string_builder(node.type),
-            inputs={'x', 'dy'},
-            outputs={'dw'},
-            code='''
-                cudnnSetStream(cudnn_handle, __dace_current_stream);          
-
-                #define checkCUDNN(expression)                           \\
-                {{                                                       \\
-                  cudnnStatus_t status = (expression);                   \\
-                  if (status != CUDNN_STATUS_SUCCESS) {{                 \\
-                    printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
-                  }}                                                     \\
-                }}
-
-
-                cudnnTensorDescriptor_t xDesc;
-                checkCUDNN(cudnnCreateTensorDescriptor(&xDesc));
-                checkCUDNN(cudnnSetTensor4dDescriptor(xDesc,
-                                           /*format=*/CUDNN_TENSOR_{format},
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/{N},
-                                           /*channels=*/{C},
-                                           /*height=*/{H},
-                                           /*width=*/{W}));
-
-
-
-                cudnnFilterDescriptor_t dwDesc;
-                cudnnCreateFilterDescriptor(&dwDesc);
-                checkCUDNN(cudnnSetFilter4dDescriptor(dwDesc,
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*format=*/CUDNN_TENSOR_{format},
-                                           /*out_channels=*/{K},
-                                           /*in_channels=*/{C},
-                                           /*kernel_height=*/{R},
-                                           /*kernel_width=*/{S}));
-
-                cudnnConvolutionDescriptor_t convDesc;
-                cudnnCreateConvolutionDescriptor(&convDesc);
-                checkCUDNN(cudnnSetConvolution2dDescriptor(convDesc,
-                                               /*pad_height=*/{padh},
-                                               /*pad_width=*/{padw},
-                                               /*vertical_stride=*/{vstr},
-                                               /*horizontal_stride=*/{hstr},
-                                               /*dilation_height=*/{dilh},
-                                               /*dilation_width=*/{dilw},
-                                               /*mode=*/CUDNN_CROSS_CORRELATION,
-                                               /*computeType=*/CUDNN_DATA_FLOAT));
-
-                int yn = 0;
-                int yc = 0;
-                int yh = 0;
-                int yw = 0;
-                checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, xDesc, dwDesc, 
-                                                                 &yn, &yc, &yh, &yw));
-
-                cudnnTensorDescriptor_t dyDesc;
-                checkCUDNN(cudnnCreateTensorDescriptor(&dyDesc));
-                checkCUDNN(cudnnSetTensor4dDescriptor(dyDesc,
-                                           /*format=*/CUDNN_TENSOR_{format},
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/yn,
-                                           /*channels=*/yc,
-                                           /*height=*/yh,
-                                           /*width=*/yw));
-
-
-                cudnnConvolutionBwdFilterAlgo_t algo;
-                checkCUDNN(cudnnGetConvolutionBackwardFilterAlgorithm(cudnn_handle,
-                                                xDesc, dyDesc, convDesc, dwDesc,
-                                                CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &algo));
-
-                size_t workSpaceSizeInBytes = 0;
-                checkCUDNN(cudnnGetConvolutionBackwardFilterWorkspaceSize(
-                    cudnn_handle, xDesc, dyDesc, convDesc, dwDesc, algo, &workSpaceSizeInBytes));
-
-                void* workSpace{{nullptr}};
-                cudaMalloc(&workSpace, workSpaceSizeInBytes);   
-
-                float alpha = 1.0, beta = 0.0;
-                checkCUDNN(cudnnConvolutionBackwardFilter(cudnn_handle, &alpha, xDesc, x,
-                                                        dyDesc, dy, convDesc, algo,
-                                                        workSpace, workSpaceSizeInBytes,
-                                                        &beta, dwDesc, dw));
-
-            '''.format(format=data_format, N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
-                vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
-            language=dace.Language.CPP,
-            location="gpu"
-        )
-
-        code_global = ''' 
-            #include <cudnn.h>
-            #include <iostream>
-            cudnnHandle_t cudnn_handle;
-        '''
-        if tasklet.code_global is not code_global:
-            tasklet.code_global = code_global
-            self.graph.set_init_code('cudnnCreate(&cudnn_handle);')
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
-
-        state.add_edge(tasklet, 'dw', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
-        state.add_edge(gpu_grad, None, tasklet, 'dy', Memlet.from_array(gpu_grad_name, gradient.desc(self.graph)))
-        state.add_edge(gpu_img, None, tasklet, 'x', Memlet.from_array(gpu_img_name, image.desc(self.graph)))
-
-        state.add_edge(gradient, None, gpu_grad, None, Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-        state.add_edge(image, None, gpu_img, None, Memlet.from_array(image.label, image.desc(self.graph)))
-        state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
-        
-        '''
-        # convolve loss over input.
-        # may need to dilate loss and may need to pad input (no correlation)
-
-        state = self.state
-        inputList = []
-        inputNodes = []
-        outputList = []
-        outputParams = []
-        outputDims = []
-        inputParams = []
-        inputDims = []
-        strides = int(node.get_attr("strides")[1])
-        # Input, filtersizes, out_backprop
-        ksize = int(node.outputs[0].shape[0])
-        if str(node.get_attr("padding"))[2:-1] == "SAME":
-            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
-                          ksize - int(node.inputs[0].shape[1]))
-        else:
-            padding = 0
-
-        for count, inp in enumerate(node.inputs):
-            if count != 1:
-                inputNode, _, dims = self.create_and_add_input_node(inp)
-                inputList.append(inputNode.desc(self.graph))
-                inputNodes.append(inputNode)
-                inputDims.append(dims)
-        inputParams.append(["i0", "i1+i5", "i2+i6", "i3"])
-        inputParams.append(["i0", "i1", "i2", "i4"])
-
-        # inputNodes looks like [input, out_backprop]
-
-        if padding > 0:
-            paddedInput, paddedDims = self.inputPadding(
-                node,
-                inputNodes[0],
-                inputList[0],
-                int(node.inputs[2].shape[1]),
-                ksize,
-                strides,
-                inputDims[0],
+            #for i, out in enumerate(outputList):
+            memlet = Memlet.simple(
+                reduce_node,
+                #out,
+                "0",
+                wcr_str="lambda a,b: a+b",
+                wcr_identity=0,
             )
-            inputNodes[0] = paddedInput
-            inputDims[0] = paddedDims
-
-        if strides > 1:
-            # Dilate and the incoming gradients
-            newShape = [
-                node.inputs[2].shape[0],
-                node.inputs[2].shape[1] +
-                (node.inputs[2].shape[1] - 1) * (strides - 1),
-                node.inputs[2].shape[2] +
-                (node.inputs[2].shape[2] - 1) * (strides - 1),
-                node.inputs[2].shape[3],
-            ]
-            expandedGrads = state.add_transient(
-                string_builder(node.inputs[2].name) + "_bigger",
-                newShape,
-                _tensortype(node.inputs[2]),
-            )
-            expandedGrads.setzero = True
-            mapParams = self.get_default_params(node.inputs[2])
-            mapRange = self.get_default_dims(node.inputs[2])
-            mapLabel = string_builder(node.type) + "_grad_expansion"
-            mapEntry, mapExit = state.add_map(mapLabel,
-                                              dict(zip(mapParams, mapRange)))
-            tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"},
-                                             "out = j0")
-            self.add_in_memlets([inputNodes[1]], mapEntry, tasklet, [mapRange],
-                                [mapParams])
-            expandedGradParams = [
-                "i0",
-                "i1*" + str(strides),
-                "i2*" + str(strides),
-                "i3",
-            ]
-            expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
-            self.add_out_memlets(
-                [expandedGrads],
-                mapExit,
-                tasklet,
-                [expandedGradDims],
-                [expandedGradParams],
-            )
-            inputNodes[1] = expandedGrads
-            inputDims[1] = expandedGradDims
-
-        outputList = self.create_and_add_output_node(node)
-        for count, out in enumerate(node.outputs):
-            params = ["i5", "i6", "i3", "i4"]
-            dims = self.get_default_dims(out)
-            outputParams.append(params)
-            outputDims.append(dims)
-
-        mapParams = outputParams[0]
-        mapParams2 = inputParams[1][:-1]
-        mapRange = outputDims[0]
-        mapRange2 = inputDims[1][:-1]
-        mapLabel = string_builder(node.type)
-        mapEntry, mapExit = state.add_map(mapLabel + "_outer",
-                                          dict(zip(mapParams, mapRange)))
-        mapEntry2, mapExit2 = state.add_map(mapLabel + "_inner",
-                                            dict(zip(mapParams2, mapRange2)))
-
-        tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
-                                    "out = j0*j1")
-
-        reduce_node = self.state.add_transient(
-            mapLabel + "_wcr_avoid",
-            [1],
-            outputList[0].desc(self.graph).dtype,
-            storage=dace.StorageType.Register,
-        )
-
-        self.reinitCR(outputList[0], outputParams, outputDims, "0")
-
-        self.add_out_memlets(
-            outputList,
-            mapExit,
-            reduce_node,
-            #mapExit2,
-            outputDims,
-            outputParams,
-            #"lambda a,b: a+b",
-            #0,
-        )
-        self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
-                            inputParams)
-
-        for i, inp in enumerate(inputNodes):
-            name = "j" + str(i)
-            memlet = Memlet.simple(inp, ",".join(inputParams[i]))
-            state.add_edge(mapEntry2, None, tasklet, name, memlet)
-
-        #for i, out in enumerate(outputList):
-        memlet = Memlet.simple(
-            reduce_node,
-            #out,
-            "0",
-            wcr_str="lambda a,b: a+b",
-            wcr_identity=0,
-        )
-        state.add_edge(tasklet, "out", mapExit2, None, memlet)
-        state.add_edge(mapExit2, None, reduce_node, None, memlet)
-        '''
+            state.add_edge(tasklet, "out", mapExit2, None, memlet)
+            state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_SparseSoftmaxCrossEntropyWithLogits(self, node):
 

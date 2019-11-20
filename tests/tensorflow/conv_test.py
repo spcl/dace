@@ -9,8 +9,8 @@ import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
 
-inp_shape = [1, 10, 10, 1]
-filters = [[3,3,1,1]]
+inp_shape = [10, 10, 10, 10]
+filters = [[3,3,10,1]]
 strides = [[1, 1, 1, 1]]
 dilations = [[1, 1, 1, 1]]
 paddings = ["VALID"]
