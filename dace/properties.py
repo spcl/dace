@@ -372,8 +372,9 @@ def make_properties(cls):
                     "Property {} already assigned in {}".format(
                         name,
                         type(obj).__name__))
-            if not prop.indirected and prop.default is not None:
-                setattr(obj, name, prop.default)
+            if not prop.indirected:
+                if prop.allow_none or prop.default is not None:
+                    setattr(obj, name, prop.default)
         # Now call vanilla __init__, which can initialize members
         init(obj, *args, **kwargs)
         # Assert that all properties have been set
@@ -1088,7 +1089,10 @@ class DataProperty(Property):
         return str(obj)
 
     def from_json(self, s, context=None):
-        sdfg = context['sdfg']
+        if isinstance(context, dace.SDFG):
+            sdfg = context
+        else:
+            sdfg = context['sdfg']
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
         if s not in sdfg.arrays:
