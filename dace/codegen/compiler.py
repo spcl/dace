@@ -54,7 +54,7 @@ class ReloadableDLL(object):
             os.path.dirname(os.path.realpath(library_filename)),
             'libdacestub_%s.%s' %
             (program_name, Config.get('compiler', 'library_extension')))
-        self._library_filename = library_filename
+        self._library_filename = os.path.realpath(library_filename)
         self._stub = None
         self._lib = None
 
@@ -358,13 +358,17 @@ def generate_program_folder(sdfg,
     return out_path
 
 
-def configure_and_compile(program_folder, program_name=None):
+def configure_and_compile(program_folder,
+                          program_name=None,
+                          output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
 
         @param program_folder: Folder containing all files necessary to build,
                                equivalent to what was passed to
                                `generate_program_folder`.
+        @param output_stream: Additional output stream to write to (used for
+                              DIODE client).
         @return: Path to the compiled shared library file.
     """
 
@@ -434,7 +438,11 @@ def configure_and_compile(program_folder, program_name=None):
     ##############################################
     # Configure
     try:
-        _run_liveoutput(" ".join(cmake_command), shell=True, cwd=build_folder)
+        _run_liveoutput(
+            " ".join(cmake_command),
+            shell=True,
+            cwd=build_folder,
+            output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -443,7 +451,10 @@ def configure_and_compile(program_folder, program_name=None):
         os.makedirs(build_folder)
         try:
             _run_liveoutput(
-                " ".join(cmake_command), shell=True, cwd=build_folder)
+                " ".join(cmake_command),
+                shell=True,
+                cwd=build_folder,
+                output_stream=output_stream)
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
@@ -458,7 +469,8 @@ def configure_and_compile(program_folder, program_name=None):
             "cmake --build . --config %s" % (Config.get(
                 'compiler', 'build_type')),
             shell=True,
-            cwd=build_folder)
+            cwd=build_folder,
+            output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
@@ -504,7 +516,7 @@ def get_binary_name(object_name,
     return name
 
 
-def _run_liveoutput(command, **kwargs):
+def _run_liveoutput(command, output_stream=None, **kwargs):
     process = subprocess.Popen(
         command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = six.StringIO()
@@ -520,6 +532,8 @@ def _run_liveoutput(command, **kwargs):
         print(stdout.decode('utf-8'), flush=True)
         if stderr is not None:
             print(stderr.decode('utf-8'), flush=True)
+    if output_stream is not None:
+        output_stream.write(stdout.decode('utf-8'), flush=True)
     output.write(stdout.decode('utf-8'))
     if stderr is not None:
         output.write(stderr.decode('utf-8'))

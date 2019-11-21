@@ -36,7 +36,7 @@ Running
 
 **Python scripts:** Run DaCe programs (in implicit, explicit, or TensorFlow syntax) using Python directly.
 
-**DIODE interactive development (experimental):**: Either run the installed script `diode`, or call `python3 -m diode.diode_rest` from the shell. Then, follow the printed instructions to enter the web interface.
+**DIODE interactive development (experimental):**: Either run the installed script `diode`, or call `python3 -m diode.diode_server` from the shell. Then, follow the printed instructions to enter the web interface.
 
 **Octave scripts (experimental):** `.m` files can be run using the installed script `dacelab`, which will create the appropriate SDFG file.
 

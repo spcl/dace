@@ -12,12 +12,8 @@ runtime_files = [
 ]
 diode_files = [
     f[len(diode_path):]
-    for f in (glob.glob(diode_path + '**/*.js', recursive=True) +
-              glob.glob(diode_path + '**/*.css', recursive=True) +
-              glob.glob(diode_path + '**/*.html', recursive=True) +
-              glob.glob(diode_path + '**/LICENSE', recursive=True) +
-              glob.glob(diode_path + 'client/external_lib/material/*') +
-              glob.glob(diode_path + 'db_scripts/*', recursive=True))
+    for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
+              glob.glob(diode_path + '**/LICENSE', recursive=True))
 ]
 cub_files = [
     f[len(dace_path):]
@@ -54,8 +50,8 @@ setup(
     package_data={
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
-            '../diode/main.glade', 'external/moodycamel/*.h',
-            'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
+            'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
+            'codegen/Xilinx_HLS.tcl.in'
         ] + runtime_files + cub_files + diode_files + hlslib_files
     },
     include_package_data=True,
