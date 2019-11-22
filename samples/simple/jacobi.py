@@ -33,7 +33,7 @@ def jacobi(A, iterations):
             in_C << A[y, x]
             out >> tmp[y, x]
 
-            out = 0.2 * (in_C + in_N + in_S + in_W + in_E)
+            out = dace.float32(0.2) * (in_C + in_N + in_S + in_W + in_E)
 
         # Double buffering
         @dace.map(_[1:H - 1, 1:W - 1])
@@ -45,7 +45,7 @@ def jacobi(A, iterations):
             in_C << tmp[y, x]
             out >> A[y, x]
 
-            out = 0.2 * (in_C + in_N + in_S + in_W + in_E)
+            out = dace.float32(0.2) * (in_C + in_N + in_S + in_W + in_E)
 
 
 if __name__ == "__main__":

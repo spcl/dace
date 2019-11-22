@@ -211,7 +211,7 @@ class Transformation(object):
             labeling.propagate_labels_sdfg(sdfg)
 
     def __str__(self):
-        raise NotImplementedError
+        return type(self).__name__
 
     def print_match(self, sdfg):
         """ Returns a string representation of the pattern match on the 
@@ -382,8 +382,8 @@ def match_pattern(state_id,
                     state, subgraph, idx, sdfg, strict=strict)
             except Exception as e:
                 print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__, e=e))
+                      ' {e}'.format(
+                          p=pattern.__name__, c=e.__class__.__name__, e=e))
                 match_found = False
             if match_found:
                 yield pattern(
@@ -432,8 +432,8 @@ def match_stateflow_pattern(sdfg,
                                                      strict)
             except Exception as e:
                 print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__, e=e))
+                      ' {e}'.format(
+                          p=pattern.__name__, c=e.__class__.__name__, e=e))
                 match_found = False
             if match_found:
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)

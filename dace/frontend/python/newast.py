@@ -156,7 +156,7 @@ def _simple_call(sdfg: SDFG,
         restype = sdfg.arrays[inpname].dtype
     outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
                                               inparr.storage)
-    num_elements = reduce(lambda x, y: x * y, inparr.shape)                                       
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
@@ -170,7 +170,8 @@ def _simple_call(sdfg: SDFG,
         state.add_mapped_tasklet(
             name=func,
             map_ranges={
-                '__i%d' % i: '0:%s' % n for i, n in enumerate(inparr.shape)
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
             },
             inputs={
                 '__inp':
@@ -182,8 +183,8 @@ def _simple_call(sdfg: SDFG,
             outputs={
                 '__out':
                 Memlet.simple(
-                    outname, ','.join([
-                        '__i%d' % i for i in range(len(inparr.shape))]))
+                    outname,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             external_edges=True)
 
