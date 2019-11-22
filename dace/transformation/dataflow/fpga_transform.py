@@ -103,12 +103,14 @@ class FPGATransformMap(pattern_matching.Transformation):
         for array_node in in_arrays_to_clone:
             array = array_node.desc(sdfg)
             if array_node.data in cloned_arrays:
-                cloned_array = cloned_arrays[array_node.data]
+                pass
+            elif 'fpga_' + array_node.data in sdfg.arrays:
+                pass
             else:
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     'fpga_' + array_node.data,
-                    array.dtype,
-                    array.shape,
+                    dtype=array.dtype,
+                    shape=array.shape,
                     materialize_func=array.materialize_func,
                     transient=True,
                     storage=dtypes.StorageType.FPGA_Global,
@@ -117,18 +119,20 @@ class FPGATransformMap(pattern_matching.Transformation):
                     strides=array.strides,
                     offset=array.offset)
                 cloned_arrays[array_node.data] = 'fpga_' + array_node.data
-            cloned_node = type(array_node)(cloned_array)
+            cloned_node = nodes.AccessNode('fpga_' + array_node.data)
 
             in_cloned_arraynodes[array_node.data] = cloned_node
         for array_node in out_arrays_to_clone:
             array = array_node.desc(sdfg)
             if array_node.data in cloned_arrays:
-                cloned_array = cloned_arrays[array_node.data]
+                pass
+            elif 'fpga_' + array_node.data in sdfg.arrays:
+                pass
             else:
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     'fpga_' + array_node.data,
-                    array.dtype,
-                    array.shape,
+                    dtype=array.dtype,
+                    shape=array.shape,
                     materialize_func=array.materialize_func,
                     transient=True,
                     storage=dtypes.StorageType.FPGA_Global,
@@ -137,7 +141,7 @@ class FPGATransformMap(pattern_matching.Transformation):
                     strides=array.strides,
                     offset=array.offset)
                 cloned_arrays[array_node.data] = 'fpga_' + array_node.data
-            cloned_node = type(array_node)(cloned_array)
+            cloned_node = nodes.AccessNode('fpga_' + array_node.data)
 
             out_cloned_arraynodes[array_node.data] = cloned_node
 

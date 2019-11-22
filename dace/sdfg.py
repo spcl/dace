@@ -302,7 +302,7 @@ class SDFG(OrderedDiGraph):
         # Redefine symbols
         for k, v in json_obj['undefined_symbols']:
             v = dace.serialize.from_json(v)
-            symbolic.symbol(k, v.dtype)
+            symbolic.symbol(k, v.dtype, override_dtype=True)
 
         for k, v in json_obj['scalar_parameters']:
             v = dace.serialize.from_json(v)
@@ -1801,11 +1801,11 @@ subgraph cluster_state_{state} {{
 
             B{Note:} This is an in-place operation on the SDFG.
         """
-        from dace.transformation.dataflow import RedundantArray
-        from dace.transformation.interstate import StateFusion
-        from dace.transformation.interstate import InlineSDFG
+        from dace.transformation.dataflow import RedundantArray, MergeArrays
+        from dace.transformation.interstate import StateFusion, InlineSDFG
 
-        strict_transformations = (StateFusion, RedundantArray, InlineSDFG)
+        strict_transformations = (StateFusion, RedundantArray, MergeArrays,
+                                  InlineSDFG)
 
         self.apply_transformations(
             strict_transformations, validate=validate, strict=True)
@@ -1814,7 +1814,8 @@ subgraph cluster_state_{state} {{
                               patterns,
                               validate=True,
                               strict=False,
-                              states=None):
+                              states=None,
+                              apply_once=False):
         """ This function applies transformations as given in the argument
             patterns. """
         # Avoiding import loops
@@ -1836,6 +1837,8 @@ subgraph cluster_state_{state} {{
                     self.fill_scope_connectors()
                     self.validate()
                 applied = True
+                break
+            if apply_once and applied:
                 break
 
         if Config.get_bool('debugprint'):

@@ -89,9 +89,8 @@ class Range(Subset):
         if not isinstance(obj, dict):
             raise TypeError("Expected dict, got {}".format(type(obj)))
         if obj['type'] != 'Range':
-            raise TypeError(
-                "from_json of class \"Range\" called on json "
-                "with type %s (expected 'Range')" % obj['type'])
+            raise TypeError("from_json of class \"Range\" called on json "
+                            "with type %s (expected 'Range')" % obj['type'])
 
         ranges = obj['ranges']
         tuples = []
@@ -540,24 +539,19 @@ class Indices(Subset):
         self.tile_sizes = [1]
 
     def to_json(self):
-
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
                 return str(obj.expr)
             else:
                 return str(obj)
 
-        return {
-            'type': 'Indices',
-            'indices': list(map(a2s, self.indices))
-        }
+        return {'type': 'Indices', 'indices': list(map(a2s, self.indices))}
 
     @staticmethod
     def from_json(obj, context=None):
         if obj['type'] != 'Indices':
-            raise TypeError(
-                "from_json of class \"Indices\" called on json "
-                "with type %s (expected 'Indices')" % obj['type'])
+            raise TypeError("from_json of class \"Indices\" called on json "
+                            "with type %s (expected 'Indices')" % obj['type'])
 
         #return Indices(symbolic.SymExpr(obj['indices']))
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
@@ -685,6 +679,11 @@ class Indices(Subset):
 
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
+
+    def squeeze(self):
+        num_dim = len(self.indices)
+        self.indices = [0]
+        return [num_dim - 1]
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
