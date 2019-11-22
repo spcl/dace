@@ -55,6 +55,10 @@ class MergeArrays(pattern_matching.Transformation):
                for e in graph.edges_between(arr1, map)):
             return False
 
+        if (any(e.dst != map for e in graph.out_edges(arr1))
+                or any(e.dst != map for e in graph.out_edges(arr2))):
+            return False
+
         # Ensure arr1 and arr2 are the first two incoming nodes (avoid further
         # duplicates)
         all_source_nodes = set(
