@@ -2086,7 +2086,8 @@ class ProgramVisitor(ExtNodeVisitor):
         for k, v in params:
             vsp = list(v.split(':'))
             for i, (val, vid) in enumerate(zip(vsp, 'best')):
-                # Walk through expression, find functions and replace with variables
+                # Walk through expression, find functions and replace with
+                # variables
                 ctr = 0
                 repldict = {}
                 for expr in symbolic.swalk(pystr_to_symbolic(val)):
@@ -2108,9 +2109,6 @@ class ProgramVisitor(ExtNodeVisitor):
                             arr = self.variables[arr]
                         if arr not in self.sdfg.arrays:
                             rng = subsets.Range.from_string(args)
-                            # arr, rng = self._add_read_access(arr, rng, node, newvar, data.Scalar)
-                            arr = self._add_read_access(
-                                arr, rng, node, newvar, data.Scalar)
                             args = str(rng)
                         map_inputs[newvar] = Memlet.simple(arr, args)
                         # ','.join([str(a) for a in expr.args]))
@@ -2192,12 +2190,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse map inputs (for memory-based ranges)
         if map_inputs is not None:
             for conn, memlet in map_inputs.items():
-                read_node = state.add_read(memlet.data)
-                if _subset_has_indirection(memlet.subset):
-                    add_indirection_subgraph(self.sdfg, state, read_node,
-                                             entry_node, memlet, conn, self)
-                    continue
+                new_name = self._add_read_access(memlet.data, memlet.subset,
+                                                 None)
 
+                read_node = state.add_read(new_name)
+                memlet = Memlet.from_array(new_name,
+                                           self.sdfg.arrays[new_name])
                 entry_node.add_in_connector(conn)
                 state.add_edge(read_node, None, entry_node, conn, memlet)
 
