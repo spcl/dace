@@ -708,9 +708,13 @@ def propagate_memlet(dfg_state,
         return EmptyMemlet()
 
     sdfg = dfg_state.parent
+    scope_node_symbols = set(
+        conn for conn in scope_node.in_connectors
+        if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
         for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
+        if s not in scope_node_symbols
     ]
 
     # Find other adjacent edges within the connected to the scope node
@@ -791,9 +795,10 @@ def propagate_memlet(dfg_state,
         sum(m.num_accesses for m in aggdata) * functools.reduce(
             lambda a, b: a * b, scope_node.map.range.size(), 1))
     if any(m.num_accesses == -1 for m in aggdata):
-        memlet.num_accesses = -1
-    elif symbolic.issymbolic(memlet.num_accesses) and any(
-            s not in defined_vars for s in memlet.num_accesses.free_symbols):
-        memlet.num_accesses = -1
+        new_memlet.num_accesses = -1
+    elif symbolic.issymbolic(new_memlet.num_accesses) and any(
+            s not in defined_vars
+            for s in new_memlet.num_accesses.free_symbols):
+        new_memlet.num_accesses = -1
 
     return new_memlet
