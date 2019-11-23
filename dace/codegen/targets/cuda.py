@@ -1242,6 +1242,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        kernel_stream.write('{', sdfg, state_id, node)
+
         if not node.map.flatten:
             # Add more opening braces for scope exit to close
             for dim in range(len(node.map.range) - 1):

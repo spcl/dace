@@ -1529,6 +1529,7 @@ class CPUCodeGen(TargetCodeGenerator):
         map_header = ""
 
         # Encapsulate map with a C scope
+        # TODO: Refactor out of MapEntry generation (generate_scope_header?)
         callsite_stream.write('{', sdfg, state_id, node)
 
         # Define all input connectors of this map entry
