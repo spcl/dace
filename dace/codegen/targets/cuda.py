@@ -1407,6 +1407,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         scope_map = scope_entry.map
         next_scopes = self.get_next_scope_entries(dfg, scope_entry)
 
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        callsite_stream.write('{', sdfg, state_id, scope_entry)
+
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if len(scope_map.params) > 1:
                 raise ValueError('Only one-dimensional maps are supported for '
