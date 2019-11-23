@@ -2190,12 +2190,15 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse map inputs (for memory-based ranges)
         if map_inputs is not None:
             for conn, memlet in map_inputs.items():
-                new_name = self._add_read_access(memlet.data, memlet.subset,
-                                                 None)
+                if self.nested:
+                    new_name = self._add_read_access(memlet.data,
+                                                     memlet.subset, None)
+                    memlet = Memlet.from_array(new_name,
+                                               self.sdfg.arrays[new_name])
+                else:
+                    new_name = memlet.data
 
                 read_node = state.add_read(new_name)
-                memlet = Memlet.from_array(new_name,
-                                           self.sdfg.arrays[new_name])
                 entry_node.add_in_connector(conn)
                 state.add_edge(read_node, None, entry_node, conn, memlet)
 
