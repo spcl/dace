@@ -22,17 +22,17 @@ class TransformationTester(Optimizer):
                  halt_on_exception=False):
         """ Creates a new Transformation tester, which brute-forces applying the
             available transformations up to a certain level.
-            @param sdfg: The SDFG to transform.
-            @param depth: The number of levels to run transformations. For
+            :param sdfg: The SDFG to transform.
+            :param depth: The number of levels to run transformations. For
                           instance, depth=1 means to only run immediate
                           transformations, whereas depth=2 would run
                           transformations resulting from those transformations.
-            @param validate: If True, the SDFG is validated after applying.
-            @param generate_code: If True, the SDFG will generate code after
+            :param validate: If True, the SDFG is validated after applying.
+            :param generate_code: If True, the SDFG will generate code after
                                   transformation.
-            @param compile: If True, the SDFG will be compiled after applying.
-            @param print_exception: If True, prints exception when it is raised.
-            @param halt_on_exception: If True, stops when a transformation
+            :param compile: If True, the SDFG will be compiled after applying.
+            :param print_exception: If True, prints exception when it is raised.
+            :param halt_on_exception: If True, stops when a transformation
                                       raises an exception.
         """
         super().__init__(sdfg)

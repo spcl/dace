@@ -175,9 +175,9 @@ class Range(Subset):
 
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
 
-            @param i: A tuple of the same dimensionality as subset.dims() or
+            :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            @return: Absolute coordinates for index i (length equal to
+            :return: Absolute coordinates for index i (length equal to
                      `data_dims()`, may be larger than `dims()`).
         """
         tiles = sum(1 if ts != 1 else 0 for ts in self.tile_sizes)
@@ -201,12 +201,12 @@ class Range(Subset):
 
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
 
-            @param i: A tuple of the same dimensionality as subset.dims() or
+            :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            @param global_shape: The full size of the set that we are
+            :param global_shape: The full size of the set that we are
                                  subsetting (e.g., full array strides/padded
                                  shape).
-            @return: Absolute 1D index at coordinate i.
+            :return: Absolute 1D index at coordinate i.
         """
         coord = self.coord_at(i)
 
@@ -269,7 +269,7 @@ class Range(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
-            @param order: List or tuple of integers from 0 to self.dims() - 1,
+            :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_ranges = [self.ranges[o] for o in order]
@@ -597,8 +597,8 @@ class Indices(Subset):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            @param i: A tuple of the same dimensionality as subset.dims().
-            @return: Absolute coordinates for index i.
+            :param i: A tuple of the same dimensionality as subset.dims().
+            :return: Absolute coordinates for index i.
         """
         if len(i) != len(self.indices):
             raise ValueError('Invalid dimensionality of input tuple (expected'
@@ -612,11 +612,11 @@ class Indices(Subset):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
-            @param i: A tuple of the same dimensionality as subset.dims().
-            @param global_shape: The full size of the set that we are
+            :param i: A tuple of the same dimensionality as subset.dims().
+            :param global_shape: The full size of the set that we are
                                  subsetting (e.g., full array strides/padded
                                  shape).
-            @return: Absolute 1D index at coordinate i.
+            :return: Absolute 1D index at coordinate i.
         """
         coord = self.coord_at(i)
 
@@ -665,7 +665,7 @@ class Indices(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
-            @param order: List or tuple of integers from 0 to self.dims() - 1,
+            :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_indices = [self.indices[o] for o in order]
@@ -706,9 +706,9 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
         union.
-        @param subset_a: The first subset.
-        @param subset_b: The second subset.
-        @return: A Subset object whose size is at least the union of the two
+        :param subset_a: The first subset.
+        :param subset_b: The second subset.
+        :return: A Subset object whose size is at least the union of the two
                  inputs. If union failed, returns None.
     """
     try:

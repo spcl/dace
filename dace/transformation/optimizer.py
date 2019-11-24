@@ -24,8 +24,8 @@ class Optimizer(object):
 
     def __init__(self, sdfg, inplace=False):
         """ Constructs an SDFG optimizer.
-            @param sdfg: The SDFG to transform.
-            @param inplace: If True, performs transformations on the given SDFG
+            :param sdfg: The SDFG to transform.
+            :param inplace: If True, performs transformations on the given SDFG
                             in-place. Uses a copy of the SDFG otherwise, and
                             stores it as `self.sdfg`.
         """
@@ -50,16 +50,16 @@ class Optimizer(object):
                             patterns=None,
                             sdfg=None):
         """ Returns all possible transformations for the current SDFG.
-            @param strict: Only consider strict transformations (i.e., ones
+            :param strict: Only consider strict transformations (i.e., ones
                            that surely increase performance or enhance
                            readability)
-            @param states: An iterable of SDFG states to consider when pattern
+            :param states: An iterable of SDFG states to consider when pattern
                            matching. If None, considers all.
-            @param patterns: An iterable of transformation classes to consider
+            :param patterns: An iterable of transformation classes to consider
                              when matching. If None, considers all registered
                              transformations in `Transformation`.
-            @param sdfg: If not None, searches for patterns on given SDFG.
-            @return: List of matching `Transformation` objects.
+            :param sdfg: If not None, searches for patterns on given SDFG.
+            :return: List of matching `Transformation` objects.
             @see: Transformation
         """
         sdfg = sdfg or self.sdfg
@@ -145,8 +145,8 @@ def _parse_cli_input(line):
             * 4(array='A')       - Transformation number 4 with one parameter
             * StripMining$1(param='i', tile_size=64) - Strip mining #2 with
                                                        parameters
-        @param line: Input line string
-        @return: A tuple with (transformation name or None if not given,
+        :param line: Input line string
+        :return: A tuple with (transformation name or None if not given,
                                       occurrence or -1 if not given,
                                       parameter dictionary or {} if not given)
     """
@@ -194,7 +194,7 @@ def _parse_cli_input(line):
 class SDFGOptimizer(Optimizer):
     def optimize(self):
         """ A command-line UI for applying patterns on the SDFG.
-            @return: An optimized SDFG object
+            :return: An optimized SDFG object
         """
         sdfg_file = self.sdfg.name + '.sdfg'
         if os.path.isfile(sdfg_file):

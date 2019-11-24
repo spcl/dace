@@ -45,31 +45,31 @@ class Memlet(object):
                  debuginfo=None,
                  wcr_conflict=True):
         """ Constructs a Memlet.
-            @param data: The data object or name to access. B{Note:} this
+            :param data: The data object or name to access. B{Note:} this
                          parameter will soon be deprecated.
             @type data: Either a string of the data descriptor name or an
                         AccessNode.
-            @param num_accesses: The number of times that the moved data
+            :param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
                                  `dace.dtypes.DYNAMIC` (-1),
                                  designates that the number of accesses is
                                  unknown at compile time.
-            @param subset: The subset of `data` that is going to be accessed.
-            @param vector_length: The length of a single unit of access to
+            :param subset: The subset of `data` that is going to be accessed.
+            :param vector_length: The length of a single unit of access to
                                   the data (used for vectorization
                                   optimizations).
-            @param wcr: A lambda function specifying how write-conflicts
+            :param wcr: A lambda function specifying how write-conflicts
                         are resolved. The syntax of the lambda function receives two elements: `current` value and `new` value,
                         and returns the value after resolution. For example,
                         summation is `lambda cur, new: cur + new`.
-            @param wcr_identity: Identity value used for the first write
+            :param wcr_identity: Identity value used for the first write
                                  conflict. B{Note:} this parameter will soon
                                  be deprecated.
-            @param other_subset: The reindexing of `subset` on the other
+            :param other_subset: The reindexing of `subset` on the other
                                  connected data.
-            @param debuginfo: Source-code information (e.g., line, file)
+            :param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
-            @param wcr_conflict: If False, forces non-locked conflict
+            :param wcr_conflict: If False, forces non-locked conflict
                                  resolution when generating code. The default
                                  is to let the code generator infer this
                                  information from the SDFG.
@@ -123,36 +123,36 @@ class Memlet(object):
                num_accesses=None,
                debuginfo=None):
         """ Constructs a Memlet from string-based expressions.
-            @param data: The data object or name to access. B{Note:} this
+            :param data: The data object or name to access. B{Note:} this
                          parameter will soon be deprecated.
             @type data: Either a string of the data descriptor name or an
                         AccessNode.
-            @param subset_str: The subset of `data` that is going to
+            :param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
-            @param veclen: The length of a single unit of access to
+            :param veclen: The length of a single unit of access to
                            the data (used for vectorization optimizations).
-            @param wcr_str: A lambda function (as a string) specifying
+            :param wcr_str: A lambda function (as a string) specifying
                             how write-conflicts are resolved. The syntax
                             of the lambda function receives two elements:
                             `current` value and `new` value,
                             and returns the value after resolution. For
                             example, summation is
                             `'lambda cur, new: cur + new'`.
-            @param wcr_identity: Identity value used for the first write
+            :param wcr_identity: Identity value used for the first write
                                  conflict. B{Note:} this parameter will soon
                                  be deprecated.
-            @param other_subset_str: The reindexing of `subset` on the other
+            :param other_subset_str: The reindexing of `subset` on the other
                                      connected data (as a string).
-            @param wcr_conflict: If False, forces non-locked conflict
+            :param wcr_conflict: If False, forces non-locked conflict
                                  resolution when generating code. The default
                                  is to let the code generator infer this
                                  information from the SDFG.
-            @param num_accesses: The number of times that the moved data
+            :param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
                                  `dace.dtypes.DYNAMIC` (-1),
                                  designates that the number of accesses is
                                  unknown at compile time.
-            @param debuginfo: Source-code information (e.g., line, file)
+            :param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
 
         """
@@ -190,8 +190,8 @@ class Memlet(object):
     @staticmethod
     def from_array(dataname, datadesc):
         """ Constructs a Memlet that transfers an entire array's contents.
-            @param dataname: The name of the data descriptor in the SDFG.
-            @param datadesc: The data descriptor object.
+            :param dataname: The name of the data descriptor in the SDFG.
+            :param datadesc: The data descriptor object.
             @type datadesc: Data.
         """
         range = subsets.Range.from_array(datadesc)
@@ -229,8 +229,8 @@ class Memlet(object):
         """ Returns a string representation of the memlet for display in a
             graph.
 
-            @param sdfg: The SDFG in which the memlet resides.
-            @param state: An SDFGState object in which the memlet resides.
+            :param sdfg: The SDFG in which the memlet resides.
+            :param state: An SDFGState object in which the memlet resides.
         """
         if self.data is None:
             return self._label(None)

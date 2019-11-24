@@ -2,7 +2,7 @@
 """
 
 from dace.graph import nodes, nxutil
-from dace.properties import ShapeProperty
+from dace.properties import ShapeProperty, make_properties
 from dace.transformation import pattern_matching as pm
 
 
@@ -13,7 +13,7 @@ class MapDimInterchange(pm.Transformation):
         Map-dimension-interchange re-orders the dimensions of a map.
     """
 
-    _map_entry = nodes.MapEntry(None)
+    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
     order = ShapeProperty()
 

@@ -54,7 +54,7 @@ class NestSDFG(pattern_matching.Transformation):
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
                         and not node.desc(nested_sdfg).transient):
-                    if (state.out_degree(node) > 0):      # input node
+                    if (state.out_degree(node) > 0):  # input node
                         arrname = node.data
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
@@ -62,7 +62,7 @@ class NestSDFG(pattern_matching.Transformation):
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             inputs[arrname] = arrname + '_in'
                         node_data_name = arrname + '_in'
-                    if (state.in_degree(node) > 0): # output node
+                    if (state.in_degree(node) > 0):  # output node
                         arrname = node.data
                         if arrname not in outputs:
                             arrobj = nested_sdfg.arrays[arrname]
@@ -103,15 +103,15 @@ class NestSDFG(pattern_matching.Transformation):
                 src = state.memlet_path(edge)[0].src
                 dst = state.memlet_path(edge)[-1].dst
                 if isinstance(src, nodes.AccessNode):
-                    if (mem.data in inputs.keys() and
-                            src.data == inputs[mem.data]):
+                    if (mem.data in inputs.keys()
+                            and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
-                    elif (mem.data in outputs.keys() and
-                          src.data == outputs[mem.data]):
+                    elif (mem.data in outputs.keys()
+                          and src.data == outputs[mem.data]):
                         mem.data = outputs[mem.data]
-                elif (isinstance(dst, nodes.AccessNode) and
-                      mem.data in outputs.keys() and
-                      dst.data == outputs[mem.data]):
+                elif (isinstance(dst, nodes.AccessNode)
+                      and mem.data in outputs.keys()
+                      and dst.data == outputs[mem.data]):
                     mem.data = outputs[mem.data]
 
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
@@ -161,10 +161,10 @@ class InlineSDFG(pattern_matching.Transformation):
     def _modify_memlet(self, internal_memlet: Memlet, external_memlet: Memlet):
         """ Unsqueezes and offsets a memlet, as per the semantics of nested
             SDFGs.
-            @param internal_memlet: The internal memlet (inside nested SDFG)
+            :param internal_memlet: The internal memlet (inside nested SDFG)
                                     before modification.
-            @param internal_memlet: The external memlet before modification.
-            @return: Offset Memlet to set on the resulting graph.
+            :param internal_memlet: The external memlet before modification.
+            :return: Offset Memlet to set on the resulting graph.
         """
         result = dc(internal_memlet)
         result.data = external_memlet.data

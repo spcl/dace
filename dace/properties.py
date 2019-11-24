@@ -474,12 +474,12 @@ class ListProperty(Property):
     def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
-        @param element_type: The type of each element in the list, or a function
+        :param element_type: The type of each element in the list, or a function
                              that converts an element to the wanted type (e.g.,
                              `dace.symbolic.pystr_to_symbolic` for symbolic
                              expressions)
-        @param args: Other arguments (inherited from Property).
-        @param kwargs: Other keyword arguments (inherited from Property).
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
         """
 
         kwargs['dtype'] = list
