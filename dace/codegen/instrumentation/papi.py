@@ -38,13 +38,13 @@ def sym2cpp(s):
 def cpp_offset_expr(d, subset_in, offset=None, packed_veclen=1):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
-        @param d: The data structure to use for sizes/strides.
-        @param subset: The subset to offset by.
-        @param offset: An additional list of offsets or a Subset object
-        @param packed_veclen: If packed types are targeted, specifies the
+        :param d: The data structure to use for sizes/strides.
+        :param subset: The subset to offset by.
+        :param offset: An additional list of offsets or a Subset object
+        :param packed_veclen: If packed types are targeted, specifies the
                               vector length that the final offset should be
                               divided by.
-        @return: A string in C++ syntax with the correct offset
+        :return: A string in C++ syntax with the correct offset
     """
     subset = copy.deepcopy(subset_in)
 
@@ -2849,7 +2849,8 @@ VALUES
             totstr = '{ "type": "PerfInfo", "payload": [' + ", ".join(
                 [
                     '{"runopts": "%s", "data": [%s]}' % (o, ", ".join(
-                        [x.to_json() for x in r_supersections if x.is_valid()]))
+                        [x.to_json() for x in r_supersections
+                         if x.is_valid()]))
                     for o, r_supersections in multirun_supersections
                 ]
             ) + '], "overhead_percentage": %s, "mode": "%s", "default_depth": %d %s}' % (

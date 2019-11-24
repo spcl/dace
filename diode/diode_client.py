@@ -14,7 +14,10 @@ if __name__ == '__main__':
         help="Connect to Server IP. Default is localhost.")
 
     parser.add_argument(
-        "-p", "--port", default="5000", help="Set server port. Default is 5000")
+        "-p",
+        "--port",
+        default="5000",
+        help="Set server port. Default is 5000")
 
     parser.add_argument(
         "-compile",
@@ -149,7 +152,8 @@ if __name__ == '__main__':
             try:
                 response = requests.post(uri, json=data)
             except Exception as e:
-                print("Failed to request url '" + uri + "' with error " + str(e))
+                print("Failed to request url '" + uri + "' with error " +
+                      str(e))
                 import time
                 time.sleep(2)
                 continue
@@ -244,8 +248,8 @@ if __name__ == '__main__':
                     # Output available transformations
                     sys.stdout.write('"simple_transform":')
                     sys.stdout.write("{")
-                    get_transformations(resp_json,
-                                        lambda a, b, c: sys.stdout.write(b + '\n'))
+                    get_transformations(
+                        resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
                     sys.stdout.write("}")
                     if "txform" != args.extract[-1]: sys.stdout.write(',')
                 if "txform_detail" == elem:
@@ -254,7 +258,8 @@ if __name__ == '__main__':
                     sys.stdout.write("{")
                     get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
                     sys.stdout.write("}")
-                    if "txform_detail" != args.extract[-1]: sys.stdout.write(',')
+                    if "txform_detail" != args.extract[-1]:
+                        sys.stdout.write(',')
                 if "structure" == elem:
                     # Remove values; only output skeleton structure (i.e. only true tree nodes, no leafs)
                     sys.stdout.write('"structure":')

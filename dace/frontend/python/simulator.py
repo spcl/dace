@@ -15,8 +15,8 @@ from dace.frontend.python.parser import DaceProgram
 
 def simulate(dace_program: DaceProgram, *args):
     """ Simulate a DaCe program using Python. 
-        @param dace_program: A program function annotated with `@dace.program`.
-        @param *args: Program arguments to pass.
+        :param dace_program: A program function annotated with `@dace.program`.
+        :param *args: Program arguments to pass.
     """
     pdp, modules = dace_program.generate_pdp()
 
