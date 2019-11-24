@@ -158,6 +158,12 @@ class Property:
         self._indirected = indirected
         self._desc = desc
         self._category = category
+        if desc is not None and len(desc) > 0:
+            self.__doc__ = desc
+        elif self.dtype is not None:
+            self.__doc__ = "Object property of type %s" % self.dtype.__name__
+        else:
+            self.__doc__ = "Object property of type %s" % type(self).__name__
 
     def __get__(self, obj, objtype=None):
         if obj is None:
