@@ -8,9 +8,12 @@ from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
-
-inp_shape = [10, 10, 10, 10]
-filters = [[3,3,10,1]]
+K = 1
+C = 2
+R = 2
+S = 1
+inp_shape = [1, 2, 1, 1]
+filters = [[R, S, K, C]]
 strides = [[1, 1, 1, 1]]
 dilations = [[1, 1, 1, 1]]
 paddings = ["VALID"]
@@ -23,36 +26,50 @@ for p in paddings:
                 filter = tf.placeholder(tf.float32, f)
                 outp = tf.nn.conv2d(inp, filter, s, padding=p, data_format="NHWC", dilations=dilations[0])
 
-                test_in = np.random.uniform(size=tuple(inp_shape)).astype(np.float32)
-                test_filter = np.random.uniform(size=tuple(f)).astype(np.float32)
-
-                config = tf.ConfigProto(device_count={'GPU':0})
+                #test_in = np.array([[[[1],[0],[0],[0],[1]],
+                #            [[0],[1],[0],[0],[0]],
+                #            [[0],[0],[1],[0],[0]],
+                #            [[0],[0],[0],[1],[0]],
+                #            [[0],[0],[0],[0],[1]]]]).astype(np.float32)
+                #test_in = np.full(shape=inp_shape, fill_value=2, dtype=np.float32)
+                #test_filter = np.random.uniform(size=tuple(f)).astype(np.float32)
+                #test_filter = np.array([[[[1, 1]]],
+                #                        [[[0, 1]]]]).astype(np.float32)
+                #test_filter3 = np.array([[[[1],[1]],
+                #                          [[-1],[1]]]]).astype(np.float32)                     
+                #print(test_filter.shape)
+                
+                test_in = np.random.uniform(size=tuple(inp_shape)).astype(np.float32)*10
+                test_filter = np.full(shape=f, fill_value=np.random.uniform()*10, dtype=np.float32)
+                
+                config = tf.ConfigProto()
                 config.gpu_options.allow_growth = True
 
                 sess_dace = TFSession()
                 sess_tf = tf.Session(config=config)
-                
+
+
                 output_dace = sess_dace.run(
                     outp, feed_dict={
                         inp: test_in,
-                        filter: test_filter
+                        filter: test_filter3
                     }, gpu=True)
+
                 output_tf = sess_tf.run(outp, feed_dict={inp: test_in, filter: test_filter})
                 
-                #from scipy import ndimage
-                #print(ndimage.correlate(test_in, test_filter, mode='constant', cval=0)); 
-                
                 try:
-                    assert tf.norm(output_dace - output_tf).eval(session=sess_tf) < 1e-2
+                    assert tf.norm(output_dace - output_tf).eval(session=sess_tf) < 1e-10
                     print('\nConvolution test passed\n')
                 except:
+                    print('filter: ', test_filter)
+                    print('filter3: ', test_filter3)
                     print('tf ', output_tf)
                     print('dace ', output_dace)
                     print(tf.linalg.norm(output_tf - output_dace).eval(session=sess_tf))
                     print(output_tf - output_dace)
                     raise AssertionError("Convolution test failed")
 
-
+                exit()
 ##### Conv backprop grad ######
 #inp_shape = [10, 10, 10, 10]
 #filters = [[2, 2, 10, 3]]

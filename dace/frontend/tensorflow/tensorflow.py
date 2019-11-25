@@ -2002,7 +2002,9 @@ class TFSession:
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
-
+            
+            print(filter, filter_params, filter_dims)
+            
             image_dims = image.desc(self.graph).shape
             filter_dims = filter.desc(self.graph).shape
             output_dims = output.desc(self.graph).shape
@@ -2043,7 +2045,7 @@ class TFSession:
                          printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
                        }}                                                     \\
                      }}
-
+                     
                      cudnnTensorDescriptor_t xDesc;
                      checkCUDNN(cudnnCreateTensorDescriptor(&xDesc));
                      checkCUDNN(cudnnSetTensor4dDescriptor(xDesc,
@@ -2058,7 +2060,7 @@ class TFSession:
                      cudnnCreateFilterDescriptor(&fDesc);
                      checkCUDNN(cudnnSetFilter4dDescriptor(fDesc,
                                                 /*dataType=*/CUDNN_DATA_FLOAT,
-                                                /*format=*/CUDNN_TENSOR_{format},
+                                                /*format=*/CUDNN_TENSOR_NCHW,
                                                 /*out_channels=*/{K},
                                                 /*in_channels=*/{C},
                                                 /*kernel_height=*/{R},
@@ -2081,7 +2083,7 @@ class TFSession:
                      int yw = 0;
                      checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, xDesc, fDesc, 
                                                                       &yn, &yc, &yh, &yw));
-                     
+                                                                      
                      cudnnTensorDescriptor_t yDesc;
                      cudnnCreateTensorDescriptor(&yDesc);
                      checkCUDNN(cudnnSetTensor4dDescriptor(yDesc,
