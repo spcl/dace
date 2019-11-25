@@ -70,9 +70,9 @@ if __name__ == '__main__':
     out = np.zeros(shape=1, dtype=np.float32)
     sdfg(A=A, B=B, out=out)
 
-    diff = np.sum(A * A + B) - out
+    diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
-    if diff > 1e-4:
+    if diff > 1e-3:
         exit(1)
 
     # Second test

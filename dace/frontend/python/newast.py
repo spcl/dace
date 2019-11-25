@@ -156,7 +156,7 @@ def _simple_call(sdfg: SDFG,
         restype = sdfg.arrays[inpname].dtype
     outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
                                               inparr.storage)
-    num_elements = reduce(lambda x, y: x * y, inparr.shape)                                       
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
@@ -170,7 +170,8 @@ def _simple_call(sdfg: SDFG,
         state.add_mapped_tasklet(
             name=func,
             map_ranges={
-                '__i%d' % i: '0:%s' % n for i, n in enumerate(inparr.shape)
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
             },
             inputs={
                 '__inp':
@@ -182,8 +183,8 @@ def _simple_call(sdfg: SDFG,
             outputs={
                 '__out':
                 Memlet.simple(
-                    outname, ','.join([
-                        '__i%d' % i for i in range(len(inparr.shape))]))
+                    outname,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             external_edges=True)
 
@@ -592,18 +593,18 @@ def until(val, substr):
 def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
                        constants):
     """ Parses a `@dace.program` function into a _ProgramNode object.
-        @param f: A Python function to parse.
-        @param argtypes: An dictionary of (name, type) for the given
+        :param f: A Python function to parse.
+        :param argtypes: An dictionary of (name, type) for the given
                          function's arguments, which may pertain to data
                          nodes or symbols (scalars).
-        @param global_vars: A dictionary of global variables in the closure
+        :param global_vars: A dictionary of global variables in the closure
                             of `f`.
-        @param modules: A dictionary from an imported module name to the
+        :param modules: A dictionary from an imported module name to the
                         module itself.
-        @param other_sdfgs: Other SDFG and DaceProgram objects in the context
+        :param other_sdfgs: Other SDFG and DaceProgram objects in the context
                             of this function.
-        @param constants: A dictionary from a name to a constant value.
-        @return: Hierarchical tree of `astnodes._Node` objects, where the top
+        :param constants: A dictionary from a name to a constant value.
+        :return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
         @rtype: SDFG
     """
@@ -782,10 +783,10 @@ def _pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any],
                         expr_ast: ast.AST):
     """ Converts a Python AST expression to a DaCe symbolic expression
         with error checks (raises `SyntaxError` on failure).
-        @param defined_arrays_and_symbols: Defined arrays and symbols
+        :param defined_arrays_and_symbols: Defined arrays and symbols
                in the context of this expression.
-        @param expr_ast: The Python AST expression to convert.
-        @return: Symbolic expression.
+        :param expr_ast: The Python AST expression to convert.
+        :return: Symbolic expression.
     """
     # TODO!
     return _inner_eval_ast(defined_arrays_and_symbols, expr_ast)
@@ -1298,8 +1299,8 @@ class TaskletTransformer(ExtNodeTransformer):
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str],
                                 str] = dict()):
         """ Creates an AST parser for tasklets. 
-            @param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
-            @param state: The SDFG state to add the tasklet to.
+            :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
+            :param state: The SDFG state to add the tasklet to.
         """
         self.sdfg = sdfg
         self.state = state
@@ -1334,8 +1335,8 @@ class TaskletTransformer(ExtNodeTransformer):
 
     def parse_tasklet(self, tasklet_ast: TaskletType):
         """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets. 
-            @param tasklet_ast: The Tasklet's Python AST to parse.
-            @return: 3-tuple of (Tasklet node, input memlets, output memlets).
+            :param tasklet_ast: The Tasklet's Python AST to parse.
+            :return: 3-tuple of (Tasklet node, input memlets, output memlets).
             @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
         """
         # Should return a tasklet object (with connectors)
@@ -1771,8 +1772,8 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Returns a list of parameters, either from the function parameters
             and decorator arguments or parameters and their annotations (type
             hints).
-            @param node: The given function definition node.
-            @return: A list of 2-tuples (name, value).
+            :param node: The given function definition node.
+            :return: A list of 2-tuples (name, value).
         """
         # If the arguments are defined in the decorator
         dec = node.decorator_list[0]
@@ -2077,7 +2078,7 @@ class ProgramVisitor(ExtNodeVisitor):
             node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
             parameter dictionary and returning relevant memlets.
-            @return: A 2-tuple of (parameter dictionary, mapping from connector
+            :return: A 2-tuple of (parameter dictionary, mapping from connector
                      name to memlet).
         """
         new_params = []
@@ -2126,7 +2127,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_consume_inputs(self, node: ast.FunctionDef
                               ) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
-            @return: A 5-tuple of Stream name, internal stream name,
+            :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
         """
 

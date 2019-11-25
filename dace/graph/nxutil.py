@@ -28,8 +28,8 @@ def node_path_graph(*args):
         Subsequently, it creates a path passing through all the nodes, in
         the same order as they were given in the function input.
 
-        @param *args: Variable number of nodes or a list of nodes.
-        @return: A directed graph based on the input arguments.
+        :param *args: Variable number of nodes or a list of nodes.
+        :return: A directed graph based on the input arguments.
         @rtype: gr.OrderedDiGraph
     """
 
@@ -110,11 +110,11 @@ def dfs_topological_sort(G, sources=None, parent=False, condition=None):
     that each node visited had all its predecessors visited. Applies
     for DAGs only.
 
-    @param G: An input DiGraph (assumed acyclic).
-    @param sources: (optional) node or list of nodes that
+    :param G: An input DiGraph (assumed acyclic).
+    :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
-    @return: A generator of edges in the lastvisit depth-first-search.
+    :return: A generator of edges in the lastvisit depth-first-search.
 
     @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
@@ -218,11 +218,11 @@ def bfs_conditional(G, source, condition):
 def traverse_sdfg_scope(G, source, yield_edges=True):
     """ Traverse an SDFG scope (nodes dominated by a ScopeEntry and 
         post-dominated by a ScopeExit). 
-        @param G: Input graph (assumed SDFGState).
-        @param source: Source node.
-        @param yield_edges: If True, returned generator yields edges
+        :param G: Input graph (assumed SDFGState).
+        :param source: Source node.
+        :param yield_edges: If True, returned generator yields edges
                             as well as nodes.
-        @return: A generator that iterates over the scope nodes (or edges).
+        :return: A generator that iterates over the scope nodes (or edges).
     """
 
     if not isinstance(source, nodes.EntryNode):
@@ -426,10 +426,10 @@ def change_edge_dest(
         Afterwards, it deletes the edges found and inserts the new ones into 
         the graph.
 
-        @param graph: The graph upon which the edge transformations will be 
+        :param graph: The graph upon which the edge transformations will be
                       applied.  
-        @param node_a: The original destination of the edges.  
-        @param node_b: The new destination of the edges to be transformed. 
+        :param node_a: The original destination of the edges.
+        :param node_b: The new destination of the edges to be transformed.
     """
 
     # Create new incoming edges to node B, by copying the incoming edges to
@@ -470,10 +470,10 @@ def change_edge_src(
         deletes the edges
         found and inserts the new ones into the graph.
 
-        @param graph: The graph upon which the edge transformations will be 
+        :param graph: The graph upon which the edge transformations will be
                       applied.
-        @param node_a: The original source of the edges to be transformed.
-        @param node_b: The new source of the edges to be transformed.
+        :param node_a: The original source of the edges to be transformed.
+        :param node_b: The new source of the edges to be transformed.
     """
 
     # Create new outgoing edges from node B, by copying the outgoing edges from
@@ -506,8 +506,8 @@ def find_source_nodes(graph):
         The function finds the source nodes of a graph, i.e. the nodes with 
         zero in-degree.
 
-        @param graph: The graph whose source nodes are being searched for.
-        @return: A list of the source nodes found.
+        :param graph: The graph whose source nodes are being searched for.
+        :return: A list of the source nodes found.
     """
     return [n for n in graph.nodes() if graph.in_degree(n) == 0]
 
@@ -517,8 +517,8 @@ def find_sink_nodes(graph):
 
         The function finds the sink nodes of a graph, i.e. the nodes with zero out-degree.
 
-        @param graph: The graph whose sink nodes are being searched for.
-        @return: A list of the sink nodes found.
+        :param graph: The graph whose sink nodes are being searched for.
+        :return: A list of the sink nodes found.
     """
     return [n for n in graph.nodes() if graph.out_degree(n) == 0]
 
@@ -537,11 +537,11 @@ def replace_subgraph(graph: dace.graph.graph.OrderedDiGraph,
         the 'old subgraph have their source changed to the sink of the 'new' 
         subgraph.
 
-        @param graph: The graph upon which the replacement will be applied.
-        @param old: The subgraph to be replaced.
-        @param new: The replacement subgraph.
+        :param graph: The graph upon which the replacement will be applied.
+        :param old: The subgraph to be replaced.
+        :param new: The replacement subgraph.
 
-        @return: True if the replacement succeeded, otherwise False.
+        :return: True if the replacement succeeded, otherwise False.
     """
 
     # 1. Find the source node of 'old' subgraph.
