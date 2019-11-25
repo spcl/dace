@@ -503,10 +503,19 @@ class TFSession:
             ############################
             # Compile the SDFG
             if gpu:
-                #from dace.transformation.interstate import GPUTransformSDFG
-                #self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
+
+                from dace.transformation.interstate import GPUTransformSDFG
+                self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
                 
-                self.graph.apply_gpu_transformations()
+                #Do not transform cuDNN tasklets
+                for state in self.graph.nodes():
+                    for node in state.nodes():
+                        if node.label in ['Conv2D_gmap', 
+                                          'Conv2DBackpropInput_gmap', 
+                                          'Conv2DBackpropFilter_gmap']:
+                            node.map.schedule = dace.ScheduleType.Sequential
+                
+                #self.graph.apply_gpu_transformations()
                 for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
@@ -2003,7 +2012,6 @@ class TFSession:
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
             
-            print(filter, filter_params, filter_dims)
             
             image_dims = image.desc(self.graph).shape
             filter_dims = filter.desc(self.graph).shape
@@ -2022,21 +2030,12 @@ class TFSession:
                 padh = explicit_paddings[2]
                 padh = explicit_paddings[4]
 
-            gpu_out_name = 'gpu_out_' + output.label
-            gpu_img_name = 'gpu_img_' + image.label
-            gpu_fil_name = 'gpu_fil_' + filter.label
-
-            self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_out = state.add_access(gpu_out_name)
-            self.graph.add_transient(gpu_img_name, image_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_img = state.add_access(gpu_img_name)
-            self.graph.add_transient(gpu_fil_name, filter_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_fil = state.add_access(gpu_fil_name)
             tasklet = state.add_tasklet(
                 name= string_builder(node.type),
                 inputs={'x', 'f'},
                 outputs={'y'},
                 code='''
+                     
                      cudnnSetStream(cudnn_handle, __dace_current_stream);
                      #define checkCUDNN(expression)                           \\
                      {{                                                       \\
@@ -2117,7 +2116,6 @@ class TFSession:
                      void* workSpace{{nullptr}};
                      cudaMalloc(&workSpace, workSpaceSizeInBytes);
 
-
                      float alpha = 1.0, beta = 0.0;
                      checkCUDNN(cudnnConvolutionForward(cudnn_handle, &alpha, xDesc, x,
                                              fDesc, f,
@@ -2126,7 +2124,7 @@ class TFSession:
                                              &beta,
                                              yDesc, y));
                 '''.format(format="NHWC", N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
-                    vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
+                           vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
                 language=dace.Language.CPP,
                 location="gpu"
             )
@@ -2140,20 +2138,13 @@ class TFSession:
                 tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
                 tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
             
-            '''
-            state.add_edge(image, None, tasklet, 'x', Memlet.from_array(image.label, image.desc(self.graph)))
-            state.add_edge(filter, None, tasklet, 'f', Memlet.from_array(filter.label, filter.desc(self.graph)))
-            state.add_edge(tasklet, 'y', output, None, Memlet.from_array(output.label, output.desc(self.graph)))
-            '''
-         
-            state.add_edge(tasklet, 'y', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
-            state.add_edge(gpu_img, None, tasklet, 'x', Memlet.from_array(gpu_img_name, image.desc(self.graph)))
-            state.add_edge(gpu_fil, None, tasklet, 'f', Memlet.from_array(gpu_fil_name, filter.desc(self.graph)))
-
-
-            state.add_edge(image, None, gpu_img, None, Memlet.from_array(image.label, image.desc(self.graph)))
-            state.add_edge(filter, None, gpu_fil, None, Memlet.from_array(filter.label, filter.desc(self.graph)))
-            state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
+            
+            state.add_edge(image, None, tasklet, 'x', 
+                           Memlet.from_array(image.label, image.desc(self.graph)))
+            state.add_edge(filter, None, tasklet, 'f', 
+                           Memlet.from_array(filter.label, filter.desc(self.graph)))
+            state.add_edge(tasklet, 'y', output, None, 
+                           Memlet.from_array(output.label, output.desc(self.graph)))
             
         else:
             local_ctr = str(next(_atomic_count))
@@ -2896,16 +2887,6 @@ class TFSession:
             padh = 0
             padw = 0
 
-            gpu_out_name = 'gpu_out_' + output.label
-            gpu_grad_name = 'gpu_gradient_' + gradient.label
-            gpu_fil_name = 'gpu_fil_' + filter.label
-            self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_out = state.add_access(gpu_out_name)
-            self.graph.add_transient(gpu_grad_name, gradient_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_grad = state.add_access(gpu_grad_name)
-            self.graph.add_transient(gpu_fil_name, filter_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_fil = state.add_access(gpu_fil_name)
-
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'w', 'dy'},
@@ -2973,9 +2954,9 @@ class TFSession:
                                                /*width=*/yw));
 
                     cudnnConvolutionBwdDataAlgo_t algo;
-                    checkCUDNN(cudnnGetConvolutionBackwardDataAlgorithm(cudnn_handle,
-                                                    wDesc, dyDesc, convDesc, dxDesc,
-                                                    CUDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, &algo));
+                    checkCUDNN(cudnnGetConvolutionBackwardDataAlgorithm(
+                                cudnn_handle, wDesc, dyDesc, convDesc, dxDesc,
+                                CUDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, &algo));
 
                     size_t workSpaceSizeInBytes = 0;
                     checkCUDNN(cudnnGetConvolutionBackwardDataWorkspaceSize(
@@ -3003,16 +2984,13 @@ class TFSession:
             '''
             if tasklet.code_global is not code_global:
                 tasklet.code_global = code_global
-                self.graph.set_init_code('cudnnCreate(&cudnn_handle);')
-                self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
+                tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
+                tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
 
-            state.add_edge(tasklet, 'dx', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
-            state.add_edge(gpu_grad, None, tasklet, 'dy', Memlet.from_array(gpu_grad_name, gradient.desc(self.graph)))
-            state.add_edge(gpu_fil, None, tasklet, 'w', Memlet.from_array(gpu_fil_name, filter.desc(self.graph)))
-
-            state.add_edge(gradient, None, gpu_grad, None, Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(filter, None, gpu_fil, None, Memlet.from_array(filter.label, filter.desc(self.graph)))
-            state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
+            state.add_edge(tasklet, 'dx', output, None, Memlet.from_array(output.label, output.desc(self.graph)))
+            state.add_edge(gradient, None, tasklet, 'dy', Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(filter, None, tasklet, 'w', Memlet.from_array(filter.label, filter.desc(self.graph)))
+            
         
         else:
             inputNodes = []
@@ -3256,16 +3234,6 @@ class TFSession:
             padh = 0
             padw = 0
 
-            gpu_out_name = 'gpu_out_' + output.label
-            gpu_grad_name = 'gpu_gradient_' + gradient.label
-            gpu_img_name = 'gpu_image_' + image.label
-            self.graph.add_transient(gpu_out_name, output_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_out = state.add_access(gpu_out_name)
-            self.graph.add_transient(gpu_grad_name, gradient_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_grad = state.add_access(gpu_grad_name)
-            self.graph.add_transient(gpu_img_name, image_dims, dace.float32, dace.StorageType.GPU_Global)
-            gpu_img = state.add_access(gpu_img_name)
-
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'x', 'dy'},
@@ -3336,8 +3304,8 @@ class TFSession:
 
                     cudnnConvolutionBwdFilterAlgo_t algo;
                     checkCUDNN(cudnnGetConvolutionBackwardFilterAlgorithm(cudnn_handle,
-                                                    xDesc, dyDesc, convDesc, dwDesc,
-                                                    CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &algo));
+                                            xDesc, dyDesc, convDesc, dwDesc,
+                                            CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &algo));
 
                     size_t workSpaceSizeInBytes = 0;
                     checkCUDNN(cudnnGetConvolutionBackwardFilterWorkspaceSize(
@@ -3365,16 +3333,15 @@ class TFSession:
             '''
             if tasklet.code_global is not code_global:
                 tasklet.code_global = code_global
-                self.graph.set_init_code('cudnnCreate(&cudnn_handle);')
-                self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
-
-            state.add_edge(tasklet, 'dw', gpu_out, None, Memlet.from_array(gpu_out_name, output.desc(self.graph)))
-            state.add_edge(gpu_grad, None, tasklet, 'dy', Memlet.from_array(gpu_grad_name, gradient.desc(self.graph)))
-            state.add_edge(gpu_img, None, tasklet, 'x', Memlet.from_array(gpu_img_name, image.desc(self.graph)))
-
-            state.add_edge(gradient, None, gpu_grad, None, Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(image, None, gpu_img, None, Memlet.from_array(image.label, image.desc(self.graph)))
-            state.add_edge(gpu_out, None, output, None, Memlet.from_array(output.label, output.desc(self.graph)))
+                tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
+                tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
+            
+            state.add_edge(gradient, None, tasklet, 'dy', 
+                           Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(image, None, tasklet, 'x', 
+                           Memlet.from_array(image.label, image.desc(self.graph)))
+            state.add_edge(tasklet, 'dw', output, None, 
+                           Memlet.from_array(output.label, output.desc(self.graph)))
         
         else:
             # convolve loss over input.
