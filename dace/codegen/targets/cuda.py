@@ -1242,6 +1242,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        kernel_stream.write('{', sdfg, state_id, node)
+
         if not node.map.flatten:
             # Add more opening braces for scope exit to close
             for dim in range(len(node.map.range) - 1):
@@ -1402,6 +1406,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         scope_entry = dfg_scope.source_nodes()[0]
         scope_map = scope_entry.map
         next_scopes = self.get_next_scope_entries(dfg, scope_entry)
+
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if len(scope_map.params) > 1:

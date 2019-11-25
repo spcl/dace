@@ -222,16 +222,6 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode):
                 # External node
                 if node.data in inputs or node.data in outputs:
-                    for _, _, dst, dst_conn, _ in state.out_edges(node):
-                        # Custom entry connector case
-                        if (isinstance(dst, nodes.EntryNode)
-                                and dst_conn[0:3] != 'IN_'):
-                            entry_connectors.add(node.data)
-                            sdfg.arrays[node.data] = nsdfg.arrays[node.data]
-                            sdfg.arrays[node.data].transient = True
-                            graph.add_node(node)
-                            torename.pop(node.data)
-                            break
                     continue
                 # Internal node (e.g., transient)
                 if node.data not in torename:
@@ -288,18 +278,6 @@ class InlineSDFG(pattern_matching.Transformation):
                         if isinstance(dst, nodes.AccessNode
                                       ) and memlet.data == cmemlet.data:
                             memlet.wcr = None
-                    # # Remove output node
-                    # out_conn = 'OUT_{}'.format(cconn[3:])
-                    # for _, conn, dst, _, _ in graph.out_edges(cnode):
-                    #     if conn == out_conn:
-                    #         graph.remove_node(dst)
-                    # # Remove connectors
-                    # in_connectors = dc(cnode.in_connectors)
-                    # in_connectors.remove(cconn)
-                    # cnode.in_connectors = in_connectors
-                    # out_connectors = dc(cnode.out_connectors)
-                    # out_connectors.remove(out_conn)
-                    # cnode.out_connectors = out_connectors
                 # else:
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
@@ -341,8 +319,6 @@ class InlineSDFG(pattern_matching.Transformation):
         for node, _, _ in list(inputs.values()) + list(outputs.values()):
             if len(graph.all_edges(node)) == 0:
                 graph.remove_node(node)
-
-        # TODO: We may want to re-propagate memlets here
 
 
 pattern_matching.Transformation.register_stateflow_pattern(NestSDFG)
