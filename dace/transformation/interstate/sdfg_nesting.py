@@ -161,10 +161,10 @@ class InlineSDFG(pattern_matching.Transformation):
     def _modify_memlet(self, internal_memlet: Memlet, external_memlet: Memlet):
         """ Unsqueezes and offsets a memlet, as per the semantics of nested
             SDFGs.
-            @param internal_memlet: The internal memlet (inside nested SDFG)
+            :param internal_memlet: The internal memlet (inside nested SDFG)
                                     before modification.
-            @param internal_memlet: The external memlet before modification.
-            @return: Offset Memlet to set on the resulting graph.
+            :param internal_memlet: The external memlet before modification.
+            :return: Offset Memlet to set on the resulting graph.
         """
         result = dc(internal_memlet)
         result.data = external_memlet.data

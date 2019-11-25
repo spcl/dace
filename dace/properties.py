@@ -158,6 +158,12 @@ class Property:
         self._indirected = indirected
         self._desc = desc
         self._category = category
+        if desc is not None and len(desc) > 0:
+            self.__doc__ = desc
+        elif self.dtype is not None:
+            self.__doc__ = "Object property of type %s" % self.dtype.__name__
+        else:
+            self.__doc__ = "Object property of type %s" % type(self).__name__
 
     def __get__(self, obj, objtype=None):
         if obj is None:
@@ -474,12 +480,12 @@ class ListProperty(Property):
     def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
-        @param element_type: The type of each element in the list, or a function
+        :param element_type: The type of each element in the list, or a function
                              that converts an element to the wanted type (e.g.,
                              `dace.symbolic.pystr_to_symbolic` for symbolic
                              expressions)
-        @param args: Other arguments (inherited from Property).
-        @param kwargs: Other keyword arguments (inherited from Property).
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
         """
 
         kwargs['dtype'] = list

@@ -596,8 +596,8 @@ def propagate_labels_sdfg(sdfg):
 
 def _propagate_labels(g, sdfg):
     """ Propagates memlets throughout one SDFG state. 
-        @param g: The state to propagate in.
-        @param sdfg: The SDFG in which the state is situated.
+        :param g: The state to propagate in.
+        :param sdfg: The SDFG in which the state is situated.
         @note: This is an in-place operation on the SDFG state.
     """
     patterns = MemletPattern.patterns()
@@ -689,10 +689,10 @@ def propagate_memlet(dfg_state,
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
-        @param dfg_state: An SDFGState object representing the graph.
-        @param memlet: The memlet adjacent to the scope node from the inside.
-        @param scope_node: A scope entry or exit node.
-        @param union_inner_edges: True if the propagation should take other
+        :param dfg_state: An SDFGState object representing the graph.
+        :param memlet: The memlet adjacent to the scope node from the inside.
+        :param scope_node: A scope entry or exit node.
+        :param union_inner_edges: True if the propagation should take other
                                   neighboring internal memlets within the same
                                   scope into account.
     """

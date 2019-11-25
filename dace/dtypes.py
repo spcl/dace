@@ -254,7 +254,7 @@ class typeclass(object):
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
             with the following syntax: dace.uint32[N,M]
-            @return: A data.Array data descriptor.
+            :return: A data.Array data descriptor.
         """
         from dace import data
 

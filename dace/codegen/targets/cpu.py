@@ -2178,7 +2178,7 @@ def ndcopy_to_strided_copy(
         a (faster) 1D copy or 2D strided copy. Returns new copy
         dimensions and offsets to emulate the requested copy.
 
-        @return: a 3-tuple: copy_shape, src_strides, dst_strides
+        :return: a 3-tuple: copy_shape, src_strides, dst_strides
     """
     dims = len(copy_shape)
 
@@ -2259,13 +2259,13 @@ def cpp_offset_expr(d: data.Data,
                     packed_veclen=1):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
-        @param d: The data structure to use for sizes/strides.
-        @param subset: The subset to offset by.
-        @param offset: An additional list of offsets or a Subset object
-        @param packed_veclen: If packed types are targeted, specifies the
+        :param d: The data structure to use for sizes/strides.
+        :param subset: The subset to offset by.
+        :param offset: An additional list of offsets or a Subset object
+        :param packed_veclen: If packed types are targeted, specifies the
                               vector length that the final offset should be
                               divided by.
-        @return: A string in C++ syntax with the correct offset
+        :return: A string in C++ syntax with the correct offset
     """
     subset = copy.deepcopy(subset_in)
 

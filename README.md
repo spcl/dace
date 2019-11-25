@@ -1,4 +1,6 @@
 [![Build Status](https://travis-ci.org/spcl/dace.svg?branch=master)](https://travis-ci.org/spcl/dace)
+[![Documentation Status](https://readthedocs.org/projects/spcldace/badge/?version=latest)](https://spcldace.readthedocs.io/en/latest/?badge=latest)
+[![PyPI version](https://badge.fury.io/py/dace.svg)](https://badge.fury.io/py/dace)
 
 
 ![D](dace.svg)aCe - Data-Centric Parallel Programming
