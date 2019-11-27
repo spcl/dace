@@ -80,7 +80,7 @@ class ExpandMatMulOpenBLAS(ExpandTransformation):
                 size = subset.size()
                 n = size[1]
         code = ("cblas_{f}(CblasRowMajor, CblasNoTrans, CblasNoTrans, "
-                "{m}, {n}, {k}, {a}, _a, {m}, _b, {k}, {b}, _c, {m});").format(
+                "{m}, {n}, {k}, {a}, _a, {k}, _b, {n}, {b}, _c, {n});").format(
                     f=func, m=m, n=n, k=k, a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
