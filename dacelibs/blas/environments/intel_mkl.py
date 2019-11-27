@@ -12,6 +12,6 @@ class IntelMKL:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = ["cblas.h", "../include/dace_blas.h"]
+    headers = ["cblas.h", "mkl/mkl.h", "../include/dace_blas.h"]
     init_code = ""
     finalize_code = ""
