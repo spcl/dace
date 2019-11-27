@@ -147,8 +147,8 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                 n = size[1]
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 "cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
-                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, {c}_b, {m}, "
-                "{c}_a, {k}, {b}, {c}_c, {m});").format(
+                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, {c}_a, {m}, "
+                "{c}_b, {k}, {b}, {c}_c, {m});").format(
                     f=func, c=cast, m=m, n=n, k=k, a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
             node.name,
@@ -156,11 +156,40 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP)
-        return tasklet
+        nested_sdfg = dace.SDFG('_cuBLAS_MatMul_')
+        A = nested_sdfg.add_array('_a', (m, k), dtype)
+        B = nested_sdfg.add_array('_b', (k, n), dtype)
+        C = nested_sdfg.add_array('_c', (m, n), dtype)
+        AT = nested_sdfg.add_transient('_aT', (k, m), dtype)
+        BT = nested_sdfg.add_transient('_bT', (n, k), dtype)
+        CT = nested_sdfg.add_transient('_cT', (n, m), dtype)
+        nested_state = nested_sdfg.add_state('_cuBLAS_MatMul_')
+        acc1 = nested_state.add_read('_a')
+        acc2 = nested_state.add_read('_b')
+        acc3 = nested_state.add_write('_c')
+        acc4 = nested_state.add_access('_aT')
+        acc5 = nested_state.add_access('_bT')
+        acc6 = nested_state.add_access('_cT')
+        from .. import Transpose
+        trans_a = Transpose('_Transpose_a', dtype)
+        trans_b = Transpose('_Transpose_b', dtype)
+        trans_c = Transpose('_Transpose_c', dtype)
+        nested_state.add_edge(acc1, None, trans_a, '_inp', dace.Memlet.from_array('_a', A))
+        nested_state.add_edge(trans_a, '_out', acc4, None, dace.Memlet.from_array('_aT', AT))
+        nested_state.add_edge(acc2, None, trans_b, '_inp', dace.Memlet.from_array('_b', B))
+        nested_state.add_edge(trans_b, '_out', acc5, None, dace.Memlet.from_array('_bT', BT))
+        nested_state.add_edge(acc6, None, trans_c, '_inp', dace.Memlet.from_array('_cT', CT))
+        nested_state.add_edge(trans_c, '_out', acc3, None, dace.Memlet.from_array('_c', C))
+        nested_state.add_edge(acc4, None, tasklet, '_a', dace.Memlet.from_array('_aT', AT))
+        nested_state.add_edge(acc5, None, tasklet, '_b', dace.Memlet.from_array('_bT', BT))
+        nested_state.add_edge(tasklet, '_c', acc6, None, dace.Memlet.from_array('_cT', CT))
+        nested_node = dace.graph.nodes.NestedSDFG('_cuBLAS_MatMul_', nested_sdfg, {'_a', '_b'}, {'_c'})
+        gpu_transform_tasklet(nested_sdfg, nested_state, tasklet)
+        return nested_node
 
-    @staticmethod
-    def postprocessing(sdfg, state, expansion):
-        gpu_transform_tasklet(sdfg, state, expansion)
+    # @staticmethod
+    # def postprocessing(sdfg, state, expansion):
+    #     gpu_transform_tasklet(sdfg, state, expansion)
 
 
 @dace.library.node
