@@ -261,6 +261,70 @@ def _imag(sdfg: SDFG, state: SDFGState, input: str):
                         _complex_to_scalar(inptype))
 
 
+@oprepo.replaces('transpose')
+@oprepo.replaces('dace.transpose')
+@oprepo.replaces('numpy.transpose')
+def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
+
+    inparr = sdfg.arrays[inpname]
+    restype = sdfg.arrays[inpname].dtype
+    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
+                                              inparr.storage)
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)                                       
+    if num_elements == 1:
+        inp = state.add_read(inpname)
+        out = state.add_write(outname)
+        tasklet = state.add_tasklet(
+            'transpose', {'__inp'}, {'__out'}, '__out = __inp')
+        state.add_edge(inp, None, tasklet, '__inp',
+                       Memlet.from_array(inpname, inparr))
+        state.add_edge(tasklet, '__out', out, None,
+                       Memlet.from_array(outname, outarr))
+    else:
+        state.add_mapped_tasklet(
+            name='transpose',
+            map_ranges={
+                '__i%d' % i: '0:%s' % n for i, n in enumerate(inparr.shape)
+            },
+            inputs={
+                '__inp':
+                Memlet.simple(
+                    inpname,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
+            },
+            code='__out = __inp',
+            outputs={
+                '__out':
+                Memlet.simple(
+                    outname, ','.join([
+                        '__i%d' % i for i in range(
+                            len(inparr.shape) - 1, -1, -1)]))
+            },
+            external_edges=True)
+
+    return outname
+
+
+@oprepo.replaces('transpose', implementation='blas')
+@oprepo.replaces('dace.transpose', implementation='blas')
+@oprepo.replaces('numpy.transpose', implementation='blas')
+def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
+
+    arr1 = sdfg.arrays[inpname]
+    restype = arr1.dtype
+    outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]),
+                                            restype, arr1.storage)
+
+    acc1 = state.add_read(inpname)
+    acc2 = state.add_write(outname)
+    tasklet = blas.nodes.transpose.Transpose('_Transpose_', restype)
+    state.add_node(tasklet)
+    state.add_edge(acc1, None, tasklet, '_inp', dace.Memlet.from_array(inpname, arr1))
+    state.add_edge(tasklet, '_out', acc2, None, dace.Memlet.from_array(outname, arr2))
+
+    return outname
+
+
 ##############################################################################
 # Python operation replacements ##############################################
 ##############################################################################
