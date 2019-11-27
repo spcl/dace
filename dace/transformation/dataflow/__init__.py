@@ -31,3 +31,6 @@ from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .fpga_transform import FPGATransformMap
 from .mpi import MPITransformMap
+
+# Algorithimc
+from .matrix_product_transpose import MatrixProductTranspose
