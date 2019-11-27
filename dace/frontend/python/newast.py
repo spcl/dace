@@ -268,7 +268,8 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
 
     inparr = sdfg.arrays[inpname]
     restype = sdfg.arrays[inpname].dtype
-    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
+    outshape = (inparr.shape[1], inparr.shape[0])
+    outname, outarr = sdfg.add_temp_transient(outshape, restype,
                                               inparr.storage)
     num_elements = reduce(lambda x, y: x * y, inparr.shape)                                       
     if num_elements == 1:
