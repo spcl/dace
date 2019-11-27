@@ -45,6 +45,7 @@ class CublasHandle {
       // Lazily construct new cuBLAS handle if the specified key does not yet
       // exist
       auto handle = CreateCublasHandle(device);
+      cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
       f = handles_.emplace(device, handle).first;
     }
     return f->second;
