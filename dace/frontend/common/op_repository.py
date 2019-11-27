@@ -36,10 +36,10 @@ class Replacements(object):
 def replaces(func: Callable[..., Tuple[str]], name: str,
              implementation='sdfg'):
     """ Registers a replacement sub-SDFG generator for a function.
-        @param func: A function that receives an SDFG, SDFGState, and the original function
+        :param func: A function that receives an SDFG, SDFGState, and the original function
                      arguments, returning a tuple of array names to connect to the outputs.
-        @param name: Full name (pydoc-compliant, including package) of function to replace.
-        @param implementation: The default implementation to replace the SDFG with.
+        :param name: Full name (pydoc-compliant, including package) of function to replace.
+        :param implementation: The default implementation to replace the SDFG with.
     """
     Replacements._rep[(name, implementation)] = func
     return func
@@ -52,12 +52,12 @@ def replaces_operator(func: Callable[[Any, Any, str, str], Tuple[str]],
                       implementation='sdfg',
                       otherclass: str = None):
     """ Registers a replacement sub-SDFG generator for an operator.
-        @param func: A function that receives an SDFG, SDFGState, and the two operand array names,
+        :param func: A function that receives an SDFG, SDFGState, and the two operand array names,
                      returning a tuple of array names to connect to the outputs.
-        @param classname: The name of the class to implement the operator for (extends dace.Data).
-        @param optype: The type (as string) of the operator to replace (extends ast.operator).
-        @param implementation: The default implementation to replace the SDFG with.
-        @param otherclass: Optional argument defining operators for a second class that
+        :param classname: The name of the class to implement the operator for (extends dace.Data).
+        :param optype: The type (as string) of the operator to replace (extends ast.operator).
+        :param implementation: The default implementation to replace the SDFG with.
+        :param otherclass: Optional argument defining operators for a second class that
                            differs from the first.
     """
     if otherclass is None:

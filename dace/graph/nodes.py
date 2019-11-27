@@ -73,8 +73,8 @@ class Node(object):
             a connector (either input or output) with the same name already
             exists in the node.
 
-            @param connector_name: The name of the new connector.
-            @return: True if the operation is successful, otherwise False.
+            :param connector_name: The name of the new connector.
+            :return: True if the operation is successful, otherwise False.
         """
 
         if (connector_name in self.in_connectors
@@ -90,8 +90,8 @@ class Node(object):
             a connector (either input or output) with the same name already
             exists in the node.
 
-            @param connector_name: The name of the new connector.
-            @return: True if the operation is successful, otherwise False.
+            :param connector_name: The name of the new connector.
+            :return: True if the operation is successful, otherwise False.
         """
 
         if (connector_name in self.in_connectors
@@ -104,8 +104,8 @@ class Node(object):
 
     def remove_in_connector(self, connector_name: str):
         """ Removes an input connector from the node.
-            @param connector_name: The name of the connector to remove.
-            @return: True if the operation was successful.
+            :param connector_name: The name of the connector to remove.
+            :return: True if the operation was successful.
         """
 
         if connector_name in self.in_connectors:
@@ -116,8 +116,8 @@ class Node(object):
 
     def remove_out_connector(self, connector_name: str):
         """ Removes an output connector from the node.
-            @param connector_name: The name of the connector to remove.
-            @return: True if the operation was successful.
+            :param connector_name: The name of the connector to remove.
+            :return: True if the operation was successful.
         """
 
         if connector_name in self.out_connectors:

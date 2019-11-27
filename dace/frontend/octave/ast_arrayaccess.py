@@ -37,9 +37,8 @@ class AST_ArrayAccess(AST_Node):
         from .ast_loop import AST_ForLoop
         from .ast_values import AST_Constant, AST_Ident
         from .ast_range import AST_RangeExpression
-        # array indexing has many forms/cases in matlab and does not seem to
-        # be fully documented, the idea is to implement the simple things
-        # we are sure about and bail out on anything that looks different
+        # array indexing has many forms/cases in matlab, here we implement
+        # the semantics we are sure about
         dims = []
         if isinstance(self.accdims, list):
             for acc in self.accdims:

@@ -28,8 +28,8 @@ _TARGET_REGISTER_ORDER = ['cpu', 'cuda', 'immaterial', 'mpi', 'xilinx']
 
 def generate_code(sdfg) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
-        @param sdfg: The SDFG to use
-        @return: List of code objects that correspond to files to compile.
+        :param sdfg: The SDFG to use
+        :return: List of code objects that correspond to files to compile.
     """
     # Before compiling, validate SDFG correctness
     sdfg.validate()

@@ -10,7 +10,7 @@ from .map_fusion import MapFusion
 
 # Data movement
 from .strip_mining import StripMining
-from .tiling import OrthogonalTiling
+from .tiling import MapTiling
 from .vectorization import Vectorization
 
 # Data-related
@@ -21,6 +21,7 @@ from .reduce_expansion import ReduceExpansion
 from .redundant_array import RedundantArray
 from .redundant_array_copying import (
     RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
+from .merge_arrays import MergeArrays
 
 # TensorFlow-specific transformations
 from .tensorflow_redundant_array import TensorflowRedundantArray

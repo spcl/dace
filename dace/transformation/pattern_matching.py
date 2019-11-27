@@ -51,7 +51,7 @@ class Transformation(object):
     @staticmethod
     def register_pattern(clazz):
         """ Registers a single-state (dataflow) transformation in the registry.
-            @param clazz: The Transformation class type.
+            :param clazz: The Transformation class type.
         """
 
         if not issubclass(clazz, Transformation):
@@ -61,7 +61,7 @@ class Transformation(object):
     @staticmethod
     def register_stateflow_pattern(clazz):
         """ Registers a multi-state transformation in the registry.
-            @param clazz: The Transformation class type.
+            :param clazz: The Transformation class type.
         """
 
         if not issubclass(clazz, Transformation):
@@ -82,7 +82,7 @@ class Transformation(object):
     @staticmethod
     def deregister_pattern(clazz):
         """ De-registers a transformation.
-            @param clazz: The Transformation class type.
+            :param clazz: The Transformation class type.
         """
 
         if not issubclass(clazz, Transformation):
@@ -121,16 +121,16 @@ class Transformation(object):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
-            @param graph: SDFGState object if this Transformation is
+            :param graph: SDFGState object if this Transformation is
                           single-state, or SDFG object otherwise.
-            @param candidate: A mapping between node IDs returned from
-                              `Transformation.expressions` and the nodes in
+            :param candidate: A mapping between node IDs returned from
+                              `Transformation.expressions` and the nodes in 
                               `graph`.
-            @param expr_index: The list index from `Transformation.expressions`
+            :param expr_index: The list index from `Transformation.expressions`
                                that was matched.
-            @param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
+            :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
                          should be equal to `graph`.
-            @return: True if the transformation can be applied.
+            :return: True if the transformation can be applied.
         """
         raise NotImplementedError
 
@@ -144,17 +144,17 @@ class Transformation(object):
 
     def __init__(self, sdfg_id, state_id, subgraph, expr_index):
         """ Initializes an instance of Transformation.
-            @param sdfg_id: A unique ID of the SDFG.
-            @param state_id: The node ID of the SDFG state, if applicable.
-            @param subgraph: A mapping between node IDs returned from
-                             `Transformation.expressions` and the nodes in
+            :param sdfg_id: A unique ID of the SDFG.
+            :param state_id: The node ID of the SDFG state, if applicable.
+            :param subgraph: A mapping between node IDs returned from
+                             `Transformation.expressions` and the nodes in 
                              `graph`.
-            @param expr_index: The list index from `Transformation.expressions`
+            :param expr_index: The list index from `Transformation.expressions`
                                that was matched.
-            @raise TypeError: When transformation is not subclass of
+            :raise TypeError: When transformation is not subclass of
                               Transformation.
-            @raise TypeError: When state_id is not instance of int.
-            @raise TypeError: When subgraph is not a dict of
+            :raise TypeError: When state_id is not instance of int.
+            :raise TypeError: When subgraph is not a dict of
                               dace.graph.nodes.Node : int.
         """
 
@@ -213,7 +213,7 @@ class Transformation(object):
             labeling.propagate_labels_sdfg(sdfg)
 
     def __str__(self):
-        raise NotImplementedError
+        return type(self).__name__
 
     def print_match(self, sdfg):
         """ Returns a string representation of the pattern match on the
@@ -302,8 +302,8 @@ def collapse_multigraph_to_nx(graph: gr.MultiDiGraph) -> nx.DiGraph:
         itself as node_data['node'], while each edge contains a list of the
         data from the original edges as its attribute (edge_data[0...N]).
 
-        @param graph: Directed multigraph object to be collapsed.
-        @return: Collapsed directed graph object.
+        :param graph: Directed multigraph object to be collapsed.
+        :return: Collapsed directed graph object.
   """
 
     # Create the digraph nodes.
@@ -335,12 +335,12 @@ def collapse_multigraph_to_nx(graph: gr.MultiDiGraph) -> nx.DiGraph:
 
 def type_match(node_a, node_b):
     """ Checks whether the node types of the inputs match.
-        @param node_a: First node.
-        @param node_b: Second node.
-        @return: True if the object types of the nodes match, False otherwise.
-        @raise TypeError: When at least one of the inputs is not a dictionary
+        :param node_a: First node.
+        :param node_b: Second node.
+        :return: True if the object types of the nodes match, False otherwise.
+        :raise TypeError: When at least one of the inputs is not a dictionary
                           or does not have a 'node' attribute.
-        @raise KeyError: When at least one of the inputs is a dictionary,
+        :raise KeyError: When at least one of the inputs is a dictionary,
                          but does not have a 'node' key.
     """
     return isinstance(node_a['node'], type(node_b['node']))
@@ -354,15 +354,15 @@ def match_expression(graph,
                      strict=False):
     """ Returns a generator which yields a subgraph mapping from
         `expression_node` to `graph_node`.
-        @param graph: Directed multigraph object to be searched for subgraphs.
-        @param expressions: List of directed graphs, isomorphic to any
-                            (sub)graph that potentially matches a
+        :param graph: Directed multigraph object to be searched for subgraphs.
+        :param expressions: List of directed graphs, isomorphic to any
+                            (sub)graph that potentially matches a 
                             transformation.
-        @param node_match: Function for checking whether two nodes match.
-        @param edge_match: Function for checking whether two edges match.
-        @param pattern_match: Function for checking whether a subgraph matches
+        :param node_match: Function for checking whether two nodes match.
+        :param edge_match: Function for checking whether two edges match.
+        :param pattern_match: Function for checking whether a subgraph matches
                               a transformation.
-        @return: Generator of 2-tuples: (subgraph, expression index in
+        :return: Generator of 2-tuples: (subgraph, expression index in
                  `expressions`).
     """
 
@@ -412,15 +412,15 @@ def match_pattern(state_id,
                   strict=False):
     """ Returns a list of single-state Transformations of a certain class that
         match the input SDFG.
-        @param state_id: The node ID of the state in the given SDFG.
-        @param state: An SDFGState object to match.
-        @param pattern: Transformation object to match.
-        @param sdfg: The SDFG to match in.
-        @param node_match: Function for checking whether two nodes match.
-        @param edge_match: Function for checking whether two edges match.
-        @param strict: Only match transformation if strict (i.e., can only
+        :param state_id: The node ID of the state in the given SDFG.
+        :param state: An SDFGState object to match.
+        :param pattern: Transformation object to match.
+        :param sdfg: The SDFG to match in.
+        :param node_match: Function for checking whether two nodes match.
+        :param edge_match: Function for checking whether two edges match.
+        :param strict: Only match transformation if strict (i.e., can only
                        improve the performance/reduce complexity of the SDFG).
-        @return: A list of Transformation objects that match.
+        :return: A list of Transformation objects that match.
     """
 
     # Collapse multigraph into directed graph
@@ -441,8 +441,8 @@ def match_pattern(state_id,
                     state, subgraph, idx, sdfg, strict=strict)
             except Exception as e:
                 print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__, e=e))
+                      ' {e}'.format(
+                          p=pattern.__name__, c=e.__class__.__name__, e=e))
                 match_found = False
             if match_found:
                 yield pattern(
@@ -464,13 +464,13 @@ def match_stateflow_pattern(sdfg,
                             strict=False):
     """ Returns a list of multi-state Transformations of a certain class that
         match the input SDFG.
-        @param sdfg: The SDFG to match in.
-        @param pattern: Transformation object to match.
-        @param node_match: Function for checking whether two nodes match.
-        @param edge_match: Function for checking whether two edges match.
-        @param strict: Only match transformation if strict (i.e., can only
+        :param sdfg: The SDFG to match in.
+        :param pattern: Transformation object to match.
+        :param node_match: Function for checking whether two nodes match.
+        :param edge_match: Function for checking whether two edges match.
+        :param strict: Only match transformation if strict (i.e., can only
                        improve the performance/reduce complexity of the SDFG).
-        @return: A list of Transformation objects that match.
+        :return: A list of Transformation objects that match.
     """
 
     # Collapse multigraph into directed graph
@@ -491,8 +491,8 @@ def match_stateflow_pattern(sdfg,
                                                      strict)
             except Exception as e:
                 print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__, e=e))
+                      ' {e}'.format(
+                          p=pattern.__name__, c=e.__class__.__name__, e=e))
                 match_found = False
             if match_found:
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
