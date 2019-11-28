@@ -2748,7 +2748,7 @@ class ProgramVisitor(ExtNodeVisitor):
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
         squeezed_rng = copy.deepcopy(rng)
-        squeezed_rng.squeeze()
+        non_squeezed = squeezed_rng.squeeze()
         shape = squeezed_rng.size()
         dtype = parent_array.dtype
 
@@ -2766,14 +2766,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 "Data type {} is not implemented".format(arr_type))
 
         self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+
+        inner_indices = set(non_squeezed)
+
         if access_type == 'r':
             self.inputs[var_name] = (dace.Memlet(parent_name,
                                                  rng.num_elements(), rng, 1),
-                                     set())
+                                     inner_indices)
         else:
             self.outputs[var_name] = (dace.Memlet(parent_name,
                                                   rng.num_elements(), rng, 1),
-                                      set())
+                                      inner_indices)
 
         return var_name
 
