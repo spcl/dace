@@ -15,15 +15,15 @@ from dace.config import Config
 def timethis(program, title, flop_count, f, *args, **kwargs):
     """ Runs a function multiple (`DACE_treps`) times, logs the running times 
         to a file, and prints the median time (with FLOPs if given).
-        @param program: The title of the measurement.
-        @param title: A sub-title of the measurement.
-        @param flop_count: Number of floating point operations in `program`.
+        :param program: The title of the measurement.
+        :param title: A sub-title of the measurement.
+        :param flop_count: Number of floating point operations in `program`.
                            If greater than zero, produces a median FLOPS 
                            report.
-        @param f: The function to measure.
-        @param args: Arguments to invoke the function with.
-        @param kwargs: Keyword arguments to invoke the function with.
-        @return: Latest return value of the function.
+        :param f: The function to measure.
+        :param args: Arguments to invoke the function with.
+        :param kwargs: Keyword arguments to invoke the function with.
+        :return: Latest return value of the function.
     """
 
     start = timer()
@@ -63,8 +63,8 @@ def detect_reduction_type(wcr_str):
     """ Inspects a lambda function and tries to determine if it's one of the 
         built-in reductions that frameworks such as MPI can provide.
 
-        @param wcr_str: A Python string representation of the lambda function.
-        @return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
+        :param wcr_str: A Python string representation of the lambda function.
+        :return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
                  if not detected, or None if no reduction is found.
     """
     if wcr_str == '' or wcr_str is None:
@@ -116,8 +116,8 @@ def detect_reduction_type(wcr_str):
 def is_op_commutative(wcr_str):
     """ Inspects a custom lambda function and tries to determine whether
         it is symbolically commutative (disregarding data type).
-        @param wcr_str: A string in Python representing a lambda function.
-        @return: True if commutative, False if not, None if cannot be 
+        :param wcr_str: A string in Python representing a lambda function.
+        :return: True if commutative, False if not, None if cannot be
                  determined.
     """
     if wcr_str == '' or wcr_str is None:
@@ -142,8 +142,8 @@ def is_op_commutative(wcr_str):
 def is_op_associative(wcr_str):
     """ Inspects a custom lambda function and tries to determine whether
         it is symbolically associative (disregarding data type).
-        @param wcr_str: A string in Python representing a lambda function.
-        @return: True if associative, False if not, None if cannot be 
+        :param wcr_str: A string in Python representing a lambda function.
+        :return: True if associative, False if not, None if cannot be
                  determined.
     """
     if wcr_str == '' or wcr_str is None:

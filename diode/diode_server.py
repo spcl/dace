@@ -3,20 +3,20 @@
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
-import dace.frontend.python.parser as python_frontend
-from diode.optgraph.DaceState import DaceState
+from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 import inspect
-from flask import Flask, Response, request, redirect, url_for, abort, make_response, jsonify, send_from_directory, send_file
-import json, copy
+from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
+import json
+import copy
 import re
-from diode.remote_execution import Executor, AsyncExecutor
+from diode.remote_execution import AsyncExecutor
 
-import traceback, os, threading, queue, time
-
-# Enum imports
-from dace.dtypes import AccessType
-from dace import ScheduleType, Language, StorageType
+import traceback
+import os
+import threading
+import queue
+import time
 
 app = Flask(__name__)
 
@@ -28,6 +28,7 @@ enum_list = [
 ]
 
 es_ref = []
+remote_execution = False
 
 config_lock = threading.Lock()
 
@@ -137,7 +138,6 @@ class ExecutorServer:
             return ret
 
     def addCommand(self, cmd):
-        import random
         with self._oplock:
             cmd['ticket'] = self._ticket_counter
             self._ticket_counter += 1
@@ -149,8 +149,6 @@ class ExecutorServer:
 
         try:
             cmd = self._executor_queue.get(timeout=3)
-
-            #print("cmd: " + str(cmd))
 
             if cmd['cmd'] == "run":
                 while True:
@@ -223,7 +221,7 @@ class ExecutorServer:
                     perfdir = ExecutorServer.getPerfdataDir(cmd['cid'])
                     perfdata_path = os.path.join(perfdir, "perfdata.db")
                     os.remove(perfdata_path)
-                    os.rmdir(perf_tmp_dir)
+                    os.rmdir(perfdir)
 
                 elif cmd['operation'] == 'endgroup':
                     print("Ending group")
@@ -363,7 +361,6 @@ class ExecutorServer:
 
     @staticmethod
     def getPerfdataDir(client_id):
-        import tempfile
 
         if not os.path.isdir("perfdata-dir/"):
             os.mkdir("perfdata-dir")
@@ -469,7 +466,7 @@ class ExecutorServer:
         def runner():
             print("Trying to get lock")
             with self._run_cv:
-                print("Run starting")
+                output_feeder("Run starting\n")
 
                 perfmode = perfopts['mode']
                 perfcores = perfopts['core_counts']
@@ -512,10 +509,10 @@ class ExecutorServer:
                 self._slot_available = False
                 dace_state.set_is_compiled(False)
 
-                async_executor = AsyncExecutor(None, True, None, None)
+                async_executor = AsyncExecutor(remote=remote_execution)
                 async_executor.autoquit = True
                 async_executor.executor.output_generator = output_feeder
-                async_executor.executor.setConfig(copied_config)
+                async_executor.executor.set_config(copied_config)
                 async_executor.run_async(dace_state)
                 async_executor.to_thread_message_queue.put("forcequit")
 
@@ -526,6 +523,11 @@ class ExecutorServer:
                     except:
                         # Check if the thread is still running
                         continue
+
+                # Flush remaining outputs
+                while not terminal_queue.empty():
+                    new = terminal_queue.get(block=True, timeout=1)
+                    yield new
 
                 with self._oplock:
                     # Delete from the tasklist
@@ -542,14 +544,14 @@ def redirect_base():
     return redirect(url_for("index", path="index.html"), code=301)
 
 
-@app.route('/client/<path:path>', methods=['GET'])
+@app.route('/webclient/<path:path>', methods=['GET'])
 def index(path):
     """
         This is an http server (on the same port as the REST API).
-        It serves the files from the 'client'-directory to user agents.
+        It serves the files from the 'webclient'-directory to user agents.
         Note: This is NOT intended for production environments and security is disregarded!
     """
-    return send_from_directory("client", path)
+    return send_from_directory("webclient", path)
 
 
 @app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
@@ -733,7 +735,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
 def create_DaceState(code, sdfg_dict, errors):
     dace_state = None
     try:
-        dace_state = DaceState(code, "fake.py", headless=True)
+        dace_state = DaceState(code, "fake.py", remote=remote_execution)
         for x in dace_state.sdfgs:
             name, sdfg = x
             sdfg_dict[name] = sdfg
@@ -836,8 +838,8 @@ def compileProgram(request, language, perfopts=None):
             in_sdfg = request.json['sdfg']
             if isinstance(in_sdfg, list):
                 if len(in_sdfg) > 1:
-                    print("More than 1 sdfg provided!")
-                    raise Exception("#TODO: Allow multiple sdfg inputs")
+                    # TODO: Allow multiple sdfg inputs
+                    raise NotImplementedError("More than 1 SDFG provided")
 
                 in_sdfg = in_sdfg[0]
 
@@ -931,7 +933,7 @@ def compileProgram(request, language, perfopts=None):
                 in_code = request.json['code']
             else:
                 in_code = ""
-            dace_state = DaceState(in_code, "tmp.py", headless=True)
+            dace_state = DaceState(in_code, "tmp.py", remote=remote_execution)
             dace_state.set_sdfg(
                 list(codegen_sdfgs_dace_state.values())[0],
                 list(codegen_sdfgs_dace_state.keys())[0])
@@ -1241,14 +1243,12 @@ def optimize():
 
         POST-Parameters:
             input_code: list. Contains all necessary input code files
-            [opt] optpath:  list of dicts, as { name: <str>, params: <dict> }. Contains the current optimization path/tree.
+            optpath:  list of dicts, as { name: <str>, params: <dict> }. Contains the current optimization path/tree.
                             This optpath is applied to the provided code before evaluating possible pattern matches.
+            client_id: For identification. May be unique across all runs,
+                       must be unique across clients
 
-            client_id: <string>:    For later identification. May be unique across all runs,
-                                    must be unique across clients
-
-        Returns:
-            matching_opts:  list of dicts, as { opt_name: <str>, opt_params: <dict>, affects: <list>, children: <recurse> }.
+        :return: matching_opts:  list of dicts, as { opt_name: <str>, opt_params: <dict>, affects: <list>, children: <recurse> }.
                             Contains the matching transformations.
                             `affects` is a list of affected node ids, which must be unique in the current program.
 
@@ -1318,58 +1318,10 @@ def compile(language):
         return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
 
 
-@app.route('/dace/api/v1.0/decompile/<string:obj>/', methods=['POST'])
-def decompile(obj):
-    """
-        De-compiles (pickles) an SDFG in python binary format.
-
-        POST-Parameters:
-            binary: base64 string. The object to pickle (the URL encodes the expected type).
-    """
-
-    import base64, pickle
-
-    try:
-        b64_data = request.json['binary']
-        decoded = base64.decodebytes(b64_data.encode())
-    except:
-        abort(Response("Invalid input", 400))
-    if obj == "SDFG":
-        loaded_sdfg = ""
-        from dace.sdfg import SDFG
-
-        try:
-            loaded_sdfg = SDFG.from_bytes(decoded)
-        except:
-            abort(Response("The provided file is not a valid SDFG", 400))
-
-        # With the SDFG decoded, we must adhere to the output format of compile() for the best interoperability
-        sdfg_name = loaded_sdfg.name
-        opts = get_transformations({sdfg_name: loaded_sdfg})
-
-        from dace.codegen import codegen
-        gen_code = codegen.generate_code(loaded_sdfg)
-
-        return jsonify({
-            "compounds": {
-                sdfg_name: {
-                    'input_code': loaded_sdfg.sourcecode,
-                    'sdfg': json.dumps(loaded_sdfg.to_json()),
-                    'matching_opts': opts[sdfg_name]['matching_opts'],
-                    'generated_code': [*map(lambda x: x.code, gen_code)]
-                }
-            }
-        })
-
-    else:
-        print("Invalid object type '" + obj + "' specified for decompilation")
-        abort(400)
-
-
 @app.route('/dace/api/v1.0/diode/themes', methods=['GET'])
 def get_available_ace_editor_themes():
     import glob, os.path
-    path = "./client/external_lib/ace/"
+    path = "./webclient/external_lib/ace/"
 
     files = [f for f in glob.glob(path + "theme-*.js")]
 
@@ -1463,10 +1415,10 @@ if __name__ == '__main__':
         help="Bind to localhost only")
 
     parser.add_argument(
-        "-ld",
-        "--localdace",
+        "-r",
+        "--remotedace",
         action="store_true",
-        help="Use local commands instead of ssh")
+        help="Use ssh commands instead of locally running dace")
 
     parser.add_argument(
         "-rd",
@@ -1483,32 +1435,7 @@ if __name__ == '__main__':
         Config.load("./dace.conf.bak")
         Config.save()
 
-    if args.localdace:
-        from dace.config import Config
-        Config.load()
-        Config.save("./dace.conf.bak")
-        Config.load()
-        Config.set(
-            "execution",
-            "general",
-            "execcmd",
-            value='${command}',
-            autosave=True)
-        Config.set(
-            "execution",
-            "general",
-            "copycmd_r2l",
-            value='cp ${srcfile} ${dstfile}',
-            autosave=True)
-        Config.set(
-            "execution",
-            "general",
-            "copycmd_l2r",
-            value='cp ${srcfile} ${dstfile}',
-            autosave=True)
-        if not os.path.isdir("./client_configs"):
-            os.mkdir("./client_configs")
-        Config.save("./client_configs/default.conf")
+    remote_execution = args.remotedace
 
     es = ExecutorServer()
     es_ref.append(es)

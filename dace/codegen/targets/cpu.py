@@ -914,7 +914,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     local_name,
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
-            elif memlet.num_accesses == -1:
+            else:
                 if output:
                     # Variable number of writes: get reference to the target of
                     # the view to reflect writes at the data
@@ -929,10 +929,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     local_name,
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
-            else:
-                raise dace.codegen.codegen.CodegenError(
-                    "Unsupported number of accesses {} for scalar {}".format(
-                        memlet.num_accesses, local_name))
         elif var_type == DefinedType.Pointer:
             if memlet.num_accesses == 1 and memlet.subset.num_elements() == 1:
                 if output:
@@ -1532,6 +1528,17 @@ class CPUCodeGen(TargetCodeGenerator):
         result = callsite_stream
         map_header = ""
 
+        # Encapsulate map with a C scope
+        # TODO: Refactor out of MapEntry generation (generate_scope_header?)
+        callsite_stream.write('{', sdfg, state_id, node)
+
+        # Define all input connectors of this map entry
+        for e in state_dfg.in_edges(node):
+            if not e.dst_conn.startswith('IN_'):
+                callsite_stream.write(
+                    self.memlet_definition(sdfg, e.data, False, e.dst_conn),
+                    sdfg, state_id, node)
+
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
@@ -1715,6 +1722,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         if outer_stream is not None:
             result.write(outer_stream.getvalue())
+
+        callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_ConsumeEntry(
             self,
@@ -2169,7 +2178,7 @@ def ndcopy_to_strided_copy(
         a (faster) 1D copy or 2D strided copy. Returns new copy
         dimensions and offsets to emulate the requested copy.
 
-        @return: a 3-tuple: copy_shape, src_strides, dst_strides
+        :return: a 3-tuple: copy_shape, src_strides, dst_strides
     """
     dims = len(copy_shape)
 
@@ -2250,13 +2259,13 @@ def cpp_offset_expr(d: data.Data,
                     packed_veclen=1):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
-        @param d: The data structure to use for sizes/strides.
-        @param subset: The subset to offset by.
-        @param offset: An additional list of offsets or a Subset object
-        @param packed_veclen: If packed types are targeted, specifies the
+        :param d: The data structure to use for sizes/strides.
+        :param subset: The subset to offset by.
+        :param offset: An additional list of offsets or a Subset object
+        :param packed_veclen: If packed types are targeted, specifies the
                               vector length that the final offset should be
                               divided by.
-        @return: A string in C++ syntax with the correct offset
+        :return: A string in C++ syntax with the correct offset
     """
     subset = copy.deepcopy(subset_in)
 

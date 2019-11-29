@@ -16,15 +16,15 @@ from dace.frontend.python.parser import DaceProgram
 
 
 class DaceState:
-    """ This class abstracts away the DaCe implementation from the GUI, the 
-        idea is that you pass in a string of DaCe code and this class will 
-        compile the code, give you access to the SDFG and the generated code, 
-        as well as the matching optimization patterns. 
+    """ This class abstracts the DaCe implementation from the GUI.
+        It accepts a string of DaCe code and compiles it, giving access to
+        the SDFG and the generated code, as well as the matching
+        transformations.
     
         DaCe requires the code to be in a file (for code inspection), but 
         while the user types in the GUI we do not have the data available in a 
-        file. Thus we create a temp directory and save it there. However, the 
-        user might check for the filename in the code, thus we provide the 
+        file. Thus we create a temporary directory and save it there. However,
+        the user might check for the filename in the code, thus we provide the
         original file name in argv[0].
     """
 
@@ -35,7 +35,7 @@ class DaceState:
                  fake_fname,
                  source_code=None,
                  sdfg=None,
-                 headless=False):
+                 remote=False):
 
         # TODO: Due to symbols, only one state per process is supported
         dace.symbolic.symbol.erase_all()
@@ -48,9 +48,9 @@ class DaceState:
         self.generated_code = []
         self.generated_code_files = None
         self.matching_patterns = []
-        self.headless = headless
         self.dace_code = dace_code
         self.source_code = source_code
+        self.remote = remote
         self.repetitions = None
         self.errors = [
         ]  # Any errors that arise from compilation are placed here to show
@@ -109,6 +109,8 @@ func({args})
             try:
                 self.sdfg = self.sdfgs[0][1]
             except IndexError:
+                if len(self.errors) > 0:
+                    raise self.errors[-1]
                 if len(self.sdfgs) == 0:
                     raise ValueError('No SDFGs found in file. SDFGs are only '
                                      'recognized when @dace.programs or SDFG '
@@ -171,9 +173,8 @@ func({args})
             exstr.write("Compilation failed:\n%s\n\n" % formatted_lines[-1])
             traceback.print_exc(file=exstr)
             self.generated_code = exstr.getvalue()
-            if self.headless == True:
-                print("Codegen failed!\n" + str(self.generated_code))
-                sys.exit(-1)
+            print("Codegen failed!\n" + str(self.generated_code))
+            sys.exit(-1)
 
     def get_dace_generated_files(self):
         """ Writes the generated code to a temporary file and returns the file

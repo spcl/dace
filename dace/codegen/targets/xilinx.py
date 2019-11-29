@@ -238,6 +238,7 @@ class XilinxCodeGen(TargetCodeGenerator):
         data_to_node = {}
 
         global_data_params = []
+        global_data_names = set()
         top_level_local_data = []
         subgraph_params = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
@@ -295,6 +296,7 @@ class XilinxCodeGen(TargetCodeGenerator):
                         else:
                             global_data_params.append((is_output, dataname,
                                                        data))
+                        global_data_names.add(dataname)
                     elif (data.storage == dace.dtypes.StorageType.FPGA_Local
                           or data.storage ==
                           dace.dtypes.StorageType.FPGA_Registers):
@@ -321,8 +323,12 @@ class XilinxCodeGen(TargetCodeGenerator):
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
         top_level_local_data = [data_to_node[n] for n in top_level_local_data]
 
-        # Get scalar parameters
-        scalar_parameters = sdfg.scalar_parameters(False)
+        # Get scalar parameters and deduplicate with respect to scalars with
+        # access nodes (which will be in `global_data_params`).
+        scalar_parameters = [
+            s for s in sdfg.scalar_parameters(False)
+            if s[0] not in global_data_names
+        ]
         symbol_parameters = sdfg.undefined_symbols(False)
 
         return (global_data_params, top_level_local_data, subgraph_params,
@@ -422,7 +428,10 @@ class XilinxCodeGen(TargetCodeGenerator):
         kernel_stream = CodeIOStream()
 
         # Write header
-        module_stream.write("#include <dace/xilinx/device.h>\n\n", sdfg)
+        module_stream.write(
+            """#include <dace/xilinx/device.h>
+#include <dace/math.h>
+#include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream)
         module_stream.write("\n", sdfg)
 
@@ -1367,6 +1376,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             pass
 
         else:
+            # Add extra opening brace (dynamic map ranges, closed in MapExit
+            # generator)
+            callsite_stream.write('{', sdfg, state_id, node)
 
             # Generate nested loops
             for i, r in enumerate(node.map.range):
