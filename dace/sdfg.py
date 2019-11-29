@@ -3876,6 +3876,7 @@ def scope_symbols(dfg):
     iteration_variables = collections.OrderedDict()
     subset_symbols = collections.OrderedDict()
     for n in dfg.nodes():
+        # TODO(later): Refactor to method on Node objects
         if isinstance(n, dace.graph.nodes.NestedSDFG):
             iv, ss = n.sdfg.scope_symbols()
             iteration_variables.update(iv)
@@ -3891,12 +3892,15 @@ def scope_symbols(dfg):
                 try:
                     for i in dim:
                         if isinstance(i, sp.Expr):
-                            subset_symbols.update((k.name, dt.Scalar(k.dtype))
-                                                  for k in i.free_symbols)
+                            subset_symbols.update(
+                                (k.name, dt.Scalar(k.dtype))
+                                for k in i.free_symbols
+                                if k.name not in n.in_connectors)
                 except TypeError:  # X object is not iterable
                     if isinstance(dim, sp.Expr):
-                        result.update((k.name, dt.Scalar(k.dtype))
-                                      for k in dim.free_symbols)
+                        subset_symbols.update((k.name, dt.Scalar(k.dtype))
+                                              for k in dim.free_symbols
+                                              if k.name not in n.in_connectors)
                     else:
                         raise TypeError(
                             "Unexpected map range type for {}: {}".format(
@@ -3908,7 +3912,8 @@ def scope_symbols(dfg):
                 symbolic.symbol(n.consume.pe_index).dtype)
             if isinstance(n.consume.num_pes, sp.Expr):
                 subset_symbols.update((k.name, dt.Scalar(k.dtype))
-                                      for k in n.consume.num_pes.free_symbols)
+                                      for k in n.consume.num_pes.free_symbols
+                                      if k.name not in n.in_connectors)
         else:
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))

@@ -1376,6 +1376,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             pass
 
         else:
+            # Add extra opening brace (dynamic map ranges, closed in MapExit
+            # generator)
+            callsite_stream.write('{', sdfg, state_id, node)
 
             # Generate nested loops
             for i, r in enumerate(node.map.range):
