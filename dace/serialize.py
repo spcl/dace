@@ -164,9 +164,16 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
         try:
             val = attrs[prop_name]
         except KeyError:
-            raise KeyError("Missing property for object of type " +
-                           type(object_with_properties).__name__ + ": " +
-                           prop_name)
+            # Allow a property to not be set if it has a default value
+            # TODO: is this really the job of serialize?
+            if prop.default is not None:
+                val = prop.default
+            elif prop.allow_none:
+                val = None
+            else:
+                raise KeyError("Missing property for object of type " +
+                               type(object_with_properties).__name__ + ": " +
+                               prop_name)
 
         # Make sure we use all properties
         source_properties.remove(prop_name)
