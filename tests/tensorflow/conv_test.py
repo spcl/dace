@@ -10,9 +10,9 @@ import dace
 from dace.frontend.tensorflow import TFSession
 K = 2
 C = 2
-R = 2
-S = 2
-inp_shape = [6, 50, 50, 2]
+R = 5
+S = 5
+inp_shape = [2, 8, 8, 2]
 filters = [[R, S, C, K]]
 strides = [[1, 1, 1, 1]]
 dilations = [[1, 1, 1, 1]]
@@ -33,14 +33,14 @@ for p in paddings:
                 #            [[0],[0],[0],[0],[1]]]]).astype(np.float32)
                 #test_in = np.full(shape=inp_shape, fill_value=2, dtype=np.float32)
                 #test_filter = np.full(shape=f, fill_value=np.random.uniform(), dtype=np.float32)
-                #test_filter = np.array([[[[0, 1]]],
-                #                        [[[0, 1]]]]).astype(np.float32)
+                #test_filter = np.array([[[[0]]],
+                #                       [[[1]]]]).astype(np.float32)
                 #test_filter3 = np.array([[[[1],[1]],
                 #                          [[-1],[1]]]]).astype(np.float32)                     
                 #print(test_filter.shape)
                 #test_filter3 = np.transpose(test_filter, [3, 2, 0, 1])[:]
                 test_filter = np.random.uniform(size=tuple(f)).astype(np.float32)
-                test_in = np.random.uniform(size=tuple(inp_shape)).astype(np.float32)*10
+                test_in = np.random.uniform(size=tuple(inp_shape)).astype(np.float32)
 
                 
                 config = tf.ConfigProto(device_count={'GPU':0})
@@ -53,7 +53,7 @@ for p in paddings:
                 output_dace = sess_dace.run(
                     outp, feed_dict={
                         inp: test_in,
-                        filter: test_filter
+                        filter: test_filter[:]
                     }, gpu=True)
 
                 output_tf = sess_tf.run(outp, feed_dict={inp: test_in, filter: test_filter})
@@ -69,7 +69,7 @@ for p in paddings:
                     print(tf.linalg.norm(output_tf - output_dace).eval(session=sess_tf))
                     print(output_tf - output_dace)
                     raise AssertionError("Convolution test failed")
-exit()
+
 ##### Conv backprop grad ######
 #inp_shape = [10, 10, 10, 10]
 #filters = [[2, 2, 10, 3]]

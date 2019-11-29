@@ -2032,65 +2032,22 @@ class TFSession:
             
             idx = [3, 2, 0, 1]
             mapParams = [filter_params[i] for i in idx]
-            mapRange = filter_dims
-            print(mapParams, mapRange)
+            mapRange = [filter_dims[i] for i in idx]
             mapLabel = string_builder(node.type) + "_filter_map"
             mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
-            maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"},
-                                    "out = j0")
+            maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"},"out = j0")
+            
             mapOutputLabel = mapLabel + "_output"
             mapOutputParams = mapParams
             tempDims = [K,C,R,S]
             mapOutputDims = ['0:' +str(x) for x in tempDims]
             mapOutput = state.add_transient(mapOutputLabel, tempDims, dace.float32, 
                                             dace.StorageType.GPU_Global)
-            print([mapOutputDims], [mapOutputParams])
+            
             self.add_out_memlets([mapOutput], mapExit, maptasklet, [mapOutputDims],
                                 [mapOutputParams])
-            print(filter_dims, filter_params)
             self.add_in_memlets([filter], mapEntry, maptasklet, [filter_dims],
                                 [filter_params])
-            
-            '''mapParams = filter_params
-            mapRange = ['0:' + str(x) for x in filter_dims]
-            print(mapParams, mapRange)
-            mapLabel = "filter_map"
-
-            mapEntry, mapExit = state.add_map(mapLabel,
-                                              dict(zip(mapParams, mapRange)))
-            print(mapEntry, mapExit)   
-            fconv_tasklet = state.add_tasklet(name= string_builder(node.type) + "_fconv_tasklet",
-                                              inputs={"f"}, outputs={"fout"},
-                                              code="fout = f;")
-            filter_memlet = Memlet.from_array(filter.label, filter.desc(self.graph))
-            
-            #state.add_edge(filter, None, mapEntry, None, 
-            #               Memlet.from_array(filter.label, filter.desc(self.graph)))
-            #state.add_edge(mapEntry, None, fconv_tasklet, 'f', 
-            #               Memlet.simple(-t))
-
-            
-            #state.add_edge(fconv_tasklet, 'fout', mapExit, None, Memlet.simple(string_builder(node.type) + "_fconv_tasklet", [1]))
-            
-
-            fconv_memlet_name = string_builder(node.type) + "_fconv_memlet"
-            self.graph.add_transient(fconv_memlet_name, filter_dims, 
-                                     dace.float32, dace.StorageType.GPU_Global)
-            fconv_memlet = state.add_access(fconv_memlet_name)
-            self.add_out_memlets(
-                [fconv_memlet], 
-                mapExit, 
-                fconv_tasklet, 
-                [mapRange],
-                [mapParams]
-            )
-            self.add_in_memlets(
-                [filter], 
-                mapEntry, 
-                fconv_tasklet, 
-                [mapRange],
-                [mapParams]
-            )'''
 
 
             tasklet = state.add_tasklet(
@@ -2204,23 +2161,10 @@ class TFSession:
             
             state.add_edge(image, None, tasklet, 'x', 
                            Memlet.from_array(image.label, image.desc(self.graph)))
-            state.add_edge(mapOutput, None, tasklet, 'f', Memlet.from_array(mapOutputLabel,mapOutput.desc(self.graph)))
+            state.add_edge(mapOutput, None, tasklet, 'f', 
+                           Memlet.from_array(mapOutputLabel,mapOutput.desc(self.graph)))
             state.add_edge(tasklet, 'y', output, None, 
-                           Memlet.from_array(output.label, output.desc(self.graph)))
-            
-            '''
-            state.add_edge(image, None, tasklet, 'x', 
-                           Memlet.from_array(image.label, image.desc(self.graph)))
-            #state.add_edge(filter, None, fconv_tasklet, 'f', 
-            #               Memlet.from_array(filter.label, filter.desc(self.graph)))
-            state.add_edge(mapExit, None, fconv_memlet, None, filter_memlet)
-            state.add_edge(tasklet, 'y', output, None, 
-                           Memlet.from_array(output.label, output.desc(self.graph)))
-            #state.add_edge(fconv_tasklet, 'fout', fconv_memlet, None, 
-            #               Memlet.from_array(fconv_memlet_name, filter.desc(self.graph)))
-            state.add_edge(fconv_memlet, None, tasklet, 'f', 
-                           filter_memlet)
-                       '''                 
+                           Memlet.from_array(output.label, output.desc(self.graph)))          
         else:
             local_ctr = str(next(_atomic_count))
             inputList = []
