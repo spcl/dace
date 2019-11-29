@@ -91,6 +91,10 @@ void __dace_exit_mpi({params}) {{
         function_stream.write('extern int __dace_comm_size, __dace_comm_rank;',
                               sdfg, state_id, map_header)
 
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        callsite_stream.write('{', sdfg, state_id, map_header)
+
         if len(map_header.map.params) > 1:
             raise NotImplementedError(
                 'Multi-dimensional MPI maps are not supported')
