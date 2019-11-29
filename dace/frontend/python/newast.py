@@ -1393,7 +1393,10 @@ class TaskletTransformer(ExtNodeTransformer):
             squeezed_rng = copy.deepcopy(rng)
             non_squeezed = squeezed_rng.squeeze()
             shape = squeezed_rng.size()
-            strides = [parent_array.strides[d] for d in non_squeezed]
+            if non_squeezed:
+                strides = [parent_array.strides[d] for d in non_squeezed]
+            else:
+                strides = [1]
         dtype = parent_array.dtype
 
         if arr_type is None:
