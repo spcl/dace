@@ -8,12 +8,12 @@ from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
-K = 1
-C = 1
+K = 2
+C = 2
 R = 2
 S = 2
-inp_shape = [1, 4, 4, 1]
-filters = [[R, S, K, C]]
+inp_shape = [6, 50, 50, 2]
+filters = [[R, S, C, K]]
 strides = [[1, 1, 1, 1]]
 dilations = [[1, 1, 1, 1]]
 paddings = ["VALID"]
@@ -32,14 +32,14 @@ for p in paddings:
                 #            [[0],[0],[0],[1],[0]],
                 #            [[0],[0],[0],[0],[1]]]]).astype(np.float32)
                 #test_in = np.full(shape=inp_shape, fill_value=2, dtype=np.float32)
-                test_filter = np.full(shape=f, fill_value=np.random.uniform(), dtype=np.float32)
-                #test_filter = np.array([[[[1, 1]]],
+                #test_filter = np.full(shape=f, fill_value=np.random.uniform(), dtype=np.float32)
+                #test_filter = np.array([[[[0, 1]]],
                 #                        [[[0, 1]]]]).astype(np.float32)
                 #test_filter3 = np.array([[[[1],[1]],
                 #                          [[-1],[1]]]]).astype(np.float32)                     
                 #print(test_filter.shape)
-                
-                #test_filter = np.random.uniform(size=tuple(f)).astype(np.float32)
+                #test_filter3 = np.transpose(test_filter, [3, 2, 0, 1])[:]
+                test_filter = np.random.uniform(size=tuple(f)).astype(np.float32)
                 test_in = np.random.uniform(size=tuple(inp_shape)).astype(np.float32)*10
 
                 
@@ -69,7 +69,7 @@ for p in paddings:
                     print(tf.linalg.norm(output_tf - output_dace).eval(session=sess_tf))
                     print(output_tf - output_dace)
                     raise AssertionError("Convolution test failed")
-
+exit()
 ##### Conv backprop grad ######
 #inp_shape = [10, 10, 10, 10]
 #filters = [[2, 2, 10, 3]]
