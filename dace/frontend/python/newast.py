@@ -3120,6 +3120,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
                     (type(func).__name__, funcname))
+            
+            # Change transient names
+            # TODO: This is temporary until SDFG calls become functions.
+            max_num = 0
+            for arrname, array in sdfg.arrays.items():
+                if array.transient and arrname[:5] == '__tmp':
+                    num = int(arrname[5:])
+                    max_num = max(max_num, num)
+                    num += self.sdfg._temp_transients
+                    sdfg.replace(arrname, f"__tmp{num}")
+            self.sdfg._temp_transients = max_num + 1
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
             argdict = {
