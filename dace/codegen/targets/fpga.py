@@ -902,7 +902,6 @@ class FPGACodeGen(TargetCodeGenerator):
         result = callsite_stream
 
         scope_dict = dfg.scope_dict()
-
         if node.map in self._unrolled_pes:
 
             # This is a top-level unrolled map, meaning it has been used to
@@ -910,6 +909,9 @@ class FPGACodeGen(TargetCodeGenerator):
             pass
 
         else:
+            # Add extra opening brace (dynamic map ranges, closed in MapExit
+            # generator)
+            callsite_stream.write('{', sdfg, state_id, node)
 
             # Pipeline innermost loops
             scope = dfg.scope_dict(True)[node]

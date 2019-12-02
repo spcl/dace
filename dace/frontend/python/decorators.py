@@ -27,7 +27,7 @@ def map(f, rng):
     """ A Map is representation of parallel execution, containing
         an integer set (Python range) for which its contents are run 
         concurrently.
-        @param rng: The map's range.
+        :param rng: The map's range.
     """
     return None
 
@@ -39,8 +39,8 @@ def consume(f, stream, pes):
         input stream and the contents. The contents are run by the given number
         of processing elements, who will try to pop elements from the input
         stream until a given quiescence condition is reached. 
-        @param stream: The stream to pop from.
-        @param pes: The number of processing elements to use.
+        :param stream: The stream to pop from.
+        :param pes: The number of processing elements to use.
     """
     return None
 
@@ -56,7 +56,7 @@ def tasklet(f):
 @paramdec
 def iterate(f, rng):
     """ A decorator version of a for loop, with a range of `rng`.
-        @param rng: The range of the for loop.
+        :param rng: The range of the for loop.
     """
     return None
 
@@ -64,7 +64,7 @@ def iterate(f, rng):
 @paramdec
 def loop(f, cond):
     """ A decorator version of a while loop, with a looping condition `cond`.
-        @param cond: The condition of the while loop.
+        :param cond: The condition of the while loop.
     """
     return None
 
@@ -73,6 +73,6 @@ def loop(f, cond):
 def conditional(f, cond):
     """ A decorator version of conditional execution, with an if-condition 
         `cond`.
-        @param cond: The condition of the branch.
+        :param cond: The condition of the branch.
     """
     return None

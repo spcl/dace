@@ -3638,7 +3638,7 @@ class DIODE {
     openUploader(purpose="") {
         
         w2popup.open({
-            title: purpose == "pickle-sdfg" ? "Upload the pickled SDFG" : "Upload a code file",
+            title: "Upload a code file",
             body: `
 <div class="w2ui-centered upload_flexbox">
     <label for="file-select" style="flex-grow: 1">
@@ -3664,10 +3664,6 @@ class DIODE {
             if(purpose == "code-python") {
                 this.newFile(data);
             }
-            else if(purpose == "pickle-sdfg"){
-                let b64_data = btoa(String.fromCharCode(...new Uint8Array(data)));
-                this.load_from_binary_sdfg(b64_data);
-            }
         };
 
         setup_drag_n_drop(x, (mime, data) => {
@@ -3678,7 +3674,7 @@ class DIODE {
             // Close the popup
             w2popup.close();
         }, null, {
-            readMode: purpose == "pickle-sdfg" ? "binary" : "text"
+            readMode: "text"
         });
 
         let fuploader = $('#file-select');
@@ -3698,47 +3694,7 @@ class DIODE {
                 // Close the popup
                 w2popup.close();
             };
-            if(purpose == "pickle-sdfg") {
-                reader.readAsBinaryString(file);
-            }
-            else {
-                reader.readAsText(file);
-            }
-        });
-    }
-
-    load_from_binary_sdfg(sdfg_data) {
-        // Reset project state
-        this.createNewProject();
-
-        let post_params = {
-            binary: sdfg_data
-        };
-        REST_request("/dace/api/v1.0/decompile/SDFG/", post_params, xhr => {
-            if (xhr.readyState === 4 && xhr.status === 200) {
-                // The reponse is similar to the one of compile()
-                let resp = xhr.response;
-                let respdata = JSON.parse(resp);
-                let compounds = respdata['compounds'];
-
-                let input_code = "";
-
-                for(let x of Object.entries(compounds)) {
-                    let t = x[1].input_code;
-                    if(t != undefined) {
-                        input_code = t;
-                    }
-                }
-
-                console.log("input code: ", input_code);
-                this.project().request(['set-inputcode'], x => {
-                    
-                }, {
-                    params: input_code
-                });
-                this.multiple_SDFGs_available(resp);
-                this.OptGraphs_available(compounds);
-            }
+            reader.readAsText(file);
         });
     }
 
@@ -4936,7 +4892,7 @@ class DIODE {
 
         // TODO: Handle enumeration types better
         let elem = document.createElement('div');
-        if(x.type == "bool") {
+        if(x.metatype == "bool") {
             let val = x.value;
             if(typeof(val) == 'string') val = val == 'True';
             elem = FormBuilder.createToggleSwitch("prop_" + x.name, (elem) => {
@@ -4945,15 +4901,15 @@ class DIODE {
             }, val);
         }
         else if(
-            x.type == "str" || x.type == "float"
+            x.metatype == "str" || x.metatype == "float"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
         }
         else if(
-            x.type == "tuple" || x.type == "dict" ||
-            x.type == "list" || x.type == "set"
+            x.metatype == "tuple" || x.metatype == "dict" ||
+            x.metatype == "list" || x.metatype == "set"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 let tmp = elem.value;
@@ -4966,10 +4922,10 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, tmp);
             }, JSON.stringify(x.value));
         }
-        else if(x.type == "Range") {
+        else if(x.metatype == "Range") {
             elem = create_range_input(transthis, x, node);
         }
-        else if(x.type == "DataProperty") {
+        else if(x.metatype == "DataProperty") {
             // The data list has to be fetched from the SDFG.
             // Therefore, there needs to be a placeholder until data is ready
             elem = document.createElement("span");
@@ -4995,7 +4951,7 @@ class DIODE {
             });
             
         }
-        else if(x.type == "CodeProperty") {
+        else if(x.metatype == "CodeProperty") {
             let codeelem = null;
             let langelem = null;
             let onchange = (elem) => {
@@ -5017,12 +4973,12 @@ class DIODE {
 
             return elem;
         }
-        else if(x.type == "int") {
+        else if(x.metatype == "int") {
             elem = FormBuilder.createIntInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, parseInt(elem.value));
             }, x.value);
         }
-        else if(x.type == 'ScheduleType') {
+        else if(x.metatype == 'ScheduleType') {
             let schedule_types = this.getEnum('ScheduleType');
             let qualified = x.value;
             if(!schedule_types.includes(qualified)) {
@@ -5032,7 +4988,7 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, schedule_types, qualified);
         }
-        else if(x.type == 'AccessType') {
+        else if(x.metatype == 'AccessType') {
             let access_types = this.getEnum('AccessType');
             let qualified = x.value;
             if(!access_types.includes(qualified)) {
@@ -5042,25 +4998,25 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, access_types, qualified);
         }
-        else if(x.type == 'Language') {
+        else if(x.metatype == 'Language') {
             elem = create_language_input();
         }
-        else if(x.type == 'None') {
+        else if(x.metatype == 'None') {
             // Not sure why the user would want to see this
             console.log("Property with type 'None' ignored", x);
             return elem;
         }
-        else if(x.type == 'object' && ['identity', 'wcr_identity'].includes(x.name)) {
+        else if(x.metatype == 'object' && ['identity', 'wcr_identity'].includes(x.name)) {
             // This is an internal property - ignore
             return elem;
         }
-        else if(x.type == 'OrderedDiGraph') {
+        else if(x.metatype == 'OrderedDiGraph') {
             // #TODO: What should we do with this?
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
         }
-        else if(x.type == 'DebugInfo') {
+        else if(x.metatype == 'DebugInfo') {
             // Special case: The DebugInfo contains information where this element was defined
             // (in the original source).
             let info_obj = x.value;
@@ -5073,7 +5029,7 @@ class DIODE {
                 });
             }, info_obj);
         }
-        else if(x.type == 'ListProperty') {
+        else if(x.metatype == 'ListProperty') {
             // #TODO: Find a better type for this
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 let tmp = elem.value;
@@ -5086,7 +5042,7 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, tmp);
             }, JSON.stringify(x.value));
         }
-        else if(x.type == "StorageType") {
+        else if(x.metatype == "StorageType") {
             let storage_types = this.getEnum('StorageType');
             let qualified = x.value;
             if(!storage_types.includes(qualified)) {
@@ -5096,7 +5052,7 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, storage_types, qualified);
         }
-        else if(x.type == "InstrumentationType") {
+        else if(x.metatype == "InstrumentationType") {
             let storage_types = this.getEnum('InstrumentationType');
             let qualified = x.value;
             if(!storage_types.includes(qualified)) {
@@ -5106,32 +5062,32 @@ class DIODE {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, storage_types, qualified);
         }
-        else if(x.type == "typeclass") {
+        else if(x.metatype == "typeclass") {
             // #TODO: Type combobox
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
         }
-        else if(x.type == "hosttype") {
+        else if(x.metatype == "hosttype") {
             elem = FormBuilder.createHostInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, DIODE.getHostList(), x.value);
         }
-        else if(x.type == "selectinput") {
+        else if(x.metatype == "selectinput") {
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.options, x.value);
         }
-        else if(x.type == "combobox") {
+        else if(x.metatype == "combobox") {
             elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.options, x.value);
         }
-        else if(x.type == "font") {
-            console.warn("Ignoring property type ", x.type);
+        else if(x.metatype == "font") {
+            console.warn("Ignoring property type ", x.metatype);
             return elem;
         }
-        else if(x.type == "SubsetProperty") {
+        else if(x.metatype == "SubsetProperty") {
             if(x.value == null) {
                 elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                     transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
@@ -5144,14 +5100,14 @@ class DIODE {
                 elem = create_range_input(transthis, x, node);
             }
         }
-        else if(x.type == "SymbolicProperty") {
+        else if(x.metatype == "SymbolicProperty") {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
             }, JSON.stringify(x.value));
         }
         else {
             console.log("Unimplemented property type: ", x);
-            alert("Unimplemented property type: " + x.type);
+            alert("Unimplemented property type: " + x.metatype);
 
             return elem;
         }
@@ -6006,6 +5962,11 @@ class DIODE {
                 // #TODO: Show success/error depending on the exit code
 
                 this.toast("Execution ended", "The execution of the last run has ended", 'info');
+
+                // Flush remaining outputs
+                let newdata = xhr.response.substr(xhr.seenBytes);
+                this.goldenlayout.eventHub.emit(terminal_identifier, newdata);
+                xhr.seenBytes = xhr.responseText.length;
             }
             if (xhr.readyState === 3) {
                 let newdata = xhr.response.substr(xhr.seenBytes);

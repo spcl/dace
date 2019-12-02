@@ -75,7 +75,7 @@ run_all() {
     #Vectorization 1: first vectorize and then transform for FPGA
     run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
     #Vectorization 2: first transform for FPGA then vectorize
-    run_sample intel_fpga/vec_sum vec_sum "1\n15\n"
+    run_sample intel_fpga/vec_sum vec_sum "1\n16\n"
     #Vectorization 3: TODO non vectorizable N
 
     # #### WCR ####

@@ -257,7 +257,7 @@ class typeclass(object):
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
             with the following syntax: dace.uint32[N,M]
-            @return: A data.Array data descriptor.
+            :return: A data.Array data descriptor.
         """
         from dace import data
 
@@ -814,6 +814,24 @@ class DebugInfo:
         self.start_column = start_column
         self.end_column = end_column
         self.filename = filename
+
+    # NOTE: Manually marking as serializable to avoid an import loop
+    # The data structure is a property on its own (pointing to a range of code),
+    # so it is serialized as a dictionary directly.
+    def to_json(self):
+        return dict(
+            type='DebugInfo',
+            start_line=self.start_line,
+            end_line=self.end_line,
+            start_column=self.start_column,
+            end_column=self.end_column,
+            filename=self.filename)
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return DebugInfo(json_obj['start_line'], json_obj['start_column'],
+                         json_obj['end_line'], json_obj['end_column'],
+                         json_obj['filename'])
 
 
 ######################################################

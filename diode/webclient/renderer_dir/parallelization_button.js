@@ -98,7 +98,7 @@ class ParallelizationButton extends Button {
             
             return returnarr;
         }).linkMouse(layout._layout_clickable);
-        suggested_action.setHint("SpeedupHigherThanOne", "OrthogonalTiling");
+        suggested_action.setHint("SpeedupHigherThanOne", "MapTiling");
 
         layout.setRect("SuggestedAction", new Pos(70, 70), new Pos(30, 20), suggested_action);
 
