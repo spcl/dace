@@ -2585,8 +2585,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
-                    }, {'inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
-                    'out = inp', {'out': memlet},
+                    }, {'__inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
+                    '__out = __inp', {'__out': memlet},
                     external_edges=True)
         else:
             if op_subset.num_elements() != 1:
@@ -2597,13 +2597,13 @@ class ProgramVisitor(ExtNodeVisitor):
             op2 = state.add_write(target_name)
             tasklet = state.add_tasklet(
                 name=state.label,
-                inputs={'inp'},
-                outputs={'out'},
-                code='out = inp')
+                inputs={'__inp'},
+                outputs={'__out'},
+                code='__out = __inp')
             inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
             out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
-            state.add_edge(op1, None, tasklet, 'inp', inp_memlet)
-            state.add_edge(tasklet, 'out', op2, None, out_memlet)
+            state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
+            state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
                             rtarget: Union[str, Tuple[str, subsets.Range]],
@@ -2659,11 +2659,11 @@ class ProgramVisitor(ExtNodeVisitor):
                             for i, (start, end,
                                     step) in enumerate(wtarget_subset)
                         }, {
-                            'in1': in1_memlet,
-                            'in2': in2_memlet
+                            '__in1': in1_memlet,
+                            '__in2': in2_memlet
                         },
-                        'out = in1 {op} in2'.format(op=op),
-                        {'out': out_memlet},
+                        '__out = __in1 {op} __in2'.format(op=op),
+                        {'__out': out_memlet},
                         external_edges=True)
                 else:
                     op1 = state.add_read(op_name)
@@ -2693,10 +2693,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(wtarget_subset)
                     }, {
-                        'in1': in1_memlet,
-                        'in2': in2_memlet
+                        '__in1': in1_memlet,
+                        '__in2': in2_memlet
                     },
-                    'out = in1 {op} in2'.format(op=op), {'out': out_memlet},
+                    '__out = __in1 {op} __in2'.format(op=op), {'__out': out_memlet},
                     external_edges=True)
         else:
             if op_subset.num_elements() != 1:
@@ -2709,17 +2709,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 op3 = state.add_write(wtarget_name)
                 tasklet = state.add_tasklet(
                     name=state.label,
-                    inputs={'in1', 'in2'},
-                    outputs={'out'},
-                    code='out = in1 {op} in2'.format(op=op))
+                    inputs={'__in1', '__in2'},
+                    outputs={'__out'},
+                    code='__out = __in1 {op} __in2'.format(op=op))
                 in1_memlet = Memlet.simple(rtarget_name,
                                            '%s' % rtarget_subset[0][0])
                 in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
                 out_memlet = Memlet.simple(wtarget_name,
                                            '%s' % wtarget_subset[0][0])
-                state.add_edge(op1, None, tasklet, 'in1', in1_memlet)
-                state.add_edge(op2, None, tasklet, 'in2', in2_memlet)
-                state.add_edge(tasklet, 'out', op3, None, out_memlet)
+                state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
+                state.add_edge(op2, None, tasklet, '__in2', in2_memlet)
+                state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
     def _get_variable_name(self, node, name):
         if name in self.variables:
