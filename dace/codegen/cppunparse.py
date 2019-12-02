@@ -397,21 +397,21 @@ class CPPUnparser:
             self.dispatch(t.value, infer_type)
         self.write(';', infer_type)
 
-    def _Return(self, t):
-        self.fill("return")
+    def _Return(self, t, infer_type=False):
+        self.fill("return", infer_type)
         if t.value:
-            self.write(" ")
-            self.dispatch(t.value)
-        self.write(';')
+            self.write(" ", infer_type)
+            self.dispatch(t.value, infer_type)
+        self.write(';', infer_type)
 
-    def _Pass(self, t):
+    def _Pass(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
 
-    def _Break(self, t):
-        self.fill("break;")
+    def _Break(self, t, infer_type=False):
+        self.fill("break;", infer_type)
 
-    def _Continue(self, t):
-        self.fill("continue;")
+    def _Continue(self, t, infer_type=False):
+        self.fill("continue;", infer_type)
 
     def _Delete(self, t):
         raise SyntaxError('Invalid C++')

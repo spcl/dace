@@ -156,7 +156,26 @@ run_all() {
   $1 trmm trmm 1
 }
 
-if [ "$1" == "xilinx" ]; then
+if [ "$1" == "intel_fpga" ]; then
+  # Check if aoc is vailable
+  which aoc
+  if [ $? -ne 0 ]; then
+    echo "aocc not available"
+    exit 99
+  fi
+
+  echo "====== Target: INTEL FPGA ======"
+  export DACE_compiler_use_cache=0
+  export DACE_compiler_fpga_vendor="intel_fpga"
+  export DACE_compiler_intel_fpga_mode="emulator"
+
+  TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
+  cd $TEST_DIR/../samples/polybench
+
+  run_all run_sample_intel
+
+else
+  # assuming xilinx
   # Check if xocc is vailable
   which xocc
   if [ $? -ne 0 ]; then
@@ -177,27 +196,6 @@ if [ "$1" == "xilinx" ]; then
   TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
   cd $TEST_DIR/../samples/polybench
   run_all run_sample_xilinx
-elif [ "$1" == "intel_fpga" ]; then
-  # Check if aoc is vailable
-  which aoc
-  if [ $? -ne 0 ]; then
-    echo "aocc not available"
-    exit 99
-  fi
-
-  echo "====== Target: INTEL FPGA ======"
-  export DACE_compiler_use_cache=0
-  export DACE_compiler_fpga_vendor="intel_fpga"
-  export DACE_compiler_intel_fpga_mode="emulator"
-
-  TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
-  cd $TEST_DIR/../samples/polybench
-
-  run_all run_sample_intel
-
-else
-  echo "Usage: $0 <intel_fpga/xilinx>"
-  exit 1
 fi
 
 PASSED=$(expr $TESTS - $ERRORS)
