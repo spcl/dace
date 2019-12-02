@@ -1935,19 +1935,33 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         )
 
         # If axes were not defined, use all input dimensions
-        input_dims = input_memlet.subset.dims()
-        output_dims = output_memlet.subset.data_dims()
+        input_num_dims = input_memlet.subset.dims()
         if axes is None:
-            axes = tuple(range(input_dims))
+            axes = tuple(range(input_num_dims))
+        output_num_dims = input_num_dims - len(axes)
 
         # Obtain variable names per output and reduction axis
         axis_vars = []
+        output_axis_vars = dict()
+        output_dims = []
         octr = 0
-        for d in range(input_dims):
+        input_subset = input_memlet.subset
+        output_subset = output_memlet.subset
+        for d in range(input_num_dims):
             if d in axes:
                 axis_vars.append("__i%d" % d)
             else:
                 axis_vars.append("__o%d" % octr)
+                ri = input_subset[d]
+                rngi = ri[1] - ri[0] + 1
+                for i, ro in enumerate(output_subset):
+                    if i in output_axis_vars.keys():
+                        continue
+                    rngo = ro[1] - ro[0] + 1
+                    if rngi == rngo:
+                        output_dims.append(i)
+                        output_axis_vars[i] = octr
+                        break
                 octr += 1
 
         # Instrumentation: Post-scope
@@ -1958,16 +1972,16 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                                 inner_stream, function_stream)
 
         # Write OpenMP loop pragma if there are output dimensions
-        if output_dims > 0:
+        if output_num_dims > 0:
             callsite_stream.write(loop_header, sdfg, state_id, node)
 
         # Generate outer loops
-        output_subset = output_memlet.subset
-        for axis in range(output_dims):
+        for axis in output_dims:
+            octr = output_axis_vars[axis]
             callsite_stream.write(
                 "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
                 format(
-                    var="__o%d" % axis,
+                    var="__o%d" % octr,
                     begin=output_subset[axis][0],
                     end=output_subset[axis][1] + 1,
                     skip=output_subset[axis][2],
@@ -1980,7 +1994,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             end_braces += 1
 
         use_tmpout = False
-        if len(axes) == input_dims:
+        if len(axes) == input_num_dims:
             # Add OpenMP reduction clause if reducing all axes
             if (redtype != dtypes.ReductionType.Custom
                     and node.schedule == dtypes.ScheduleType.CPU_Multicore):
@@ -2002,11 +2016,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
             sdfg,
             output_memlet,
-            offset=["__o%d" % i for i in range(output_dims)],
+            offset=["__o%d" % output_axis_vars[i]
+                    if i in output_axis_vars.keys() else r[0]
+                    for i, r in enumerate(output_subset)],
             relative_offset=False,
         ))
 
-        if len(axes) != input_dims and node.identity is not None:
+        if len(axes) != input_num_dims and node.identity is not None:
             # Write code for identity value in multiple axes
             callsite_stream.write(
                 "%s = %s;" % (outvar, sym2cpp(node.identity)), sdfg, state_id,
