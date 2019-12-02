@@ -3136,6 +3136,8 @@ class ProgramVisitor(ExtNodeVisitor):
             }
             # Unset parent inputs/read accesses that
             # turn out to be outputs/write accesses.
+            # TODO: Is there a case where some data is both input and output?
+            # TODO: If yes, is it a problem?
             for memlet in outputs.values():
                 aname = memlet.data
                 rng = memlet.subset
