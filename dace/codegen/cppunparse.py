@@ -204,19 +204,20 @@ class CPPUnparser:
 
     def fill(self, text="", infer_type=False):
         """Indent a piece of text, according to the current indentation level"""
-        if self.firstfill:
-            if self.indent_output:
-                self.f.write("    " * (self._indent + self.indent_offset) +
-                             text)
+        if not infer_type:
+            if self.firstfill:
+                if self.indent_output:
+                    self.f.write("    " * (self._indent + self.indent_offset) +
+                                 text)
+                else:
+                    self.f.write(text)
+                self.firstfill = False
             else:
-                self.f.write(text)
-            self.firstfill = False
-        else:
-            if self.indent_output:
-                self.f.write("\n" + "    " *
-                             (self._indent + self.indent_offset) + text)
-            else:
-                self.f.write("\n" + text)
+                if self.indent_output:
+                    self.f.write("\n" + "    " *
+                                 (self._indent + self.indent_offset) + text)
+                else:
+                    self.f.write("\n" + text)
 
     def write(self, text, infer_type=False):
         """Append a piece of text to the current line if infer_type is False. Does nothing otherwise"""
@@ -225,14 +226,14 @@ class CPPUnparser:
 
     def enter(self, infer_type=False):
         """Print '{', and increase the indentation."""
-        self.write(" {\n", infer_type)
+        self.write(" {", infer_type)
         self._indent += 1
 
-    def leave(self):
+    def leave(self, infer_type=False):
         """Decrease the indentation and print '}'."""
         self._indent -= 1
-        self.fill()
-        self.write("}")
+        self.fill(infer_type=infer_type)
+        self.write("}", infer_type)
         # Clear locals defined inside scope
         self.locals.clear_scope(self._indent + 1)
 
@@ -244,7 +245,7 @@ class CPPUnparser:
                 self.dispatch(t)
         except TypeError:
             meth = getattr(self, "_" + tree.__class__.__name__)
-            return meth(tree, infer_type)
+            return meth(tree, infer_type=infer_type)
 
     ############### Unparsing methods ######################
     # There should be one method per concrete grammar type #
@@ -257,12 +258,12 @@ class CPPUnparser:
         for stmt in tree.body:
             self.dispatch(stmt, infer_type)
 
-    def _Interactive(self, tree):
+    def _Interactive(self, tree, infer_type=False):
         for stmt in tree.body:
-            self.dispatch(stmt)
+            self.dispatch(stmt, infer_type)
 
-    def _Expression(self, tree):
-        self.dispatch(tree.body)
+    def _Expression(self, tree, infer_type=False):
+        self.dispatch(tree.body, infer_type)
 
     # stmt
     def _Expr(self, tree, infer_type=False):
@@ -310,7 +311,7 @@ class CPPUnparser:
             self.write(")")
 
     def _Assign(self, t, infer_type=False):
-        self.fill()
+        self.fill(infer_type=infer_type)
 
         # Handle the case of a tuple output
         if len(t.targets) > 1:
@@ -578,39 +579,39 @@ class CPPUnparser:
         # self.dispatch(t.body)
         # self.leave()
 
-    def _generic_FunctionDef(self, t, is_async=False):
-        self.write("\n")
+    def _generic_FunctionDef(self, t, is_async=False, infer_type=False):
+        self.write("\n", infer_type)
         for deco in t.decorator_list:
-            self.fill("// Decorator: ")
-            self.dispatch(deco)
+            self.fill("// Decorator: ", infer_type)
+            self.dispatch(deco, infer_type)
         if is_async:
-            self.write('/* async */ ')
+            self.write('/* async */ ', infer_type)
 
         if getattr(t, "returns", False):
             if isinstance(t.returns, ast.NameConstant):
                 if t.returns.value is None:
-                    self.write('void')
+                    self.write('void', infer_type)
                 else:
-                    self.dispatch(t.returns)
+                    self.dispatch(t.returns, infer_type)
             else:
-                self.dispatch(t.returns)
+                self.dispatch(t.returns, infer_type)
 
-            self.fill(" " + t.name + "(")
+            self.fill(" " + t.name + "(", infer_type)
         else:
-            self.fill("auto " + t.name + "(")
+            self.fill("auto " + t.name + "(", infer_type)
 
-        self.dispatch(t.args)
+        self.dispatch(t.args, infer_type)
 
-        self.write(")")
-        self.enter()
-        self.dispatch(t.body)
-        self.leave()
+        self.write(")", infer_type)
+        self.enter(infer_type)
+        self.dispatch(t.body, infer_type)
+        self.leave(infer_type)
 
-    def _FunctionDef(self, t):
-        self._generic_FunctionDef(t)
+    def _FunctionDef(self, t, infer_type=False):
+        self._generic_FunctionDef(t, infer_type=infer_type)
 
-    def _AsyncFunctionDef(self, t):
-        self._generic_FunctionDef(t, is_async=True)
+    def _AsyncFunctionDef(self, t, infer_type=False):
+        self._generic_FunctionDef(t, infer_type, is_async=True)
 
     def _generic_For(self, t, is_async=False):
         if is_async:
@@ -1089,17 +1090,17 @@ class CPPUnparser:
         interleave(lambda: self.write(', '), self.dispatch, t.dims)
 
     # argument
-    def _arg(self, t):
+    def _arg(self, t, infer_type=False):
         if t.annotation:
-            self.dispatch(t.annotation)
-            self.write(' ')
+            self.dispatch(t.annotation, infer_type)
+            self.write(' ', infer_type)
         else:
-            self.write("auto ")
-        self.write(t.arg)
+            self.write("auto ", infer_type)
+        self.write(t.arg, infer_type)
         self.locals.define(t.arg, t.lineno, self._indent)
 
     # others
-    def _arguments(self, t):
+    def _arguments(self, t, infer_type=False):
         first = True
         # normal arguments
         defaults = [None] * (len(t.args) - len(t.defaults)) + t.defaults
@@ -1107,16 +1108,16 @@ class CPPUnparser:
             if first:
                 first = False
             else:
-                self.write(", ")
+                self.write(", ", infer_type)
 
             # ast.arg does not exist in python2
             if six.PY2:
-                self.write("auto ")
+                self.write("auto ", infer_type)
                 self.locals.define(a.id, a.lineno, self._indent)
 
             self.dispatch(a)
             if d:
-                self.write("=")
+                self.write("=", infer_type)
                 self.dispatch(d)
 
         # varargs, or bare '*' if no varargs but keyword-only arguments present
