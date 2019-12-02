@@ -2894,20 +2894,39 @@ class TFSession:
             gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
             output = self.create_and_add_output_node(node)[0]
 
-            filter_dims = filter.desc(self.graph).shape
-            gradient_dims = gradient.desc(self.graph).shape
-            output_dims = output.desc(self.graph).shape
+            filter_dims_list = filter.desc(self.graph).shape
+            gradient_dims_list = gradient.desc(self.graph).shape
+            output_dims_list = output.desc(self.graph).shape
 
-            N = output_dims[0]
-            H = output_dims[1]
-            W = output_dims[2]
-            C = filter_dims[2]
-            K = filter_dims[3]
-            R = filter_dims[0]
-            S = filter_dims[1]
+            N = output_dims_list[0]
+            H = output_dims_list[1]
+            W = output_dims_list[2]
+            C = filter_dims_list[2]
+            K = filter_dims_list[3]
+            R = filter_dims_list[0]
+            S = filter_dims_list[1]
             padh = 0
             padw = 0
-
+            
+            idx = [3, 0, 1, 2]
+            mapParams = [filter_params[i] for i in idx]
+            mapRange = [filter_dims[i] for i in idx]
+            mapLabel = string_builder(node.type) + "_filter_map"
+            mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+            maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"},"out = j0")
+            
+            mapOutputLabel = mapLabel + "_output"
+            mapOutputParams = mapParams
+            tempDims = [K,R,S,C]
+            mapOutputDims = ['0:' +str(x) for x in tempDims]
+            mapOutput = state.add_transient(mapOutputLabel, tempDims, dace.float32, 
+                                            dace.StorageType.GPU_Global)
+            
+            self.add_out_memlets([mapOutput], mapExit, maptasklet, [mapOutputDims],
+                                [mapOutputParams])
+            self.add_in_memlets([filter], mapEntry, maptasklet, [filter_dims],
+                                [filter_params])
+            
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'w', 'dy'},
@@ -2927,7 +2946,7 @@ class TFSession:
                     cudnnCreateFilterDescriptor(&wDesc);
                     checkCUDNN(cudnnSetFilter4dDescriptor(wDesc,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
-                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
                                                /*out_channels=*/{K},
                                                /*in_channels=*/{C},
                                                /*kernel_height=*/{R},
@@ -2938,7 +2957,7 @@ class TFSession:
                     cudnnTensorDescriptor_t dxDesc;
                     checkCUDNN(cudnnCreateTensorDescriptor(&dxDesc));
                     checkCUDNN(cudnnSetTensor4dDescriptor(dxDesc,
-                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
                                                /*batch_size=*/{N},
                                                /*channels=*/{C},
@@ -2967,7 +2986,7 @@ class TFSession:
                     cudnnTensorDescriptor_t dyDesc;
                     checkCUDNN(cudnnCreateTensorDescriptor(&dyDesc));
                     checkCUDNN(cudnnSetTensor4dDescriptor(dyDesc,
-                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
                                                /*batch_size=*/yn,
                                                /*channels=*/yc,
@@ -3010,7 +3029,7 @@ class TFSession:
 
             state.add_edge(tasklet, 'dx', output, None, Memlet.from_array(output.label, output.desc(self.graph)))
             state.add_edge(gradient, None, tasklet, 'dy', Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(filter, None, tasklet, 'w', Memlet.from_array(filter.label, filter.desc(self.graph)))
+            state.add_edge(mapOutput, None, tasklet, 'w', Memlet.from_array(mapOutputLabel, mapOutput.desc(self.graph)))
             
         
         else:
@@ -3241,20 +3260,22 @@ class TFSession:
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
             output = self.create_and_add_output_node(node)[0]
-
-            image_dims = image.desc(self.graph).shape
-            gradient_dims = gradient.desc(self.graph).shape
-            output_dims = output.desc(self.graph).shape
-            N = image_dims[0]
-            H = image_dims[1]
-            W = image_dims[2]
-            C = image_dims[3]
-            K = output_dims[3]
-            R = output_dims[0]
-            S = output_dims[1]
+            output_params = self.get_default_params(node.outputs[0])
+            output_dims = self.get_default_dims(node.outputs[0])
+            
+            image_dims_list = image.desc(self.graph).shape
+            gradient_dims_list = gradient.desc(self.graph).shape
+            output_dims_list = output.desc(self.graph).shape
+            N = image_dims_list[0]
+            H = image_dims_list[1]
+            W = image_dims_list[2]
+            C = image_dims_list[3]
+            K = output_dims_list[3]
+            R = output_dims_list[0]
+            S = output_dims_list[1]
             padh = 0
             padw = 0
-
+            
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'x', 'dy'},
@@ -3274,7 +3295,7 @@ class TFSession:
                     cudnnTensorDescriptor_t xDesc;
                     checkCUDNN(cudnnCreateTensorDescriptor(&xDesc));
                     checkCUDNN(cudnnSetTensor4dDescriptor(xDesc,
-                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
                                                /*batch_size=*/{N},
                                                /*channels=*/{C},
@@ -3287,7 +3308,7 @@ class TFSession:
                     cudnnCreateFilterDescriptor(&dwDesc);
                     checkCUDNN(cudnnSetFilter4dDescriptor(dwDesc,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
-                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
                                                /*out_channels=*/{K},
                                                /*in_channels=*/{C},
                                                /*kernel_height=*/{R},
@@ -3315,7 +3336,7 @@ class TFSession:
                     cudnnTensorDescriptor_t dyDesc;
                     checkCUDNN(cudnnCreateTensorDescriptor(&dyDesc));
                     checkCUDNN(cudnnSetTensor4dDescriptor(dyDesc,
-                                               /*format=*/CUDNN_TENSOR_{format},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
                                                /*batch_size=*/yn,
                                                /*channels=*/yc,
@@ -3356,13 +3377,31 @@ class TFSession:
                 tasklet.code_global = code_global
                 tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
                 tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
+                
+            mapLabel = string_builder(node.type) + "_filter_map"
+            mapInputLabel = mapLabel + "_input"
+            tempDims = [K,R,S,C]
+            mapInputDims = ['0:' +str(x) for x in tempDims] 
+            mapInputParams = ['i0','i1','i2','i3']
+            mapInput = state.add_transient(mapInputLabel, tempDims, dace.float32, 
+                                            dace.StorageType.GPU_Global)
+            idx = [1, 2, 3, 0]
+            mapParams = [mapInputParams[i] for i in idx]
+            mapRange = [mapInputDims[i] for i in idx]
+            mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+            maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"},"out = j0")
+            
+            self.add_in_memlets([mapInput], mapEntry, maptasklet, [mapInputDims],
+                                [mapInputParams])
+            self.add_out_memlets([output], mapExit, maptasklet, [output_dims],
+                                [mapParams])
             
             state.add_edge(gradient, None, tasklet, 'dy', 
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
             state.add_edge(image, None, tasklet, 'x', 
                            Memlet.from_array(image.label, image.desc(self.graph)))
-            state.add_edge(tasklet, 'dw', output, None, 
-                           Memlet.from_array(output.label, output.desc(self.graph)))
+            state.add_edge(tasklet, 'dw', mapInput, None, 
+                           Memlet.from_array(mapInputLabel, mapInput.desc(self.graph)))
         
         else:
             # convolve loss over input.

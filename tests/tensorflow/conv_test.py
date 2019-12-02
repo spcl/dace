@@ -8,11 +8,11 @@ from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
-K = 2
-C = 2
-R = 5
-S = 5
-inp_shape = [2, 8, 8, 2]
+K = 10
+C = 1
+R = 2
+S = 2
+inp_shape = [1, 10, 10, 1]
 filters = [[R, S, C, K]]
 strides = [[1, 1, 1, 1]]
 dilations = [[1, 1, 1, 1]]
@@ -35,7 +35,7 @@ for p in paddings:
                 #test_filter = np.full(shape=f, fill_value=np.random.uniform(), dtype=np.float32)
                 #test_filter = np.array([[[[0]]],
                 #                       [[[1]]]]).astype(np.float32)
-                #test_filter3 = np.array([[[[1],[1]],
+                #test_filter = np.array([[[[1],[-1]],
                 #                          [[-1],[1]]]]).astype(np.float32)                     
                 #print(test_filter.shape)
                 #test_filter3 = np.transpose(test_filter, [3, 2, 0, 1])[:]
