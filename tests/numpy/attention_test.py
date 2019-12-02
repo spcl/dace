@@ -89,9 +89,7 @@ def attn_fwd(q : dace.float32[batchSize, Qsize, seqLenQ],
             beta[:,:] = k_bar_t @ q_bar[:,:] # seqLenK x seqLenQ
 
             for j in dace.map[0:seqLenK]:
-                tmp = dace.define_local([seqLenQ], dace.float32)
-                dace_softmax(beta[j], tmp)
-                alpha[j] = tmp
+                dace_softmax(beta[j], alpha[j])
             # alpha[:,:] = softmax(beta[:,:]) # rowwise softmax: seqLenK x seqLenQ
 
             h_bar[:,:] = v_bar[:,:] @ alpha[:,:] # projQsize x seqLenQ
