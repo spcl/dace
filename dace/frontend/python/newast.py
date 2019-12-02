@@ -3134,6 +3134,27 @@ class ProgramVisitor(ExtNodeVisitor):
                 k: v
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
+            # Unset parent inputs/read accesses that
+            # turn out to be outputs/write accesses.
+            for memlet in outputs.values():
+                aname = memlet.data
+                rng = memlet.subset
+                access_value = (aname, rng)
+                access_key = _inverse_dict_lookup(self.accesses, access_value)
+                if access_key:
+                    # Delete read access and create write access and output
+                    vname = aname[:-1] + 'w'
+                    name, rng, atype = access_key
+                    if atype == 'r':
+                        del self.accesses[access_key]
+                        access_value = self._add_write_access(name, rng, node,
+                                                              new_name=vname)
+                        memlet.data = vname
+                if aname in self.inputs.keys():
+                    # Delete input
+                    del self.inputs[aname]
+
+
 
             # Map internal SDFG symbols to external symbols (find_and_replace?)
             for aname, arg in args:
