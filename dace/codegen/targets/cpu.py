@@ -2082,8 +2082,18 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
             # Store back tmpout into the true output
             if i == end_braces - 1 and use_tmpout:
+                # TODO: Verify the following fix
+                scalar_output = True
+                for r in output_subset:
+                    if r != 0 and r != (0, 0, 1):
+                        scalar_output = False
+                        break
+                if scalar_output:
+                    out_var = output_memlet.data
+                else:
+                    cpp_array_expr(sdfg, output_memlet)
                 callsite_stream.write(
-                    "%s = __tmpout;" % cpp_array_expr(sdfg, output_memlet),
+                    "%s = __tmpout;" % out_var,
                     sdfg,
                     state_id,
                     node,
