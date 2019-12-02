@@ -184,10 +184,10 @@ class InlineSDFG(pattern_matching.Transformation):
 
             result.subset.unsqueeze(to_unsqueeze)
         elif len(internal_memlet.subset) > len(external_memlet.subset):
-            raise ValueError(
-                'Unexpected extra dimensions in internal memlet '
-                'while inlining SDFG.\nExternal memlet: %s\n'
-                'Internal memlet: %s' % (external_memlet, internal_memlet))
+            raise ValueError('Unexpected extra dimensions in internal memlet '
+                             'while inlining SDFG.\nExternal memlet: %s\n'
+                             'Internal memlet: %s' %
+                             (external_memlet, internal_memlet))
 
         result.subset.offset(external_memlet.subset, False)
 
@@ -217,6 +217,11 @@ class InlineSDFG(pattern_matching.Transformation):
 
         # Add SDFG nodes to top-level SDFG
         state = nsdfg.nodes()[0]
+        # Keep a backup of the topological sorted order of the access nodes,
+        order = [
+            x for x in reversed(list(nx.topological_sort(state._nx)))
+            if isinstance(x, nodes.AccessNode)
+        ]
         for node in state.nodes():
             # Data access nodes
             if isinstance(node, nodes.AccessNode):
@@ -269,11 +274,13 @@ class InlineSDFG(pattern_matching.Transformation):
                     # Connector is written in a non-sink access node
                     graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn,
                                    newmemlet)
-                    if isinstance(cnode, nodes.AccessNode):
+                    # Check if there is another sink-node for the connector.
+                    n = next((x for x in order if x.label == e.dst.label),
+                             None)
+                    if not state.out_edges(n):
                         continue
                     else:
                         # Connector is ONLY written in a non-sink access node,
-                        # i.e. cnode is an exit node and an edge must pass
                         # through the exit node to the true output access node.
                         e._src = e._dst
                         e._src_conn = e._dst_conn
@@ -283,7 +290,7 @@ class InlineSDFG(pattern_matching.Transformation):
                         newmemlet.other_subset = dc(newmemlet.subset)
                         for _, _, dst, _, memlet in graph.out_edges(cnode):
                             if isinstance(dst, nodes.AccessNode
-                                ) and memlet.data == cmemlet.data:
+                                          ) and memlet.data == cmemlet.data:
                                 memlet.wcr = None
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
