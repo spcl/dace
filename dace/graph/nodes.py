@@ -44,7 +44,7 @@ class Node(object):
 
     def to_json(self, parent):
         labelstr = str(self)
-        typestr = str(type(self).__name__)
+        typestr = getattr(self, '__jsontype__', str(type(self).__name__))
 
         scope_entry_node = parent.entry_node(self)
         if scope_entry_node is not None:
@@ -236,21 +236,18 @@ class CodeNode(Node):
     """ A node that contains runnable code with acyclic external data
         dependencies. May either be a tasklet or a nested SDFG, and
         denoted by an octagonal shape. """
-    
+
     label = Property(dtype=str, desc="Name of the CodeNode")
-    location = Property(dtype=str,
-                        desc="CodeNode execution location descriptor",
-                        allow_none=True)
+    location = Property(
+        dtype=str,
+        desc="CodeNode execution location descriptor",
+        allow_none=True)
     environments = SetProperty(
         str,
         desc="Environments required by CMake to build and run this code node.",
         default=set())
-    
-    def __init__(self,
-                 label="",
-                 location=None,
-                 inputs=None,
-                 outputs=None):
+
+    def __init__(self, label="", location=None, inputs=None, outputs=None):
         super(CodeNode, self).__init__(inputs or set(), outputs or set())
         # Properties
         self.label = label
@@ -817,8 +814,8 @@ class Consume(object):
 
 
 # Redirect Consume properties to ConsumeEntry and ConsumeExit
-ConsumeEntry = indirect_properties(
-    Consume, lambda obj: obj.consume)(ConsumeEntry)
+ConsumeEntry = indirect_properties(Consume,
+                                   lambda obj: obj.consume)(ConsumeEntry)
 
 # ------------------------------------------------------------------------------
 
@@ -912,6 +909,11 @@ class LibraryNode(CodeNode):
             self.implementation = self.default_implementation
         else:
             self.implementation = None
+
+    # Overrides subclasses to return LibraryNode as their JSON type
+    @property
+    def __jsontype__(self):
+        return 'LibraryNode'
 
     def expand(self, sdfg, *args, **kwargs):
         """Shorthand to create and perform the expansion transformation
