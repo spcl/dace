@@ -266,19 +266,25 @@ class InlineSDFG(pattern_matching.Transformation):
                 cnode, cconn, cmemlet = outputs[e.dst.data]
                 newmemlet = self._modify_memlet(e.data, cmemlet)
                 if state.out_edges(e.dst):
+                    # Connector is written in a non-sink access node
                     graph.add_edge(e.src, e.src_conn, e.dst, e.dst_conn,
                                    newmemlet)
-                    e._src = e._dst
-                    e._src_conn = e._dst_conn
-                    # Remove wcr
-                    newmemlet = dc(newmemlet)
-                    newmemlet.wcr = None
-                    newmemlet.other_subset = dc(newmemlet.subset)
-                    for _, _, dst, _, memlet in graph.out_edges(cnode):
-                        if isinstance(dst, nodes.AccessNode
-                                      ) and memlet.data == cmemlet.data:
-                            memlet.wcr = None
-                # else:
+                    if isinstance(cnode, nodes.AccessNode):
+                        continue
+                    else:
+                        # Connector is ONLY written in a non-sink access node,
+                        # i.e. cnode is an exit node and an edge must pass
+                        # through the exit node to the true output access node.
+                        e._src = e._dst
+                        e._src_conn = e._dst_conn
+                        # Remove wcr
+                        newmemlet = dc(newmemlet)
+                        newmemlet.wcr = None
+                        newmemlet.other_subset = dc(newmemlet.subset)
+                        for _, _, dst, _, memlet in graph.out_edges(cnode):
+                            if isinstance(dst, nodes.AccessNode
+                                ) and memlet.data == cmemlet.data:
+                                memlet.wcr = None
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
             elif e.data.data in torename:
