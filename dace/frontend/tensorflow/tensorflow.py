@@ -606,6 +606,7 @@ class TFSession:
         """
         self.winograd = winograd
         self.gpu = gpu
+        self.cudnn = False
         callfunc = self.compile(
             nodes,
             gpu,
@@ -2012,6 +2013,21 @@ class TFSession:
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
             
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            if padding == "SAME":
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    image,
+                    image.desc(self.graph),
+                    output.desc(self.graph).shape[1],
+                    filter.desc(self.graph).shape[0],
+                    strides[1],
+                    image_dims,
+                )
+                image_dims = paddedDims
+                image = paddedInput
+
             image_dims_list = image.desc(self.graph).shape
             filter_dims_list = filter.desc(self.graph).shape
             output_dims_list = output.desc(self.graph).shape
@@ -2029,7 +2045,7 @@ class TFSession:
                 padh = explicit_paddings[2]
                 padw = explicit_paddings[4]
             
-            
+            print(image_dims, filter_dims, output_dims_list)
             idx = [3, 2, 0, 1]
             mapParams = [filter_params[i] for i in idx]
             mapRange = [filter_dims[i] for i in idx]
@@ -2068,7 +2084,7 @@ class TFSession:
                      cudnnTensorDescriptor_t xDesc;
                      checkCUDNN(cudnnCreateTensorDescriptor(&xDesc));
                      checkCUDNN(cudnnSetTensor4dDescriptor(xDesc,
-                                                /*format=*/CUDNN_TENSOR_{format},
+                                                /*format=*/CUDNN_TENSOR_NHWC,
                                                 /*dataType=*/CUDNN_DATA_FLOAT,
                                                 /*batch_size=*/{N},
                                                 /*channels=*/{C},
@@ -2102,11 +2118,11 @@ class TFSession:
                      int yw = 0;
                      checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc, xDesc, fDesc, 
                                                                       &yn, &yc, &yh, &yw));
-                                                                      
+                     printf(\" %d, %d, %d, %d \\n\", yn, yc, yh, yw);
                      cudnnTensorDescriptor_t yDesc;
                      cudnnCreateTensorDescriptor(&yDesc);
                      checkCUDNN(cudnnSetTensor4dDescriptor(yDesc,
-                                                /*format=*/CUDNN_TENSOR_{format},
+                                                /*format=*/CUDNN_TENSOR_NHWC,
                                                 /*dataType=*/CUDNN_DATA_FLOAT,
                                                 /*batch_size=*/yn,
                                                 /*channels=*/yc,
@@ -2143,7 +2159,7 @@ class TFSession:
                                              workSpace, workSpaceSizeInBytes,
                                              &beta,
                                              yDesc, y));
-                '''.format(format="NHWC", N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
+                '''.format(N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
                            vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
                 language=dace.Language.CPP,
                 location="gpu"
@@ -2153,10 +2169,11 @@ class TFSession:
                 #include <iostream>
                 cudnnHandle_t cudnn_handle;
             '''         
-            if not tasklet.code_global == code_global:
+            if not self.cudnn:
                 tasklet.code_global = code_global
                 tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
                 tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
+                self.cudnn = True
             
             
             state.add_edge(image, None, tasklet, 'x', 
@@ -2893,20 +2910,73 @@ class TFSession:
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
             output = self.create_and_add_output_node(node)[0]
-
+            output_dims = self.get_default_dims(node.outputs[0])
+            
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            '''if padding == "SAME":
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    output,
+                    output.desc(self.graph),
+                    gradient.desc(self.graph).shape[1],
+                    filter.desc(self.graph).shape[0],
+                    strides[1],
+                    output_dims,
+                )
+                output_dims = paddedDims
+                output = paddedInput'''
+            
             filter_dims_list = filter.desc(self.graph).shape
             gradient_dims_list = gradient.desc(self.graph).shape
             output_dims_list = output.desc(self.graph).shape
-
-            N = output_dims_list[0]
-            H = output_dims_list[1]
-            W = output_dims_list[2]
             C = filter_dims_list[2]
             K = filter_dims_list[3]
             R = filter_dims_list[0]
             S = filter_dims_list[1]
+            N = output_dims_list[0]
+            H = output_dims_list[1]
+            W = output_dims_list[2]
             padh = 0
             padw = 0
+            if padding == "EXPLICIT":
+                padh = explicit_paddings[2]
+                padw = explicit_paddings[4]
+            
+            '''if padding == "SAME":
+                pad = int(strides[1] * (int(node.inputs[2].shape[1]) - 1) +
+                              R - int(output.desc(self.graph).shape[1]))
+            else:
+                pad = 0
+
+            if pad > 0:
+                # If padding is even (padding is on each side the same)
+                if pad % 2 == 0:
+                    paddingUp = pad // 2
+                    paddingDown = pad // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = pad // 2
+                    paddingDown = paddingUp + 1
+                
+                paddedOutputDims = self.get_default_dims(node.outputs[0])
+                print("llol")
+                paddedOutputDims[1] += "+" + str(pad)
+                paddedOutputDims[2] += "+" + str(pad)
+
+                paddedOutput = state.add_transient(
+                    string_builder(node.outputs[0].name) + "_padded",
+                    [
+                        paddedOutputDims[0][2:],
+                        paddedOutputDims[1][2:],
+                        paddedOutputDims[2][2:],
+                        paddedOutputDims[3][2:],
+                    ],
+                    _tensortype(node.outputs[0]),
+                )'''
+                
+            
             
             idx = [3, 0, 1, 2]
             mapParams = [filter_params[i] for i in idx]
@@ -2926,7 +2996,7 @@ class TFSession:
                                 [mapOutputParams])
             self.add_in_memlets([filter], mapEntry, maptasklet, [filter_dims],
                                 [filter_params])
-            
+            print(grad_dims, filter_dims, output_dims_list)
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'w', 'dy'},
@@ -3011,7 +3081,7 @@ class TFSession:
                                                             workSpace, workSpaceSizeInBytes,
                                                             &beta, dxDesc, dx));
 
-                '''.format(format=data_format, N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
+                '''.format(N=N, C=C, H=H, W=W, K=K, R=R, S=S, padh=padh, padw=padw,
                     vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2]),
                 language=dace.Language.CPP,
                 location="gpu"
@@ -3022,14 +3092,18 @@ class TFSession:
                 #include <iostream>
                 cudnnHandle_t cudnn_handle;
             '''
-            if tasklet.code_global is not code_global:
+            if not self.cudnn:
                 tasklet.code_global = code_global
                 tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
                 tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
+                self.cudnn = True
 
-            state.add_edge(tasklet, 'dx', output, None, Memlet.from_array(output.label, output.desc(self.graph)))
-            state.add_edge(gradient, None, tasklet, 'dy', Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(mapOutput, None, tasklet, 'w', Memlet.from_array(mapOutputLabel, mapOutput.desc(self.graph)))
+            state.add_edge(tasklet, 'dx', output, None, 
+                           Memlet.from_array(output.label, output.desc(self.graph)))
+            state.add_edge(gradient, None, tasklet, 'dy', 
+                           Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(mapOutput, None, tasklet, 'w', 
+                           Memlet.from_array(mapOutputLabel, mapOutput.desc(self.graph)))
             
         
         else:
@@ -3263,6 +3337,21 @@ class TFSession:
             output_params = self.get_default_params(node.outputs[0])
             output_dims = self.get_default_dims(node.outputs[0])
             
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            if padding == "SAME":
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    image,
+                    image.desc(self.graph),
+                    gradient.desc(self.graph).shape[1],
+                    output.desc(self.graph).shape[0],
+                    strides[1],
+                    image_dims,
+                )
+                image_dims = paddedDims
+                image = paddedInput
+            
             image_dims_list = image.desc(self.graph).shape
             gradient_dims_list = gradient.desc(self.graph).shape
             output_dims_list = output.desc(self.graph).shape
@@ -3275,6 +3364,9 @@ class TFSession:
             S = output_dims_list[1]
             padh = 0
             padw = 0
+            if padding == "EXPLICIT":
+                padh = explicit_paddings[2]
+                padw = explicit_paddings[4]
             
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
@@ -3373,10 +3465,11 @@ class TFSession:
                 #include <iostream>
                 cudnnHandle_t cudnn_handle;
             '''
-            if tasklet.code_global is not code_global:
+            if not self.cudnn:
                 tasklet.code_global = code_global
                 tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
                 tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
+                self.cudnn = True
                 
             mapLabel = string_builder(node.type) + "_filter_map"
             mapInputLabel = mapLabel + "_input"
@@ -4423,6 +4516,7 @@ class TFSession:
             :return: A 2-tuple (output DaCe access node with padded input,
                                 list of dimension strings of the padded data).
         """
+        print(inpnode, inp, outputSize, kernelSize, strides, inputDims)
         state = self.state
         paddingUp = 0
         paddingDown = 0

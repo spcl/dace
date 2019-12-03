@@ -8,15 +8,15 @@ from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
-K = 10
+K = 1
 C = 1
-R = 2
-S = 2
+R = 8
+S = 8
 inp_shape = [1, 10, 10, 1]
 filters = [[R, S, C, K]]
-strides = [[1, 1, 1, 1]]
+strides = [[1, 2, 2, 1]]
 dilations = [[1, 1, 1, 1]]
-paddings = ["VALID"]
+paddings = ["SAME"]
 for p in paddings:
     for f in filters:
         for s in strides:
@@ -69,12 +69,12 @@ for p in paddings:
                     print(tf.linalg.norm(output_tf - output_dace).eval(session=sess_tf))
                     print(output_tf - output_dace)
                     raise AssertionError("Convolution test failed")
-
+#exit()
 ##### Conv backprop grad ######
 #inp_shape = [10, 10, 10, 10]
 #filters = [[2, 2, 10, 3]]
 #strides = [[1, 1, 1, 1]]
-#paddings = ["VALID"]
+
 for p in paddings:
     for f in filters:
         for s in strides:

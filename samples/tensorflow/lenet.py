@@ -69,24 +69,28 @@ if __name__ == "__main__":
             minval=-0.1, maxval=0.1, seed=SEED))
 
     logits = fullConnectionTf2
+    print('here: ',logits.shape, label_node)
     softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=label_node, logits=logits)
     loss = tf.reduce_mean(softmax, name="loss")
-
+    #loss = logits
     # Get gradient tensors and initializer operation
     gradients = tf.gradients(loss, tf.trainable_variables())
     init = tf.global_variables_initializer()
 
     # Compute gradients and compare
     # Tensorflow
-    with tf.Session() as sess:
+
+    config = tf.ConfigProto(device_count={'GPU':0})
+    config.gpu_options.allow_growth = True
+    with tf.Session(config=config) as sess:
         sess.run(init)
         tf_gradients = sess.run(gradients)
 
     # DaCe
     with TFSession(seed=SEED) as sess:
-        sess.run(init)
-        dace_gradients = sess.run(gradients)
+        sess.run(init, gpu=True)
+        dace_gradients = sess.run(gradients, gpu=True)
 
     # Compare
     for tfgrad, dacegrad in zip(tf_gradients, dace_gradients):
