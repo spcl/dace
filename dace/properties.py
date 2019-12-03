@@ -172,6 +172,12 @@ class Property:
         self._indirected = indirected
         self._desc = desc
         self._category = category
+        if desc is not None and len(desc) > 0:
+            self.__doc__ = desc
+        elif self.dtype is not None:
+            self.__doc__ = "Object property of type %s" % self.dtype.__name__
+        else:
+            self.__doc__ = "Object property of type %s" % type(self).__name__
 
     def __get__(self, obj, objtype=None):
         if obj is None:
@@ -386,8 +392,9 @@ def make_properties(cls):
                     "Property {} already assigned in {}".format(
                         name,
                         type(obj).__name__))
-            if not prop.indirected and prop.default is not None:
-                setattr(obj, name, prop.default)
+            if not prop.indirected:
+                if prop.allow_none or prop.default is not None:
+                    setattr(obj, name, prop.default)
         # Now call vanilla __init__, which can initialize members
         init(obj, *args, **kwargs)
         # Assert that all properties have been set
@@ -487,12 +494,12 @@ class ListProperty(Property):
     def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
-        @param element_type: The type of each element in the list, or a function
+        :param element_type: The type of each element in the list, or a function
                              that converts an element to the wanted type (e.g.,
                              `dace.symbolic.pystr_to_symbolic` for symbolic
                              expressions)
-        @param args: Other arguments (inherited from Property).
-        @param kwargs: Other keyword arguments (inherited from Property).
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
         """
 
         kwargs['dtype'] = list
@@ -1107,7 +1114,10 @@ class DataProperty(Property):
         return str(obj)
 
     def from_json(self, s, context=None):
-        sdfg = context['sdfg']
+        if isinstance(context, dace.SDFG):
+            sdfg = context
+        else:
+            sdfg = context['sdfg']
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
         if s not in sdfg.arrays:

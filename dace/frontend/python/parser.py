@@ -60,7 +60,7 @@ def _get_argnames(f):
 def _compile_module(s, name='<string>'):
     """ Compiles a string representing a python module (file or code) and
         returns the resulting global objects as a dictionary mapping name->val.
-        @param name: Optional name for better error message handling.
+        :param name: Optional name for better error message handling.
     """
 
     gen_module = {}
@@ -92,12 +92,12 @@ def parse_from_file(filename, *compilation_args):
 def parse_from_function(function, *compilation_args, strict=None):
     """ Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
-        @param function: DaceProgram object (obtained from the `@dace.program`
+        :param function: DaceProgram object (obtained from the `@dace.program`
                          decorator).
-        @param compilation_args: Various compilation arguments e.g. dtypes.
-        @param strict: Whether to apply strict transformations or not (None
+        :param compilation_args: Various compilation arguments e.g. dtypes.
+        :param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
-        @return: The generated SDFG object.
+        :return: The generated SDFG object.
     """
     if not isinstance(function, DaceProgram):
         raise TypeError(
@@ -205,8 +205,8 @@ class DaceProgram:
 
     def generate_pdp(self, *compilation_args):
         """ Generates the parsed AST representation of a DaCe program.
-            @param compilation_args: Various compilation arguments e.g., dtypes.
-            @return: A 2-tuple of (program, modules), where `program` is a 
+            :param compilation_args: Various compilation arguments e.g., dtypes.
+            :return: A 2-tuple of (program, modules), where `program` is a
                      `dace.astnodes._ProgramNode` representing the parsed DaCe 
                      program, and `modules` is a dictionary mapping imported 
                      module names to their actual module names (for maintaining

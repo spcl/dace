@@ -1,4 +1,6 @@
 [![Build Status](https://travis-ci.org/spcl/dace.svg?branch=master)](https://travis-ci.org/spcl/dace)
+[![Documentation Status](https://readthedocs.org/projects/spcldace/badge/?version=latest)](https://spcldace.readthedocs.io/en/latest/?badge=latest)
+[![PyPI version](https://badge.fury.io/py/dace.svg)](https://badge.fury.io/py/dace)
 
 
 ![D](dace.svg)aCe - Data-Centric Parallel Programming
@@ -16,7 +18,7 @@ For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
 Tutorials
 ---------
 
-* _Data-Centric Python Programs with NumPy (coming soon)_
+* [Data-Centric Python Programs with NumPy](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb)
 * [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb)
 * [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
 * [Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)

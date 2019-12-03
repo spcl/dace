@@ -57,8 +57,8 @@ class DaCeCodeGenerator(object):
     def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream):
         """ Generate a header in every output file that includes custom types
             and constants.
-            @param sdfg: The input SDFG.
-            @param global_stream: Stream to write to (global).
+            :param sdfg: The input SDFG.
+            :param global_stream: Stream to write to (global).
         """
         #########################################################
         # Custom types
@@ -85,9 +85,9 @@ class DaCeCodeGenerator(object):
                         callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
             function for overriding purposes.
-            @param sdfg: The input SDFG.
-            @param global_stream: Stream to write to (global).
-            @param callsite_stream: Stream to write to (at call site).
+            :param sdfg: The input SDFG.
+            :param global_stream: Stream to write to (global).
+            :param callsite_stream: Stream to write to (at call site).
         """
         fname = sdfg.name
         params = sdfg.signature()
@@ -111,9 +111,9 @@ class DaCeCodeGenerator(object):
                         callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
             function for overriding purposes.
-            @param sdfg: The input SDFG.
-            @param global_stream: Stream to write to (global).
-            @param callsite_stream: Stream to write to (at call site).
+            :param sdfg: The input SDFG.
+            :param global_stream: Stream to write to (global).
+            :param callsite_stream: Stream to write to (at call site).
         """
         fname = sdfg.name
         params = sdfg.signature()
@@ -585,11 +585,11 @@ DACE_EXPORTED void __dace_exit(%s)
                       ) -> (str, str, Set[TargetCodeGenerator]):
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
-            @param sdfg: The SDFG to generate code for.
-            @param schedule: The schedule the SDFG is currently located, or
+            :param sdfg: The SDFG to generate code for.
+            :param schedule: The schedule the SDFG is currently located, or
                              None if the SDFG is top-level.
-            @param sdfg_id: An optional string id given to the SDFG label
-            @return: A tuple of the generated global frame code, local frame
+            :param sdfg_id: An optional string id given to the SDFG label
+            :return: A tuple of the generated global frame code, local frame
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """

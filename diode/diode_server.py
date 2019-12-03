@@ -1243,14 +1243,12 @@ def optimize():
 
         POST-Parameters:
             input_code: list. Contains all necessary input code files
-            [opt] optpath:  list of dicts, as { name: <str>, params: <dict> }. Contains the current optimization path/tree.
+            optpath:  list of dicts, as { name: <str>, params: <dict> }. Contains the current optimization path/tree.
                             This optpath is applied to the provided code before evaluating possible pattern matches.
+            client_id: For identification. May be unique across all runs,
+                       must be unique across clients
 
-            client_id: <string>:    For later identification. May be unique across all runs,
-                                    must be unique across clients
-
-        Returns:
-            matching_opts:  list of dicts, as { opt_name: <str>, opt_params: <dict>, affects: <list>, children: <recurse> }.
+        :return: matching_opts:  list of dicts, as { opt_name: <str>, opt_params: <dict>, affects: <list>, children: <recurse> }.
                             Contains the matching transformations.
                             `affects` is a list of affected node ids, which must be unique in the current program.
 
