@@ -73,30 +73,30 @@ run_sample() {
 run_all() {
     # #### VECTORIZATION ####
     #Vectorization 1: first vectorize and then transform for FPGA
-    run_sample intel_fpga/vec_sum vec_sum "11\n1\n"
+    run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0\nFPGATransformSDFG\$0\n"
     #Vectorization 2: first transform for FPGA then vectorize
-    run_sample intel_fpga/vec_sum vec_sum "1\n16\n"
+    run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0\n"
     #Vectorization 3: TODO non vectorizable N
 
     # #### WCR ####
     #simple WCR (accumulates on scalar)
-    run_sample intel_fpga/dot dot "1\n"
+    run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 
     # histogram (WCR on array)
-    run_sample ../samples/simple/histogram histogram "1\n"
+    run_sample ../samples/simple/histogram histogram "FPGATransformSDFG\$0\n"
 
     # #### REDUCE ####
     # Simple reduce
-    run_sample intel_fpga/vector_reduce vector_reduce "1\n"
+    run_sample intel_fpga/vector_reduce vector_reduce "FPGATransformSDFG\$0\n"
 
     # GEMM sample
-    run_sample ../samples/simple/gemm gemm "1\n"
+    run_sample ../samples/simple/gemm gemm "FPGATransformSDFG\$0\n"
 
     # #### TYPE INFERENCE ####
-    run_sample ../samples/simple/mandelbrot mandelbrot "1\n"
+    run_sample ../samples/simple/mandelbrot mandelbrot "FPGATransformSDFG\$0\n"
 
     # type inference for statements with annotation
-    run_sample intel_fpga/type_inference type_inference "1\n"
+    run_sample intel_fpga/type_inference type_inference "FPGATransformSDFG\$0\n"
 
 
     # #### SYSTOLIC ARRAY ###

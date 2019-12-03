@@ -30,7 +30,7 @@ set(DACE_ENABLE_CUDA OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
 
-# Split list by file type
+# Split list by target
 foreach(DACE_FILE ${DACE_FILES})
   # Extract the target from the folder name
   get_filename_component(DACE_FILE_NAME ${DACE_FILE} NAME_WE)
@@ -76,7 +76,7 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}/\")
+add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\")
 set(DACE_LIBS ${DACE_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${OpenMP_CXX_LIBRARIES})
 if(DACE_ENABLE_MPI)
   find_package(MPI REQUIRED)
@@ -343,7 +343,7 @@ if(DACE_ENABLE_INTELFPGA)
 
   set(DACE_AOC_BUILD_FLAGS
     -I${CMAKE_SOURCE_DIR}/include
-    -I${CMAKE_SOURCE_DIR}/../external/hlslib/intel/include
+    -I${CMAKE_SOURCE_DIR}/../external/hlslib/include
     -I${CMAKE_SOURCE_DIR}/../runtime/include
     -I${CMAKE_BINARY_DIR}
     -board=${DACE_INTELFPGA_TARGET_BOARD}
