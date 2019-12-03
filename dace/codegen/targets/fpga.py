@@ -474,7 +474,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Single stream
                 self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
 
-            # Language-specific implementatiojn
+            # Language-specific implementation
             self.define_stream(nodedesc.dtype, nodedesc.veclen,
                                nodedesc.buffer_size, dataname, arrsize,
                                function_stream, result)
