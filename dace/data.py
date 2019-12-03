@@ -118,7 +118,7 @@ class Data(object):
 class Scalar(Data):
     """ Data descriptor of a scalar value. """
 
-    allow_conflicts = Property(dtype=bool)
+    allow_conflicts = Property(dtype=bool, default=False)
 
     def __init__(self,
                  dtype,
@@ -214,7 +214,7 @@ class Array(Data):
     """ Array/constant descriptor (dimensions, type and other properties). """
 
     # Properties
-    allow_conflicts = Property(dtype=bool)
+    allow_conflicts = Property(dtype=bool, default=False)
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
