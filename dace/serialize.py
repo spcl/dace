@@ -85,7 +85,7 @@ def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
         if known_type is not None:
             # For enums, resolve using the type if known
-            if issubclass(known_type, enum.Enum):
+            if issubclass(known_type, enum.Enum) and isinstance(obj, str):
                 return known_type[obj]
             # If we can, convert from string
             if isinstance(obj, str):
