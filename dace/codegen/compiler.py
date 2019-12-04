@@ -46,8 +46,8 @@ class ReloadableDLL(object):
 
     def __init__(self, library_filename, program_name):
         """ Creates a new reloadable shared object.
-            @param library_filename: Path to library file.
-            @param program_name: Name of the DaCe program (for use in finding
+            :param library_filename: Path to library file.
+            :param program_name: Name of the DaCe program (for use in finding
                                  the stub library loader).
         """
         self._stub_filename = os.path.join(
@@ -304,10 +304,10 @@ def generate_program_folder(sdfg,
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
-        @param sdfg: The SDFG to generate the program folder for.
-        @param code_objects: List of generated code objects.
-        @param out_path: The folder in which the build files should be written.
-        @return: Path to the program folder.
+        :param sdfg: The SDFG to generate the program folder for.
+        :param code_objects: List of generated code objects.
+        :param out_path: The folder in which the build files should be written.
+        :return: Path to the program folder.
     """
 
     src_path = os.path.join(out_path, "src")
@@ -364,12 +364,12 @@ def configure_and_compile(program_folder,
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
 
-        @param program_folder: Folder containing all files necessary to build,
+        :param program_folder: Folder containing all files necessary to build,
                                equivalent to what was passed to
                                `generate_program_folder`.
-        @param output_stream: Additional output stream to write to (used for
+        :param output_stream: Additional output stream to write to (used for
                               DIODE client).
-        @return: Path to the compiled shared library file.
+        :return: Path to the compiled shared library file.
     """
 
     if program_name is None:

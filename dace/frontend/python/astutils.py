@@ -11,8 +11,8 @@ from dace import dtypes, symbolic
 
 def _remove_outer_indentation(src: str):
     """ Removes extra indentation from a source Python function.
-        @param src: Source code (possibly indented).
-        @return: Code after de-indentation.
+        :param src: Source code (possibly indented).
+        :return: Code after de-indentation.
     """
     lines = src.split('\n')
     indentation = len(lines[0]) - len(lines[0].lstrip())
@@ -21,8 +21,8 @@ def _remove_outer_indentation(src: str):
 
 def function_to_ast(f):
     """ Obtain the source code of a Python function and create an AST.
-        @param f: Python function.
-        @return: A 4-tuple of (AST, function filename, function line-number,
+        :param f: Python function.
+        :return: A 4-tuple of (AST, function filename, function line-number,
                                source code as string).
     """
     try:
@@ -172,8 +172,8 @@ def subscript_to_ast_slice(node, without_array=False):
     """ Converts an AST subscript to slice on the form
         (<name>, [<3-tuples of AST nodes>]). If an ast.Name is passed, returns
         (name, None), implying the full range. 
-        @param node: The AST node to convert.
-        @param without_array: If True, returns only the slice. Otherwise,
+        :param node: The AST node to convert.
+        :param without_array: If True, returns only the slice. Otherwise,
                               returns a 2-tuple of (array, range).
     """
 

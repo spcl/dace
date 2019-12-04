@@ -97,4 +97,5 @@ CREATE TABLE `Overheads`
     conn.close()
 
 
-db_setup()
+if __name__ == '__main__':
+    db_setup()
