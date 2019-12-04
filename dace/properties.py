@@ -910,7 +910,7 @@ class CodeProperty(Property):
         if isinstance(obj, str):
             return obj
         # Grab the originally parsed string if any
-        if obj._as_string is not None and obj._as_string != "":
+        if hasattr(obj, "_as_string") and obj._as_string:
             return obj._as_string
         # It's probably good enough to assume that there is an original string
         # if the language was not Python, so we just throw the string to the
