@@ -227,11 +227,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     def make_read(defined_type, type_str, var_name, vector_length, expr,
                   index):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "{}.Pop()".format(expr)
+            return "{}.pop()".format(expr)
         if defined_type == DefinedType.StreamArray:
             if " " in expr:
                 expr = "(" + expr + ")"
-            return "{}[{}].Pop()".format(expr, index)
+            return "{}[{}].pop()".format(expr, index)
         elif defined_type == DefinedType.Scalar:
             return var_name
         else:
@@ -243,11 +243,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
                    index, read_expr, wcr):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "{}.Push({});".format(write_expr, read_expr)
+            return "{}.push({});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             if not index:
                 index = "0"
-            return "{}[{}].Push({}};".format(write_expr, index, read_expr)
+            return "{}[{}].push({}};".format(write_expr, index, read_expr)
         else:
             if defined_type == DefinedType.Scalar:
                 write_expr = var_name
