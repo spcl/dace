@@ -118,13 +118,14 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                           for (name, code) in self._host_codes
                       ])))
 
-        host_code_obj = CodeObject(self._program_name + "_host",
+        host_code_obj = CodeObject(self._program_name,
                                    host_code.getvalue(), "cpp",
-                                   IntelFPGACodeGen, "Intel FPGA")
+                                   IntelFPGACodeGen, "Intel FPGA",
+                                   target_type="host")
 
         kernel_code_objs = [
-            CodeObject("kernel_" + kernel_name, code, "cl", IntelFPGACodeGen,
-                       "Intel FPGA")
+            CodeObject(kernel_name, code, "cl", IntelFPGACodeGen,
+                       "Intel FPGA", target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
 

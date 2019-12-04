@@ -98,8 +98,8 @@ class ReloadableDLL(object):
         is_loaded = self._stub.is_library_loaded(lib_cfilename)
         if is_loaded == 1:
             raise DuplicateDLLError(
-                'Library %s is already loaded somewhere else, ' %
-                os.path.basename(self._library_filename) +
+                'Library %s is already loaded somewhere else, ' % os.path.
+                basename(self._library_filename) +
                 'either unload it or use a different name ' +
                 'for the SDFG/program.')
 
@@ -324,9 +324,12 @@ def generate_program_folder(sdfg,
         name = code_object.name
         extension = code_object.language
         target_name = code_object.target.target_name
+        target_type = code_object.target_type
 
         # Create target folder
         target_folder = os.path.join(src_path, target_name)
+        if target_type:
+            target_folder = os.path.join(target_folder, target_type)
         try:
             os.makedirs(target_folder)
         except FileExistsError:
@@ -340,7 +343,7 @@ def generate_program_folder(sdfg,
                                 code_object.code)
             code_file.write(clean_code)
 
-        filelist.append("{},{}".format(target_name, basename))
+        filelist.append("{},{},{}".format(target_name, target_type, basename))
 
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -396,8 +399,11 @@ def configure_and_compile(program_folder,
     # Get absolute paths and targets for all source files
     files = []
     targets = {}  # {target name: target class}
-    for target_name, file_name in file_list:
-        path = os.path.join(src_folder, target_name, file_name)
+    for target_name, target_type, file_name in file_list:
+        if target_type:
+            path = os.path.join(target_name, target_type, file_name)
+        else:
+            path = os.path.join(target_name, file_name)
         files.append(path)
         targets[target_name] = codegen.STRING_TO_TARGET[target_name]
 
@@ -407,6 +413,7 @@ def configure_and_compile(program_folder,
         "cmake",
         "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
         '"' + os.path.join(dace_path, "codegen") + '"',
+        "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
         "-DDACE_PROGRAM_NAME={}".format(program_name),
     ]
@@ -460,14 +467,14 @@ def configure_and_compile(program_folder,
             if Config.get_bool('debugprint'):
                 raise CompilerConfigurationError('Configuration failure')
             else:
-                raise CompilerConfigurationError('Configuration failure:\n' +
-                                                 ex.output)
+                raise CompilerConfigurationError(
+                    'Configuration failure:\n' + ex.output)
 
     # Compile and link
     try:
         _run_liveoutput(
-            "cmake --build . --config %s" % (Config.get(
-                'compiler', 'build_type')),
+            "cmake --build . --config %s" %
+            (Config.get('compiler', 'build_type')),
             shell=True,
             cwd=build_folder,
             output_stream=output_stream)
@@ -478,9 +485,8 @@ def configure_and_compile(program_folder,
         else:
             raise CompilationError('Compiler failure:\n' + ex.output)
 
-    shared_library_path = os.path.join(
-        build_folder, "lib{}.{}".format(
-            program_name, Config.get('compiler', 'library_extension')))
+    shared_library_path = os.path.join(build_folder, "lib{}.{}".format(
+        program_name, Config.get('compiler', 'library_extension')))
 
     return shared_library_path
 
@@ -510,9 +516,8 @@ def get_binary_name(object_name,
         name = os.path.join('.dacecache', object_name, "build",
                             'lib%s.%s' % (object_name, lib_extension))
     else:
-        name = os.path.join(
-            '.dacecache', object_name, "build",
-            'lib%s_%s.%s' % (object_name, object_hash, lib_extension))
+        name = os.path.join('.dacecache', object_name, "build", 'lib%s_%s.%s' %
+                            (object_name, object_hash, lib_extension))
     return name
 
 
