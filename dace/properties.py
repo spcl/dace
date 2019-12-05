@@ -653,16 +653,6 @@ class DebugInfoProperty(Property):
             di = DebugInfo(f, sl, sc, el, ec)
         return di
 
-    def to_json(self, s):
-        if not isinstance(s, DebugInfo):
-            return None
-        return s.to_json()
-
-    def from_json(self, s, sdfg=None):
-        if s is None: return None
-
-        return s
-
 
 class ParamsProperty(Property):
     """ Property for list of parameters, such as parameters for a Map. """
