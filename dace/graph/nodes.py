@@ -359,7 +359,7 @@ class NestedSDFG(CodeNode):
 
     label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
+    sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
