@@ -55,13 +55,13 @@ def generate_dummy(sdfg) -> str:
         if isinstance(al[arg], data.Scalar):
             allocations += "  " + str(al[arg].signature(name=arg, with_types=True)) + " = 42;\n"
 
-    # allocate the array args using malloc 
+    # allocate the array args using calloc 
     for arg in al:
         if isinstance(al[arg], data.Array):
             dims_mul = "*".join(map(str, al[arg].shape))
             basetype = str(al[arg].dtype)
             allocations += "  " + str(al[arg].signature(name=arg, with_types=True)) + \
-                           " = calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
+                           " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
             deallocations += "  free(" + str(arg) + ");\n"
 
     sdfg_call = "\n  __dace_init(" + sdfg.signature(with_types=False, for_call=True) + ");\n"
