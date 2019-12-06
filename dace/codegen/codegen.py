@@ -139,12 +139,14 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # add a header file for calling the SDFG
     dummy = CodeObject(sdfg.name, generate_headers(sdfg),
-                       'h', cpu.CPUCodeGen, 'CallHeader')
+                       'h', cpu.CPUCodeGen, 'CallHeader',
+                       linkable=False)
     target_objects.append(dummy)
 
     # add a dummy main function to show how to call the SDFG
     dummy = CodeObject(sdfg.name + "_main", generate_dummy(sdfg),
-                       'cpp', cpu.CPUCodeGen, 'DummyMain')
+                       'cpp', cpu.CPUCodeGen, 'DummyMain', 
+                       linkable=False)
     target_objects.append(dummy)
 
     return target_objects
