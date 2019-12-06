@@ -2929,26 +2929,25 @@ class TFSession:
             
             filter_dims_list = filter.desc(self.graph).shape
             gradient_dims_list = gradient.desc(self.graph).shape
-            output_dims_list = output.desc(self.graph).shape
+            
             C = filter_dims_list[2]
             K = filter_dims_list[3]
             R = filter_dims_list[0]
             S = filter_dims_list[1]
-            N = output_dims_list[0]
-            H = output_dims_list[1]
-            W = output_dims_list[2]
+
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
                 padh = explicit_paddings[2]
                 padw = explicit_paddings[4]
             
-            '''if padding == "SAME":
+            if padding == "SAME":
                 pad = int(strides[1] * (int(node.inputs[2].shape[1]) - 1) +
                               R - int(output.desc(self.graph).shape[1]))
             else:
                 pad = 0
-
+            paddedOutput = output
+            paddedOutputDims = output_dims
             if pad > 0:
                 # If padding is even (padding is on each side the same)
                 if pad % 2 == 0:
@@ -2974,9 +2973,12 @@ class TFSession:
                         paddedOutputDims[3][2:],
                     ],
                     _tensortype(node.outputs[0]),
-                )'''
-                
+                )
             
+            output_dims_list = paddedOutput.desc(self.graph).shape
+            N = output_dims_list[0]
+            H = output_dims_list[1]
+            W = output_dims_list[2]
             
             idx = [3, 0, 1, 2]
             mapParams = [filter_params[i] for i in idx]
@@ -3098,13 +3100,37 @@ class TFSession:
                 tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
                 self.cudnn = True
 
-            state.add_edge(tasklet, 'dx', output, None, 
-                           Memlet.from_array(output.label, output.desc(self.graph)))
+            
             state.add_edge(gradient, None, tasklet, 'dy', 
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
             state.add_edge(mapOutput, None, tasklet, 'w', 
-                           Memlet.from_array(mapOutputLabel, mapOutput.desc(self.graph)))
-            
+                               Memlet.from_array(mapOutputLabel, mapOutput.desc(self.graph)))
+            if pad>0:
+                
+                
+                nonpaddedsubset = paddedOutputDims.copy()
+                nonpaddedsubset[1] = (
+                    str(paddingUp) + ":" +
+                    str(output.desc(self.graph).shape[1] + paddingUp))
+                nonpaddedsubset[2] = (
+                    str(paddingUp) + ":" +
+                    str(output.desc(self.graph).shape[2] + paddingUp))
+                self.state.add_edge(
+                    paddedOutput,
+                    None,
+                    output,
+                    None,
+                    Memlet.simple(
+                        paddedOutput,
+                        ",".join(nonpaddedsubset),
+                        other_subset_str=",".join(output_dims),
+                    ),
+                )
+                state.add_edge(tasklet, 'dx', paddedOutput, None, 
+                           Memlet.from_array(paddedOutput.label, paddedOutput.desc(self.graph)))
+            else:        
+                state.add_edge(tasklet, 'dx', output, None,
+                               Memlet.from_array(output.label, output.desc(self.graph)))
         
         else:
             inputNodes = []
@@ -3128,6 +3154,7 @@ class TFSession:
             outputDims.append(self.get_default_dims(node.outputs[0]))
 
             ksize = int(node.inputs[1].shape[0])
+            print('inputs', node)
             if str(node.get_attr("padding"))[2:-1] == "SAME":
                 padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
                               ksize - int(outputList[0].desc(self.graph).shape[1]))

@@ -8,15 +8,15 @@ from tensorflow.python.ops import gen_nn_ops
 import numpy as np
 import dace
 from dace.frontend.tensorflow import TFSession
-K = 1
-C = 1
-R = 8
-S = 8
-inp_shape = [1, 10, 10, 1]
+K = 10
+C = 5
+R = 3
+S = 3
+inp_shape = [5, 10, 10, 5]
 filters = [[R, S, C, K]]
 strides = [[1, 2, 2, 1]]
 dilations = [[1, 1, 1, 1]]
-paddings = ["SAME"]
+paddings = ["VALID"]
 for p in paddings:
     for f in filters:
         for s in strides:
