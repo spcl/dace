@@ -15,7 +15,7 @@ set(DACE_XILINX_SYNTHESIS_FLAGS "" CACHE STRING "Extra flags for performing high
 set(DACE_XILINX_BUILD_FLAGS "" CACHE STRING "Extra flags to xocc build phase")
 set(DACE_XILINX_TARGET_CLOCK 200 CACHE STRING "Target clock frequency of FPGA kernel")
 set(DACE_XILINX_PART_NAME "xcvu9p-fsgd2104-2l-e" CACHE STRING "Xilinx chip to target from HLS")
-set(DACE_XILINX_TARGET_PLATFORM "xilinx_vcu1525_dynamic_5_1" CACHE STRING "SDAccel platform to target")
+set(DACE_XILINX_TARGET_PLATFORM "xilinx_vcu1525_dynamic_5_1" CACHE STRING "Vitis platform to target")
 set(DACE_XILINX_ENABLE_DEBUGGING OFF CACHE STRING "Inject debugging cores to kernel build (always on for simulation/emulation)")
 
 # Intel FPGA options 
@@ -113,10 +113,10 @@ if(DACE_ENABLE_XILINX OR DACE_ENABLE_INTELFPGA)
   include_directories(SYSTEM ${DACE_HLSLIB_DIR}/include)
 endif()
 if(DACE_ENABLE_XILINX)
-  find_package(SDAccel REQUIRED)
-  include_directories(SYSTEM ${SDAccel_INCLUDE_DIRS})
+  find_package(Vitis REQUIRED)
+  include_directories(SYSTEM ${Vitis_INCLUDE_DIRS})
   add_definitions(-DDACE_XILINX)
-  set(DACE_LIBS ${DACE_LIBS} ${SDAccel_LIBRARIES})
+  set(DACE_LIBS ${DACE_LIBS} ${Vitis_LIBRARIES})
 endif()
 if(DACE_ENABLE_INTELFPGA)
   find_package(IntelFPGAOpenCL REQUIRED)
@@ -167,8 +167,8 @@ if(DACE_ENABLE_XILINX)
   set_source_files_properties(${DACE_XILINX_KERNEL_FILES} PROPERTIES COMPILE_FLAGS "-DDACE_XILINX_DEVICE_CODE ${DACE_XILINX_HOST_FLAGS}")
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_XILINX_KERNEL_FILES} ${DACE_XILINX_HOST_FILES})
 
-  if(((${SDAccel_MAJOR_VERSION} LESS 2018) AND
-      (${SDAccel_MINOR_VERSION} LESS 3)) OR ${SDAccel_MAJOR_VERSION} LESS 2017)
+  if(((${Vitis_MAJOR_VERSION} LESS 2018) AND
+      (${Vitis_MINOR_VERSION} LESS 3)) OR ${Vitis_MAJOR_VERSION} LESS 2017)
     add_definitions(-DHLSLIB_LEGACY_SDX=1)
   else()
     add_definitions(-DHLSLIB_LEGACY_SDX=0)
@@ -192,7 +192,7 @@ if(DACE_ENABLE_XILINX)
     set(DACE_XOCC_KERNELS ${DACE_XOCC_KERNELS} --kernel ${DACE_KERNEL_NAME} --xp prop:kernel.${DACE_KERNEL_NAME}.kernel_flags=\"${DACE_XILINX_SYNTHESIS_FLAGS_INTERNAL}\")
 
     configure_file(${CMAKE_SOURCE_DIR}/Xilinx_HLS.tcl.in Synthesize_${DACE_KERNEL_NAME}.tcl)
-    add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${SDAccel_VIVADO_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl) 
+    add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${Vitis_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl) 
     set(DACE_SYNTHESIS_TARGETS ${DACE_SYNTHESIS_TARGETS} xilinx_synthesis_${DACE_KERNEL_NAME})
 
   endforeach()
@@ -225,12 +225,12 @@ if(DACE_ENABLE_XILINX)
       --profile_kernel "exec:all:all")
   endif()
 
-  if(SDAccel_MAJOR_VERSION LESS 2018 AND SDAccel_MINOR_VERSION LESS 3)
+  if(Vitis_MAJOR_VERSION LESS 2018 AND Vitis_MINOR_VERSION LESS 3)
 
     add_custom_target(
       xilinx_build_${DACE_PROGRAM_NAME}_software_emulation
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -t sw_emu
       ${DACE_XOCC_KERNEL_FILES}
@@ -239,7 +239,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_build_${DACE_PROGRAM_NAME}_hardware_emulation
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -t hw_emu
       ${DACE_XOCC_KERNEL_FILES}
@@ -248,7 +248,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_build_${DACE_PROGRAM_NAME}_hardware
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -t hw
       ${DACE_XOCC_KERNEL_FILES}
@@ -259,7 +259,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -c
       -t sw_emu
@@ -269,7 +269,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -c
       -t hw_emu
@@ -279,7 +279,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_compile_${DACE_PROGRAM_NAME}_hardware
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -c
       -t hw
@@ -289,7 +289,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_build_${DACE_PROGRAM_NAME}_software_emulation
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -l
       -t sw_emu
@@ -299,7 +299,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_build_${DACE_PROGRAM_NAME}_hardware_emulation
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -l
       -t hw_emu
@@ -309,7 +309,7 @@ if(DACE_ENABLE_XILINX)
     add_custom_target(
       xilinx_build_${DACE_PROGRAM_NAME}_hardware
       COMMAND
-      XILINX_PATH=${CMAKE_BINARY_DIR} ${SDAccel_XOCC}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${XOCC_BUILD_FLAGS}
       -l
       -t hw
