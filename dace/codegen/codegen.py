@@ -2,6 +2,7 @@ import os
 from typing import List
 
 from dace import dtypes
+from dace import data
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
@@ -25,6 +26,55 @@ STRING_TO_TARGET = {
 
 _TARGET_REGISTER_ORDER = ['cpu', 'cuda', 'immaterial', 'mpi', 'xilinx']
 
+def generate_headers(sdfg) -> str:
+    """ Generate a header file for the SDFG """
+    proto = ""
+    proto += "int __dace_init(" + sdfg.signature(with_types=True, for_call=False) + ");\n"
+    proto += "int __dace_exit(" + sdfg.signature(with_types=True, for_call=False) + ");\n"
+    proto += "void __program_" + sdfg.name + "(" + sdfg.signature(with_types=True, for_call=False) + ");\n\n"
+    return proto
+
+def generate_dummy(sdfg) -> str:
+    """ Generates a C program calling this SDFG. Since we do not
+        know the purpose/semantics of the program, we allocate
+        the right types and and guess values for scalars.
+    """
+    includes = "#include <stdlib.h>\n"
+    includes += "#include \"" + sdfg.name + ".h\"\n\n"
+    header = "int main(int argc, char** argv) {\n"
+    allocations = ""
+    deallocations = ""
+    sdfg_call = ""
+    footer = "  return 0;\n}\n"
+
+    al = sdfg.arglist()
+
+    # first find all scalars and set them to 42
+    for arg in al:
+        if isinstance(al[arg], data.Scalar):
+            allocations += "  " + str(al[arg].signature(name=arg, with_types=True)) + " = 42;\n"
+
+    # allocate the array args using calloc 
+    for arg in al:
+        if isinstance(al[arg], data.Array):
+            dims_mul = "*".join(map(str, al[arg].shape))
+            basetype = str(al[arg].dtype)
+            allocations += "  " + str(al[arg].signature(name=arg, with_types=True)) + \
+                           " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
+            deallocations += "  free(" + str(arg) + ");\n"
+
+    sdfg_call = "\n  __dace_init(" + sdfg.signature(with_types=False, for_call=True) + ");\n"
+    sdfg_call += "  __program_" + sdfg.name + "(" + sdfg.signature(with_types=False, for_call=True) + ");\n"
+    sdfg_call += "  __dace_exit(" + sdfg.signature(with_types=False, for_call=True) + ");\n\n"
+
+    res = ""
+    res += includes
+    res += header
+    res += allocations
+    res += sdfg_call
+    res += deallocations
+    res += footer
+    return res
 
 def generate_code(sdfg) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
@@ -85,6 +135,18 @@ def generate_code(sdfg) -> List[CodeObject]:
     # Create code objects for each target
     for tgt in used_targets:
         target_objects.extend(tgt.get_generated_codeobjects())
+
+    # add a header file for calling the SDFG
+    dummy = CodeObject(sdfg.name, generate_headers(sdfg),
+                       'h', cpu.CPUCodeGen, 'CallHeader',
+                       linkable=False)
+    target_objects.append(dummy)
+
+    # add a dummy main function to show how to call the SDFG
+    dummy = CodeObject(sdfg.name + "_main", generate_dummy(sdfg),
+                       'cpp', cpu.CPUCodeGen, 'DummyMain', 
+                       linkable=False)
+    target_objects.append(dummy)
 
     return target_objects
 
