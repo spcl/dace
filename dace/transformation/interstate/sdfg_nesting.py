@@ -184,10 +184,10 @@ class InlineSDFG(pattern_matching.Transformation):
 
             result.subset.unsqueeze(to_unsqueeze)
         elif len(internal_memlet.subset) > len(external_memlet.subset):
-            raise ValueError('Unexpected extra dimensions in internal memlet '
-                             'while inlining SDFG.\nExternal memlet: %s\n'
-                             'Internal memlet: %s' %
-                             (external_memlet, internal_memlet))
+            raise ValueError(
+                'Unexpected extra dimensions in internal memlet '
+                'while inlining SDFG.\nExternal memlet: %s\n'
+                'Internal memlet: %s' % (external_memlet, internal_memlet))
 
         result.subset.offset(external_memlet.subset, False)
 
@@ -210,10 +210,11 @@ class InlineSDFG(pattern_matching.Transformation):
         for e in graph.out_edges(nsdfg_node):
             outputs[e.src_conn] = (e.dst, e.dst_conn, e.data)
 
+        to_reconnect = set()
+
         torename = {}
         torename.update({k: v[2].data for k, v in inputs.items()})
         torename.update({k: v[2].data for k, v in outputs.items()})
-        entry_connectors = set()
 
         # Add SDFG nodes to top-level SDFG
         state = nsdfg.nodes()[0]
@@ -249,6 +250,7 @@ class InlineSDFG(pattern_matching.Transformation):
                 node.sdfg.parent_sdfg = sdfg
 
             graph.add_node(node)
+            to_reconnect.add(node)
 
         # TODO: Confirm that the following is always correct
         # Add Scalars of the nested SDFG to the parent
@@ -260,13 +262,10 @@ class InlineSDFG(pattern_matching.Transformation):
         for e in state.edges():
             if isinstance(e.src, nodes.AccessNode) and e.src.data in inputs:
                 cnode, cconn, cmemlet = inputs[e.src.data]
-                if e.src.data in entry_connectors:
-                    graph.add_edge(cnode, cconn, e.src, None, cmemlet)
-                    graph.add_edge(e.src, None, e.dst, e.dst_conn, e.data)
-                else:
-                    # Connect to source node instead
-                    newmemlet = self._modify_memlet(e.data, cmemlet)
-                    graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
+                # Connect to source node instead
+                newmemlet = self._modify_memlet(e.data, cmemlet)
+                graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
+                to_reconnect.remove(e.dst)
             elif isinstance(e.dst, nodes.AccessNode) and e.dst.data in outputs:
                 cnode, cconn, cmemlet = outputs[e.dst.data]
                 newmemlet = self._modify_memlet(e.data, cmemlet)
@@ -294,6 +293,7 @@ class InlineSDFG(pattern_matching.Transformation):
                                 memlet.wcr = None
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
+                to_reconnect.remove(e.src)
             elif e.data.data in torename:
                 if e.data.data in inputs:
                     newmemlet = self._modify_memlet(e.data,
@@ -317,12 +317,18 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode) and node.data in torename:
                 node.data = torename[node.data]
 
-        # If an empty memlet was connected to the nested SDFG, reconnect
-        # all source nodes with empty memlets
-        if None in inputs:
-            cnode, cconn, cmemlet = inputs[None]
+        # If in scope, reconnect all source and sink nodes with empty memlets
+        scope_node = graph.scope_dict()[nsdfg_node]
+        if scope_node is not None:
+            scope_exit = graph.exit_nodes(scope_node)[0]
             for node in state.source_nodes():
-                graph.add_edge(cnode, cconn, node, None, EmptyMemlet())
+                if node in to_reconnect:
+                    graph.add_edge(scope_node, None, node, None, EmptyMemlet())
+                    to_reconnect.remove(node)
+            for node in state.sink_nodes():
+                if node in to_reconnect:
+                    graph.add_edge(node, None, scope_exit, None, EmptyMemlet())
+                    to_reconnect.remove(node)
 
         # Remove the nested SDFG node
         graph.remove_node(nsdfg_node)
