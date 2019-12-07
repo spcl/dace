@@ -35,10 +35,9 @@ def generate_headers(sdfg) -> str:
     return proto
 
 def generate_dummy(sdfg) -> str:
-    """ Generates a C program calling this SDFG. Obviously we do not
-        know the purpose/semantics of the SFGG, so we simply allocate
-        the right types and and guess values for scalars. But it should
-        be easy for users to extend.
+    """ Generates a C program calling this SDFG. Since we do not
+        know the purpose/semantics of the program, we allocate
+        the right types and and guess values for scalars.
     """
     includes = "#include <stdlib.h>\n"
     includes += "#include \"" + sdfg.name + ".h\"\n\n"
