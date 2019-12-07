@@ -343,7 +343,8 @@ def generate_program_folder(sdfg,
                                 code_object.code)
             code_file.write(clean_code)
 
-        filelist.append("{},{},{}".format(target_name, target_type, basename))
+        if code_object.linkable == True:
+            filelist.append("{},{},{}".format(target_name, target_type, basename))
 
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
