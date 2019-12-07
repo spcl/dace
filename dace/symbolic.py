@@ -531,7 +531,7 @@ def sympy_numeric_fix(expr):
     return expr
 
 
-def sympy_ceiling_fix(expr):
+def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
     """
@@ -579,6 +579,27 @@ def sympy_ceiling_fix(expr):
             m = ceil.match(sympy.ceiling(a * int_ceil(c, d)))
             if m is not None:
                 nexpr = nexpr.subs(ceil, m[a] * int_ceil(m[c], m[d]))
+                processed += 1
+                continue
+        for floor in nexpr.find(sympy.floor):
+            # Simple floor
+            m = floor.match(sympy.floor(a / b))
+            if m is not None:
+                nexpr = nexpr.subs(floor, int_floor(m[a], m[b]))
+                processed += 1
+                continue
+            # Floor of floor: "floor(floor(c/d) / b)"
+            m = floor.match(sympy.floor(int_floor(c, d) / b))
+            if m is not None:
+                nexpr = nexpr.subs(floor, int_floor(
+                    int_floor(m[c], m[d]), m[b]))
+                processed += 1
+                continue
+            # Floor of floor: "floor(a / floor(c/d))"
+            m = floor.match(sympy.floor(a / int_floor(c, d)))
+            if m is not None:
+                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(
+                    m[c], m[d])))
                 processed += 1
                 continue
 
@@ -676,7 +697,7 @@ def symstr(sym):
 
     try:
         sym = sympy_numeric_fix(sym)
-        sym = sympy_ceiling_fix(sym)
+        sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
         sstr = DaceSympyPrinter().doprint(sym)

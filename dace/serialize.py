@@ -85,7 +85,7 @@ def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
         if known_type is not None:
             # For enums, resolve using the type if known
-            if issubclass(known_type, enum.Enum):
+            if issubclass(known_type, enum.Enum) and isinstance(obj, str):
                 return known_type[obj]
             # If we can, convert from string
             if isinstance(obj, str):
@@ -150,7 +150,9 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
-def set_properties_from_json(object_with_properties, json_obj, context=None):
+def set_properties_from_json(object_with_properties,
+                             json_obj,
+                             context=None):
 
     try:
         attrs = json_obj['attributes']
@@ -159,13 +161,23 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
 
     # Apply properties
     ps = dict(object_with_properties.__properties__)
+    source_properties = set(attrs.keys())
     for prop_name, prop in ps.items():
         try:
             val = attrs[prop_name]
+            # Make sure we use all properties
+            source_properties.remove(prop_name)
         except KeyError:
-            raise KeyError("Missing property for object of type " +
-                           type(object_with_properties).__name__ + ": " +
-                           prop_name)
+            # Allow a property to not be set if it has a default value
+            # TODO: is this really the job of serialize?
+            if prop.default is not None:
+                val = prop.default
+            elif prop.allow_none:
+                val = None
+            else:
+                raise KeyError("Missing property for object of type " +
+                               type(object_with_properties).__name__ + ": " +
+                               prop_name)
 
         if isinstance(val, dict):
             val = prop.from_json(val, context)
@@ -186,3 +198,10 @@ def set_properties_from_json(object_with_properties, json_obj, context=None):
                 pass
 
         setattr(object_with_properties, prop_name, val)
+
+    if len(source_properties) > 0:
+        # TODO: elevate to error once #28 is fixed.
+        # raise KeyError("Unused properties: {}".format(", ".join(
+        #     sorted(source_properties))))
+        print("WARNING: unused properties: {}".format(", ".join(
+            sorted(source_properties))))
