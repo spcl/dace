@@ -23,6 +23,10 @@ class SDFGElement {
         return this.data.attributes;
     }
 
+    type() {
+        return this.data.type;
+    }
+
     label() {
         return this.data.label;
     }
@@ -100,6 +104,10 @@ class State extends SDFGElement {
     label() {
         return this.data.state.label;
     }
+
+    type() {
+        return this.data.state.type;
+    }
 }
 
 class Node extends SDFGElement {
@@ -120,6 +128,10 @@ class Node extends SDFGElement {
 
     attributes() {
         return this.data.node.attributes;
+    }
+
+    type() {
+        return this.data.node.type;
     }
 
     set_layout() {
