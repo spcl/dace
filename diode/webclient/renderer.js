@@ -1032,7 +1032,7 @@ class SDFGRenderer {
         if (evtype === "touchstart" || evtype === "mousedown") {
             let ev = (evtype === "touchstart") ? event.touches[0] : event;
             this.drag_start = ev;
-            if (evtype === "touchstart" && e.targetTouches.length == 2)
+            if (evtype === "touchstart" && event.targetTouches.length == 2)
                 this.drag_second_start = event.touches[1];
 
         } else if (evtype === "touchend" || evtype === "mouseup") {
@@ -1044,7 +1044,7 @@ class SDFGRenderer {
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
             // Zoom (pinching)
-            if (evtype === "touchmove" && e.targetTouches.length == 2) {
+            if (evtype === "touchmove" && event.targetTouches.length == 2) {
                 // Find distance between two points and center, zoom to that
                 let centerX = (comp_x_func(this.drag_start) + comp_x_func(this.drag_second_start)) / 2.0;
                 let centerY = (comp_y_func(this.drag_start) + comp_y_func(this.drag_second_start)) / 2.0;
