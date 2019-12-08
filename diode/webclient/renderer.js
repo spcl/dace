@@ -20,6 +20,7 @@ class CanvasManager {
 
         this.request_scale = false;
         this.scale_factor = {x: 1, y: 1};
+        this.scalef = 1.0;
 
         this._destroying = false;
 
@@ -158,6 +159,7 @@ class CanvasManager {
             let pt = this.svgPoint(this.scale_origin.x, this.scale_origin.y).matrixTransform(this.user_transform.inverse());
             this.user_transform = this.user_transform.translate(pt.x, pt.y);
             this.user_transform = this.user_transform.scale(sv, sv, 1, 0, 0, 0);
+            this.scalef *= sv;
             this.user_transform = this.user_transform.translate(-pt.x, -pt.y);
         }
         this.contention--;
@@ -200,6 +202,9 @@ class CanvasManager {
         // Uniform scaling
         this.user_transform = this.user_transform.scale(scale, scale, 1, 0, 0, 0);
         this.user_transform = this.user_transform.translate(tx, ty);
+        this.scale_factor = {x: 1, y: 1};
+        this.scale_origin = {x: 0, y: 0};
+        this.scalef = 1.0;
     }
 
     translate(x, y) {
@@ -225,6 +230,13 @@ class CanvasManager {
         return x;
     }
 
+    points_per_pixel() {
+        // Since we are using uniform scaling, (bottom-top)/height and
+        // (right-left)/width should be equivalent
+        let left = this.mapPixelToCoordsX(0);
+        let right = this.mapPixelToCoordsX(this.canvas.width);
+        return (right - left) / this.canvas.width;
+    }
 
     draw(now = null) {
         if(this._destroying)
@@ -454,6 +466,10 @@ function relayout_sdfg(ctx, sdfg) {
         offset_state(s, state, {x: topleft.x + STATE_MARGIN,
                                          y: topleft.y + STATE_MARGIN});
     });
+
+    let bb = calculateBoundingBox(g);
+    g.width = bb.width;
+    g.height = bb.height;
 
     return g;
 }
