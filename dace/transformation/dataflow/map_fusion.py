@@ -150,7 +150,8 @@ class MapFusion(pattern_matching.Transformation):
                         new_tuple = symbolic.symbol(params_dict[str(_tup)])
                     elif isinstance(_tup, (list, tuple)):
                         for _sym in _tup:
-                            if isinstance(_sym, symbolic.symbol):
+                            if (isinstance(_sym, symbolic.symbol)
+                                    and str(_sym) in params_dict):
                                 new_tuple.append(
                                     symbolic.symbol(params_dict[str(_sym)]))
                             else:
