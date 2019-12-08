@@ -671,9 +671,20 @@ class SDFGRenderer {
         // Add buttons
         this.toolbar = document.createElement('div');
         this.toolbar.style = 'position:absolute; top:10px; left: 10px;';
+        let d;
+
+        // Menu bar
+        /*
+        let d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">menu</i>';
+        d.style = 'padding-bottom: 0px;';
+        d.onclick = () => {};
+        d.title = 'Menu';
+        this.toolbar.appendChild(d);
+        */
 
         // Zoom to fit
-        let d = document.createElement('button');
+        d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
         d.style = 'padding-bottom: 0px;';
         d.onclick = () => this.zoom_to_view();
