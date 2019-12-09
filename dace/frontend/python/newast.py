@@ -3134,6 +3134,13 @@ class ProgramVisitor(ExtNodeVisitor):
             sdfg._temp_transients = max_num + 1
             self.sdfg._temp_transients = max_num + 1
 
+            slice_state = None
+            output_slices = set()
+            for arg in node.args:
+                if isinstance(arg, ast.Subscript):
+                    slice_state = self.last_state
+                    break
+
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
             argdict = {
                 conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
@@ -3168,8 +3175,23 @@ class ProgramVisitor(ExtNodeVisitor):
                 if aname in self.inputs.keys():
                     # Delete input
                     del self.inputs[aname]
-
-
+                # Delete potential input slicing
+                for n in slice_state:
+                    if isinstance(n, nodes.AccessNode) and n.data == aname:
+                        for e in slice_state.in_edges(n):
+                            sub = None
+                            for s in node.args:
+                                if isinstance(s, ast.Subscript):
+                                    if s.value.id == e.src.data:
+                                        sub = s
+                                        break
+                            if not sub:
+                                raise KeyError("Did not find output subscript")
+                            output_slices.add((sub, ast.Name(id=aname)))
+                            slice_state.remove_edge(e)
+                            slice_state.remove_node(e.src)
+                        slice_state.remove_node(n)
+                        break
 
             # Map internal SDFG symbols to external symbols (find_and_replace?)
             for aname, arg in args:
@@ -3184,6 +3206,20 @@ class ProgramVisitor(ExtNodeVisitor):
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys())
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
+
+            if output_slices:
+                assign_node = ast.Assign()
+                targets= []
+                value = []
+                for t, v in output_slices:
+                    targets.append(t)
+                    value.append(v)
+                assign_node = ast.Assign(targets=ast.Tuple(elts=targets),
+                                         value=ast.Tuple(elts=value),
+                                         lineno=node.lineno,
+                                         col_offset=node.col_offset)
+                return self._visit_assign(assign_node, assign_node.targets,
+                                          None)
 
             # No return values from SDFGs
             return []
@@ -3310,6 +3346,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # If an allowed global, use directly
         if name in self.globals:
             return _inner_eval_ast(self.globals, node)
+
+        if name in self.sdfg.arrays:
+            return name
 
         if name not in self.scope_vars:
             raise DaceSyntaxError(self, node,
