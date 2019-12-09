@@ -265,7 +265,11 @@ class InlineSDFG(pattern_matching.Transformation):
                 # Connect to source node instead
                 newmemlet = self._modify_memlet(e.data, cmemlet)
                 graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
-                to_reconnect.remove(e.dst)
+                try:
+                    to_reconnect.remove(e.dst)
+                except KeyError:
+                    # TODO: Benign?
+                    pass
             elif isinstance(e.dst, nodes.AccessNode) and e.dst.data in outputs:
                 cnode, cconn, cmemlet = outputs[e.dst.data]
                 newmemlet = self._modify_memlet(e.data, cmemlet)
@@ -295,7 +299,7 @@ class InlineSDFG(pattern_matching.Transformation):
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
                 try:
                     to_reconnect.remove(e.src)
-                except:
+                except KeyError:
                     # TODO: Benign?
                     pass
             elif e.data.data in torename:
@@ -328,11 +332,19 @@ class InlineSDFG(pattern_matching.Transformation):
             for node in state.source_nodes():
                 if node in to_reconnect:
                     graph.add_edge(scope_node, None, node, None, EmptyMemlet())
-                    to_reconnect.remove(node)
+                    try:
+                        to_reconnect.remove(node)
+                    except KeyError:
+                        # TODO: Benign?
+                        pass
             for node in state.sink_nodes():
                 if node in to_reconnect:
                     graph.add_edge(node, None, scope_exit, None, EmptyMemlet())
-                    to_reconnect.remove(node)
+                    try:
+                        to_reconnect.remove(node)
+                    except KeyError:
+                        # TODO: Benign?
+                        pass
 
         # Remove the nested SDFG node
         graph.remove_node(nsdfg_node)
