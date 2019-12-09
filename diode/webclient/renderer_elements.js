@@ -23,6 +23,10 @@ class SDFGElement {
         return this.data.attributes;
     }
 
+    type() {
+        return this.data.type;
+    }
+
     label() {
         return this.data.label;
     }
@@ -93,12 +97,45 @@ class State extends SDFGElement {
         ctx.strokeStyle = "black";
     }
 
+    simple_draw(renderer, ctx, mousepos) {
+        // Fast drawing function for small states
+        let topleft = this.topleft();
+
+        ctx.fillStyle = "#deebf7";
+        ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
+        ctx.fillStyle = "#000000";
+
+        if (this.intersect(mousepos.x, mousepos.y))
+            renderer.tooltip = this.tooltip();
+        // Draw state name in center without contents (does not look good)
+        /*
+        let FONTSIZE = Math.min(renderer.canvas_manager.points_per_pixel() * 16, 100);
+        let label = this.label();
+
+        let oldfont = ctx.font;
+        ctx.font = FONTSIZE + "px Arial";
+
+        let textmetrics = ctx.measureText(label);
+        ctx.fillText(label, this.x - textmetrics.width / 2.0, this.y - this.height / 6.0 + FONTSIZE / 2.0);
+
+        ctx.font = oldfont;
+        */
+    }
+
+    tooltip() {
+        return "State: " + this.label();
+    }
+
     attributes() {
         return this.data.state.attributes;
     }
 
     label() {
         return this.data.state.label;
+    }
+
+    type() {
+        return this.data.state.type;
     }
 }
 
@@ -114,12 +151,24 @@ class Node extends SDFGElement {
         ctx.fillText(this.label(), this.x - textw/2, this.y + LINEHEIGHT/4);
     }
 
+    simple_draw(renderer, ctx, mousepos) {
+        // Fast drawing function for small nodes
+        let topleft = this.topleft();
+        ctx.fillStyle = "white";
+        ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
+        ctx.fillStyle = "black";
+    }
+
     label() {
         return this.data.node.label;
     }
 
     attributes() {
         return this.data.node.attributes;
+    }
+
+    type() {
+        return this.data.node.type;
     }
 
     set_layout() {
@@ -395,10 +444,13 @@ class NestedSDFG extends Node {
 
 // Draw an entire SDFG
 function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
+    let ppp = renderer.canvas_manager.points_per_pixel();
+
     // Render state machine
     let g = sdfg_dagre;
-    g.nodes().forEach( v => { g.node(v).draw(renderer, ctx, mousepos); });
-    g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
+    if (ppp < EDGE_LOD)
+        g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
+
 
     visible_rect = renderer.visible_rect;
 
@@ -406,15 +458,18 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
     g.nodes().forEach( v => {
         let node = g.node(v);
 
+        if (ppp >= STATE_LOD || node.width / ppp < STATE_LOD) {
+            node.simple_draw(renderer, ctx, mousepos);
+            return;
+        }
         // Skip invisible states
         if (!node.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
             return;
 
-        let ng = node.data.graph;
-        let layout = node.data.state.attributes.layout;
+        node.draw(renderer, ctx, mousepos);
 
-        
-        
+        let ng = node.data.graph;
+
         if (!node.data.state.attributes.is_collapsed && ng)
         {
             ng.nodes().forEach(v => {
@@ -422,11 +477,17 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
 
                 if (!n.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
                     return;
+                if (ppp >= NODE_LOD) {
+                    n.simple_draw(renderer, ctx, mousepos);
+                    return;
+                }
 
                 n.draw(renderer, ctx, mousepos);
                 n.in_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
                 n.out_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
             });
+            if (ppp >= EDGE_LOD)
+                return;
             ng.edges().forEach(e => {
                 let edge = ng.edge(e);
                 if (!edge.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
