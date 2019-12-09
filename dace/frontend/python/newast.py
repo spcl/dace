@@ -3124,12 +3124,14 @@ class ProgramVisitor(ExtNodeVisitor):
             # Change transient names
             # TODO: This is temporary until SDFG calls become functions.
             max_num = 0
+            offset = max(self.sdfg._temp_transients, sdfg._temp_transients)
             for arrname, array in sdfg.arrays.items():
                 if array.transient and arrname[:5] == '__tmp':
                     num = int(arrname[5:])
                     max_num = max(max_num, num)
-                    num += self.sdfg._temp_transients
+                    num += offset
                     sdfg.replace(arrname, f"__tmp{num}")
+            sdfg._temp_transients = max_num + 1
             self.sdfg._temp_transients = max_num + 1
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
