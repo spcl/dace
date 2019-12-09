@@ -3176,22 +3176,23 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Delete input
                     del self.inputs[aname]
                 # Delete potential input slicing
-                for n in slice_state:
-                    if isinstance(n, nodes.AccessNode) and n.data == aname:
-                        for e in slice_state.in_edges(n):
-                            sub = None
-                            for s in node.args:
-                                if isinstance(s, ast.Subscript):
-                                    if s.value.id == e.src.data:
-                                        sub = s
-                                        break
-                            if not sub:
-                                raise KeyError("Did not find output subscript")
-                            output_slices.add((sub, ast.Name(id=aname)))
-                            slice_state.remove_edge(e)
-                            slice_state.remove_node(e.src)
-                        slice_state.remove_node(n)
-                        break
+                if slice_state:
+                    for n in slice_state.nodes():
+                        if isinstance(n, nodes.AccessNode) and n.data == aname:
+                            for e in slice_state.in_edges(n):
+                                sub = None
+                                for s in node.args:
+                                    if isinstance(s, ast.Subscript):
+                                        if s.value.id == e.src.data:
+                                            sub = s
+                                            break
+                                if not sub:
+                                    raise KeyError("Did not find output subscript")
+                                output_slices.add((sub, ast.Name(id=aname)))
+                                slice_state.remove_edge(e)
+                                slice_state.remove_node(e.src)
+                            slice_state.remove_node(n)
+                            break
 
             # Map internal SDFG symbols to external symbols (find_and_replace?)
             for aname, arg in args:
