@@ -688,11 +688,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
-            src_index = " + ".join(([""] if len(dst_strides) > 0 else []) + [
+            src_index = " + ".join([
                 "__dace_copy{} * {}".format(i, cpu.sym2cpp(stride))
                 for i, stride in enumerate(src_strides) if copy_shape[i] != 1
             ])
-            dst_index = " + ".join(([""] if len(dst_strides) > 0 else []) + [
+            dst_index = " + ".join([
                 "__dace_copy{} * {}".format(i, cpu.sym2cpp(stride))
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
