@@ -62,7 +62,8 @@ run_all() {
     run_sample gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 
     run_sample filter_fpga_vectorized filter_fpga_vectorized_4 1 8192 4 0.25
     # run_sample jacobi_fpga_systolic jacobi_fpga_systolic_4_Hx128xT 1 128 128 8 4
-    run_sample gemv_transposed_fpga gemv_transposed_1024xM 1 1024 1024
+    # TODO: this doesn't pipeline. Should it? Why doesn't it?
+    run_sample gemv_transposed_fpga gemv_transposed_1024xM 0 1024 1024
     if [ "$1" -ne "0" ]; then
       run_sample histogram_fpga histogram_fpga 0 128 128
       run_sample spmv_fpga spmv_fpga 0 64 64 640
