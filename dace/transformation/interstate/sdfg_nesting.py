@@ -293,7 +293,11 @@ class InlineSDFG(pattern_matching.Transformation):
                                 memlet.wcr = None
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
-                to_reconnect.remove(e.src)
+                try:
+                    to_reconnect.remove(e.src)
+                except:
+                    # TODO: Benign?
+                    pass
             elif e.data.data in torename:
                 if e.data.data in inputs:
                     newmemlet = self._modify_memlet(e.data,
