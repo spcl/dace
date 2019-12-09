@@ -1,4 +1,7 @@
 var LINEHEIGHT = 10;
+var EDGE_LOD = 8; // Points-per-pixel threshold for not drawing memlets/interstate edges
+var NODE_LOD = 5; // Points-per-pixel threshold for not drawing node shapes and labels
+var STATE_LOD = 50; // Pixel threshold for not drawing state contents
 
 var targetsection_ignore_error = true; // Set to true to ignore errors occurring when no valid targetsection was found
 var toplevel_use_mean = false;
