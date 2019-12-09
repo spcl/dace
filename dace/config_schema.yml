@@ -260,15 +260,15 @@ required:
 
                     executable:
                         type: str
-                        default: xocc
-                        title: SDAccel compiler executable path 
-                        description: File path or name of SDAccel binary (xocc) 
+                        default: v++ 
+                        title: Vitis compiler executable path 
+                        description: File path or name of Vitis binary (v++) 
 
                     platform:
                         type: str
-                        default: xilinx_vcu1525_dynamic_5_1 
-                        title: Target platform for xocc
-                        description: Platform name of SDAccel target.
+                        default: xilinx_u280_xdma_201920_1 
+                        title: Target platform for Xilinx 
+                        description: Platform name of Vitis/SDx/SDAccel target.
 
                     enable_debugging:
                         type: bool 
@@ -295,7 +295,7 @@ required:
                     build_flags:
                         type: str
                         title: Arguments
-                        description: Kernel build (xocc) C++ flags 
+                        description: Kernel build C++ flags 
                         default: ""
                         
             #############################################

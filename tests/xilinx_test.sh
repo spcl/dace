@@ -74,10 +74,13 @@ run_all() {
 }
 
 # Check if xocc is vailable
-which xocc
+which v++ 
 if [ $? -ne 0 ]; then
-  echo "xocc not available"
-  exit 99
+  which xocc
+  if [ $? -ne 0 ]; then
+    echo "v++/xocc not available"
+    exit 99
+  fi
 fi
 
 echo "====== Target: Xilinx ======"
