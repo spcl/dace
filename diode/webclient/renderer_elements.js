@@ -105,7 +105,7 @@ class State extends SDFGElement {
         ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
         ctx.fillStyle = "#000000";
 
-        if (this.intersect(mousepos.x, mousepos.y))
+        if (mousepos && this.intersect(mousepos.x, mousepos.y))
             renderer.tooltip = this.tooltip();
         // Draw state name in center without contents (does not look good)
         /*
