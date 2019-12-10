@@ -246,7 +246,7 @@ class Tasklet(CodeNode):
     """
 
     label = Property(dtype=str, desc="Name of the tasklet")
-    code = CodeProperty(desc="Tasklet code")
+    code = CodeProperty(desc="Tasklet code", default="")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
     code_init = CodeProperty(
@@ -359,12 +359,13 @@ class NestedSDFG(CodeNode):
 
     label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
+    sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     location = Property(dtype=str, desc="SDFG execution location descriptor")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
@@ -557,12 +558,14 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ParamsProperty(desc="Mapped parameters")
-    range = RangeProperty(desc="Ranges of map parameters")
+    range = RangeProperty(
+        desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Map schedule",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
@@ -732,13 +735,14 @@ class Consume(object):
     # Properties
     label = Property(dtype=str, desc="Name of the consume node")
     pe_index = Property(dtype=str, desc="Processing element identifier")
-    num_pes = SymbolicProperty(desc="Number of processing elements")
+    num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Consume schedule",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     chunksize = Property(
         dtype=int,
         desc="Maximal size of elements to consume at a time",
@@ -810,13 +814,14 @@ class Reduce(Node):
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)
-    wcr = LambdaProperty()
+    wcr = LambdaProperty(default='lambda a,b: a')
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Reduction execution policy",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()
 
     instrument = Property(

@@ -42,7 +42,8 @@ class InterstateEdge(object):
         desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
         from_string=assignments_from_string,
         to_string=assignments_to_string)
-    condition = CodeProperty(desc="Transition condition")
+    condition = CodeProperty(
+        desc="Transition condition", default=ast.parse("1").body[0])
 
     def __init__(self, condition=None, assignments=None):
 
@@ -165,8 +166,8 @@ class ControlFlow:
 @make_properties
 class LoopAssignment(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -178,8 +179,8 @@ class LoopAssignment(ControlFlow):
 @make_properties
 class LoopEntry(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -191,8 +192,8 @@ class LoopEntry(ControlFlow):
 @make_properties
 class LoopExit(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -204,8 +205,8 @@ class LoopExit(ControlFlow):
 @make_properties
 class LoopBack(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -226,8 +227,8 @@ LoopScope = make_properties(LoopScope)
 # make_properties will be called after adding cyclic class reference members
 class IfThenElse:
 
-    entry = Property()
-    exit = Property()
+    entry = Property(allow_none=True)
+    exit = Property(allow_none=True)
 
     def __init__(self, entry, exit):
         self.entry = entry
@@ -239,8 +240,8 @@ class IfThenElse:
 @make_properties
 class IfEntry(ControlFlow):
 
-    scope = Property(dtype=ControlFlowScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=ControlFlowScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -252,8 +253,8 @@ class IfEntry(ControlFlow):
 @make_properties
 class IfExit(ControlFlow):
 
-    scope = Property(dtype=ControlFlowScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=ControlFlowScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -265,7 +266,7 @@ class IfExit(ControlFlow):
 @make_properties
 class IfThenScope(ControlFlowScope):
 
-    if_then_else = Property(dtype=IfThenElse)
+    if_then_else = Property(dtype=IfThenElse, allow_none=True)
     entry = Property(dtype=IfEntry, allow_none=True)
     exit = Property(dtype=IfExit, allow_none=True)
 
@@ -280,7 +281,7 @@ class IfThenScope(ControlFlowScope):
 @make_properties
 class IfElseScope(ControlFlowScope):
 
-    if_then_else = Property(dtype=IfThenElse)
+    if_then_else = Property(dtype=IfThenElse, allow_none=True)
     entry = Property(dtype=IfEntry, allow_none=True)
     exit = Property(dtype=IfExit, allow_none=True)
 
