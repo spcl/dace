@@ -366,13 +366,15 @@ class TFSession:
                      and returns a tuple of values in the same order as nodes.
         """
         from dace.config import Config
+        
+        # Set libraries for cudnn
+        if os.name == 'nt' and not 'cudnn.lib' in Config.get('compiler','cpu','libs'):
+            Config.append('compiler', 'cpu', 'libs', value='cudnn.lib;')
+            Config.append('compiler','cpu','libs', value='cuda.lib')
+        elif not ' libcudnn.so' in Config.get('compiler','cpu','libs'):
+            Config.append('compiler', 'cpu', 'libs', value=' libcudnn.so') 
 
-        path = ' -I/usr/local/cuda-10.1/include'
-        val = Config.get('compiler', 'cpu', 'args')
-        if not path in val:
-            Config.append('compiler', 'cpu', 'libs', value=' /usr/local/cuda-10.1/lib64/libcudnn.so.7')
-            Config.append('compiler', 'cpu', 'args', value=' -I/usr/local/cuda-10.1/include')
-
+        
         # Create a unique name for this session
         if name is None:
             global _LASTSESSION
@@ -503,19 +505,18 @@ class TFSession:
             ############################
             # Compile the SDFG
             if gpu:
-
                 from dace.transformation.interstate import GPUTransformSDFG
                 self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
                 
                 #Do not transform cuDNN tasklets
-                for state in self.graph.nodes():
-                    for node in state.nodes():
-                        if node.label in ['Conv2D_gmap', 
-                                          'Conv2DBackpropInput_gmap', 
-                                          'Conv2DBackpropFilter_gmap']:
-                            node.map.schedule = dace.ScheduleType.Sequential
+                if self.cudnn:
+                    for state in self.graph.nodes():
+                        for node in state.nodes():
+                            if node.label in ['Conv2D_gmap', 
+                                              'Conv2DBackpropInput_gmap', 
+                                              'Conv2DBackpropFilter_gmap']:
+                                node.map.schedule = dace.ScheduleType.Sequential
                 
-                #self.graph.apply_gpu_transformations()
                 for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
@@ -590,6 +591,7 @@ class TFSession:
             strict=True,
             name=None,
             winograd=False,
+            cudnn=True
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
@@ -605,8 +607,7 @@ class TFSession:
             :return: Tuple or dictionary of values in the same order as `nodes`.
         """
         self.winograd = winograd
-        self.gpu = gpu
-        self.cudnn = False
+        self.cudnn = cudnn and gpu
         callfunc = self.compile(
             nodes,
             gpu,
@@ -2001,7 +2002,7 @@ class TFSession:
         if (7 in _tensorshape(node.inputs[0])[1:3]
                 and 3 in _tensorshape(node.inputs[1])[0:2] and self.winograd):
             winograd_convolution(self, node)
-        elif self.gpu:
+        elif self.cudnn:
             local_ctr = str(next(_atomic_count))
             state = self.state
             data_format = node.get_attr("data_format").decode("utf-8")
@@ -2045,14 +2046,13 @@ class TFSession:
                 padh = explicit_paddings[2]
                 padw = explicit_paddings[4]
             
-            print(image_dims, filter_dims, output_dims_list)
             idx = [3, 2, 0, 1]
             mapParams = [filter_params[i] for i in idx]
             mapRange = [filter_dims[i] for i in idx]
             mapLabel = string_builder(node.type) + "_filter_map"
             mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
             maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"},"out = j0")
-            
+
             mapOutputLabel = mapLabel + "_output"
             mapOutputParams = mapParams
             tempDims = [K,C,R,S]
@@ -2164,16 +2164,15 @@ class TFSession:
                 language=dace.Language.CPP,
                 location="gpu"
             )
+            
             code_global = ''' 
                 #include <cudnn.h>
                 #include <iostream>
                 cudnnHandle_t cudnn_handle;
-            '''         
-            if not self.cudnn:
-                tasklet.code_global = code_global
-                tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
-                tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
-                self.cudnn = True
+            '''
+            tasklet.code_global = code_global
+            tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
+            tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
             
             
             state.add_edge(image, None, tasklet, 'x', 
@@ -2900,7 +2899,7 @@ class TFSession:
                             inputParams)
 
     def visit_Conv2DBackpropInput(self, node):
-        if self.gpu:
+        if self.cudnn:
             state = self.state
             data_format = node.get_attr("data_format").decode("utf-8")
             dilations = node.get_attr("dilations")
@@ -2912,20 +2911,6 @@ class TFSession:
             output = self.create_and_add_output_node(node)[0]
             output_dims = self.get_default_dims(node.outputs[0])
             
-            # add a padding map for same padding(zero padding so that input and
-            # output of convolution have the same size)
-            '''if padding == "SAME":
-                paddedInput, paddedDims = self.inputPadding(
-                    node,
-                    output,
-                    output.desc(self.graph),
-                    gradient.desc(self.graph).shape[1],
-                    filter.desc(self.graph).shape[0],
-                    strides[1],
-                    output_dims,
-                )
-                output_dims = paddedDims
-                output = paddedInput'''
             
             filter_dims_list = filter.desc(self.graph).shape
             gradient_dims_list = gradient.desc(self.graph).shape
@@ -2998,7 +2983,7 @@ class TFSession:
                                 [mapOutputParams])
             self.add_in_memlets([filter], mapEntry, maptasklet, [filter_dims],
                                 [filter_params])
-            print(grad_dims, filter_dims, output_dims_list)
+                                
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'w', 'dy'},
@@ -3094,11 +3079,9 @@ class TFSession:
                 #include <iostream>
                 cudnnHandle_t cudnn_handle;
             '''
-            if not self.cudnn:
-                tasklet.code_global = code_global
-                tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
-                tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
-                self.cudnn = True
+            tasklet.code_global = code_global
+            tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
+            tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
 
             
             state.add_edge(gradient, None, tasklet, 'dy', 
@@ -3350,7 +3333,7 @@ class TFSession:
         
 
     def visit_Conv2DBackpropFilter(self, node):
-        if self.gpu:
+        if self.cudnn:
             state = self.state
             data_format = node.get_attr("data_format").decode("utf-8")
             dilations = node.get_attr("dilations")
@@ -3492,11 +3475,9 @@ class TFSession:
                 #include <iostream>
                 cudnnHandle_t cudnn_handle;
             '''
-            if not self.cudnn:
-                tasklet.code_global = code_global
-                tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
-                tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
-                self.cudnn = True
+            tasklet.code_global = code_global
+            tasklet.code_init = 'cudnnCreate(&cudnn_handle);'
+            tasklet.code_exit = 'cudnnDestroy(cudnn_handle);'
                 
             mapLabel = string_builder(node.type) + "_filter_map"
             mapInputLabel = mapLabel + "_input"
