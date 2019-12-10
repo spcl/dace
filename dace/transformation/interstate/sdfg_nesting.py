@@ -210,7 +210,8 @@ class InlineSDFG(pattern_matching.Transformation):
         for e in graph.out_edges(nsdfg_node):
             outputs[e.src_conn] = (e.dst, e.dst_conn, e.data)
 
-        to_reconnect = set()
+        to_reconnect_inp = set()
+        to_reconnect_out = set()
 
         torename = {}
         torename.update({k: v[2].data for k, v in inputs.items()})
@@ -250,7 +251,8 @@ class InlineSDFG(pattern_matching.Transformation):
                 node.sdfg.parent_sdfg = sdfg
 
             graph.add_node(node)
-            to_reconnect.add(node)
+            to_reconnect_inp.add(node)
+            to_reconnect_out.add(node)
 
         # TODO: Confirm that the following is always correct
         # Add Scalars of the nested SDFG to the parent
@@ -266,7 +268,7 @@ class InlineSDFG(pattern_matching.Transformation):
                 newmemlet = self._modify_memlet(e.data, cmemlet)
                 graph.add_edge(cnode, cconn, e.dst, e.dst_conn, newmemlet)
                 try:
-                    to_reconnect.remove(e.dst)
+                    to_reconnect_inp.remove(e.dst)
                 except KeyError:
                     # TODO: Benign?
                     pass
@@ -298,7 +300,7 @@ class InlineSDFG(pattern_matching.Transformation):
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
                 try:
-                    to_reconnect.remove(e.src)
+                    to_reconnect_out.remove(e.src)
                 except KeyError:
                     # TODO: Benign?
                     pass
@@ -330,18 +332,18 @@ class InlineSDFG(pattern_matching.Transformation):
         if scope_node is not None:
             scope_exit = graph.exit_nodes(scope_node)[0]
             for node in state.source_nodes():
-                if node in to_reconnect:
+                if node in to_reconnect_inp:
                     graph.add_edge(scope_node, None, node, None, EmptyMemlet())
                     try:
-                        to_reconnect.remove(node)
+                        to_reconnect_inp.remove(node)
                     except KeyError:
                         # TODO: Benign?
                         pass
             for node in state.sink_nodes():
-                if node in to_reconnect:
+                if node in to_reconnect_out:
                     graph.add_edge(node, None, scope_exit, None, EmptyMemlet())
                     try:
-                        to_reconnect.remove(node)
+                        to_reconnect_out.remove(node)
                     except KeyError:
                         # TODO: Benign?
                         pass
