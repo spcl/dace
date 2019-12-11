@@ -493,7 +493,6 @@ class Range(Subset):
         if not squeezed_ranges:
             squeezed_ranges = [(0, 0, 1)]
             squeezed_tsizes = [1]
-            # non_ones = [len(shape) - 1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
         self.offset(self, True)
