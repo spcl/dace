@@ -68,12 +68,9 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
             let contents = document.getElementById("sidebar-contents");
             let html = "";
             for (let attr of Object.entries(elem.attributes())) {
-                html += "<p><b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                // TODO: Refactor support for property display
-                if (attr[0].indexOf("code") >= 0)
-                    html += '</p><pre class="w3-code">' + attr[1].string_data + '</pre>';
-                else
-                    html += attr[1] + "</p>";
+                if (attr[0] === "layout") continue;
+                html += "<p><b>" + attr[0] + "</b>:&nbsp;&nbsp;</p>";
+                html += sdfg_property_to_string(attr[1]) + "</p>";
             }
             contents.innerHTML = html;
             document.getElementById("sidebar").style.display = "block";
