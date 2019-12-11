@@ -1934,35 +1934,64 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             output_memlet.veclen,
         )
 
-        # If axes were not defined, use all input dimensions
+        # Example:
+        #
+        # inp = array(K, M, N)
+        # out = array(L, M, N)
+        # out[i] = reduce(lambda a, b: a + b, inp, axes=0)
+        #
+        # Pseudocode:
+        # for m in range(M):
+        #     for n in range(N):
+        #         for k in range(K):
+        #             out[i, m, n] += inp[k, m, n]
+
+        # The number of output dimensions is equal to the number of input
+        # dimensions, minus the number of dimensions being reduced (axes)
+        # Example:
+        # 3D array inp reduced to a 2D array
+        # NOTE: The number of output dimensions is less or equal to the number
+        # of dimensions of the output array, where the result is stored.
         input_num_dims = input_memlet.subset.dims()
+        # If axes were not defined, use all input dimensions
         if axes is None:
             axes = tuple(range(input_num_dims))
         output_num_dims = input_num_dims - len(axes)
 
         # Obtain variable names per output and reduction axis
-        axis_vars = []
-        output_axis_vars = dict()
-        output_dims = []
-        octr = 0
-        input_subset = input_memlet.subset
-        output_subset = output_memlet.subset
+        axis_vars = []  # Iteration variables for the input dimensions
+        output_axis_vars = dict()  # Dict matching the dimensions of the input
+                                   # that are NOT being reduced with the
+                                   # equivalent dimensions of the output array.
+        output_dims = []  # The equivalent output array dimensions
+                          # of the input dimensions NOT being reduced. 
+        octr = 0  # First index for the dimensions NOT being reduced.
+        input_size = input_memlet.subset.size()
+        output_size = output_memlet.subset.size()
         for d in range(input_num_dims):
             if d in axes:
+                # Dimension is being reduced.
                 axis_vars.append("__i%d" % d)
             else:
+                # Dimension is NOT being reduced.
                 axis_vars.append("__o%d" % octr)
-                ri = input_subset[d]
-                rngi = ri[1] - ri[0] + 1
-                for i, ro in enumerate(output_subset):
+                ri = input_size[d]
+                # Iterate over the dimensions of the output memlet and find
+                # the one that is matching with the input memlet dimension.
+                for i, ro in enumerate(output_size):
+                    # This is needed in case where there are multiple NOT
+                    # reduced dimensions with the same size.
                     if i in output_axis_vars.keys():
                         continue
-                    rngo = ro[1] - ro[0] + 1
-                    if rngi == rngo:
+                    if ri == ro:
                         output_dims.append(i)
                         output_axis_vars[i] = octr
                         break
                 octr += 1
+        # Example:
+        # __i0 -> first dimension of inp (size K)
+        # __o0 -> second dimension of inp and out (size M)
+        # __o1 -> third dimensions of inp and out (size N)
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.instrument]
@@ -1976,6 +2005,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             callsite_stream.write(loop_header, sdfg, state_id, node)
 
         # Generate outer loops
+        output_subset = output_memlet.subset
         for axis in output_dims:
             octr = output_axis_vars[axis]
             callsite_stream.write(
@@ -1992,6 +2022,9 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             )
 
             end_braces += 1
+        # Example:
+        # for (int __o0 = 0; __o0 < M; __o0 += 1) {
+        #     for (int __o1 = 0; __o1 < N; __o1 += 1) {
 
         use_tmpout = False
         if len(axes) == input_num_dims:
@@ -2021,6 +2054,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     for i, r in enumerate(output_subset)],
             relative_offset=False,
         ))
+        # Example (pseudocode):
+        # out[i, __o0, __o1]
 
         if len(axes) != input_num_dims and node.identity is not None:
             # Write code for identity value in multiple axes
@@ -2048,6 +2083,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 node,
             )
             end_braces += 1
+        # Example:
+        # for (int __i0 = 0; __i0 < K; __i0 += 1) {
 
         # Generate reduction code
         credtype = "dace::ReductionType::" + str(
@@ -2082,7 +2119,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
             # Store back tmpout into the true output
             if i == end_braces - 1 and use_tmpout:
-                # TODO: Verify the following fix
+                # TODO: This is a targeted fix that has to be generalized when
+                # refactoring code generation. The issue is related to an
+                # inconsistency on whether an output connector generates a tmp
+                # scalar variable to be used with __write or a pointer to the
+                # output array.
                 scalar_output = True
                 for r in output_subset:
                     if r != 0 and r != (0, 0, 1):
