@@ -2016,7 +2016,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
             sdfg,
             output_memlet,
-            offset=["__o%d" % output_axis_vars[i]
+            offset=[("__o%d" % output_axis_vars[i])
                     if i in output_axis_vars.keys() else r[0]
                     for i, r in enumerate(output_subset)],
             relative_offset=False,
