@@ -3122,17 +3122,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     (type(func).__name__, funcname))
             
             # Change transient names
-            # TODO: This is temporary until SDFG calls become functions.
-            max_num = 0
-            offset = max(self.sdfg._temp_transients, sdfg._temp_transients)
             for arrname, array in sdfg.arrays.items():
                 if array.transient and arrname[:5] == '__tmp':
-                    num = int(arrname[5:])
-                    max_num = max(max_num, num)
-                    num += offset
-                    sdfg.replace(arrname, f"__tmp{num}")
-            sdfg._temp_transients = max_num + 1
-            self.sdfg._temp_transients = max_num + 1
+                    if int(arrname[5:]) < self.sdfg._temp_transients:
+                        new_name = sdfg.temp_data_name()
+                        sdfg.replace(arrname, new_name)
+            self.sdfg._temp_transients = max(self.sdfg._temp_transients,
+                                             sdfg._temp_transients)
 
             slice_state = None
             output_slices = set()
@@ -3187,7 +3183,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                             sub = s
                                             break
                                 if not sub:
-                                    raise KeyError("Did not find output subscript")
+                                    raise KeyError("Did not find output "
+                                                   "subscript")
                                 output_slices.add((sub, ast.Name(id=aname)))
                                 slice_state.remove_edge(e)
                                 slice_state.remove_node(e.src)
