@@ -508,15 +508,6 @@ class TFSession:
                 from dace.transformation.interstate import GPUTransformSDFG
                 self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
                 
-                #Do not transform cuDNN tasklets
-                if self.cudnn:
-                    for state in self.graph.nodes():
-                        for node in state.nodes():
-                            if node.label in ['Conv2D_gmap', 
-                                              'Conv2DBackpropInput_gmap', 
-                                              'Conv2DBackpropFilter_gmap']:
-                                node.map.schedule = dace.ScheduleType.Sequential
-                
                 for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue

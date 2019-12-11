@@ -222,6 +222,9 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         for state, gcodes in zip(sdfg.nodes(), global_code_nodes):
             for gcode in gcodes:
+                # Exception for cuDNN
+                if gcode.label in ['Conv2D','Conv2DBackpropInput','Conv2DBackpropFilter']:
+                    continue
                 # Create map and connectors
                 me, mx = state.add_map(
                     gcode.label + '_gmap', {gcode.label + '__gmapi': '0:1'},
