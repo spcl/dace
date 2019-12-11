@@ -158,6 +158,7 @@ endif() # DACE_ENABLE_CUDA
 
 # Create Xilinx object files
 if(DACE_ENABLE_XILINX)
+
   if((NOT (DACE_XILINX_MODE STREQUAL "hardware")) OR DACE_XILINX_ENABLE_DEBUGGING)
     set(DACE_XILINX_HOST_FLAGS "${DACE_XILINX_HOST_FLAGS} -g")
     set(DACE_XILINX_SYNTHESIS_FLAGS "${DACE_XILINX_SYNTHESIS_FLAGS} -g")
@@ -194,7 +195,6 @@ if(DACE_ENABLE_XILINX)
     configure_file(${CMAKE_SOURCE_DIR}/Xilinx_HLS.tcl.in Synthesize_${DACE_KERNEL_NAME}.tcl)
     add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${Vitis_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl) 
     set(DACE_SYNTHESIS_TARGETS ${DACE_SYNTHESIS_TARGETS} xilinx_synthesis_${DACE_KERNEL_NAME})
-
   endforeach()
 
   add_custom_target(xilinx_synthesis DEPENDS ${DACE_SYNTHESIS_TARGETS})
