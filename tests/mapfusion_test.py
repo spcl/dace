@@ -16,11 +16,11 @@ def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20],
 
             b = a * a
 
-    for k, l in dace.map[0:20, 0:10]:
+    for i, j in dace.map[0:20, 0:10]:
         with dace.tasklet:
-            a << tmp[l, k]
-            b << B[l, k]
-            c >> tmp_2[l, k]
+            a << tmp[j, i]
+            b << B[j, i]
+            c >> tmp_2[j, i]
 
             c = a + b
 
@@ -60,10 +60,18 @@ def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20],
             out2 = inp + 2
 
 
+@dace.program
+def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
+    tmp1 = A * 2
+    tmp2 = tmp1 * 4
+    B[:] = tmp2 + 5
+
+
 if __name__ == '__main__':
     sdfg = fusion.to_sdfg()
+    sdfg.save(os.path.join('_dotgraphs', 'before1.sdfg'))
     sdfg.apply_transformations([MapFusion])
-    sdfg.save(os.path.join('_dotgraphs', 'after.sdfg'))
+    sdfg.save(os.path.join('_dotgraphs', 'after1.sdfg'))
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
@@ -75,10 +83,25 @@ if __name__ == '__main__':
     if diff > 1e-3:
         exit(1)
 
+    #############
     # Second test
     sdfg = multiple_fusions.to_sdfg()
+    num_nodes_before = len(
+        [node for state in sdfg.nodes() for node in state.nodes()])
+
+    sdfg.save(os.path.join('_dotgraphs', 'before2.sdfg'))
+    sdfg = dace.SDFG.from_file(os.path.join('_dotgraphs', 'before2.sdfg'))
     sdfg.apply_transformations([MapFusion])
-    sdfg.save(os.path.join('_dotgraphs', 'after.sdfg'))
+    sdfg.save(os.path.join('_dotgraphs', 'after2.sdfg'))
+
+    num_nodes_after = len(
+        [node for state in sdfg.nodes() for node in state.nodes()])
+    # Ensure that the number of nodes was reduced after transformation
+    if num_nodes_after >= num_nodes_before:
+        raise RuntimeError('SDFG was not properly transformed '
+                           '(nodes before: %d, after: %d)' % (num_nodes_before,
+                                                              num_nodes_after))
+
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
     C = np.zeros_like(A)
@@ -92,4 +115,32 @@ if __name__ == '__main__':
 
     print('Difference2:', diff2)
     if diff2 > 1e-4:
+        exit(1)
+
+    #############
+    # Third test
+    sdfg = fusion_chain.to_sdfg()
+    sdfg.save(os.path.join('_dotgraphs', 'before3.sdfg'))
+    sdfg = dace.SDFG.from_file(os.path.join('_dotgraphs', 'before3.sdfg'))
+    sdfg.apply_transformations([MapFusion], apply_once=True)
+    num_nodes_before = len(
+        [node for state in sdfg.nodes() for node in state.nodes()])
+    sdfg.apply_transformations([MapFusion], apply_once=True)
+    sdfg.apply_transformations([MapFusion], apply_once=True)
+    sdfg.save(os.path.join('_dotgraphs', 'after3.sdfg'))
+
+    num_nodes_after = len(
+        [node for state in sdfg.nodes() for node in state.nodes()])
+    # Ensure that the number of nodes was reduced after transformation
+    if num_nodes_after >= num_nodes_before:
+        raise RuntimeError('SDFG was not properly transformed '
+                           '(nodes before: %d, after: %d)' % (num_nodes_before,
+                                                              num_nodes_after))
+
+    A = np.random.rand(10, 20).astype(np.float32)
+    B = np.zeros_like(A)
+    sdfg(A=A, B=B)
+    diff = np.linalg.norm(A * 8 + 5 - B)
+    print('Difference:', diff)
+    if diff > 1e-4:
         exit(1)
