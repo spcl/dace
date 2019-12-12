@@ -96,7 +96,7 @@ class InterstateEdge(object):
             ['%s=%s' % (k, v) for k, v in self.assignments.items()])
 
         # Edge with assigment only (no condition)
-        if self.is_unconditional():
+        if astutils.unparse(self.condition) == '1':
             # Edge without conditions or assignments
             if len(self.assignments) == 0:
                 return ''
