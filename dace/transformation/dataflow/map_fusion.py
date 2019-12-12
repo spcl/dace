@@ -35,7 +35,6 @@ class MapFusion(pattern_matching.Transformation):
              two maps. Alternatively, this access node should not be adjacent to
              the first map entry.
     """
-
     _first_map_exit = nodes.ExitNode()
     _some_array = nodes.AccessNode("_")
     _second_map_entry = nodes.EntryNode()
@@ -106,6 +105,14 @@ class MapFusion(pattern_matching.Transformation):
             if isinstance(dst, nodes.AccessNode):
                 intermediate_nodes.add(dst)
                 intermediate_data.add(dst.data)
+
+                # If array is used anywhere else in this state.
+                num_occurrences = len([
+                    n for n in graph.nodes()
+                    if isinstance(n, nodes.AccessNode) and n.data == dst.data
+                ])
+                if num_occurrences > 1:
+                    return False
             else:
                 return False
         # Check map ranges
@@ -202,6 +209,7 @@ class MapFusion(pattern_matching.Transformation):
 
         """
         graph = sdfg.nodes()[self.state_id]
+        print('Applying on', MapFusion.match_to_str(graph, self.subgraph))
         first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
         first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[
@@ -220,14 +228,6 @@ class MapFusion(pattern_matching.Transformation):
             if sdfg.arrays[node.data].transient is False:
                 do_not_erase.add(node)
             else:
-                # If array is used anywhere else in this state.
-                num_occurrences = len([
-                    n for n in graph.nodes()
-                    if isinstance(n, nodes.AccessNode) and n.data == node.data
-                ])
-                if num_occurrences > 1:
-                    return False
-
                 for edge in graph.in_edges(node):
                     if edge.src != first_exit:
                         do_not_erase.add(node)
@@ -239,240 +239,189 @@ class MapFusion(pattern_matching.Transformation):
                             break
 
         # Find permutation between first and second scopes
-        if first_entry.map.params != second_entry.map.params:
-            perm = MapFusion.find_permutation(first_entry.map,
-                                              second_entry.map)
-            params_dict = {}
-            for _index, _param in enumerate(first_entry.map.params):
-                params_dict[_param] = second_entry.map.params[perm[_index]]
+        perm = MapFusion.find_permutation(first_entry.map, second_entry.map)
+        params_dict = {}
+        for index, param in enumerate(first_entry.map.params):
+            params_dict[param] = second_entry.map.params[perm[index]]
 
-            # Hopefully replaces (in memlets and tasklet) the second scope map
-            # indices with the permuted first map indices
-            second_scope = graph.scope_subgraph(second_entry)
-            for _firstp, _secondp in params_dict.items():
-                replace(second_scope, _secondp, _firstp)
+        # Replaces (in memlets and tasklet) the second scope map
+        # indices with the permuted first map indices.
+        # This works in two passes to avoid problems when e.g., exchanging two
+        # parameters (instead of replacing (j,i) and (i,j) to (j,j) and then
+        # i,i).
+        second_scope = graph.scope_subgraph(second_entry)
+        for firstp, secondp in params_dict.items():
+            if firstp != secondp:
+                replace(second_scope, secondp, '__' + secondp + '_fused')
+        for firstp, secondp in params_dict.items():
+            if firstp != secondp:
+                replace(second_scope, '__' + secondp + '_fused', firstp)
 
-        ########Isolate First MapExit node###########
-        for _edge in graph.in_edges(first_exit):
-            __some_str = _edge.data.data
-            _access_node = graph.find_node(__some_str)
-            # all outputs of first_exit are in intermediate_nodes set, so all inputs to
-            # first_exit should also be!
-            if _access_node not in do_not_erase:
-                _new_dst = None
-                _new_dst_conn = None
-                # look at the second map entry out-edges to get the new destination
+        # Isolate First exit node
+        ############################
+        for edge in graph.in_edges(first_exit):
+            memlet_path = graph.memlet_path(edge)
+            edge_index = next(
+                i for i, e in enumerate(memlet_path) if e == edge)
+            access_node = memlet_path[-1].dst
+            if access_node not in do_not_erase:
+                out_edges = [
+                    e for e in graph.out_edges(access_node)
+                    if e.dst == second_entry
+                ]
+                # In this transformation, there can only be one edge to the
+                # second map
+                assert len(out_edges) == 1
+                # Get source connector to the second map
+                connector = out_edges[0].dst_conn[3:]
+
+                new_dst = None
+                new_dst_conn = None
+                # Look at the second map entry out-edges to get the new
+                # destination
                 for _e in graph.out_edges(second_entry):
-                    if _e.data.data == _access_node.data:
-                        _new_dst = _e.dst
-                        _new_dst_conn = _e.dst_conn
+                    if _e.src_conn[4:] == connector:
+                        new_dst = _e.dst
+                        new_dst_conn = _e.dst_conn
                         break
-                if _new_dst is None:
-                    # Access node is not even used in the second map
-                    graph.remove_node(_access_node)
+                if new_dst is None:
+                    # Access node is not used in the second map
+                    graph.remove_node(access_node)
                     continue
-                if _edge.data.data == _access_node.data and isinstance(
-                        _edge._src, nodes.AccessNode):
-                    _edge.data.data = _edge._src.data
-                    _edge.data.subset = "0"
-                    graph.add_edge(
-                        _edge._src,
-                        _edge.src_conn,
-                        _new_dst,
-                        _new_dst_conn,
-                        dcpy(_edge.data),
-                    )
-                else:
-                    if _edge.data.subset.num_elements() == 1:
-                        # We will add a scalar
-                        local_name = "__s%d_n%d%s_n%d%s" % (
-                            self.state_id,
-                            graph.node_id(_edge._src),
-                            _edge.src_conn,
-                            graph.node_id(_edge._dst),
-                            _edge.dst_conn,
-                        )
-                        local_node = sdfg.add_scalar(
-                            local_name,
-                            dtype=_access_node.desc(graph).dtype,
-                            toplevel=False,
-                            transient=True,
-                            storage=dtypes.StorageType.Register,
-                        )
-                        _edge.data.data = (
-                            local_name)  # graph.add_access(local_name).data
-                        _edge.data.subset = "0"
-                        graph.add_edge(
-                            _edge._src,
-                            _edge.src_conn,
-                            _new_dst,
-                            _new_dst_conn,
-                            dcpy(_edge.data),
-                        )
-                    else:
-                        # We will add a transient of size = memlet subset
-                        # size
-                        local_name = "__s%d_n%d%s_n%d%s" % (
-                            self.state_id,
-                            graph.node_id(_edge._src),
-                            _edge.src_conn,
-                            graph.node_id(_edge._dst),
-                            _edge.dst_conn,
-                        )
-                        local_node = graph.add_transient(
-                            local_name,
-                            _edge.data.subset.size(),
-                            dtype=_access_node.desc(graph).dtype,
-                            toplevel=False,
-                        )
-                        _edge.data.data = (
-                            local_name)  # graph.add_access(local_name).data
-                        _edge.data.subset = ",".join([
-                            "0:" + str(_s) for _s in _edge.data.subset.size()
-                        ])
-                        graph.add_edge(
-                            _edge._src,
-                            _edge.src_conn,
-                            local_node,
-                            None,
-                            dcpy(_edge.data),
-                        )
-                        graph.add_edge(local_node, None, _new_dst,
-                                       _new_dst_conn, dcpy(_edge.data))
-                graph.remove_edge(_edge)
-                ####Isolate this node#####
-                for _in_e in graph.in_edges(_access_node):
-                    graph.remove_edge(_in_e)
-                for _out_e in graph.out_edges(_access_node):
-                    graph.remove_edge(_out_e)
-                graph.remove_node(_access_node)
-            else:
-                # _access_node will become an output of the second map exit
-                for _out_e in graph.out_edges(first_exit):
-                    if _out_e.data.data == _access_node.data:
-                        graph.add_edge(
-                            second_exit,
-                            None,
-                            _out_e._dst,
-                            _out_e.dst_conn,
-                            dcpy(_out_e.data),
-                        )
+                # If the source is an access node, modify the memlet to point
+                # to it
+                if (isinstance(edge.src, nodes.AccessNode)
+                        and edge.data.data != edge.src.data):
+                    edge.data.data = edge.src.data
+                    edge.data.subset = ("0" if edge.data.other_subset is None
+                                        else edge.data.other_subset)
+                    edge.data.other_subset = None
 
-                        graph.remove_edge(_out_e)
-                        break
                 else:
-                    raise AssertionError(
-                        "No out-edge was found that leads to {}".format(
-                            _access_node))
-                graph.add_edge(_edge._src, _edge.src_conn, second_exit, None,
-                               dcpy(_edge.data))
-                ### If the second map needs this node then link the connector
+                    # Add a transient scalar/array
+                    self.fuse_nodes(sdfg, graph, edge, new_dst, new_dst_conn)
+
+                graph.remove_edge(edge)
+
+                # Remove transient node between the two maps
+                graph.remove_node(access_node)
+            else:  # The case where intermediate array node cannot be removed
+                # Node will become an output of the second map exit
+                out_e = memlet_path[edge_index + 1]
+                conn = second_exit.next_connector()
+                graph.add_edge(
+                    second_exit,
+                    'OUT_' + conn,
+                    out_e.dst,
+                    out_e.dst_conn,
+                    dcpy(out_e.data),
+                )
+                second_exit.add_out_connector('OUT_' + conn)
+
+                graph.remove_edge(out_e)
+
+                graph.add_edge(edge.src, edge.src_conn, second_exit,
+                               'IN_' + conn, dcpy(edge.data))
+                second_exit.add_in_connector('IN_' + conn)
+
+                # If the second map needs this node, link the connector
                 # that generated this to the place where it is needed, with a
                 # temp transient/scalar for memlet to be generated
-                for _out_e in graph.out_edges(second_entry):
-                    if _out_e.data.data == _access_node.data:
-                        if _edge.data.subset.num_elements() == 1:
-                            # We will add a scalar
-                            local_name = "__s%d_n%d%s_n%d%s" % (
-                                self.state_id,
-                                graph.node_id(_edge._src),
-                                _edge.src_conn,
-                                graph.node_id(_edge._dst),
-                                _edge.dst_conn,
-                            )
-                            local_node = sdfg.add_scalar(
-                                local_name,
-                                dtype=_access_node.desc(graph).dtype,
-                                storage=dtypes.StorageType.Register,
-                                toplevel=False,
-                                transient=True,
-                            )
-                            _edge.data.data = (
-                                local_name
-                            )  # graph.add_access(local_name).data
-                            _edge.data.subset = "0"
-                            graph.add_edge(
-                                _edge._src,
-                                _edge.src_conn,
-                                _out_e._dst,
-                                _out_e.dst_conn,
-                                dcpy(_edge.data),
-                            )
-                        else:
-                            # We will add a transient of size = memlet subset
-                            # size
-                            local_name = "__s%d_n%d%s_n%d%s" % (
-                                self.state_id,
-                                graph.node_id(_edge._src),
-                                _edge.src_conn,
-                                graph.node_id(_edge._dst),
-                                _edge.dst_conn,
-                            )
-                            local_node = sdfg.add_transient(
-                                local_name,
-                                _edge.data.subset.size(),
-                                dtype=_access_node.desc(graph).dtype,
-                                toplevel=False,
-                            )
-                            _edge.data.data = (
-                                local_name
-                            )  # graph.add_access(local_name).data
-                            _edge.data.subset = ",".join([
-                                "0:" + str(_s)
-                                for _s in _edge.data.subset.size()
-                            ])
-                            graph.add_edge(
-                                _edge._src,
-                                _edge.src_conn,
-                                local_node,
-                                None,
-                                dcpy(_edge.data),
-                            )
-                            graph.add_edge(
-                                local_node,
-                                None,
-                                _out_e._dst,
-                                _out_e.dst_conn,
-                                dcpy(_edge.data),
-                            )
-                        break
-                graph.remove_edge(_edge)
-        graph.remove_node(first_exit)  # Take a leap of faith
+                for out_e in graph.out_edges(second_entry):
+                    second_memlet_path = graph.memlet_path(out_e)
+                    source_node = second_memlet_path[0].src
+                    if source_node == access_node:
+                        self.fuse_nodes(sdfg, graph, edge, out_e.dst,
+                                        out_e.dst_conn)
+                graph.remove_edge(edge)
+        ###
+        # First scope exit is isolated and can now be safely removed
+        graph.remove_node(first_exit)
 
-        #############Isolate second_entry node################
-        for _edge in graph.in_edges(second_entry):
-            _access_node = graph.find_node(_edge.data.data)
-            if _access_node in intermediate_nodes:
-                # Already handled above, just remove this
-                graph.remove_edge(_edge)
+        # Isolate second_entry node
+        ###########################
+        for edge in graph.in_edges(second_entry):
+            memlet_path = graph.memlet_path(edge)
+            edge_index = next(
+                i for i, e in enumerate(memlet_path) if e == edge)
+            access_node = memlet_path[0].src
+            if access_node in intermediate_nodes:
+                # Already handled above, can be safely removed
+                graph.remove_edge(edge)
                 continue
-            else:
-                # This is an external input to the second map which will now go through the first
-                # map.
-                graph.add_edge(_edge._src, _edge.src_conn, first_entry, None,
-                               dcpy(_edge.data))
-                graph.remove_edge(_edge)
-                for _out_e in graph.out_edges(second_entry):
-                    if _out_e.data.data == _access_node.data:
-                        graph.add_edge(
-                            first_entry,
-                            None,
-                            _out_e._dst,
-                            _out_e.dst_conn,
-                            dcpy(_out_e.data),
-                        )
-                        graph.remove_edge(_out_e)
-                        break
-                else:
-                    raise AssertionError(
-                        "No out-edge was found that leads to {}".format(
-                            _access_node))
 
+            # This is an external input to the second map which will now go
+            # through the first map.
+            conn = first_entry.next_connector()
+            graph.add_edge(edge.src, edge.src_conn, first_entry, 'IN_' + conn,
+                           dcpy(edge.data))
+            first_entry.add_in_connector('IN_' + conn)
+            graph.remove_edge(edge)
+            out_e = memlet_path[edge_index + 1]
+            graph.add_edge(
+                first_entry,
+                'OUT_' + conn,
+                out_e.dst,
+                out_e.dst_conn,
+                dcpy(out_e.data),
+            )
+            first_entry.add_out_connector('OUT_' + conn)
+
+            graph.remove_edge(out_e)
+        ###
+        # Second node is isolated and can now be safely removed
         graph.remove_node(second_entry)
 
-        # Fix scope exit
+        # Fix scope exit to point to the right map
         second_exit.map = first_entry.map
-        graph.fill_scope_connectors()
+
+    def fuse_nodes(self, sdfg, graph, edge, new_dst, new_dst_conn):
+        """ Fuses two nodes via memlets and possibly transient arrays. """
+        memlet_path = graph.memlet_path(edge)
+        access_node = memlet_path[-1].dst
+
+        local_name = "__s%d_n%d%s_n%d%s" % (
+            self.state_id,
+            graph.node_id(edge.src),
+            edge.src_conn,
+            graph.node_id(edge.dst),
+            edge.dst_conn,
+        )
+        # Add intermediate memory between subgraphs. If a scalar,
+        # uses direct connection. If an array, adds a transient node
+        if edge.data.subset.num_elements() == 1:
+            sdfg.add_scalar(
+                local_name,
+                dtype=access_node.desc(graph).dtype,
+                transient=True,
+                storage=dtypes.StorageType.Register,
+            )
+            edge.data.data = local_name
+            edge.data.subset = "0"
+            local_node = edge.src
+            src_connector = edge.src_conn
+        else:
+            sdfg.add_transient(
+                local_name,
+                edge.data.subset.size(),
+                dtype=access_node.desc(graph).dtype)
+            local_node = graph.add_access(local_name)
+            src_connector = None
+            edge.data.data = local_name
+            edge.data.subset = ",".join(
+                ["0:" + str(s) for s in edge.data.subset.size()])
+            # Add edge that leads to transient node
+            graph.add_edge(
+                edge.src,
+                edge.src_conn,
+                local_node,
+                None,
+                dcpy(edge.data),
+            )
+        ########
+        # Add edge that leads to the second node
+        graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                       dcpy(edge.data))
 
 
 pattern_matching.Transformation.register_pattern(MapFusion)
