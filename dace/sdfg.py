@@ -1749,41 +1749,45 @@ subgraph cluster_state_{state} {{
             Raises an InvalidSDFGError with the erroneous node/edge
             on failure.
         """
-        # SDFG-level checks
-        if not validate_name(self.name):
-            raise InvalidSDFGError("Invalid name", self, None)
+        try:
+            # SDFG-level checks
+            if not validate_name(self.name):
+                raise InvalidSDFGError("Invalid name", self, None)
 
-        if len(self.source_nodes()) > 1 and self._start_state is None:
-            raise InvalidSDFGError("Starting state undefined", self, None)
+            if len(self.source_nodes()) > 1 and self._start_state is None:
+                raise InvalidSDFGError("Starting state undefined", self, None)
 
-        if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
-            raise InvalidSDFGError("Found multiple states with the same name",
-                                   self, None)
+            if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
+                raise InvalidSDFGError(
+                    "Found multiple states with the same name", self, None)
 
-        # Validate array names
-        for name in self._arrays.keys():
-            if name is not None and not validate_name(name):
-                raise InvalidSDFGError("Invalid array name %s" % name, self,
-                                       None)
+            # Validate array names
+            for name in self._arrays.keys():
+                if name is not None and not validate_name(name):
+                    raise InvalidSDFGError("Invalid array name %s" % name,
+                                           self, None)
 
-        # Check every state separately
-        for sid, state in enumerate(self.nodes()):
-            state.validate(self, sid)
+            # Check every state separately
+            for sid, state in enumerate(self.nodes()):
+                state.validate(self, sid)
 
-        # Interstate edge checks
-        for eid, edge in enumerate(self.edges()):
+            # Interstate edge checks
+            for eid, edge in enumerate(self.edges()):
 
-            # Name validation
-            if len(edge.data.assignments) > 0:
-                for assign in edge.data.assignments.keys():
-                    if not validate_name(assign):
-                        raise InvalidSDFGInterstateEdgeError(
-                            "Invalid interstate symbol name %s" % assign, self,
-                            eid)
+                # Name validation
+                if len(edge.data.assignments) > 0:
+                    for assign in edge.data.assignments.keys():
+                        if not validate_name(assign):
+                            raise InvalidSDFGInterstateEdgeError(
+                                "Invalid interstate symbol name %s" % assign,
+                                self, eid)
 
-        # TODO: Check interstate edges with undefined symbols
+            # TODO: Check interstate edges with undefined symbols
 
-        pass
+        except InvalidSDFGError:
+            # If the SDFG is invalid, save it
+            self.save(os.path.join('_dotgraphs', 'invalid.sdfg'))
+            raise
 
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).
