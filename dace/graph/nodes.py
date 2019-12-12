@@ -139,7 +139,7 @@ class Node(object):
                 curconn = int(cconn)
                 if curconn >= next_number:
                     next_number = curconn + 1
-            except TypeError:  # not integral
+            except (TypeError, ValueError):  # not integral
                 continue
         return next_number
 
