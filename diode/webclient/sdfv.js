@@ -34,7 +34,7 @@ function file_read_complete() {
 }
 
 function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
-    if (evtype === 'click') {
+    if (evtype === 'click' || evtype === 'dblclick') {
         if (elem) {
             // Change header
             document.getElementById("sidebar-header").innerText = elem.type() + " " + elem.label();
@@ -42,10 +42,16 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
             // Change contents
             let contents = document.getElementById("sidebar-contents");
             let html = "";
+            if (elem instanceof Edge && elem.data.type === "Memlet") {
+                let sdfg_edge = elem.sdfg.nodes[elem.parent_id].edges[elem.id];
+                html += "<h4>Connectors: " + sdfg_edge.src_connector + " &rarr; " + sdfg_edge.dst_connector + "</h4>";
+            }
+            html += "<hr />";
+
             for (let attr of Object.entries(elem.attributes())) {
                 if (attr[0] === "layout") continue;
-                html += "<p><b>" + attr[0] + "</b>:&nbsp;&nbsp;</p>";
-                html += sdfg_property_to_string(attr[1]) + "</p>";
+                html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
+                html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
             }
             contents.innerHTML = html;
             document.getElementById("sidebar").style.display = "block";

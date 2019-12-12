@@ -95,6 +95,9 @@ function sdfg_property_to_string(prop) {
     } else if (prop.approx !== undefined && prop.main !== undefined) {
         // SymExpr
         return prop.main;
+    } else if (prop.constructor == Object) {
+        // General dictionary
+        return JSON.stringify(prop);
     } else {
         return prop;
     }
