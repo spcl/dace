@@ -8,9 +8,9 @@ K = dace.symbol('K')
 @dace.program
 def dace_softmax(X_in : dace.float32[N], X_out : dace.float32[N]):
     
-    tmp_max = dace.reduce(lambda a, b: a + b, X_in, identity=0)
+    tmp_max = dace.reduce(lambda a, b: max(a, b), X_in)
     X_out[:] = exp(X_in - tmp_max)    
-    tmp_sum = dace.reduce(lambda a, b: max(a, b), X_in)
+    tmp_sum = dace.reduce(lambda a, b: a + b, X_in, identity=0)
     X_out[:] /= tmp_sum
 
 @dace.program
