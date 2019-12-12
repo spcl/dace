@@ -49,7 +49,7 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
             html += "<hr />";
 
             for (let attr of Object.entries(elem.attributes())) {
-                if (attr[0] === "layout") continue;
+                if (attr[0] === "layout" || attr[0] === "sdfg") continue;
                 html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
                 html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
             }
