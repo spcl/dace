@@ -127,6 +127,7 @@ endif()
 
 # Create CUDA object files
 if(DACE_ENABLE_CUDA)
+
   # Get local CUDA architectures
   if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
       execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "--run"
