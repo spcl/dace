@@ -209,7 +209,6 @@ class MapFusion(pattern_matching.Transformation):
 
         """
         graph = sdfg.nodes()[self.state_id]
-        print('Applying on', MapFusion.match_to_str(graph, self.subgraph))
         first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
         first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[
