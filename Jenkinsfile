@@ -1,5 +1,5 @@
 pipeline {
-    agent { docker { image 'python:3-stretch' } }
+    agent any
     stages {
         stage('Setup') {
             steps {
