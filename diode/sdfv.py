@@ -22,6 +22,8 @@ if __name__ == '__main__':
         print('SDFG file', filename, 'not found')
         exit(2)
 
+    sdfg_json = None
+
     # Open JSON file directly
     with open(filename, 'rb') as fp:
         firstbyte = fp.read(1)
@@ -32,7 +34,7 @@ if __name__ == '__main__':
     # Load SDFG
     if sdfg_json is None:
         sdfg = dace.SDFG.from_file(filename)
-        sdfg_json = sdfg.toJSON()
+        sdfg_json = sdfg.to_json()
 
     basepath = os.path.dirname(os.path.realpath(__file__))
     template_loader = jinja2.FileSystemLoader(
@@ -40,8 +42,7 @@ if __name__ == '__main__':
     template_env = jinja2.Environment(loader=template_loader)
     template = template_env.get_template('sdfv.html')
 
-    html = template.render(sdfg=json.dumps(sdfg_json),
-                           dir=basepath + '/')
+    html = template.render(sdfg=json.dumps(sdfg_json), dir=basepath + '/')
 
     html_filename = filename + ".html"
 
@@ -57,4 +58,3 @@ if __name__ == '__main__':
         os.system('open %s' % html_filename)
     else:
         os.system('xdg-open %s' % html_filename)
-

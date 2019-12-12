@@ -50,58 +50,35 @@ class NestSDFG(pattern_matching.Transformation):
         transients = {}
 
         for state in nested_sdfg.nodes():
-
-            for node in nxutil.find_source_nodes(state):
+            #  Input and output nodes are added as input and output nodes of the nested SDFG
+            for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
                         and not node.desc(nested_sdfg).transient):
-                    arrname = node.data
-                    if arrname not in inputs:
-                        arrobj = nested_sdfg.arrays[arrname]
-                        nested_sdfg.arrays[arrname + '_in'] = arrobj
-                        outer_sdfg.arrays[arrname] = dc(arrobj)
-                        inputs[arrname] = arrname + '_in'
-                    node.data = arrname + '_in'
-
-            for node in nxutil.find_sink_nodes(state):
-                if (isinstance(node, nodes.AccessNode)
-                        and not node.desc(nested_sdfg).transient):
-                    arrname = node.data
-                    if arrname not in outputs:
-                        arrobj = nested_sdfg.arrays[arrname]
-                        nested_sdfg.arrays[arrname + '_out'] = arrobj
+                    if (state.out_degree(node) > 0):  # input node
+                        arrname = node.data
                         if arrname not in inputs:
+                            arrobj = nested_sdfg.arrays[arrname]
+                            nested_sdfg.arrays[arrname + '_in'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                        outputs[arrname] = arrname + '_out'
-
-                        # TODO: Is this needed any longer ?
-                        # # WCR Fix
-                        # if self.promote_global_trans:
-                        #     for edge in state.in_edges(node):
-                        #         if state.memlet_path(edge)[0].data.wcr:
-                        #             if node.data not in input_data:
-                        #                 input_orig.update({
-                        #                     node.data + '_in':
-                        #                     node.data
-                        #                 })
-                        #                 input_nodes.update({
-                        #                     node.data + '_in':
-                        #                     dc(node)
-                        #                 })
-                        #                 new_data = dc(node.desc(sdfg))
-                        #                 sdfg.arrays.update({
-                        #                     node.data + '_in':
-                        #                     new_data
-                        #                 })
-                        #                 input_data.add(node.data + '_in')
-                        #             break
-
-                    node.data = arrname + '_out'
+                            inputs[arrname] = arrname + '_in'
+                        node_data_name = arrname + '_in'
+                    if (state.in_degree(node) > 0):  # output node
+                        arrname = node.data
+                        if arrname not in outputs:
+                            arrobj = nested_sdfg.arrays[arrname]
+                            nested_sdfg.arrays[arrname + '_out'] = arrobj
+                            if arrname not in inputs:
+                                outer_sdfg.arrays[arrname] = dc(arrobj)
+                            outputs[arrname] = arrname + '_out'
+                        node_data_name = arrname + '_out'
+                    node.data = node_data_name
 
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
                 for node in state.nodes():
                     if (isinstance(node, nodes.AccessNode)
                             and node.desc(nested_sdfg).transient):
+
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
@@ -117,9 +94,9 @@ class NestSDFG(pattern_matching.Transformation):
         for oldarrname, newarrname in transients.items():
             nested_sdfg.arrays.pop(oldarrname)
             nested_sdfg.arrays[newarrname].transient = False
-            outer_sdfg.arrays[oldarrname].transient = False
         outputs.update(transients)
 
+        # Update memlets
         for state in nested_sdfg.nodes():
             for _, edge in enumerate(state.edges()):
                 _, _, _, _, mem = edge
@@ -184,10 +161,10 @@ class InlineSDFG(pattern_matching.Transformation):
     def _modify_memlet(self, internal_memlet: Memlet, external_memlet: Memlet):
         """ Unsqueezes and offsets a memlet, as per the semantics of nested
             SDFGs.
-            @param internal_memlet: The internal memlet (inside nested SDFG)
+            :param internal_memlet: The internal memlet (inside nested SDFG)
                                     before modification.
-            @param internal_memlet: The external memlet before modification.
-            @return: Offset Memlet to set on the resulting graph.
+            :param internal_memlet: The external memlet before modification.
+            :return: Offset Memlet to set on the resulting graph.
         """
         result = dc(internal_memlet)
         result.data = external_memlet.data
@@ -245,16 +222,6 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode):
                 # External node
                 if node.data in inputs or node.data in outputs:
-                    for _, _, dst, dst_conn, _ in state.out_edges(node):
-                        # Custom entry connector case
-                        if (isinstance(dst, nodes.EntryNode)
-                                and dst_conn[0:3] != 'IN_'):
-                            entry_connectors.add(node.data)
-                            sdfg.arrays[node.data] = nsdfg.arrays[node.data]
-                            sdfg.arrays[node.data].transient = True
-                            graph.add_node(node)
-                            torename.pop(node.data)
-                            break
                     continue
                 # Internal node (e.g., transient)
                 if node.data not in torename:
@@ -311,18 +278,6 @@ class InlineSDFG(pattern_matching.Transformation):
                         if isinstance(dst, nodes.AccessNode
                                       ) and memlet.data == cmemlet.data:
                             memlet.wcr = None
-                    # # Remove output node
-                    # out_conn = 'OUT_{}'.format(cconn[3:])
-                    # for _, conn, dst, _, _ in graph.out_edges(cnode):
-                    #     if conn == out_conn:
-                    #         graph.remove_node(dst)
-                    # # Remove connectors
-                    # in_connectors = dc(cnode.in_connectors)
-                    # in_connectors.remove(cconn)
-                    # cnode.in_connectors = in_connectors
-                    # out_connectors = dc(cnode.out_connectors)
-                    # out_connectors.remove(out_conn)
-                    # cnode.out_connectors = out_connectors
                 # else:
                 # Connect to destination node instead
                 graph.add_edge(e.src, e.src_conn, cnode, cconn, newmemlet)
@@ -364,8 +319,6 @@ class InlineSDFG(pattern_matching.Transformation):
         for node, _, _ in list(inputs.values()) + list(outputs.values()):
             if len(graph.all_edges(node)) == 0:
                 graph.remove_node(node)
-
-        # TODO: We may want to re-propagate memlets here
 
 
 pattern_matching.Transformation.register_stateflow_pattern(NestSDFG)

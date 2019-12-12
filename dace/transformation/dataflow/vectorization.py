@@ -35,7 +35,6 @@ class Vectorization(pattern_matching.Transformation):
         tasklet = graph.nodes()[candidate[Vectorization._tasklet]]
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
         found = False
-        dtype = None
 
         # Check if all edges, adjacent to the tasklet,
         # use the parameter in their last dimension.
@@ -45,7 +44,7 @@ class Vectorization(pattern_matching.Transformation):
             if isinstance(sdfg.arrays[memlet.data], data.Stream):
                 continue
             if memlet.wcr is not None:
-                continue
+                return False
 
             try:
                 subset = memlet.subset

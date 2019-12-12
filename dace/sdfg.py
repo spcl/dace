@@ -16,6 +16,7 @@ import numpy as np
 import sympy as sp
 
 import dace
+import dace.serialize
 from dace import data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic
 from dace.config import Config
 from dace.frontend.python import wrappers
@@ -32,7 +33,7 @@ from dace.properties import make_properties, Property, CodeProperty, OrderedDict
 def getcaller() -> Tuple[str, int]:
     """ Returns the file and line of the function that called the current
         function (the one that calls getcaller()).
-        @return: 2-tuple of file and line.
+        :return: 2-tuple of file and line.
     """
     caller = getframeinfo(stack()[2][0])
     return (caller.filename, caller.lineno)
@@ -40,9 +41,9 @@ def getcaller() -> Tuple[str, int]:
 
 def getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     """ Returns a DebugInfo object for the position that called this function.
-        @param old_dinfo: Another DebugInfo object that will override the
+        :param old_dinfo: Another DebugInfo object that will override the
                           return value of this function
-        @return: DebugInfo containing line number and calling file.
+        :return: DebugInfo containing line number and calling file.
     """
     if old_dinfo is not None:
         return old_dinfo
@@ -150,6 +151,18 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return "%s (at state %s%s)" % (self.message, str(state.label), edgestr)
 
 
+def _arrays_to_json(arrays):
+    if arrays is None:
+        return None
+    return {k: dace.serialize.to_json(v) for k, v in arrays.items()}
+
+
+def _arrays_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
+
+
 @make_properties
 class SDFG(OrderedDiGraph):
     """ The main intermediate representation of code in DaCe.
@@ -161,16 +174,20 @@ class SDFG(OrderedDiGraph):
         assignments (see the `InterstateEdge` class documentation). The nested
         acyclic multigraphs represent dataflow, where nodes may represent data
         regions in memory, tasklets, or parametric graph scopes (see
-        `dace.graph.nodes` for a full list of available node types); edges in the multigraph represent data movement using memlets, as described in the `Memlet` class documentation.
+        `dace.graph.nodes` for a full list of available node types); edges in
+        the multigraph represent data movement using memlets, as described in
+        the `Memlet` class documentation.
     """
 
     #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(
         dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(dtype=dict, desc="Data descriptors for this SDFG",
-                        to_json=lambda x: json.dumps({k: v for k, v in x.items() if k is not None}, default=Property.json_dumper) if x is not None else "null",
-                        from_json=lambda s, sdfg=None: Property.add_none_pair(json.loads(s, object_hook=Property.json_loader)) if s != "null" else None)
+    _arrays = Property(
+        dtype=dict,
+        desc="Data descriptors for this SDFG",
+        to_json=_arrays_to_json,
+        from_json=_arrays_from_json)
 
     global_code = CodeProperty(
         desc=
@@ -188,15 +205,15 @@ class SDFG(OrderedDiGraph):
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
-            @param name: Name for the SDFG (also used as the filename for
+            :param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
-            @param symbols: Additional dictionary of symbol names -> types that the SDFG
+            :param symbols: Additional dictionary of symbol names -> types that the SDFG
                             defines, apart from symbolic data sizes.
-            @param propagate: If False, disables automatic propagation of
+            :param propagate: If False, disables automatic propagation of
                               memlet subsets from scopes outwards. Saves
                               processing time but disallows certain
                               transformations.
-            @param parent: The parent SDFG or SDFG state (for nested SDFGs).
+            :param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
         super(SDFG, self).__init__()
         self._name = name
@@ -220,7 +237,7 @@ class SDFG(OrderedDiGraph):
             False
         )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
-        self._arrays = {None: None}  # type: Dict[str, dt.Array]
+        self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = ''
         self.init_code = ''
         self.exit_code = ''
@@ -232,25 +249,27 @@ class SDFG(OrderedDiGraph):
         self._orig_name = name
         self._num = 0
 
-    def toJSON(self):
+    def to_json(self):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
-        import json
-        tmp = super(SDFG, self).toJSON()
-        tmp = json.loads(tmp)
+        tmp = super().to_json()
 
         # Inject the undefined symbols
-        tmp['undefined_symbols'] = self.undefined_symbols(True)
-        tmp['scalar_parameters'] = self.scalar_parameters(True)
+        tmp['undefined_symbols'] = [
+            (k, v.to_json())
+            for k, v in sorted(self.undefined_symbols(True).items())
+        ]
+        tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
+            self.scalar_parameters(True), key=lambda x: x[0])]
 
         tmp['attributes']['name'] = self.name
 
-        # Re-encode
-        return json.dumps(tmp, default=Property.json_dumper)
+        return tmp
 
     @classmethod
-    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context_info={'sdfg': None}):
+
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -259,39 +278,34 @@ class SDFG(OrderedDiGraph):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        import json
-
         ret = SDFG(
             name=attrs['name'],
-            arg_types=json.loads(
-                json.dumps(attrs['arg_types']),
-                object_hook=properties.Property.json_loader),
-            constants=json.loads(
-                json.dumps(attrs['constants_prop']),
-                object_hook=properties.Property.json_loader),
+            arg_types=dace.serialize.loads(
+                dace.serialize.dumps(attrs['arg_types'])),
+            constants=dace.serialize.loads(
+                dace.serialize.dumps(attrs['constants_prop'])),
             parent=context_info['sdfg'])
 
-        Property.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj)
 
-        import copy
         for n in nodes:
             nci = copy.deepcopy(context_info)
             nci['sdfg'] = ret
 
-            state = SDFGState.fromJSON_object(n, nci)
+            state = SDFGState.from_json(n, context=nci)
             ret.add_node(state)
 
         for e in edges:
-            e = json.loads(json.dumps(e), object_hook=Property.json_loader)
+            e = dace.serialize.loads(dace.serialize.dumps(e))
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         # Redefine symbols
-        for k, v in json_obj['undefined_symbols'].items():
-            v = Property.known_types()[v['type']].fromJSON_object(v)
-            symbolic.symbol(k, v.dtype)
+        for k, v in json_obj['undefined_symbols']:
+            v = dace.serialize.from_json(v)
+            symbolic.symbol(k, v.dtype, override_dtype=True)
 
         for k, v in json_obj['scalar_parameters']:
-            v = Property.known_types()[v['type']].fromJSON_object(v)
+            v = dace.serialize.from_json(v)
             ret.add_symbol(k, v.dtype)
 
         ret.validate()
@@ -325,9 +339,9 @@ class SDFG(OrderedDiGraph):
 
     def replace(self, name: str, new_name: str):
         """ Finds and replaces all occurrences of a symbol or array name in SDFG.
-            @param name: Name to find.
-            @param new_name: Name to replace.
-            @raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
+            :param name: Name to find.
+            :param new_name: Name to replace.
+            :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
 
         def replace_dict(d, old, new):
@@ -360,9 +374,9 @@ class SDFG(OrderedDiGraph):
 
     def add_symbol(self, name, stype, override_dtype=False):
         """ Adds a symbol to the SDFG.
-            @param name: Symbol name.
-            @param stype: Symbol type.
-            @param override_dtype: If True, overrides existing symbol type in
+            :param name: Symbol name.
+            :param stype: Symbol type.
+            :param override_dtype: If True, overrides existing symbol type in
                                    symbol registry.
         """
         if name in self._symbols:
@@ -386,7 +400,7 @@ class SDFG(OrderedDiGraph):
 
     def set_start_state(self, state_id):
         """ Manually sets the starting state of this SDFG.
-            @param state_id: The node ID (use `node_id(state)`) of the
+            :param state_id: The node ID (use `node_id(state)`) of the
                              state to set.
         """
         if state_id < 0 or state_id >= len(self.nodes()):
@@ -439,8 +453,8 @@ class SDFG(OrderedDiGraph):
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
-            @param name: The name of the data descriptor to remove.
-            @param validate: If True, verifies that there are no access
+            :param name: The name of the data descriptor to remove.
+            :param validate: If True, verifies that there are no access
                              nodes that are using this data descriptor
                              prior to removing it.
         """
@@ -475,8 +489,8 @@ class SDFG(OrderedDiGraph):
 
     def set_sourcecode(self, code, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
-            @param code: A string of source code.
-            @param lang: A string representing the language of the source code,
+            :param code: A string of source code.
+            :param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
         self.sourcecode = {'code_or_block': code, 'language': lang}
@@ -522,14 +536,14 @@ class SDFG(OrderedDiGraph):
 
     def add_constants(self, new_constants: Dict[str, Any]):
         """ Adds new compile-time constants to this SDFG.
-            @param new_constants: Dictionary of new constants to add.
+            :param new_constants: Dictionary of new constants to add.
         """
         #self._constants.update(new_constants)
         self.constants_prop.update(new_constants)
 
     def reset_constants(self, constants: Dict[str, Any]):
         """ Resets compile-time constants of this SDFG to a given dictionary.
-            @param constants: Dictionary of new constants to set.
+            :param constants: Dictionary of new constants to set.
         """
         #self._constants = constants
         self.constants_prop = constants
@@ -563,8 +577,8 @@ class SDFG(OrderedDiGraph):
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
             thereof.
-            @param node: The node to add.
-            @param is_start_state: If True, sets this node as the starting
+            :param node: The node to add.
+            :param is_start_state: If True, sets this node as the starting
                                    state.
         """
         if not isinstance(node, SDFGState):
@@ -579,9 +593,9 @@ class SDFG(OrderedDiGraph):
     def add_edge(self, u, v, edge):
         """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
             subclass thereof.
-            @param u: Source node.
-            @param v: Destination node.
-            @param edge: The edge to add.
+            :param u: Source node.
+            :param v: Destination node.
+            :param edge: The edge to add.
         """
         if not isinstance(u, SDFGState):
             raise TypeError("Expected SDFGState, got: {}".format(
@@ -857,12 +871,12 @@ class SDFG(OrderedDiGraph):
     def signature_arglist(self, with_types=True, for_call=False):
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
-            @param with_types: If True, includes argment types in the result.
-            @param for_call: If True, returns arguments that can be used when
+            :param with_types: If True, includes argment types in the result.
+            :param for_call: If True, returns arguments that can be used when
                              calling the SDFG. This means that immaterial data
                              will generate "nullptr" arguments instead of the
                              argument names.
-            @return: A list of strings. For example: `['float *A', 'int b']`.
+            :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         arg_list = self.arglist()
 
@@ -879,11 +893,11 @@ class SDFG(OrderedDiGraph):
 
     def signature(self, with_types=True, for_call=False):
         """ Returns a C/C++ signature of this SDFG, used when generating code.
-            @param with_types: If True, includes argument types (can be used
+            :param with_types: If True, includes argument types (can be used
                                for a function prototype). If False, only
                                include argument names (can be used for function
                                calls).
-            @param for_call: If True, returns arguments that can be used when
+            :param for_call: If True, returns arguments that can be used when
                              calling the SDFG. This means that immaterial data
                              will generate "nullptr" arguments instead of the
                              argument names.
@@ -895,11 +909,11 @@ class SDFG(OrderedDiGraph):
                      fill_connectors=True,
                      recursive=True):
         """ Draws the SDFG to a GraphViz (.dot) file.
-            @param filename: The file to draw the SDFG to (will be written to
+            :param filename: The file to draw the SDFG to (will be written to
                              '_dotgraphs/<filename>').
-            @param fill_connectors: Whether to fill missing scope (e.g., "IN_")
+            :param fill_connectors: Whether to fill missing scope (e.g., "IN_")
                                     connectors prior to drawing the graph.
-            @param recursive: If True, also draws nested SDFGs.
+            :param recursive: If True, also draws nested SDFGs.
         """
         if fill_connectors:
             self.fill_scope_connectors()
@@ -927,7 +941,7 @@ class SDFG(OrderedDiGraph):
     def draw(self):
         """ Creates a GraphViz representation of the full SDFG, including all
             states and transitions.
-            @return: A string representing the SDFG in .dot format.
+            :return: A string representing the SDFG in .dot format.
         """
 
         nodes = []
@@ -1039,7 +1053,9 @@ subgraph cluster_state_{state} {{
     var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
-            sdfg=json.dumps(self.toJSON()),
+            # Dumping to a string so that Jupyter Javascript can parse it
+            # recursively
+            sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
 
         return result
@@ -1118,37 +1134,42 @@ subgraph cluster_state_{state} {{
 
     def save(self, filename: str, use_pickle=False, with_metadata=False):
         """ Save this SDFG to a file.
-            @param filename: File name to save to.
-            @param use_pickle: Use Python pickle as the SDFG format (default:
+            :param filename: File name to save to.
+            :param use_pickle: Use Python pickle as the SDFG format (default:
                                JSON).
-            @param with_metadata: Save property metadata (e.g. name,
+            :param with_metadata: Save property metadata (e.g. name,
                                   description). False or True override current
                                   option, whereas None keeps default
         """
+        try:
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        except (FileNotFoundError, FileExistsError):
+            pass
+
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
         else:
             if with_metadata is not None:
-                old_meta = dace.properties.json_store_metadata
-                dace.properties.json_store_metadata = with_metadata
+                old_meta = dace.serialize.JSON_STORE_METADATA
+                dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                fp.write(self.toJSON())
+                fp.write(dace.serialize.dumps(self.to_json()))
             if with_metadata is not None:
-                dace.properties.json_store_metadata = old_meta
+                dace.serialize.JSON_STORE_METADATA = old_meta
 
     @staticmethod
     def from_file(filename: str):
         """ Constructs an SDFG from a file.
-            @param filename: File name to load SDFG from.
-            @return: An SDFG.
+            :param filename: File name to load SDFG from.
+            :return: An SDFG.
         """
         with open(filename, "rb") as fp:
             firstbyte = fp.read(1)
             fp.seek(0)
             if firstbyte == b'{':  # JSON file
                 sdfg_json = json.load(fp)
-                sdfg = SDFG.fromJSON_object(sdfg_json)
+                sdfg = SDFG.from_json(sdfg_json)
             else:  # Pickle
                 sdfg = symbolic.SympyAwareUnpickler(fp).load()
 
@@ -1161,10 +1182,10 @@ subgraph cluster_state_{state} {{
     ##############################
     def add_state(self, label=None, is_start_state=False):
         """ Adds a new SDFG state to this graph and returns it.
-            @param label: State label.
-            @param is_start_state: If True, resets SDFG starting state to this
+            :param label: State label.
+            :param is_start_state: If True, resets SDFG starting state to this
                                    state.
-            @return: A new SDFGState object.
+            :return: A new SDFGState object.
         """
         if label is None or any([s.label == label for s in self.nodes()]):
             i = len(self)
@@ -1385,8 +1406,8 @@ subgraph cluster_state_{state} {{
 
     def add_datadesc(self, name: str, datadesc: dt.Data):
         """ Adds an existing data descriptor to the SDFG array store.
-            @param name: Name to use.
-            @param datadesc: Data descriptor to add.
+            :param name: Name to use.
+            :param datadesc: Data descriptor to add.
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" %
@@ -1410,31 +1431,31 @@ subgraph cluster_state_{state} {{
     ):
         """ Helper function that adds a looping state machine around a
             given state (or sequence of states).
-            @param before_state: The state after which the loop should
+            :param before_state: The state after which the loop should
                                  begin, or None if the loop is the first
                                  state (creates an empty state).
-            @param loop_state: The state that begins the loop. See also
+            :param loop_state: The state that begins the loop. See also
                                `loop_end_state` if the loop is multi-state.
-            @param after_state: The state that should be invoked after
+            :param after_state: The state that should be invoked after
                                 the loop ends, or None if the program
                                 should terminate (creates an empty state).
-            @param loop_var: A name of an inter-state variable to use
+            :param loop_var: A name of an inter-state variable to use
                              for the loop. If None, `initialize_expr`
                              and `increment_expr` must be None.
-            @param initialize_expr: A string expression that is assigned
+            :param initialize_expr: A string expression that is assigned
                                     to `loop_var` before the loop begins.
                                     If None, does not define an expression.
-            @param condition_expr: A string condition that occurs every
+            :param condition_expr: A string condition that occurs every
                                    loop iteration. If None, loops forever
                                    (undefined behavior).
-            @param increment_expr: A string expression that is assigned to
+            :param increment_expr: A string expression that is assigned to
                                    `loop_var` after every loop iteration.
                                     If None, does not define an expression.
-            @param loop_end_state: If the loop wraps multiple states, the
+            :param loop_end_state: If the loop wraps multiple states, the
                                    state where the loop iteration ends.
                                    If None, sets the end state to
                                    `loop_state` as well.
-            @return: A 3-tuple of (`before_state`, generated loop guard state,
+            :return: A 3-tuple of (`before_state`, generated loop guard state,
                                    `after_state`).
         """
         from dace.frontend.python.astutils import negate_expr  # Avoid import loops
@@ -1483,8 +1504,8 @@ subgraph cluster_state_{state} {{
         """ Finds a state according to its ID (if integer is provided) or
             label (if string is provided).
 
-            @param state_id_or_label: State ID (if int) or label (if str).
-            @return: An SDFGState object.
+            :param state_id_or_label: State ID (if int) or label (if str).
+            :return: An SDFGState object.
         """
 
         if isinstance(state_id_or_label, str):
@@ -1503,18 +1524,18 @@ subgraph cluster_state_{state} {{
         """ Finds a node within a state according to its ID (if integer is
             provided) or label (if string is provided).
 
-            @param state_id_or_label: State ID (if int) or label (if str).
-            @param node_id_or_label:  Node ID (if int) or label (if str)
+            :param state_id_or_label: State ID (if int) or label (if str).
+            :param node_id_or_label:  Node ID (if int) or label (if str)
                                       within the given state.
-            @return: A nodes.Node object.
+            :return: A nodes.Node object.
         """
         state = self.find_state(state_id_or_label)
         return state.find_node(node_id_or_label)
 
     def specialize(self, additional_symbols=None, specialize_all_symbols=True):
         """ Sets symbolic values in this SDFG to constants.
-            @param additional_symbols: Additional values to specialize.
-            @param specialize_all_symbols: If True, raises an
+            :param additional_symbols: Additional values to specialize.
+            :param specialize_all_symbols: If True, raises an
                    UnboundLocalError if at least one of the symbols in the
                    SDFG is unset.
         """
@@ -1547,15 +1568,15 @@ subgraph cluster_state_{state} {{
     def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.
 
-            @param specialize: If True, specializes all symbols to their
+            :param specialize: If True, specializes all symbols to their
                                defined values as constants. If None, uses
                                configuration setting.
-            @param optimizer: If defines a valid class name, it will be called
+            :param optimizer: If defines a valid class name, it will be called
                               during compilation to transform the SDFG as
                               necessary. If None, uses configuration setting.
-            @param output_file: If not None, copies the output library file to
+            :param output_file: If not None, copies the output library file to
                                 the specified path.
-            @return: A callable CompiledSDFG object.
+            :return: A callable CompiledSDFG object.
         """
 
         # Importing these outside creates an import loop
@@ -1591,7 +1612,7 @@ subgraph cluster_state_{state} {{
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
             opt = optclass(sdfg)
-            sdfg = opt.optimize(debugprint=Config.get_bool("debugprint"))
+            sdfg = opt.optimize()
 
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
@@ -1619,9 +1640,9 @@ subgraph cluster_state_{state} {{
         """ Checks if arguments and keyword arguments match the SDFG
             types. Raises RuntimeError otherwise.
 
-            @raise RuntimeError: Argument count mismatch.
-            @raise TypeError: Argument type mismatch.
-            @raise NotImplementedError: Unsupported argument type.
+            :raise RuntimeError: Argument count mismatch.
+            :raise TypeError: Argument type mismatch.
+            :raise NotImplementedError: Unsupported argument type.
         """
         expected_args = self.arglist()
         num_args_passed = len(args) + len(kwargs)
@@ -1780,11 +1801,11 @@ subgraph cluster_state_{state} {{
 
             B{Note:} This is an in-place operation on the SDFG.
         """
-        from dace.transformation.dataflow import RedundantArray
-        from dace.transformation.interstate import StateFusion
-        from dace.transformation.interstate import InlineSDFG
+        from dace.transformation.dataflow import RedundantArray, MergeArrays
+        from dace.transformation.interstate import StateFusion, InlineSDFG
 
-        strict_transformations = (StateFusion, RedundantArray, InlineSDFG)
+        strict_transformations = (StateFusion, RedundantArray, MergeArrays,
+                                  InlineSDFG)
 
         self.apply_transformations(
             strict_transformations, validate=validate, strict=True)
@@ -1793,7 +1814,8 @@ subgraph cluster_state_{state} {{
                               patterns,
                               validate=True,
                               strict=False,
-                              states=None):
+                              states=None,
+                              apply_once=False):
         """ This function applies transformations as given in the argument
             patterns. """
         # Avoiding import loops
@@ -1815,6 +1837,8 @@ subgraph cluster_state_{state} {{
                     self.fill_scope_connectors()
                     self.validate()
                 applied = True
+                break
+            if apply_once and applied:
                 break
 
         if Config.get_bool('debugprint'):
@@ -1842,10 +1866,10 @@ subgraph cluster_state_{state} {{
 
     def generate_code(self, specialize=None):
         """ Generates code from this SDFG and returns it.
-            @param specialize: If True, specializes all set symbols to their
+            :param specialize: If True, specializes all set symbols to their
                                values in the generated code. If None,
                                uses default configuration value.
-            @return: A list of `CodeObject` objects containing the generated
+            :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
 
@@ -1887,8 +1911,8 @@ class MemletTrackingView(object):
 
             @note: Behavior is undefined when there is more than one path
                    involving this edge.
-            @param edge: An edge within this state.
-            @return: A list of edges from a source node to a destination node.
+            :param edge: An edge within this state.
+            :return: A list of edges from a source node to a destination node.
             """
         result = [edge]
 
@@ -1941,8 +1965,8 @@ class MemletTrackingView(object):
         """ Given one edge, returns a list of edges representing a tree
             between its node source(s) and sink(s). Used for memlet tracking.
 
-            @param edge: An edge within this state.
-            @return: A list of edges from source nodes to destination nodes
+            :param edge: An edge within this state.
+            :return: A list of edges from source nodes to destination nodes
                      (in arbitrary order) that pass through the given edge.
             """
         result = {}
@@ -2029,15 +2053,15 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         """ Returns a dictionary that segments an SDFG state into
             entry-node/exit-node scopes.
 
-            @param node_to_children: If False (default), returns a mapping
+            :param node_to_children: If False (default), returns a mapping
                                      of each node to its parent scope
                                      (ScopeEntry) node. If True, returns a
                                      mapping of each parent node to a list of
                                      children nodes.
             @type node_to_children: bool
-            @param return_ids: Return node ID numbers instead of node objects.
+            :param return_ids: Return node ID numbers instead of node objects.
             @type return_ids: bool
-            @return: The mapping from a node to its parent scope node, or the
+            :return: The mapping from a node to its parent scope node, or the
                      mapping from a node to a list of children nodes.
             @rtype: dict(Node, Node) or dict(Node, list(Node))
         """
@@ -2142,15 +2166,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         desc="Do not synchronize at the end of the state")
 
     instrument = Property(
-        enum=dtypes.InstrumentationType,
+        choices=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self, label=None, sdfg=None, debuginfo=None):
         """ Constructs an SDFG state.
-            @param label: Name for the state (optional).
-            @param sdfg: A reference to the parent SDFG.
-            @param debuginfo: Source code locator for debugging.
+            :param label: Name for the state (optional).
+            :param sdfg: A reference to the parent SDFG.
+            :param debuginfo: Source code locator for debugging.
         """
         super(SDFGState, self).__init__()
         self._label = label
@@ -2214,8 +2238,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def replace(self, name: str, new_name: str):
         """ Finds and replaces all occurrences of a symbol or array in this
             state.
-            @param name: Name to find.
-            @param new_name: Name to replace.
+            :param name: Name to find.
+            :param new_name: Name to replace.
         """
         replace(self, name, new_name)
 
@@ -2263,11 +2287,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
 
-    def defined_symbols_at(self, sdfg, node):
-        """ Returns all symbols available to a given node, including map and
-           state transition variables. """
-        return sdfg.defined_symbols_at(node, state=self)
-
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """
         return data_symbols(self)
@@ -2294,8 +2313,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def draw_node(self, graph):
         return dot.draw_node(graph, self, shape="Msquare")
 
-    def toJSON(self, parent=None):
-        import json
+    def to_json(self, parent=None):
         ret = {
             'type':
             type(self).__name__,
@@ -2311,24 +2329,24 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     self.scope_dict(node_to_children=True, return_ids=True)
                     .items())
             },
-            'nodes': [json.loads(n.toJSON(self)) for n in self.nodes()],
+            'nodes': [n.to_json(self) for n in self.nodes()],
             'edges': [
-                json.loads(e.toJSON(self)) for e in sorted(
+                e.to_json(self) for e in sorted(
                     self.edges(),
                     key=lambda e: (e.src_conn or '', e.dst_conn or ''))
             ],
             'attributes':
-            json.loads(Property.all_properties_to_json(self)),
+            dace.serialize.all_properties_to_json(self),
         }
 
-        return json.dumps(ret)
+        return ret
 
     @classmethod
-    def fromJSON_object(cls, json_obj, context_info={'sdfg': None}):
+    def from_json(cls, json_obj, context={'sdfg': None}):
         """ Loads the node properties, label and type into a dict.
-            @param json_obj: The object containing information about this node.
+            :param json_obj: The object containing information about this node.
                              NOTE: This may not be a string!
-            @return: An SDFGState instance constructed from the passed data
+            :return: An SDFGState instance constructed from the passed data
         """
 
         _type = json_obj['type']
@@ -2340,30 +2358,24 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         edges = json_obj['edges']
 
         ret = SDFGState(
-            label=json_obj['label'], sdfg=context_info['sdfg'], debuginfo=None)
+            label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
 
         rec_ci = {
-            'sdfg':
-            context_info['sdfg'],
-            'sdfg_state':
-            ret,
-            'callback':
-            context_info['callback'] if 'callback' in context_info else None
+            'sdfg': context['sdfg'],
+            'sdfg_state': ret,
+            'callback': context['callback'] if 'callback' in context else None
         }
-        Property.set_properties_from_json(ret, json_obj, rec_ci)
+        dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
-        import json
         for n in nodes:
-            nret = json.loads(
-                json.dumps(n),
-                object_hook=lambda x: Property.json_loader(x, rec_ci))
+            nret = dace.serialize.loads(
+                dace.serialize.dumps(n), context=rec_ci)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            eret = json.loads(
-                json.dumps(e),
-                object_hook=lambda x: Property.json_loader(x, rec_ci))
+            eret = dace.serialize.loads(
+                dace.serialize.dumps(e), context=rec_ci)
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)
@@ -2440,15 +2452,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """ Returns a dictionary that segments an SDFG state into
             entry-node/exit-node scopes.
 
-            @param node_to_children: If False (default), returns a mapping
+            :param node_to_children: If False (default), returns a mapping
                                      of each node to its parent scope
                                      (ScopeEntry) node. If True, returns a
                                      mapping of each parent node to a list of
                                      children nodes.
             @type node_to_children: bool
-            @param return_ids: Return node ID numbers instead of node objects.
+            :param return_ids: Return node ID numbers instead of node objects.
             @type return_ids: bool
-            @return: The mapping from a node to its parent scope node, or the
+            :return: The mapping from a node to its parent scope node, or the
                      mapping from a node to a list of children nodes.
             @rtype: dict(Node, Node) or dict(Node, list(Node))
         """
@@ -2517,8 +2529,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_read(self, array_or_stream_name: str,
                  debuginfo=None) -> nd.AccessNode:
         """ Adds a read-only access node to this SDFG state.
-            @param array_or_stream_name: The name of the array/stream.
-            @return: An array access node.
+            :param array_or_stream_name: The name of the array/stream.
+            :return: An array access node.
         """
         debuginfo = getdebuginfo(debuginfo)
         node = nd.AccessNode(
@@ -2531,8 +2543,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_write(self, array_or_stream_name: str,
                   debuginfo=None) -> nd.AccessNode:
         """ Adds a write-only access node to this SDFG state.
-            @param array_or_stream_name: The name of the array/stream.
-            @return: An array access node.
+            :param array_or_stream_name: The name of the array/stream.
+            :return: An array access node.
         """
         debuginfo = getdebuginfo(debuginfo)
         node = nd.AccessNode(
@@ -2545,8 +2557,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_access(self, array_or_stream_name: str,
                    debuginfo=None) -> nd.AccessNode:
         """ Adds a general (read/write) access node to this SDFG state.
-            @param array_or_stream_name: The name of the array/stream.
-            @return: An array access node.
+            :param array_or_stream_name: The name of the array/stream.
+            :return: An array access node.
         """
         debuginfo = getdebuginfo(debuginfo)
         node = nd.AccessNode(
@@ -2653,13 +2665,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ) -> Tuple[nd.Node]:
         """ Adds a map entry and map exit.
-            @param name:      Map label
-            @param ndrange:   Mapping between range variable names and their
+            :param name:      Map label
+            :param ndrange:   Mapping between range variable names and their
                               subsets (parsed from strings)
-            @param schedule:  Map schedule type
-            @param unroll:    True if should unroll the map in code generation
+            :param schedule:  Map schedule type
+            :param unroll:    True if should unroll the map in code generation
 
-            @return: (map_entry, map_exit) node 2-tuple
+            :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = getdebuginfo(debuginfo)
         map = self._map_from_ndrange(
@@ -2679,17 +2691,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ) -> Tuple[nd.Node]:
         """ Adds consume entry and consume exit nodes.
-            @param name:      Label
-            @param elements:  A 2-tuple signifying the processing element
+            :param name:      Label
+            :param elements:  A 2-tuple signifying the processing element
                               index and number of total processing elements
-            @param condition: Quiescence condition to finish consuming, or
+            :param condition: Quiescence condition to finish consuming, or
                               None (by default) to consume until the stream
                               is empty for the first time. If false, will
                               consume forever.
-            @param schedule:  Consume schedule type
-            @param chunksize: Maximal number of elements to consume at a time
+            :param schedule:  Consume schedule type
+            :param chunksize: Maximal number of elements to consume at a time
 
-            @return: (consume_entry, consume_exit) node 2-tuple
+            :return: (consume_entry, consume_exit) node 2-tuple
         """
         if len(elements) != 2:
             raise TypeError("Elements must be a 2-tuple of "
@@ -2730,25 +2742,25 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     ) -> Tuple[nd.Node]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
-            @param name:       Tasklet (and wrapping map) name
-            @param map_ranges: Mapping between variable names and their
+            :param name:       Tasklet (and wrapping map) name
+            :param map_ranges: Mapping between variable names and their
                                subsets
-            @param inputs:     Mapping between input local variable names and
+            :param inputs:     Mapping between input local variable names and
                                their memlets
-            @param code:       Code (written in `language`)
-            @param outputs:    Mapping between output local variable names and
+            :param code:       Code (written in `language`)
+            :param outputs:    Mapping between output local variable names and
                                their memlets
-            @param schedule:   Map schedule
-            @param unroll_map: True if map should be unrolled in code
+            :param schedule:   Map schedule
+            :param unroll_map: True if map should be unrolled in code
                                generation
-            @param code_global: (optional) Global code (outside functions)
-            @param language:   Programming language in which the code is
+            :param code_global: (optional) Global code (outside functions)
+            :param language:   Programming language in which the code is
                                written
-            @param debuginfo:  Debugging information (mostly for DIODE)
-            @param external_edges: Create external access nodes and connect
+            :param debuginfo:  Debugging information (mostly for DIODE)
+            :param external_edges: Create external access nodes and connect
                                    them with memlets automatically
 
-            @return: tuple of (tasklet, map_entry, map_exit)
+            :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
         debuginfo = getdebuginfo(debuginfo)
@@ -2852,14 +2864,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=None,
     ):
         """ Adds a reduction node.
-            @param wcr: A lambda function representing the reduction operation
-            @param axes: A tuple of axes to reduce the input memlet from, or
+            :param wcr: A lambda function representing the reduction operation
+            :param axes: A tuple of axes to reduce the input memlet from, or
                          None for all axes
-            @param wcr_identity: If not None, initializes output memlet values
+            :param wcr_identity: If not None, initializes output memlet values
                                  with this value
-            @param schedule: Reduction schedule type
+            :param schedule: Reduction schedule type
 
-            @return: A Reduce node
+            :return: A Reduce node
         """
         debuginfo = getdebuginfo(debuginfo)
         result = nd.Reduce(
@@ -2886,25 +2898,25 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             of the scope) is not specified, it is propagated automatically
             using internal_memlet and the scope.
 
-            @param scope_node: A scope node (for example, map exit) to add
+            :param scope_node: A scope node (for example, map exit) to add
                                edges around.
-            @param internal_node: The node within the scope to connect to. If
+            :param internal_node: The node within the scope to connect to. If
                                   `scope_node` is an entry node, this means
                                   the node connected to the outgoing edge,
                                   else incoming.
-            @param external_node: The node out of the scope to connect to.
-            @param internal_memlet: The memlet on the edge to/from
+            :param external_node: The node out of the scope to connect to.
+            :param internal_memlet: The memlet on the edge to/from
                                     internal_node.
-            @param external_memlet: The memlet on the edge to/from
+            :param external_memlet: The memlet on the edge to/from
                                     external_node (optional, will propagate
                                     internal_memlet if not specified).
-            @param scope_connector: A scope connector name (or a unique
+            :param scope_connector: A scope connector name (or a unique
                                     number if not specified).
-            @param internal_connector: The connector on internal_node to
+            :param internal_connector: The connector on internal_node to
                                        connect to.
-            @param external_connector: The connector on external_node to
+            :param external_connector: The connector on external_node to
                                        connect to.
-            @return: A 2-tuple representing the (internal, external) edges.
+            :return: A 2-tuple representing the (internal, external) edges.
         """
         if not isinstance(scope_node, (nd.EntryNode, nd.ExitNode)):
             raise ValueError("scope_node is not a scope entry/exit")
@@ -2980,7 +2992,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """ Adds a path of memlet edges between the given nodes, propagating
             from the given innermost memlet.
 
-            @param *path_nodes: Nodes participating in the path (in the given
+            :param *path_nodes: Nodes participating in the path (in the given
                                 order).
             @keyword memlet: (mandatory) The memlet at the innermost scope
                              (e.g., the incoming memlet to a tasklet (last
@@ -3205,8 +3217,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """ Finds a node according to its ID (if integer is
             provided) or label (if string is provided).
 
-            @param node_id_or_label  Node ID (if int) or label (if str)
-            @return A nodes.Node object
+            :param node_id_or_label  Node ID (if int) or label (if str)
+            :return A nodes.Node object
         """
 
         if isinstance(node_id_or_label, str):
@@ -3864,6 +3876,7 @@ def scope_symbols(dfg):
     iteration_variables = collections.OrderedDict()
     subset_symbols = collections.OrderedDict()
     for n in dfg.nodes():
+        # TODO(later): Refactor to method on Node objects
         if isinstance(n, dace.graph.nodes.NestedSDFG):
             iv, ss = n.sdfg.scope_symbols()
             iteration_variables.update(iv)
@@ -3879,12 +3892,15 @@ def scope_symbols(dfg):
                 try:
                     for i in dim:
                         if isinstance(i, sp.Expr):
-                            subset_symbols.update((k.name, dt.Scalar(k.dtype))
-                                                  for k in i.free_symbols)
+                            subset_symbols.update(
+                                (k.name, dt.Scalar(k.dtype))
+                                for k in i.free_symbols
+                                if k.name not in n.in_connectors)
                 except TypeError:  # X object is not iterable
                     if isinstance(dim, sp.Expr):
-                        result.update((k.name, dt.Scalar(k.dtype))
-                                      for k in dim.free_symbols)
+                        subset_symbols.update((k.name, dt.Scalar(k.dtype))
+                                              for k in dim.free_symbols
+                                              if k.name not in n.in_connectors)
                     else:
                         raise TypeError(
                             "Unexpected map range type for {}: {}".format(
@@ -3896,7 +3912,8 @@ def scope_symbols(dfg):
                 symbolic.symbol(n.consume.pe_index).dtype)
             if isinstance(n.consume.num_pes, sp.Expr):
                 subset_symbols.update((k.name, dt.Scalar(k.dtype))
-                                      for k in n.consume.num_pes.free_symbols)
+                                      for k in n.consume.num_pes.free_symbols
+                                      if k.name not in n.in_connectors)
         else:
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))
@@ -4052,10 +4069,10 @@ def compile(function_or_sdfg, *args, **kwargs):
 def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
     """ Tests whether a node in an SDFG is contained within GPU device-level
         code.
-        @param sdfg: The SDFG in which the node resides.
-        @param state: The SDFG state in which the node resides.
-        @param node: The node in question
-        @return: True if node is in device-level code, False otherwise.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: True if node is in device-level code, False otherwise.
     """
     while sdfg is not None:
         sdict = state.scope_dict()
@@ -4083,9 +4100,9 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             name: str, new_name: str):
     """ Finds and replaces all occurrences of a symbol or array in the given
         subgraph.
-        @param subgraph: The given graph or subgraph to replace in.
-        @param name: Name to find.
-        @param new_name: Name to replace.
+        :param subgraph: The given graph or subgraph to replace in.
+        :param name: Name to find.
+        :param new_name: Name to replace.
     """
     symrepl = {
         symbolic.symbol(name):

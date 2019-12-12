@@ -11,7 +11,7 @@ from dace.properties import Property, CodeProperty, make_properties
 
 
 def assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited 
+    """ Returns a dictionary of assignments from a semicolon-delimited
         string of expressions. """
 
     result = {}
@@ -24,14 +24,14 @@ def assignments_from_string(astr):
 
 
 def assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment 
+    """ Returns a semicolon-delimited string from a dictionary of assignment
         expressions. """
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
 @make_properties
 class InterstateEdge(object):
-    """ An SDFG state machine edge. These edges can contain a condition     
+    """ An SDFG state machine edge. These edges can contain a condition
         (which may include data accesses for data-dependent decisions) and
         zero or more assignments of values to inter-state variables (e.g.,
         loop iterates).
@@ -42,7 +42,8 @@ class InterstateEdge(object):
         desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
         from_string=assignments_from_string,
         to_string=assignments_to_string)
-    condition = CodeProperty(desc="Transition condition")
+    condition = CodeProperty(
+        desc="Transition condition", default=ast.parse("1").body[0])
 
     def __init__(self, condition=None, assignments=None):
 
@@ -69,24 +70,23 @@ class InterstateEdge(object):
     def condition_symbols(self):
         return dace.symbolic.symbols_in_ast(self.condition[0])
 
-    def toJSON(self, parent=None):
-        import json
+    def to_json(self, parent=None):
         ret = {
             'type': type(self).__name__,
-            'attributes': json.loads(Property.all_properties_to_json(self)),
+            'attributes': dace.serialize.all_properties_to_json(self),
             'label': self.label
         }
 
-        return json.dumps(ret)
+        return ret
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "InterstateEdge":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = InterstateEdge()
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 
@@ -166,8 +166,8 @@ class ControlFlow:
 @make_properties
 class LoopAssignment(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -179,8 +179,8 @@ class LoopAssignment(ControlFlow):
 @make_properties
 class LoopEntry(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -192,8 +192,8 @@ class LoopEntry(ControlFlow):
 @make_properties
 class LoopExit(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -205,8 +205,8 @@ class LoopExit(ControlFlow):
 @make_properties
 class LoopBack(ControlFlow):
 
-    scope = Property(dtype=LoopScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=LoopScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -227,8 +227,8 @@ LoopScope = make_properties(LoopScope)
 # make_properties will be called after adding cyclic class reference members
 class IfThenElse:
 
-    entry = Property()
-    exit = Property()
+    entry = Property(allow_none=True)
+    exit = Property(allow_none=True)
 
     def __init__(self, entry, exit):
         self.entry = entry
@@ -240,8 +240,8 @@ class IfThenElse:
 @make_properties
 class IfEntry(ControlFlow):
 
-    scope = Property(dtype=ControlFlowScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=ControlFlowScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -253,8 +253,8 @@ class IfEntry(ControlFlow):
 @make_properties
 class IfExit(ControlFlow):
 
-    scope = Property(dtype=ControlFlowScope)
-    edge = Property(dtype=Edge)
+    scope = Property(dtype=ControlFlowScope, allow_none=True)
+    edge = Property(dtype=Edge, allow_none=True)
 
     def __init__(self, scope, edge, *args, **kwargs):
         self.scope = scope
@@ -266,7 +266,7 @@ class IfExit(ControlFlow):
 @make_properties
 class IfThenScope(ControlFlowScope):
 
-    if_then_else = Property(dtype=IfThenElse)
+    if_then_else = Property(dtype=IfThenElse, allow_none=True)
     entry = Property(dtype=IfEntry, allow_none=True)
     exit = Property(dtype=IfExit, allow_none=True)
 
@@ -281,7 +281,7 @@ class IfThenScope(ControlFlowScope):
 @make_properties
 class IfElseScope(ControlFlowScope):
 
-    if_then_else = Property(dtype=IfThenElse)
+    if_then_else = Property(dtype=IfThenElse, allow_none=True)
     entry = Property(dtype=IfEntry, allow_none=True)
     exit = Property(dtype=IfExit, allow_none=True)
 

@@ -440,12 +440,12 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
-            @param sdfg: The sdfg to modify.
-            @param default_stream: The stream ID to start counting from (used
+            :param sdfg: The sdfg to modify.
+            :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
-            @param default_event: The event ID to start counting from (used
+            :param default_event: The event ID to start counting from (used
                                   in recursion to nested SDFGs).
-            @return: 2-tuple of the number of streams, events to create.
+            :return: 2-tuple of the number of streams, events to create.
         """
         concurrent_streams = int(
             Config.get('compiler', 'cuda', 'max_concurrent_streams'))
@@ -1242,6 +1242,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        kernel_stream.write('{', sdfg, state_id, node)
+
         if not node.map.flatten:
             # Add more opening braces for scope exit to close
             for dim in range(len(node.map.range) - 1):
@@ -1402,6 +1406,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         scope_entry = dfg_scope.source_nodes()[0]
         scope_map = scope_entry.map
         next_scopes = self.get_next_scope_entries(dfg, scope_entry)
+
+        # Add extra opening brace (dynamic map ranges, closed in MapExit
+        # generator)
+        callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if len(scope_map.params) > 1:

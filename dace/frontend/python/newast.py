@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict, namedtuple
 import copy
+from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
 
@@ -90,7 +91,7 @@ def _reduce(sdfg: SDFG,
             identity=None):
     # TODO(later): If output is None, derive the output size from the input and create a new node
     if output is None:
-        inarr = until(input, '[')
+        inarr = input
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
@@ -111,8 +112,8 @@ def _reduce(sdfg: SDFG,
             output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
-        inarr = until(input, '[')
-        outarr = until(output, '[')
+        inarr = input
+        outarr = output
 
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
@@ -146,48 +147,44 @@ def _reduce(sdfg: SDFG,
 
 def _simple_call(sdfg: SDFG,
                  state: SDFGState,
-                 input: str,
+                 inpname: str,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
-    inpname = until(input, '[')
-    input_subset = _parse_memlet_subset(sdfg.arrays[inpname],
-                                        ast.parse(input).body[0].value, {})
-    output_shape = input_subset.size()
+    inparr = sdfg.arrays[inpname]
     if restype is None:
         restype = sdfg.arrays[inpname].dtype
-    outname, outarr = sdfg.add_temp_transient(output_shape, restype,
-                                              sdfg.arrays[inpname].storage)
-    if input_subset.num_elements() == 1:
+    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype,
+                                              inparr.storage)
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)
+    if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
         tasklet = state.add_tasklet(
             func, {'__inp'}, {'__out'}, '__out = {f}(__inp)'.format(f=func))
         state.add_edge(inp, None, tasklet, '__inp',
-                       Memlet.simple(inpname, str(input_subset)))
+                       Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None,
                        Memlet.from_array(outname, outarr))
     else:
         state.add_mapped_tasklet(
             name=func,
             map_ranges={
-                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                for i, (s, e, t) in enumerate(input_subset)
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
             },
             inputs={
                 '__inp':
                 Memlet.simple(
                     inpname,
-                    ','.join(['__i%d' % i for i in range(len(input_subset))]))
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             code='__out = {f}(__inp)'.format(f=func),
             outputs={
                 '__out':
                 Memlet.simple(
-                    outname, ','.join([
-                        '__i%d - %s' % (i, s)
-                        for i, (s, _, _) in enumerate(input_subset)
-                    ]))
+                    outname,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
             },
             external_edges=True)
 
@@ -249,8 +246,7 @@ def _conj(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
 def _real(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
-    inptype = sdfg.arrays[inpname].dtype
+    inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'real',
                         _complex_to_scalar(inptype))
 
@@ -259,8 +255,7 @@ def _real(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
 def _imag(sdfg: SDFG, state: SDFGState, input: str):
-    inpname = until(input, '[')
-    inptype = sdfg.arrays[inpname].dtype
+    inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'imag',
                         _complex_to_scalar(inptype))
 
@@ -556,8 +551,12 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
             or arr1.shape[1] != arr2.shape[0]):
         raise SyntaxError('Matrix sizes must match')
 
+    type1 = arr1.dtype.type
+    type2 = arr2.dtype.type
+    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+
     op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
-                                        arr1.dtype, arr1.storage)
+                                        restype, arr1.storage)
 
     state.add_mapped_tasklet(
         '_MatMult_', {
@@ -594,18 +593,18 @@ def until(val, substr):
 def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
                        constants):
     """ Parses a `@dace.program` function into a _ProgramNode object.
-        @param f: A Python function to parse.
-        @param argtypes: An dictionary of (name, type) for the given
+        :param f: A Python function to parse.
+        :param argtypes: An dictionary of (name, type) for the given
                          function's arguments, which may pertain to data
                          nodes or symbols (scalars).
-        @param global_vars: A dictionary of global variables in the closure
+        :param global_vars: A dictionary of global variables in the closure
                             of `f`.
-        @param modules: A dictionary from an imported module name to the
+        :param modules: A dictionary from an imported module name to the
                         module itself.
-        @param other_sdfgs: Other SDFG and DaceProgram objects in the context
+        :param other_sdfgs: Other SDFG and DaceProgram objects in the context
                             of this function.
-        @param constants: A dictionary from a name to a constant value.
-        @return: Hierarchical tree of `astnodes._Node` objects, where the top
+        :param constants: A dictionary from a name to a constant value.
+        :return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
         @rtype: SDFG
     """
@@ -784,10 +783,10 @@ def _pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any],
                         expr_ast: ast.AST):
     """ Converts a Python AST expression to a DaCe symbolic expression
         with error checks (raises `SyntaxError` on failure).
-        @param defined_arrays_and_symbols: Defined arrays and symbols
+        :param defined_arrays_and_symbols: Defined arrays and symbols
                in the context of this expression.
-        @param expr_ast: The Python AST expression to convert.
-        @return: Symbolic expression.
+        :param expr_ast: The Python AST expression to convert.
+        :return: Symbolic expression.
     """
     # TODO!
     return _inner_eval_ast(defined_arrays_and_symbols, expr_ast)
@@ -1300,8 +1299,8 @@ class TaskletTransformer(ExtNodeTransformer):
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str],
                                 str] = dict()):
         """ Creates an AST parser for tasklets. 
-            @param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
-            @param state: The SDFG state to add the tasklet to.
+            :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
+            :param state: The SDFG state to add the tasklet to.
         """
         self.sdfg = sdfg
         self.state = state
@@ -1336,8 +1335,8 @@ class TaskletTransformer(ExtNodeTransformer):
 
     def parse_tasklet(self, tasklet_ast: TaskletType):
         """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets. 
-            @param tasklet_ast: The Tasklet's Python AST to parse.
-            @return: 3-tuple of (Tasklet node, input memlets, output memlets).
+            :param tasklet_ast: The Tasklet's Python AST to parse.
+            :return: 3-tuple of (Tasklet node, input memlets, output memlets).
             @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
         """
         # Should return a tasklet object (with connectors)
@@ -1773,8 +1772,8 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Returns a list of parameters, either from the function parameters
             and decorator arguments or parameters and their annotations (type
             hints).
-            @param node: The given function definition node.
-            @return: A list of 2-tuples (name, value).
+            :param node: The given function definition node.
+            :return: A list of 2-tuples (name, value).
         """
         # If the arguments are defined in the decorator
         dec = node.decorator_list[0]
@@ -2079,7 +2078,7 @@ class ProgramVisitor(ExtNodeVisitor):
             node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
             parameter dictionary and returning relevant memlets.
-            @return: A 2-tuple of (parameter dictionary, mapping from connector
+            :return: A 2-tuple of (parameter dictionary, mapping from connector
                      name to memlet).
         """
         new_params = []
@@ -2087,7 +2086,8 @@ class ProgramVisitor(ExtNodeVisitor):
         for k, v in params:
             vsp = list(v.split(':'))
             for i, (val, vid) in enumerate(zip(vsp, 'best')):
-                # Walk through expression, find functions and replace with variables
+                # Walk through expression, find functions and replace with
+                # variables
                 ctr = 0
                 repldict = {}
                 for expr in symbolic.swalk(pystr_to_symbolic(val)):
@@ -2109,9 +2109,6 @@ class ProgramVisitor(ExtNodeVisitor):
                             arr = self.variables[arr]
                         if arr not in self.sdfg.arrays:
                             rng = subsets.Range.from_string(args)
-                            # arr, rng = self._add_read_access(arr, rng, node, newvar, data.Scalar)
-                            arr = self._add_read_access(
-                                arr, rng, node, newvar, data.Scalar)
                             args = str(rng)
                         map_inputs[newvar] = Memlet.simple(arr, args)
                         # ','.join([str(a) for a in expr.args]))
@@ -2128,7 +2125,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_consume_inputs(self, node: ast.FunctionDef
                               ) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
-            @return: A 5-tuple of Stream name, internal stream name,
+            :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
         """
 
@@ -2193,12 +2190,15 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse map inputs (for memory-based ranges)
         if map_inputs is not None:
             for conn, memlet in map_inputs.items():
-                read_node = state.add_read(memlet.data)
-                if _subset_has_indirection(memlet.subset):
-                    add_indirection_subgraph(self.sdfg, state, read_node,
-                                             entry_node, memlet, conn, self)
-                    continue
+                if self.nested:
+                    new_name = self._add_read_access(memlet.data,
+                                                     memlet.subset, None)
+                    memlet = Memlet.from_array(new_name,
+                                               self.sdfg.arrays[new_name])
+                else:
+                    new_name = memlet.data
 
+                read_node = state.add_read(new_name)
                 entry_node.add_in_connector(conn)
                 state.add_edge(read_node, None, entry_node, conn, memlet)
 
@@ -3395,8 +3395,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         result = func(self, self.sdfg, self.last_state, operand1, operand2)
-        if not isinstance(result, (tuple, list)):
-            return [result]
         return result
 
     def visit_UnaryOp(self, node: ast.UnaryOp):

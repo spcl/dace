@@ -8,7 +8,7 @@ SERVPORT=`expr 6000 + ${CI_CONCURRENT_ID:-0}`
 # Remove old config files if they exist
 rm ./client_configs/default.conf
 # Start the REST server
-python3 $DIODEBASEPATH/diode_rest.py --localhost --localdace --port $SERVPORT &
+python3 $DIODEBASEPATH/diode_server.py --localhost --port $SERVPORT &
 SERVPID=$!
 RETVAL=0
 

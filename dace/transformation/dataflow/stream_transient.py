@@ -343,8 +343,11 @@ class InLocalStorage(pattern_matching.Transformation):
     _outer_map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _inner_map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
-    array = DataProperty(
-        desc="Array to create local storage for", default="gpu_V")
+    array = Property(
+        dtype=str,
+        desc="Array to create local storage for (if empty, first available)",
+        default=None,
+        allow_none=True)
 
     @staticmethod
     def annotates_memlets():
@@ -376,6 +379,11 @@ class InLocalStorage(pattern_matching.Transformation):
         inner_map_entry = graph.nodes()[self.subgraph[
             InLocalStorage._inner_map_entry]]
 
+        array = self.array
+        if array is None:
+            array = graph.edges_between(outer_map_entry,
+                                        inner_map_entry)[0].data.data
+
         original_edge = None
         invariant_memlet = None
         for edge in graph.in_edges(inner_map_entry):
@@ -383,7 +391,7 @@ class InLocalStorage(pattern_matching.Transformation):
             if src != outer_map_entry:
                 continue
             memlet = edge.data
-            if self.array == memlet.data:
+            if array == memlet.data:
                 original_edge = edge
                 invariant_memlet = memlet
                 break
@@ -395,11 +403,11 @@ class InLocalStorage(pattern_matching.Transformation):
                 original_edge = edge
                 invariant_memlet = edge.data
                 print('WARNING: Array %s not found! Using array %s instead.' %
-                      (self.array, invariant_memlet.data))
-                self.array = invariant_memlet.data
+                      (array, invariant_memlet.data))
+                array = invariant_memlet.data
                 break
         if invariant_memlet is None:
-            raise KeyError('Array %s not found!' % self.array)
+            raise KeyError('Array %s not found!' % array)
 
         new_data = sdfg.add_array(
             'trans_' + invariant_memlet.data, [
@@ -434,7 +442,7 @@ class InLocalStorage(pattern_matching.Transformation):
 
         for _parent, _, _child, _, memlet in graph.bfs_edges(
                 inner_map_entry, reverse=False):
-            if memlet.data != self.array:
+            if memlet.data != array:
                 continue
             for ind, r in enumerate(memlet.subset):
                 if isinstance(memlet.subset[ind], tuple):

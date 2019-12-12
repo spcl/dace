@@ -596,8 +596,8 @@ def propagate_labels_sdfg(sdfg):
 
 def _propagate_labels(g, sdfg):
     """ Propagates memlets throughout one SDFG state. 
-        @param g: The state to propagate in.
-        @param sdfg: The SDFG in which the state is situated.
+        :param g: The state to propagate in.
+        :param sdfg: The SDFG in which the state is situated.
         @note: This is an in-place operation on the SDFG state.
     """
     patterns = MemletPattern.patterns()
@@ -689,10 +689,10 @@ def propagate_memlet(dfg_state,
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
-        @param dfg_state: An SDFGState object representing the graph.
-        @param memlet: The memlet adjacent to the scope node from the inside.
-        @param scope_node: A scope entry or exit node.
-        @param union_inner_edges: True if the propagation should take other
+        :param dfg_state: An SDFGState object representing the graph.
+        :param memlet: The memlet adjacent to the scope node from the inside.
+        :param scope_node: A scope entry or exit node.
+        :param union_inner_edges: True if the propagation should take other
                                   neighboring internal memlets within the same
                                   scope into account.
     """
@@ -708,9 +708,13 @@ def propagate_memlet(dfg_state,
         return EmptyMemlet()
 
     sdfg = dfg_state.parent
+    scope_node_symbols = set(
+        conn for conn in scope_node.in_connectors
+        if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
         for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
+        if s not in scope_node_symbols
     ]
 
     # Find other adjacent edges within the connected to the scope node
@@ -791,9 +795,10 @@ def propagate_memlet(dfg_state,
         sum(m.num_accesses for m in aggdata) * functools.reduce(
             lambda a, b: a * b, scope_node.map.range.size(), 1))
     if any(m.num_accesses == -1 for m in aggdata):
-        memlet.num_accesses = -1
-    elif symbolic.issymbolic(memlet.num_accesses) and any(
-            s not in defined_vars for s in memlet.num_accesses.free_symbols):
-        memlet.num_accesses = -1
+        new_memlet.num_accesses = -1
+    elif symbolic.issymbolic(new_memlet.num_accesses) and any(
+            s not in defined_vars
+            for s in new_memlet.num_accesses.free_symbols):
+        new_memlet.num_accesses = -1
 
     return new_memlet

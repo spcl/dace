@@ -30,7 +30,7 @@ if _isnotebook():
 
     # Load dependencies
     root_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), '..', 'diode', 'client')
+        os.path.dirname(os.path.abspath(__file__)), '..', 'diode', 'webclient')
     for dep in sdfv_deps:
         file = os.path.join(root_path, dep)
         with open(file, 'r') as fp:

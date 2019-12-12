@@ -419,22 +419,22 @@ def matrix_multiplication(state: State,
                           C_index: Index = None,
                           label: str = None):
     """ Adds a matrix multiplication operation to an existing SDFG state.
-        @param A_src: The source node from which the memlet of matrix A is
+        :param A_src: The source node from which the memlet of matrix A is
                       connected.
-        @param A_node: The Access Node for matrix A.
-        @param B_src: The source node from which the memlet of matrix B is
+        :param A_node: The Access Node for matrix A.
+        :param B_src: The source node from which the memlet of matrix B is
                       connected.
-        @param B_node: The Access Node for matrix B.
-        @param C_dst: The destination node to which the memlet of matrix C is
+        :param B_node: The Access Node for matrix B.
+        :param C_dst: The destination node to which the memlet of matrix C is
                       connected.
-        @param C_node: The Access Node for matrix C.
-        @param accumulate: Whether to accumulate to C or store to it.
-        @param interchange: If True, interchanges the multiplication maps for
+        :param C_node: The Access Node for matrix C.
+        :param accumulate: Whether to accumulate to C or store to it.
+        :param interchange: If True, interchanges the multiplication maps for
                             performance (in some cases).
-        @param A_index: Slice of matrix A to use for multiplication.
-        @param B_index: Slice of matrix B to use for multiplication.
-        @param C_index: Slice of matrix C to use for multiplication.
-        @param label: Optional label for the maps and tasklet.
+        :param A_index: Slice of matrix A to use for multiplication.
+        :param B_index: Slice of matrix B to use for multiplication.
+        :param C_index: Slice of matrix C to use for multiplication.
+        :param label: Optional label for the maps and tasklet.
     """
 
     # Validate input
@@ -544,14 +544,14 @@ def matrix_transpose_cublas(state: State,
                             conjugate: bool = False):
     """ Adds a matrix transposition operation to an existing SDFG state,
         using CUBLAS as the implementation.
-        @param A_src: The source node from which the memlet of matrix A is
+        :param A_src: The source node from which the memlet of matrix A is
                       connected.
-        @param A_node: The Access Node for matrix A.
-        @param B_dst: The destination node to which the memlet of matrix B is
+        :param A_node: The Access Node for matrix A.
+        :param B_dst: The destination node to which the memlet of matrix B is
                       connected.
-        @param B_node: The Access Node for matrix B.
-        @param alpha: Multiplier for input matrix.
-        @param label: Optional label for the tasklet.
+        :param B_node: The Access Node for matrix B.
+        :param alpha: Multiplier for input matrix.
+        :param label: Optional label for the tasklet.
     """
 
     sdfg = state.parent
@@ -623,24 +623,24 @@ def matrix_multiplication_cublas(state: State,
                                  label: str = None):
     """ Adds a matrix multiplication operation to an existing SDFG state,
         using CUBLAS as the implementation.
-        @param A_src: The source node from which the memlet of matrix A is
+        :param A_src: The source node from which the memlet of matrix A is
                       connected.
-        @param A_node: The Access Node for matrix A.
-        @param B_src: The source node from which the memlet of matrix B is
+        :param A_node: The Access Node for matrix A.
+        :param B_src: The source node from which the memlet of matrix B is
                       connected.
-        @param B_node: The Access Node for matrix B.
-        @param C_dst: The destination node to which the memlet of matrix C is
+        :param B_node: The Access Node for matrix B.
+        :param C_dst: The destination node to which the memlet of matrix C is
                       connected.
-        @param C_node: The Access Node for matrix C.
-        @param accumulate: Whether to accumulate to C or store to it.
-        @param interchange: If True, interchanges the multiplication maps for
+        :param C_node: The Access Node for matrix C.
+        :param accumulate: Whether to accumulate to C or store to it.
+        :param interchange: If True, interchanges the multiplication maps for
                             performance (in some cases).
-        @param alpha: Alpha value for GEMM.
-        @param beta: Beta value for GEMM.
-        @param A_index: Slice of matrix A to use for multiplication.
-        @param B_index: Slice of matrix B to use for multiplication.
-        @param C_index: Slice of matrix C to use for multiplication.
-        @param label: Optional label for the maps and tasklet.
+        :param alpha: Alpha value for GEMM.
+        :param beta: Beta value for GEMM.
+        :param A_index: Slice of matrix A to use for multiplication.
+        :param B_index: Slice of matrix B to use for multiplication.
+        :param C_index: Slice of matrix C to use for multiplication.
+        :param label: Optional label for the maps and tasklet.
     """
 
     # Validate input
@@ -712,27 +712,27 @@ def matrix_multiplication_cublas_v2(state: State,
     """ Adds a matrix multiplication operation to an existing SDFG state,
         using CUBLAS as the implementation, and providing a separate source
         and destination nodes for the output matrix.
-        @param A_src: The source node from which the memlet of matrix A is
+        :param A_src: The source node from which the memlet of matrix A is
                       connected.
-        @param A_node: The Access Node for matrix A.
-        @param B_src: The source node from which the memlet of matrix B is
+        :param A_node: The Access Node for matrix A.
+        :param B_src: The source node from which the memlet of matrix B is
                       connected.
-        @param B_node: The Access Node for matrix B.
-        @param C_src: The node from which the memlet of matrix C is
+        :param B_node: The Access Node for matrix B.
+        :param C_src: The node from which the memlet of matrix C is
                       connected into the multiplication.
-        @param C_src_node: The input Access Node for matrix C.
-        @param C_dst: The node to which the memlet of matrix C is
+        :param C_src_node: The input Access Node for matrix C.
+        :param C_dst: The node to which the memlet of matrix C is
                       connected out of the multiplication.
-        @param C_dst_node: The output Access Node for matrix C.
-        @param accumulate: Whether to accumulate to C or store to it.
-        @param interchange: If True, interchanges the multiplication maps for
+        :param C_dst_node: The output Access Node for matrix C.
+        :param accumulate: Whether to accumulate to C or store to it.
+        :param interchange: If True, interchanges the multiplication maps for
                             performance (in some cases).
-        @param alpha: Alpha value for GEMM.
-        @param beta: Beta value for GEMM.
-        @param A_index: Slice of matrix A to use for multiplication.
-        @param B_index: Slice of matrix B to use for multiplication.
-        @param C_index: Slice of matrix C to use for multiplication.
-        @param label: Optional label for the maps and tasklet.
+        :param alpha: Alpha value for GEMM.
+        :param beta: Beta value for GEMM.
+        :param A_index: Slice of matrix A to use for multiplication.
+        :param B_index: Slice of matrix B to use for multiplication.
+        :param C_index: Slice of matrix C to use for multiplication.
+        :param label: Optional label for the maps and tasklet.
     """
 
     # Validate input
@@ -803,22 +803,22 @@ def matrix_multiplication_mkl(state: State,
                               label: str = None):
     """ Adds a matrix multiplication operation to an existing SDFG state,
         using MKL as the implementation.
-        @param A_src: The source node from which the memlet of matrix A is
+        :param A_src: The source node from which the memlet of matrix A is
                       connected.
-        @param A_node: The Access Node for matrix A.
-        @param B_src: The source node from which the memlet of matrix B is
+        :param A_node: The Access Node for matrix A.
+        :param B_src: The source node from which the memlet of matrix B is
                       connected.
-        @param B_node: The Access Node for matrix B.
-        @param C_dst: The destination node to which the memlet of matrix C is
+        :param B_node: The Access Node for matrix B.
+        :param C_dst: The destination node to which the memlet of matrix C is
                       connected.
-        @param C_node: The Access Node for matrix C.
-        @param accumulate: Whether to accumulate to C or store to it.
-        @param interchange: If True, interchanges the multiplication maps for
+        :param C_node: The Access Node for matrix C.
+        :param accumulate: Whether to accumulate to C or store to it.
+        :param interchange: If True, interchanges the multiplication maps for
                             performance (in some cases).
-        @param A_index: Slice of matrix A to use for multiplication.
-        @param B_index: Slice of matrix B to use for multiplication.
-        @param C_index: Slice of matrix C to use for multiplication.
-        @param label: Optional label for the maps and tasklet.
+        :param A_index: Slice of matrix A to use for multiplication.
+        :param B_index: Slice of matrix B to use for multiplication.
+        :param C_index: Slice of matrix C to use for multiplication.
+        :param label: Optional label for the maps and tasklet.
     """
 
     # Validate input

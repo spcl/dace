@@ -7,20 +7,16 @@ from __future__ import print_function
 
 import ctypes
 import os
-import re
 import six
 import shutil
 import subprocess
-import string
-import subprocess as sp
 import re
 from typing import List
 import numpy as np
 
 import dace
 from dace.frontend import operations
-from dace.frontend.python import wrappers
-from dace import symbolic, dtypes, data as dt
+from dace import symbolic, data as dt
 from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -50,15 +46,15 @@ class ReloadableDLL(object):
 
     def __init__(self, library_filename, program_name):
         """ Creates a new reloadable shared object.
-            @param library_filename: Path to library file.
-            @param program_name: Name of the DaCe program (for use in finding
+            :param library_filename: Path to library file.
+            :param program_name: Name of the DaCe program (for use in finding
                                  the stub library loader).
         """
         self._stub_filename = os.path.join(
             os.path.dirname(os.path.realpath(library_filename)),
             'libdacestub_%s.%s' %
             (program_name, Config.get('compiler', 'library_extension')))
-        self._library_filename = library_filename
+        self._library_filename = os.path.realpath(library_filename)
         self._stub = None
         self._lib = None
 
@@ -155,7 +151,7 @@ class CompiledSDFG(object):
         return self._sdfg
 
     def __del__(self):
-        if self._initialized == True:
+        if self._initialized is True:
             self.finalize(*self._lastargs)
             self._initialized = False
         self._lib.unload()
@@ -275,18 +271,23 @@ class CompiledSDFG(object):
             self._exit(*argtuple)
 
     def __call__(self, **kwargs):
-        argtuple = self._construct_args(**kwargs)
+        try:
+            argtuple = self._construct_args(**kwargs)
 
-        # Call initializer function if necessary, then SDFG
-        if self._initialized == False:
-            self.initialize(*argtuple)
+            # Call initializer function if necessary, then SDFG
+            if self._initialized is False:
+                self.initialize(*argtuple)
 
-        # PROFILING
-        if Config.get_bool('profiling'):
-            operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
-                                *argtuple)
-        else:
-            return self._cfunc(*argtuple)
+            # PROFILING
+            if Config.get_bool('profiling'):
+                operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
+                                    *argtuple)
+            else:
+                return self._cfunc(*argtuple)
+        except (RuntimeError, TypeError, UnboundLocalError, KeyError,
+                DuplicateDLLError, ReferenceError):
+            self._lib.unload()
+            raise
 
 
 def unique_flags(flags):
@@ -303,10 +304,10 @@ def generate_program_folder(sdfg,
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
-        @param sdfg: The SDFG to generate the program folder for.
-        @param code_objects: List of generated code objects.
-        @param out_path: The folder in which the build files should be written.
-        @return: Path to the program folder.
+        :param sdfg: The SDFG to generate the program folder for.
+        :param code_objects: List of generated code objects.
+        :param out_path: The folder in which the build files should be written.
+        :return: Path to the program folder.
     """
 
     src_path = os.path.join(out_path, "src")
@@ -339,7 +340,8 @@ def generate_program_folder(sdfg,
                                 code_object.code)
             code_file.write(clean_code)
 
-        filelist.append("{},{}".format(target_name, basename))
+        if code_object.linkable == True:
+            filelist.append("{},{}".format(target_name, basename))
 
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -357,14 +359,18 @@ def generate_program_folder(sdfg,
     return out_path
 
 
-def configure_and_compile(program_folder, program_name=None):
+def configure_and_compile(program_folder,
+                          program_name=None,
+                          output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
 
-        @param program_folder: Folder containing all files necessary to build,
+        :param program_folder: Folder containing all files necessary to build,
                                equivalent to what was passed to
                                `generate_program_folder`.
-        @return: Path to the compiled shared library file.
+        :param output_stream: Additional output stream to write to (used for
+                              DIODE client).
+        :return: Path to the compiled shared library file.
     """
 
     if program_name is None:
@@ -433,7 +439,11 @@ def configure_and_compile(program_folder, program_name=None):
     ##############################################
     # Configure
     try:
-        _run_liveoutput(" ".join(cmake_command), shell=True, cwd=build_folder)
+        _run_liveoutput(
+            " ".join(cmake_command),
+            shell=True,
+            cwd=build_folder,
+            output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -442,7 +452,10 @@ def configure_and_compile(program_folder, program_name=None):
         os.makedirs(build_folder)
         try:
             _run_liveoutput(
-                " ".join(cmake_command), shell=True, cwd=build_folder)
+                " ".join(cmake_command),
+                shell=True,
+                cwd=build_folder,
+                output_stream=output_stream)
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
@@ -457,7 +470,8 @@ def configure_and_compile(program_folder, program_name=None):
             "cmake --build . --config %s" % (Config.get(
                 'compiler', 'build_type')),
             shell=True,
-            cwd=build_folder)
+            cwd=build_folder,
+            output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
@@ -503,7 +517,7 @@ def get_binary_name(object_name,
     return name
 
 
-def _run_liveoutput(command, **kwargs):
+def _run_liveoutput(command, output_stream=None, **kwargs):
     process = subprocess.Popen(
         command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = six.StringIO()
@@ -519,6 +533,8 @@ def _run_liveoutput(command, **kwargs):
         print(stdout.decode('utf-8'), flush=True)
         if stderr is not None:
             print(stderr.decode('utf-8'), flush=True)
+    if output_stream is not None:
+        output_stream.write(stdout.decode('utf-8'), flush=True)
     output.write(stdout.decode('utf-8'))
     if stderr is not None:
         output.write(stderr.decode('utf-8'))

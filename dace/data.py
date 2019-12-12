@@ -48,13 +48,13 @@ class Data(object):
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
-    dtype = TypeClassProperty()
-    shape = ShapeProperty()
-    transient = Property(dtype=bool)
+    dtype = TypeClassProperty(default=dtypes.int32)
+    shape = ShapeProperty(default=[])
+    transient = Property(dtype=bool, default=False)
     storage = Property(
         dtype=dace.dtypes.StorageType,
         desc="Storage location",
-        enum=dace.dtypes.StorageType,
+        choices=dace.dtypes.StorageType,
         default=dace.dtypes.StorageType.Default,
         from_string=lambda x: dtypes.StorageType[x])
     location = Property(
@@ -63,7 +63,7 @@ class Data(object):
         default='')
     toplevel = Property(
         dtype=bool, desc="Allocate array outside of state", default=False)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, dtype, shape, transient, storage, location, toplevel,
                  debuginfo):
@@ -91,17 +91,12 @@ class Data(object):
                             'or symbols')
         return True
 
-    def toJSON(self):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     def copy(self):
         raise RuntimeError(
@@ -123,7 +118,7 @@ class Data(object):
 class Scalar(Data):
     """ Data descriptor of a scalar value. """
 
-    allow_conflicts = Property(dtype=bool)
+    allow_conflicts = Property(dtype=bool, default=False)
 
     def __init__(self,
                  dtype,
@@ -139,13 +134,13 @@ class Scalar(Data):
                                      location, toplevel, debuginfo)
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Scalar":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Scalar(dace.dtypes.int8)
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
         ret.validate()
@@ -219,7 +214,7 @@ class Array(Data):
     """ Array/constant descriptor (dimensions, type and other properties). """
 
     # Properties
-    allow_conflicts = Property(dtype=bool)
+    allow_conflicts = Property(dtype=bool, default=False)
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
@@ -284,29 +279,24 @@ class Array(Data):
                      self.offset, self.may_alias, self.toplevel,
                      self.debuginfo)
 
-    def toJSON(self):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         # Take care of symbolic expressions
         attrs['strides'] = list(map(str, attrs['strides']))
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Array":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Array(dace.dtypes.int8, ())
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
 
@@ -434,7 +424,7 @@ class Stream(Data):
     # Properties
     strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
-    buffer_size = SymbolicProperty(desc="Size of internal buffer.")
+    buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
     veclen = Property(
         dtype=int, desc="Vector length. Memlets must adhere to this.")
 
@@ -474,29 +464,24 @@ class Stream(Data):
         super(Stream, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
 
-    def toJSON(self):
-        try:
-            attrs = json.loads(Property.all_properties_to_json(self))
-        except Exception as e:
-            print("Got exception: " + str(e))
-            import traceback
-            traceback.print_exc()
+    def to_json(self):
+        attrs = dace.serialize.all_properties_to_json(self)
 
         # Take care of symbolic expressions
         attrs['strides'] = list(map(str, attrs['strides']))
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
-        return json.dumps(retdict)
+        return retdict
 
     @staticmethod
-    def fromJSON_object(json_obj, context=None):
+    def from_json(json_obj, context=None):
         if json_obj['type'] != "Stream":
             raise TypeError("Invalid data type")
 
         # Create dummy object
         ret = Stream(dace.dtypes.int8, 1, 1)
-        Property.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         # TODO: FIXME:
         # Since the strides are a list-property (normal Property()),
         # loading from/to string (and, consequently, from/to json)

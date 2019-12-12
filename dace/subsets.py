@@ -1,3 +1,4 @@
+import dace.serialize
 from dace import data, symbolic, dtypes
 import re
 import sympy as sp
@@ -43,6 +44,7 @@ def _tuple_to_symexpr(val):
             if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
 
 
+@dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
 
@@ -62,8 +64,7 @@ class Range(Subset):
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
-    def toJSON(self):
-        import json
+    def to_json(self):
         ret = []
 
         def a2s(obj):
@@ -81,21 +82,15 @@ class Range(Subset):
                 'tile': a2s(tile)
             })
 
-        return json.dumps({'type': 'subsets.Range', 'ranges': ret})
+        return {'type': 'Range', 'ranges': ret}
 
     @staticmethod
-    def fromJSON(obj, context=None):
-        import json
-        obj = json.loads(obj)
-
-        return Range.fromJSON_object(obj, context)
-
-    @staticmethod
-    def fromJSON_object(obj, context=None):
-        if obj['type'] != 'subsets.Range':
-            raise TypeError(
-                "fromJSON of class `Range` called on json with type %s (expected 'subsets.Range')"
-                % obj['type'])
+    def from_json(obj, context=None):
+        if not isinstance(obj, dict):
+            raise TypeError("Expected dict, got {}".format(type(obj)))
+        if obj['type'] != 'Range':
+            raise TypeError("from_json of class \"Range\" called on json "
+                            "with type %s (expected 'Range')" % obj['type'])
 
         ranges = obj['ranges']
         tuples = []
@@ -115,7 +110,7 @@ class Range(Subset):
 
     @staticmethod
     def from_array(array):
-        """ Constructs a range that covers the full array given as input. 
+        """ Constructs a range that covers the full array given as input.
             @type array: dace.data.Data """
         return Range([(0, s - 1, 1) for s in array.shape])
 
@@ -177,12 +172,12 @@ class Range(Subset):
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
-            
+
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            
-            @param i: A tuple of the same dimensionality as subset.dims() or
+
+            :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            @return: Absolute coordinates for index i (length equal to
+            :return: Absolute coordinates for index i (length equal to
                      `data_dims()`, may be larger than `dims()`).
         """
         tiles = sum(1 if ts != 1 else 0 for ts in self.tile_sizes)
@@ -203,15 +198,15 @@ class Range(Subset):
     def at(self, i, global_shape):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
-            
+
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            
-            @param i: A tuple of the same dimensionality as subset.dims() or
+
+            :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            @param global_shape: The full size of the set that we are 
-                                 subsetting (e.g., full array strides/padded 
+            :param global_shape: The full size of the set that we are
+                                 subsetting (e.g., full array strides/padded
                                  shape).
-            @return: Absolute 1D index at coordinate i.
+            :return: Absolute 1D index at coordinate i.
         """
         coord = self.coord_at(i)
 
@@ -274,7 +269,7 @@ class Range(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
-            @param order: List or tuple of integers from 0 to self.dims() - 1,
+            :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_ranges = [self.ranges[o] for o in order]
@@ -526,6 +521,7 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
 
+@dace.serialize.serializable
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
@@ -542,33 +538,20 @@ class Indices(Subset):
             self.indices = symbolic.pystr_to_symbolic(indices)
         self.tile_sizes = [1]
 
-    def toJSON(self):
-        import json
-
+    def to_json(self):
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
                 return str(obj.expr)
             else:
                 return str(obj)
 
-        return json.dumps({
-            'type': 'subsets.Indices',
-            'indices': [*map(a2s, self.indices)]
-        })
+        return {'type': 'Indices', 'indices': list(map(a2s, self.indices))}
 
     @staticmethod
-    def fromJSON(obj, context=None):
-        import json
-        obj = json.loads(obj)
-
-        return Indices.fromJSON_object(obj, context)
-
-    @staticmethod
-    def fromJSON_object(obj, context=None):
-        if obj['type'] != 'subsets.Indices':
-            raise TypeError(
-                "fromJSON of class `Indices` called on json with type %s (expected 'subsets.Indices')"
-                % obj['type'])
+    def from_json(obj, context=None):
+        if obj['type'] != 'Indices':
+            raise TypeError("from_json of class \"Indices\" called on json "
+                            "with type %s (expected 'Indices')" % obj['type'])
 
         #return Indices(symbolic.SymExpr(obj['indices']))
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
@@ -614,8 +597,8 @@ class Indices(Subset):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
-            @param i: A tuple of the same dimensionality as subset.dims().
-            @return: Absolute coordinates for index i.
+            :param i: A tuple of the same dimensionality as subset.dims().
+            :return: Absolute coordinates for index i.
         """
         if len(i) != len(self.indices):
             raise ValueError('Invalid dimensionality of input tuple (expected'
@@ -629,11 +612,11 @@ class Indices(Subset):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
-            @param i: A tuple of the same dimensionality as subset.dims().
-            @param global_shape: The full size of the set that we are 
-                                 subsetting (e.g., full array strides/padded 
+            :param i: A tuple of the same dimensionality as subset.dims().
+            :param global_shape: The full size of the set that we are
+                                 subsetting (e.g., full array strides/padded
                                  shape).
-            @return: Absolute 1D index at coordinate i.
+            :return: Absolute 1D index at coordinate i.
         """
         coord = self.coord_at(i)
 
@@ -682,7 +665,7 @@ class Indices(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
-            @param order: List or tuple of integers from 0 to self.dims() - 1,
+            :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_indices = [self.indices[o] for o in order]
@@ -696,6 +679,11 @@ class Indices(Subset):
 
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
+
+    def squeeze(self):
+        num_dim = len(self.indices)
+        self.indices = [0]
+        return [num_dim - 1]
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
@@ -718,9 +706,9 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
         union.
-        @param subset_a: The first subset.
-        @param subset_b: The second subset.
-        @return: A Subset object whose size is at least the union of the two
+        :param subset_a: The first subset.
+        :param subset_b: The second subset.
+        :return: A Subset object whose size is at least the union of the two
                  inputs. If union failed, returns None.
     """
     try:
