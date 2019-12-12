@@ -1,9 +1,9 @@
 pipeline {
-    agent any
-    stages {
-        stage('Setup') {
-            steps {
-                sh '''
+  agent any
+  stages {
+    stage('Setup') {
+      steps {
+        sh '''
                     echo "Reverting configuration to defaults"
                     rm -f ~/.dace.conf
                     echo "Clearing caches"
@@ -14,11 +14,14 @@ pipeline {
                     pip3 install --ignore-installed --upgrade --user .
                     pip3 install --user cmake
                 '''
-            }
-        }
+      }
+    }
+
+    stage('Test') {
+      parallel {
         stage('Test') {
-            steps {
-                sh '''
+          steps {
+            sh '''
                     ###
                     export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
                     export PATH=/usr/local/cuda/bin:~/.local/bin:$PATH
@@ -26,20 +29,28 @@ pipeline {
                     export DACE_debugprint=1
                     tests/cuda_test.sh
                 '''
-                
-                sh '''
+            sh '''
                     export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
                     export DACE_compiler_xilinx_executable=xocc
                     export DACE_compiler_xilinx_platform=xilinx_vcu1525_dynamic_5_1
                     export XILINXD_LICENSE_FILE=2100@sgv-license-01
                     tests/xilinx_test.sh 0
                 '''
-                
-                sh '''
+            sh '''
                     export PATH=/opt/mpich3.2.11/bin:$PATH
                     tests/mpi_test.sh
                 '''
-            }
+          }
         }
+
+        stage('Test Xilinx') {
+          steps {
+            sh 'which gcc'
+          }
+        }
+
+      }
     }
+
+  }
 }
