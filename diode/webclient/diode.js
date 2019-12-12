@@ -5694,7 +5694,7 @@ class DIODE {
             if(cis) {
                 cval = values['sdfg_object'];
                 if(typeof(cval) == 'string')
-                    cval = JSON.parse(cval);
+                    cval = parse_sdfg(cval);
             }
 
             calling_context.project().request(["clear-errors"], () => {});
