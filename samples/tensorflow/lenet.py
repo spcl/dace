@@ -69,11 +69,10 @@ if __name__ == "__main__":
             minval=-0.1, maxval=0.1, seed=SEED))
 
     logits = fullConnectionTf2
-    print('here: ',logits.shape, label_node)
     softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=label_node, logits=logits)
     loss = tf.reduce_mean(softmax, name="loss")
-    #loss = logits
+
     # Get gradient tensors and initializer operation
     gradients = tf.gradients(loss, tf.trainable_variables())
     init = tf.global_variables_initializer()
