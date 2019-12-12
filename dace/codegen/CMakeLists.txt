@@ -274,6 +274,8 @@ if(DACE_ENABLE_XILINX)
       -t sw_emu
       ${DACE_VITIS_KERNEL_FILES}
       -o ${DACE_PROGRAM_NAME}_sw_emu.xo)
+    add_custom_target(xilinx_compile_software_emulation DEPENDS
+                      xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation)
 
     add_custom_target(
       xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation
@@ -284,6 +286,8 @@ if(DACE_ENABLE_XILINX)
       -t hw_emu
       ${DACE_VITIS_KERNEL_FILES}
       -o ${DACE_PROGRAM_NAME}_hw_emu.xo)
+    add_custom_target(xilinx_compile_hardware_emulation DEPENDS
+                      xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation)
 
     add_custom_target(
       xilinx_compile_${DACE_PROGRAM_NAME}_hardware
@@ -294,9 +298,11 @@ if(DACE_ENABLE_XILINX)
       -t hw
       ${DACE_VITIS_KERNEL_FILES}
       -o ${DACE_PROGRAM_NAME}_hw.xo)
+    add_custom_target(xilinx_compile_hardware DEPENDS
+                      xilinx_compile_${DACE_PROGRAM_NAME}_hardware)
 
     add_custom_target(
-      xilinx_build_${DACE_PROGRAM_NAME}_software_emulation
+      xilinx_link_${DACE_PROGRAM_NAME}_software_emulation
       COMMAND
       XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
@@ -304,9 +310,11 @@ if(DACE_ENABLE_XILINX)
       -t sw_emu
       ${DACE_PROGRAM_NAME}_sw_emu.xo
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin)
+    add_custom_target(xilinx_link_software_emulation DEPENDS
+                      xilinx_link_${DACE_PROGRAM_NAME}_software_emulation)
 
     add_custom_target(
-      xilinx_build_${DACE_PROGRAM_NAME}_hardware_emulation
+      xilinx_link_${DACE_PROGRAM_NAME}_hardware_emulation
       COMMAND
       XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
@@ -314,9 +322,11 @@ if(DACE_ENABLE_XILINX)
       -t hw_emu
       ${DACE_PROGRAM_NAME}_hw_emu.xo
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin)
+    add_custom_target(xilinx_link_hardware_emulation DEPENDS
+                      xilinx_link_${DACE_PROGRAM_NAME}_hardware_emulation)
 
     add_custom_target(
-      xilinx_build_${DACE_PROGRAM_NAME}_hardware
+      xilinx_link_${DACE_PROGRAM_NAME}_hardware
       COMMAND
       XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
@@ -324,6 +334,8 @@ if(DACE_ENABLE_XILINX)
       -t hw
       ${DACE_PROGRAM_NAME}_hw.xo
       -o ${DACE_PROGRAM_NAME}_hw.xclbin)
+    add_custom_target(xilinx_link_hardware DEPENDS
+                      xilinx_link_${DACE_PROGRAM_NAME}_hardware)
 
   endif()
 
