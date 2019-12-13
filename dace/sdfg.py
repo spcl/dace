@@ -1832,9 +1832,8 @@ subgraph cluster_state_{state} {{
         while applied:
             applied = False
             # Find and apply immediately
-            for match in opt.get_pattern_matches(
+            for sdfg, match in opt.get_pattern_matches(
                     strict=strict, patterns=patterns, states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate:

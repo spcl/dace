@@ -702,7 +702,8 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
         # Apply properties (will automatically apply by step-matching)
         sdfg = applySDFGProperties(sdfg, sdfg_props, step)
 
-        for pattern in matching:
+        # TODO: Use s (may be a nested SDFG)
+        for s, pattern in matching:
             name = type(pattern).__name__
 
             if useGlobalSuffix:
@@ -961,7 +962,7 @@ def get_transformations(sdfgs):
         ptrns = opt.get_pattern_matches()
 
         optimizations = []
-        for p in ptrns:
+        for _, p in ptrns:
             label = type(p).__name__
 
             nodeids = []

@@ -54,7 +54,7 @@ class TransformationTester(Optimizer):
         matches = list(self.get_pattern_matches(sdfg=sdfg))
 
         # Apply each transformation
-        for match in matches:
+        for tsdfg, match in matches:
             # Copy the SDFG
             new_sdfg: SDFG = copy.deepcopy(sdfg)
 
@@ -72,7 +72,6 @@ class TransformationTester(Optimizer):
                     end='',
                     file=self.stdout)
 
-                tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
                 match.apply(tsdfg)
 
                 sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
