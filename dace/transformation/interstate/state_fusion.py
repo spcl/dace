@@ -45,7 +45,7 @@ class StateFusion(pattern_matching.Transformation):
         if len(out_edges) != 1:
             return False
         # The interstate edge must not have a condition.
-        if out_edges[0].data.condition.as_string != "":
+        if not out_edges[0].data.is_unconditional():
             return False
         # The interstate edge may have assignments, as long as there are input
         # edges to the first state, that can absorb them.

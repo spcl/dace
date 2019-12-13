@@ -4,7 +4,7 @@ import enum
 import re
 
 import dace
-from dace import dtypes
+from dace import symbolic
 from dace.graph.graph import Edge
 from dace.frontend.python import astutils
 from dace.properties import Property, CodeProperty, make_properties
@@ -61,7 +61,7 @@ class InterstateEdge(object):
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
         return (self.condition is None or InterstateEdge.condition.to_string(
-            self.condition).strip() == "1")
+            self.condition).strip() == "1" or self.condition.as_string == "")
 
     def condition_sympy(self):
         cond_ast = self.condition

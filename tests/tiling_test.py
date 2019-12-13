@@ -98,10 +98,7 @@ if __name__ == "__main__":
 
     sdfg, body = create_sdfg()
     sdfg.fill_scope_connectors()
-    optimizer = SDFGOptimizer(sdfg, inplace=True)
-    for match in optimizer.get_pattern_matches(
-            states=[body], patterns=[MapTiling]):
-        match.apply(sdfg)
+    sdfg.apply_transformations([MapTiling], states=[body], apply_once=True)
     for node in body.nodes():
         if (isinstance(node, dace.graph.nodes.MapEntry)
                 and node.label[:-2] == 'stencil'):
