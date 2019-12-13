@@ -70,6 +70,7 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
 if __name__ == '__main__':
     sdfg = fusion.to_sdfg()
     sdfg.save(os.path.join('_dotgraphs', 'before1.sdfg'))
+    sdfg.apply_strict_transformations()
     sdfg.apply_transformations([MapFusion])
     sdfg.save(os.path.join('_dotgraphs', 'after1.sdfg'))
 
@@ -91,6 +92,7 @@ if __name__ == '__main__':
 
     sdfg.save(os.path.join('_dotgraphs', 'before2.sdfg'))
     sdfg = dace.SDFG.from_file(os.path.join('_dotgraphs', 'before2.sdfg'))
+    sdfg.apply_strict_transformations()
     sdfg.apply_transformations([MapFusion])
     sdfg.save(os.path.join('_dotgraphs', 'after2.sdfg'))
 
@@ -122,6 +124,7 @@ if __name__ == '__main__':
     sdfg = fusion_chain.to_sdfg()
     sdfg.save(os.path.join('_dotgraphs', 'before3.sdfg'))
     sdfg = dace.SDFG.from_file(os.path.join('_dotgraphs', 'before3.sdfg'))
+    sdfg.apply_strict_transformations()
     sdfg.apply_transformations([MapFusion], apply_once=True)
     num_nodes_before = len(
         [node for state in sdfg.nodes() for node in state.nodes()])
