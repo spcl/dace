@@ -91,7 +91,6 @@ if __name__ == '__main__':
         [node for state in sdfg.nodes() for node in state.nodes()])
 
     sdfg.save(os.path.join('_dotgraphs', 'before2.sdfg'))
-    sdfg = dace.SDFG.from_file(os.path.join('_dotgraphs', 'before2.sdfg'))
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations([MapFusion])
     sdfg.save(os.path.join('_dotgraphs', 'after2.sdfg'))
@@ -123,7 +122,6 @@ if __name__ == '__main__':
     # Third test
     sdfg = fusion_chain.to_sdfg()
     sdfg.save(os.path.join('_dotgraphs', 'before3.sdfg'))
-    sdfg = dace.SDFG.from_file(os.path.join('_dotgraphs', 'before3.sdfg'))
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations([MapFusion], apply_once=True)
     num_nodes_before = len(
