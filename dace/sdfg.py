@@ -1832,8 +1832,9 @@ subgraph cluster_state_{state} {{
         while applied:
             applied = False
             # Find and apply immediately
-            for sdfg, match in opt.get_pattern_matches(
+            for match in opt.get_pattern_matches(
                     strict=strict, patterns=patterns, states=states):
+                sdfg = self.sdfg_list[match.sdfg_id]
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate:
@@ -4027,11 +4028,12 @@ def all_transients(dfg):
         visited.add(node.data)
         yield node.data
 
-	
+
 def _transients_in_scope(sdfg, scope, scope_dict):
-    return set(node.data for node in scope_dict[scope.entry if scope else scope]
-               if isinstance(node, nd.AccessNode) and
-               sdfg.arrays[node.data].transient)
+    return set(node.data
+               for node in scope_dict[scope.entry if scope else scope]
+               if isinstance(node, nd.AccessNode)
+               and sdfg.arrays[node.data].transient)
 
 
 def local_transients(sdfg, dfg, entry_node):

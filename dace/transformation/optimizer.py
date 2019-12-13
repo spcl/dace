@@ -118,19 +118,20 @@ class Optimizer(object):
             return actions
 
         def get_dataflow_actions(actions, sdfg, match):
-            graph = sdfg.nodes()[match.state_id]
+            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
             return get_actions(actions, graph, match)
 
         def get_stateflow_actions(actions, sdfg, match):
-            return get_actions(actions, sdfg, match)
+            graph = sdfg.sdfg_list[match.sdfg_id]
+            return get_actions(actions, graph, match)
 
         actions = dict()
 
-        for sdfg, match in self.get_pattern_matches():
+        for match in self.get_pattern_matches():
             if match.state_id >= 0:
-                actions = get_dataflow_actions(actions, sdfg, match)
+                actions = get_dataflow_actions(actions, self.sdfg, match)
             else:
-                actions = get_stateflow_actions(actions, sdfg, match)
+                actions = get_stateflow_actions(actions, self.sdfg, match)
 
         return actions
 
@@ -219,11 +220,11 @@ class SDFGOptimizer(Optimizer):
         # Optimize until there is not pattern matching or user stops the process.
         pattern_counter = 0
         while True:
-            matches = list(self.get_pattern_matches())
             # Print in the UI all the pattern matching options.
-            ui_options = sorted(matches, key=lambda m: m[1])
+            ui_options = sorted(self.get_pattern_matches())
             ui_options_idx = 0
-            for sdfg, pattern_match in ui_options:
+            for pattern_match in ui_options:
+                sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
                 print('%d. Transformation %s' %
                       (ui_options_idx, pattern_match.print_match(sdfg)))
                 ui_options_idx += 1
@@ -242,14 +243,13 @@ class SDFGOptimizer(Optimizer):
             pattern_match = None
             if (pattern_name is None and occurrence >= 0
                     and occurrence < ui_options_idx):
-                sdfg, pattern_match = ui_options[occurrence]
+                pattern_match = ui_options[occurrence]
             elif pattern_name is not None:
                 counter = 0
-                for s, match in ui_options:
+                for match in ui_options:
                     if type(match).__name__ == pattern_name:
                         if occurrence == counter:
                             pattern_match = match
-                            sdfg = s
                             break
                         counter = counter + 1
 
@@ -261,6 +261,7 @@ class SDFGOptimizer(Optimizer):
 
             match_id = (str(occurrence) if pattern_name is None else
                         '%s$%d' % (pattern_name, occurrence))
+            sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
             print('You selected (%s) pattern %s with parameters %s' %
                   (match_id, pattern_match.print_match(sdfg), str(param_dict)))
 
