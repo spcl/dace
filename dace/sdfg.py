@@ -4024,34 +4024,34 @@ def all_transients(dfg):
         visited.add(node.data)
         yield node.data
 
+	
+def _transients_in_scope(sdfg, scope, scope_dict):
+    return set(node.data for node in scope_dict[scope.entry if scope else scope]
+               if isinstance(node, nd.AccessNode) and
+               sdfg.arrays[node.data].transient)
+
 
 def local_transients(sdfg, dfg, entry_node):
     """ Returns transients local to the scope defined by the specified entry
         node in the dataflow graph. """
-    scope_dict = dfg.scope_dict(node_to_children=False)
-    shared_transients = set(sdfg.shared_transients())
-    in_scope = set()
-    out_scope = set()
-    for node in dfg.nodes():
-        if not isinstance(node, nd.AccessNode):
-            continue
-        if not node.desc(sdfg).transient:
-            continue
-        if node.data in shared_transients:
-            continue
-        if scope_dict[node] == entry_node:
-            in_scope.add(node.data)
-        else:
-            # Since nodes can appear in multiple places, make sure it's not
-            # present anywhere else by keeping track of transients not in this
-            # scope
-            out_scope.add(node.data)
-    transients = dtypes.deduplicate([
-        n.data for n in dfg.nodes()
-        if isinstance(n, dace.graph.nodes.AccessNode) and n.data in in_scope
-        and n.data not in out_scope
-    ])
-    return transients
+    state: SDFGState = dfg._graph
+    scope_dict = state.scope_dict(node_to_children=True)
+    scope_tree = state.scope_tree()
+    current_scope = scope_tree[entry_node]
+
+    # Start by setting shared transients as defined
+    defined_transients = set(sdfg.shared_transients())
+
+    # Get access nodes in current scope
+    transients = _transients_in_scope(sdfg, current_scope, scope_dict)
+
+    # Add transients defined in parent scopes
+    while current_scope is not None:
+        current_scope = current_scope.parent
+        defined_transients.update(
+            _transients_in_scope(sdfg, current_scope, scope_dict))
+
+    return sorted(list(transients - defined_transients))
 
 
 def compile(function_or_sdfg, *args, **kwargs):
