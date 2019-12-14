@@ -562,7 +562,7 @@ class SDFGReferenceProperty(Property):
 
         # Parse the string of the JSON back into an SDFG object
         # Need to use regular json.loads instead of dace.serialize.dumps
-        return dace.SDFG.from_json(json.loads(obj))
+        return dace.SDFG.from_json(json.loads(obj), context)
 
 
 class RangeProperty(Property):
