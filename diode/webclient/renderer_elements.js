@@ -375,6 +375,40 @@ class Tasklet extends Node {
         ctx.fill();
         ctx.fillStyle = "black";
 
+        let ppp = renderer.canvas_manager.points_per_pixel();
+        if (ppp < TASKLET_LOD) {
+            // If we are close to the tasklet, show its contents
+            let code = this.attributes().code.string_data;
+            let lines = code.split('\n');
+            let maxline = 0, maxline_len = 0;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].length > maxline_len) {
+                    maxline = i;
+                    maxline_len = lines[i].length;
+                }
+            }
+            let oldfont = ctx.font;
+            ctx.font = "10px courier new";
+            let textmetrics = ctx.measureText(lines[maxline]);
+
+            // Fit font size to 80% height and width of tasklet
+            let height = lines.length * LINEHEIGHT*1.05;
+            let width = textmetrics.width;
+            let TASKLET_WRATIO = 0.9, TASKLET_HRATIO = 0.5;
+            let hr = height / (this.height * TASKLET_HRATIO);
+            let wr = width / (this.width * TASKLET_WRATIO);
+            let FONTSIZE = Math.min(10 / hr, 10 / wr);
+
+            ctx.font = FONTSIZE + "px courier new";
+            let y = this.y - height / 8;
+            for (let i = 0; i < lines.length; i++)
+                ctx.fillText(lines[i], this.x - (this.width*TASKLET_WRATIO) / 2.0,
+                          y + i*FONTSIZE*1.05);
+
+            ctx.font = oldfont;
+            return;
+        }
+
         let textmetrics = ctx.measureText(this.label());
         ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
     }
@@ -397,7 +431,7 @@ class Reduce extends Node {
 
         let far_label = this.label().substring(4, this.label().indexOf(','));
         drawAdaptiveText(ctx, renderer, far_label,
-                         this.label(), this.x, this.y,
+                         this.label(), this.x, this.y - this.height*0.2,
                          this.width, this.height,
                          SCOPE_LOD);
     }
