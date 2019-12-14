@@ -225,8 +225,7 @@ class Edge extends SDFGElement {
     }
 
     set_layout() {
-        this.width = this.data.width;
-        this.height = this.data.height;
+        // NOTE: Setting this.width/height will disrupt dagre in self-edges
     }
 
     intersect(x, y, w = 0, h = 0) {
