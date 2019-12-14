@@ -332,8 +332,17 @@ class ScopeNode extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
-        var textmetrics = ctx.measureText(this.label());
-        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
+
+        let far_label = this.attributes().label;
+        if (this.scopeend()) {  // Get label from scope entry
+            let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
+            far_label = entry.attributes.label;
+        }
+
+        drawAdaptiveText(ctx, renderer, far_label,
+                         this.label(), this.x, this.y, 
+                         this.width, this.height, 
+                         SCOPE_LOD);
     }
 }
 
@@ -365,6 +374,7 @@ class Tasklet extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
+
         let textmetrics = ctx.measureText(this.label());
         ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
     }
@@ -384,8 +394,12 @@ class Reduce extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
-        let textmetrics = ctx.measureText(this.label());
-        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y - this.height / 4.0 + LINEHEIGHT / 2.0);
+
+        let far_label = this.label().substring(4, this.label().indexOf(','));
+        drawAdaptiveText(ctx, renderer, far_label,
+                         this.label(), this.x, this.y,
+                         this.width, this.height,
+                         SCOPE_LOD);
     }
 }
 
@@ -557,6 +571,35 @@ function offset_state(state, state_graph, offset) {
 
 
 ///////////////////////////////////////////////////////
+
+function drawAdaptiveText(ctx, renderer, far_text, close_text,
+                          x, y, w, h, ppp_thres, max_font_size=50,
+                          font_multiplier=16) {
+    let ppp = renderer.canvas_manager.points_per_pixel();
+    let label = close_text;
+    let FONTSIZE = Math.min(ppp * font_multiplier, max_font_size);
+    let yoffset = LINEHEIGHT / 2.0;
+    let oldfont = ctx.font;
+    if (ppp >= ppp_thres) { // Far text
+        ctx.font = FONTSIZE + "px sans-serif";
+        label = far_text;
+        yoffset = FONTSIZE / 2.0 - h / 6.0;
+    }
+
+    let textmetrics = ctx.measureText(label);
+    let tw = textmetrics.width;
+    if (ppp >= ppp_thres && tw > w) {
+        FONTSIZE = FONTSIZE / (tw / w);
+        ctx.font = FONTSIZE + "px sans-serif";
+        yoffset = FONTSIZE / 2.0 - h / 6.0;
+        tw = w;
+    }
+
+    ctx.fillText(label, x - tw / 2.0, y + yoffset);
+
+    if (ppp >= ppp_thres)
+        ctx.font = oldfont;
+}
 
 function drawHexagon(ctx, x, y, w, h, offset) {
     let topleft = {x: x - w / 2.0, y: y - h / 2.0};
