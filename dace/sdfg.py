@@ -283,7 +283,8 @@ class SDFG(OrderedDiGraph):
                 dace.serialize.dumps(attrs['constants_prop'])),
             parent=context_info['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(
+            ret, json_obj, ignore_properties={'constants_prop'})
 
         for n in nodes:
             nci = copy.deepcopy(context_info)
@@ -527,7 +528,15 @@ class SDFG(OrderedDiGraph):
         if self._parent_sdfg is not None:
             result.update(self._parent_sdfg.constants)
 
-        result.update({k: v[1] for k, v in self.constants_prop.items()})
+        def cast(dtype: dt.Data, value: Any):
+            """ Cast a value to the given data type. """
+            if isinstance(dtype, dt.Array):
+                return value
+            elif isinstance(dtype, dt.Scalar):
+                return dtype.dtype(value)
+            raise TypeError('Unsupported data type %s' % dtype)
+
+        result.update({k: cast(*v) for k, v in self.constants_prop.items()})
         return result
 
     def add_constant(self, name: str, value: Any):
@@ -545,7 +554,6 @@ class SDFG(OrderedDiGraph):
                 return dt.Scalar(type(obj))
             elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
                 return dt.Scalar(dtypes.DTYPE_TO_TYPECLASS[type(obj)])
-            print(obj)
             raise TypeError('Unrecognized constant type: %s' % type(obj))
 
         self.constants_prop[name] = (get_type(value), value)
@@ -1579,9 +1587,10 @@ subgraph cluster_state_{state} {{
         })
 
         # Update constants
-        self.add_constants(
-            {k: (symbolic.symbol.s_types[k], v)
-             for k, v in syms.items()})
+        self.add_constants({
+            k: (dt.Scalar(symbolic.symbol.s_types[k]), v)
+            for k, v in syms.items()
+        })
 
     def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.

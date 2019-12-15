@@ -583,7 +583,7 @@ if __name__ == "__main__":
         sdfg = make_sdfg(False)
         sdfg.specialize()
         N.set(args["N"])
-    sdfg.add_constant("num_stages", num_stages)
+    sdfg.add_constant("num_stages", dace.int32(num_stages))
 
     ratio = dtype(args["ratio"])
 
