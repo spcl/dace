@@ -46,7 +46,7 @@ if __name__ == "__main__":
     # Run DaCe program
 
     sdfg = stencil3x3.to_sdfg()
-    sdfg.add_constants({'kernel': KERNEL})
+    sdfg.add_constant('kernel', KERNEL)
     sdfg(A=A, B=B, N=N)
 
     # Regression

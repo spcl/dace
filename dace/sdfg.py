@@ -201,7 +201,7 @@ class SDFG(OrderedDiGraph):
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
-                 constants: Dict[str, Any] = None,
+                 constants: Dict[str, Tuple[dt.Data, Any]] = None,
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
@@ -220,13 +220,10 @@ class SDFG(OrderedDiGraph):
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        #if not isinstance(arg_types, collections.OrderedDict):
-        #    raise TypeError
-
-        #self._arg_types = arg_types  # OrderedDict(str, typeclass)
-        #self._constants = constants  # type: Dict[str, Any]
         self.arg_types = arg_types or collections.OrderedDict()
-        self.constants_prop = constants or {}
+        self.constants_prop = {}
+        if constants is not None:
+            self.add_constants(constants)
 
         self._propagate = propagate
         self._parent = parent
@@ -530,23 +527,42 @@ class SDFG(OrderedDiGraph):
         if self._parent_sdfg is not None:
             result.update(self._parent_sdfg.constants)
 
-        #result.update(self._constants)
-        result.update(self.constants_prop)
+        result.update({k: v[1] for k, v in self.constants_prop.items()})
         return result
 
-    def add_constants(self, new_constants: Dict[str, Any]):
-        """ Adds new compile-time constants to this SDFG.
-            :param new_constants: Dictionary of new constants to add.
+    def add_constant(self, name: str, value: Any):
+        """ Adds/updates a new compile-time constant to this SDFG. A constant
+            may either be a scalar or a numpy ndarray thereof.
+            :param name: The name of the constant.
+            :param value: The constant value.
         """
-        #self._constants.update(new_constants)
+
+        def get_type(obj):
+            if isinstance(obj, np.ndarray):
+                return dt.Array(
+                    dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type], shape=obj.shape)
+            elif isinstance(obj, dtypes.typeclass):
+                return dt.Scalar(type(obj))
+            elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
+                return dt.Scalar(dtypes.DTYPE_TO_TYPECLASS[type(obj)])
+            print(obj)
+            raise TypeError('Unrecognized constant type: %s' % type(obj))
+
+        self.constants_prop[name] = (get_type(value), value)
+
+    def add_constants(self, new_constants: Dict[str, Tuple[dt.Data, Any]]):
+        """ Adds new compile-time constants to this SDFG.
+            :param new_constants: Dictionary of new constants
+                                  (name -> (type, value)) to add.
+        """
         self.constants_prop.update(new_constants)
 
     def reset_constants(self, constants: Dict[str, Any]):
         """ Resets compile-time constants of this SDFG to a given dictionary.
             :param constants: Dictionary of new constants to set.
         """
-        #self._constants = constants
-        self.constants_prop = constants
+        self.constants_prop = {}
+        self.add_constants(constants)
 
     @property
     def propagate(self):
@@ -1563,7 +1579,9 @@ subgraph cluster_state_{state} {{
         })
 
         # Update constants
-        self.constants_prop.update(syms)
+        self.add_constants(
+            {k: (symbolic.symbol.s_types[k], v)
+             for k, v in syms.items()})
 
     def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.

@@ -1681,7 +1681,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if isinstance(v, data.Scalar):
                 self.sdfg.add_symbol(k, v.dtype, override_dtype=True)
         # Add constants
-        self.sdfg.add_constants(constants)
+        for cstname, cstval in constants.items():
+            self.sdfg.add_constant(cstname, cstval)
 
         # Add symbols. TODO: more elegant way
         for arr in scope_arrays.values():
@@ -2585,7 +2586,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
-                    }, {'__inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
+                    },
+                    {'__inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
                     '__out = __inp', {'__out': memlet},
                     external_edges=True)
         else:
@@ -2696,7 +2698,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         '__in1': in1_memlet,
                         '__in2': in2_memlet
                     },
-                    '__out = __in1 {op} __in2'.format(op=op), {'__out': out_memlet},
+                    '__out = __in1 {op} __in2'.format(op=op),
+                    {'__out': out_memlet},
                     external_edges=True)
         else:
             if op_subset.num_elements() != 1:
@@ -2773,9 +2776,8 @@ class ProgramVisitor(ExtNodeVisitor):
         inner_indices = set(non_squeezed)
 
         if access_type == 'r':
-            self.inputs[var_name] = (dace.Memlet(parent_name,
-                                                 rng.num_elements(), rng, 1),
-                                     inner_indices)
+            self.inputs[var_name] = (dace.Memlet(
+                parent_name, rng.num_elements(), rng, 1), inner_indices)
         else:
             self.outputs[var_name] = (dace.Memlet(parent_name,
                                                   rng.num_elements(), rng, 1),
@@ -3062,8 +3064,8 @@ class ProgramVisitor(ExtNodeVisitor):
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data == name:
                     visited_state_data.add(node.data)
-                    if (node.data not in visited_data and
-                        state.in_degree(node) == 0):
+                    if (node.data not in visited_data
+                            and state.in_degree(node) == 0):
                         return True
             visited_data = visited_data.union(visited_state_data)
 
@@ -3120,7 +3122,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
                     (type(func).__name__, funcname))
-            
+
             # Change transient names
             for arrname, array in sdfg.arrays.items():
                 if array.transient and arrname[:5] == '__tmp':
@@ -3165,8 +3167,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     name, rng, atype = access_key
                     if atype == 'r':
                         del self.accesses[access_key]
-                        access_value = self._add_write_access(name, rng, node,
-                                                              new_name=vname)
+                        access_value = self._add_write_access(
+                            name, rng, node, new_name=vname)
                         memlet.data = vname
                 if aname in self.inputs.keys():
                     # Delete input
@@ -3207,15 +3209,16 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if output_slices:
                 assign_node = ast.Assign()
-                targets= []
+                targets = []
                 value = []
                 for t, v in output_slices:
                     targets.append(t)
                     value.append(v)
-                assign_node = ast.Assign(targets=ast.Tuple(elts=targets),
-                                         value=ast.Tuple(elts=value),
-                                         lineno=node.lineno,
-                                         col_offset=node.col_offset)
+                assign_node = ast.Assign(
+                    targets=ast.Tuple(elts=targets),
+                    value=ast.Tuple(elts=value),
+                    lineno=node.lineno,
+                    col_offset=node.col_offset)
                 return self._visit_assign(assign_node, assign_node.targets,
                                           None)
 
