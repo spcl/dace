@@ -3648,7 +3648,7 @@ class DIODE {
             </div>
         </div>
     </label>
-    <input id="file-select" type="file"  accept=".py,.m" style="position:absolute;"/>
+    <input id="file-select" type="file"  accept=".py,.m,.sdfg" style="position:absolute;"/>
 </div>
 `,
             buttons: '',
@@ -3778,6 +3778,14 @@ class DIODE {
         this.createNewProject();
 
         let millis = this.getPseudorandom();
+
+        // Assuming SDFG files start with {
+        if (content[0] == '{') {
+            // Prettify JSON object, if not pretty
+            if (content.split('\n').length == 1)
+                content = JSON.stringify(JSON.parse(content), null, 2);
+        }
+
 
         let config = {
             title: "CodeIn",
@@ -5690,6 +5698,15 @@ class DIODE {
 
             let cis = values['sdfg_object'] != undefined;
             let cval = values['input_code'];
+
+            // Assuming SDFG files start with {
+            if (cval[0] == '{') {
+                let sd = parse_sdfg(cval);
+                values['sdfg_object'] = {};
+                values['sdfg_object'][sd.attributes.name] = cval;
+                
+                cis = true;
+            }
 
             if(cis) {
                 cval = values['sdfg_object'];
