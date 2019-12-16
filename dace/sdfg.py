@@ -223,7 +223,7 @@ class SDFG(OrderedDiGraph):
         self.arg_types = arg_types or collections.OrderedDict()
         self.constants_prop = {}
         if constants is not None:
-            self.add_constants(constants)
+            self.constants_prop.update(constants)
 
         self._propagate = propagate
         self._parent = parent
@@ -557,20 +557,6 @@ class SDFG(OrderedDiGraph):
             raise TypeError('Unrecognized constant type: %s' % type(obj))
 
         self.constants_prop[name] = (get_type(value), value)
-
-    def add_constants(self, new_constants: Dict[str, Tuple[dt.Data, Any]]):
-        """ Adds new compile-time constants to this SDFG.
-            :param new_constants: Dictionary of new constants
-                                  (name -> (type, value)) to add.
-        """
-        self.constants_prop.update(new_constants)
-
-    def reset_constants(self, constants: Dict[str, Any]):
-        """ Resets compile-time constants of this SDFG to a given dictionary.
-            :param constants: Dictionary of new constants to set.
-        """
-        self.constants_prop = {}
-        self.add_constants(constants)
 
     @property
     def propagate(self):
@@ -1587,10 +1573,8 @@ subgraph cluster_state_{state} {{
         })
 
         # Update constants
-        self.add_constants({
-            k: (dt.Scalar(symbolic.symbol.s_types[k]), v)
-            for k, v in syms.items()
-        })
+        for k, v in syms.items():
+            self.add_constant(k, v)
 
     def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.
