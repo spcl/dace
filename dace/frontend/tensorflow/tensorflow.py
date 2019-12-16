@@ -2039,12 +2039,12 @@ class TFSession:
                 inputs={'x', 'f'},
                 outputs={'y'},
                 code='''
-                     cudnnSetStream(cudnn_handle, __dace_current_stream);
+                     cudnnSetStream(cudnn_handle_{i}, __dace_current_stream);
                      float alpha = 1.0, beta = 0.0;
-                     checkCUDNN(cudnnConvolutionForward(cudnn_handle, &alpha, xDesc_{i}, x,
+                     checkCUDNN(cudnnConvolutionForward(cudnn_handle_{i}, &alpha, xDesc_{i}, x,
                                              fDesc_{i}, f,
                                              convDesc_{i}, algo_{i},
-                                             workSpace, workSpaceSizeInBytes,
+                                             workSpace_{i}, workSpaceSizeInBytes_{i},
                                              &beta,
                                              yDesc_{i}, y));
                 '''.format(i=local_ctr),
@@ -2055,14 +2055,18 @@ class TFSession:
                 self.graph.set_global_code(''' 
                     #include <cudnn.h>
                     #include <iostream>
-                    cudnnHandle_t cudnn_handle;
+                    cudnnHandle_t cudnn_handle_{i};
                     cudnnTensorDescriptor_t xDesc_{i};
                     cudnnFilterDescriptor_t fDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnConvolutionFwdAlgo_t algo_{i};
-                    size_t workSpaceSizeInBytes = 0;
-                    void* workSpace{{nullptr}};
+                    size_t workSpaceSizeInBytes_{i} = 0;
+                    void* workSpace_{i}{{nullptr}};
+                    int y_first = 0;
+                    int yc = 0;
+                    int yh = 0;
+                    int yw = 0;
                     
                     #define checkCUDNN(expression)                           \\
                     {{                                                       \\
@@ -2074,16 +2078,18 @@ class TFSession:
                 '''.format(i=local_ctr))
             else:
                 self.graph.set_global_code(self.graph.global_code + '''
+                    cudnnHandle_t cudnn_handle_{i};
                     cudnnTensorDescriptor_t xDesc_{i};
                     cudnnFilterDescriptor_t fDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnConvolutionFwdAlgo_t algo_{i};
+                    size_t workSpaceSizeInBytes_{i} = 0;
+                    void* workSpace_{i}{{nullptr}};
                     '''.format(i=local_ctr))
 
-            self.graph.set_init_code( '''
-                cudnnCreate(&cudnn_handle);
-                
+            init_code = '''
+                cudnnCreate(&cudnn_handle_{i});
                 checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
                 checkCUDNN(cudnnSetTensor4dDescriptor(xDesc_{i},
                                            /*format=*/CUDNN_TENSOR_NHWC,
@@ -2112,23 +2118,23 @@ class TFSession:
                                                 /*dilation_width=*/{dilw},
                                                 /*mode=*/CUDNN_CROSS_CORRELATION,
                                                 /*computeType=*/CUDNN_DATA_FLOAT));
-                int yn = 0;
-                int yc = 0;
-                int yh = 0;
-                int yw = 0;
+                y_first = 0;
+                yc = 0;
+                yh = 0;
+                yw = 0;
                 checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
-                                                                  &yn, &yc, &yh, &yw));
+                                                                  &y_first , &yc, &yh, &yw));
 
                 cudnnCreateTensorDescriptor(&yDesc_{i});
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
                                             /*format=*/CUDNN_TENSOR_NHWC,
                                             /*dataType=*/CUDNN_DATA_FLOAT,
-                                            /*batch_size=*/yn,
+                                            /*batch_size=*/y_first ,
                                             /*channels=*/yc,
                                             /*image_height=*/yh,
                                             /*image_width=*/yw));
 
-                checkCUDNN(cudnnGetConvolutionForwardAlgorithm(cudnn_handle,
+                checkCUDNN(cudnnGetConvolutionForwardAlgorithm(cudnn_handle_{i},
                                                  xDesc_{i},
                                                  fDesc_{i},
                                                  convDesc_{i},
@@ -2137,19 +2143,23 @@ class TFSession:
                                                  /*memoryLimitInBytes=*/0,
                                                  &algo_{i}));
 
-                checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(cudnn_handle,
+                checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(cudnn_handle_{i},
                                                          xDesc_{i},
                                                          fDesc_{i},
                                                          convDesc_{i},
                                                          yDesc_{i},
                                                          algo_{i},
-                                                         &workSpaceSizeInBytes));
+                                                         &workSpaceSizeInBytes_{i}));
                 
-                cudaMalloc(&workSpace, workSpaceSizeInBytes);
+                cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
             '''.format( N=image_dims_list[0], C=image_dims_list[3], H=image_dims_list[1], W=image_dims_list[2],
                         K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                        vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_ctr))
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
+                        vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_ctr)
+            if len(self.graph.init_code) == 0:
+                self.graph.set_init_code(init_code)
+            else:
+                self.graph.set_init_code(self.graph.init_code + init_code)
+            self.graph.set_exit_code('cudnnDestroy(cudnn_handle_{i});'.format(i=local_ctr))
 
             state.add_edge(image, None, tasklet, 'x', 
                            Memlet.from_array(image.label, image.desc(self.graph)))
@@ -2939,11 +2949,11 @@ class TFSession:
                 inputs={'w', 'dy'},
                 outputs={'dx'},
                 code='''
-                    cudnnSetStream(cudnn_handle, __dace_current_stream);          
+                    cudnnSetStream(cudnn_handle_{i}, __dace_current_stream);          
                     float alpha = 1.0, beta = 0.0;
-                    checkCUDNN(cudnnConvolutionBackwardData(cudnn_handle, &alpha, fDesc_{i}, w,
+                    checkCUDNN(cudnnConvolutionBackwardData(cudnn_handle_{i}, &alpha, fDesc_{i}, w,
                                                             yDesc_{i}, dy, convDesc_{i}, algo_{i},
-                                                            workSpace, workSpaceSizeInBytes,
+                                                            workSpace_{i}, workSpaceSizeInBytes_{i},
                                                             &beta, xDesc_{i}, dx));
                 '''.format(i=local_count),
                 language=dace.Language.CPP,
@@ -2953,14 +2963,19 @@ class TFSession:
                 self.graph.set_global_code(''' 
                     #include <cudnn.h>
                     #include <iostream>
-                    cudnnHandle_t cudnn_handle;
+                    cudnnHandle_t cudnn_handle_{i};
                     cudnnFilterDescriptor_t fDesc_{i};
                     cudnnTensorDescriptor_t xDesc_{i};
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionBwdDataAlgo_t algo_{i};
-                    size_t workSpaceSizeInBytes = 0;
-                    void* workSpace{{nullptr}};
+                    size_t workSpaceSizeInBytes_{i} = 0;
+                    void* workSpace_{i}{{nullptr}};
+                    int y_first = 0;
+                    int yc = 0;
+                    int yh = 0;
+                    int yw = 0;
+                    
                     
                     #define checkCUDNN(expression)                           \\
                     {{                                                       \\
@@ -2972,14 +2987,17 @@ class TFSession:
                 '''.format(i=local_count))
             else:
                 self.graph.set_global_code(self.graph.global_code + '''
+                    cudnnHandle_t cudnn_handle_{i};
                     cudnnFilterDescriptor_t fDesc_{i};
                     cudnnTensorDescriptor_t xDesc_{i};
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionBwdDataAlgo_t algo_{i};
+                    size_t workSpaceSizeInBytes_{i} = 0;
+                    void* workSpace_{i}{{nullptr}};
                 '''.format(i=local_count))
-            self.graph.set_init_code('''
-                cudnnCreate(&cudnn_handle);
+            init_code = '''
+                cudnnCreate(&cudnn_handle_{i});
                 
                 cudnnCreateFilterDescriptor(&fDesc_{i});
                 checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
@@ -3010,34 +3028,38 @@ class TFSession:
                                                /*mode=*/CUDNN_CROSS_CORRELATION,
                                                /*computeType=*/CUDNN_DATA_FLOAT));
 
-                int yn = 0;
-                int yc = 0;
-                int yh = 0;
-                int yw = 0;
+                y_first = 0;
+                yc = 0;
+                yh = 0;
+                yw = 0;
                 checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
-                                                                 &yn, &yc, &yh, &yw));
+                                                                 &y_first , &yc, &yh, &yw));
 
                 checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
                                            /*format=*/CUDNN_TENSOR_NHWC,
                                            /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/yn,
+                                           /*batch_size=*/y_first ,
                                            /*channels=*/yc,
                                            /*height=*/yh,
                                            /*width=*/yw));
 
                 checkCUDNN(cudnnGetConvolutionBackwardDataAlgorithm(
-                            cudnn_handle, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i},
+                            cudnn_handle_{i}, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i},
                             CUDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, &algo_{i}));
 
                 checkCUDNN(cudnnGetConvolutionBackwardDataWorkspaceSize(
-                    cudnn_handle, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i}, algo_{i}, &workSpaceSizeInBytes));
+                    cudnn_handle_{i}, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i}, algo_{i}, &workSpaceSizeInBytes_{i}));
 
-                cudaMalloc(&workSpace, workSpaceSizeInBytes);   
+                cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});   
             '''.format(N=output_dims_list[0], C=filter_dims_list[2], H=output_dims_list[1], W=output_dims_list[2],
                        K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count))
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
+                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count)
+            if len(self.graph.init_code) == 0:
+                self.graph.set_init_code(init_code)
+            else:
+                self.graph.set_init_code(self.graph.init_code + init_code)
+            self.graph.set_exit_code('cudnnDestroy(cudnn_handle_{i});'.format(i=local_count))
 
             state.add_edge(gradient, None, tasklet, 'dy', 
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
@@ -3332,11 +3354,11 @@ class TFSession:
                 inputs={'x', 'dy'},
                 outputs={'dw'},
                 code='''
-                    cudnnSetStream(cudnn_handle, __dace_current_stream);          
+                    cudnnSetStream(cudnn_handle_{i}, __dace_current_stream);          
                     float alpha = 1.0, beta = 0.0;
-                    checkCUDNN(cudnnConvolutionBackwardFilter(cudnn_handle, &alpha, xDesc_{i}, x,
+                    checkCUDNN(cudnnConvolutionBackwardFilter(cudnn_handle_{i}, &alpha, xDesc_{i}, x,
                                                             yDesc_{i}, dy, convDesc_{i}, algo_{i},
-                                                            workSpace, workSpaceSizeInBytes,
+                                                            workSpace_{i}, workSpaceSizeInBytes_{i},
                                                             &beta, fDesc_{i}, dw));
                 '''.format(i=local_count),
                 language=dace.Language.CPP,
@@ -3347,14 +3369,18 @@ class TFSession:
                 self.graph.set_global_code(''' 
                     #include <cudnn.h>
                     #include <iostream>
-                    cudnnHandle_t cudnn_handle;
+                    cudnnHandle_t cudnn_handle_{i};
                     cudnnTensorDescriptor_t xDesc_{i};
                     cudnnFilterDescriptor_t fDesc_{i};
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionBwdFilterAlgo_t algo_{i};
-                    size_t workSpaceSizeInBytes = 0;
-                    void* workSpace{{nullptr}};
+                    int y_first = 0;
+                    int yc = 0;
+                    int yh = 0;
+                    int yw = 0;
+                    size_t workSpaceSizeInBytes_{i} = 0;
+                    void* workSpace_{i}{{nullptr}};
                     
                     #define checkCUDNN(expression)                           \\
                     {{                                                       \\
@@ -3366,72 +3392,79 @@ class TFSession:
                 '''.format(i=local_count))
             else:
                 self.graph.set_global_code(self.graph.global_code + '''
+                    cudnnHandle_t cudnn_handle_{i};
                     cudnnTensorDescriptor_t xDesc_{i};
                     cudnnFilterDescriptor_t fDesc_{i};
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionBwdFilterAlgo_t algo_{i};
+                    size_t workSpaceSizeInBytes_{i} = 0;
+                    void* workSpace_{i}{{nullptr}};
                 '''.format(i=local_count))
-            self.graph.set_init_code('''
-                cudnnCreate(&cudnn_handle);
-                checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
-                checkCUDNN(cudnnSetTensor4dDescriptor(xDesc_{i},
-                                           /*format=*/CUDNN_TENSOR_NHWC,
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/{N},
-                                           /*channels=*/{C},
-                                           /*height=*/{H},
-                                           /*width=*/{W}));
-
-                cudnnCreateFilterDescriptor(&fDesc_{i});
-                checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*format=*/CUDNN_TENSOR_NHWC,
-                                           /*out_channels=*/{K},
-                                           /*in_channels=*/{C},
-                                           /*kernel_height=*/{R},
-                                           /*kernel_width=*/{S}));
-
-                cudnnCreateConvolutionDescriptor(&convDesc_{i});
-                checkCUDNN(cudnnSetConvolution2dDescriptor(convDesc_{i},
-                                               /*pad_height=*/{padh},
-                                               /*pad_width=*/{padw},
-                                               /*vertical_stride=*/{vstr},
-                                               /*horizontal_stride=*/{hstr},
-                                               /*dilation_height=*/{dilh},
-                                               /*dilation_width=*/{dilw},
-                                               /*mode=*/CUDNN_CROSS_CORRELATION,
-                                               /*computeType=*/CUDNN_DATA_FLOAT));
-
-                int yn = 0;
-                int yc = 0;
-                int yh = 0;
-                int yw = 0;
-                checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
-                                                                 &yn, &yc, &yh, &yw));
-
-                checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
-                checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
-                                           /*format=*/CUDNN_TENSOR_NHWC,
-                                           /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/yn,
-                                           /*channels=*/yc,
-                                           /*height=*/yh,
-                                           /*width=*/yw));
-
-                checkCUDNN(cudnnGetConvolutionBackwardFilterAlgorithm(cudnn_handle,
-                                        xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i},
-                                        CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &algo_{i}));
-
-                checkCUDNN(cudnnGetConvolutionBackwardFilterWorkspaceSize(
-                    cudnn_handle, xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i}, algo_{i}, &workSpaceSizeInBytes));
-
-                cudaMalloc(&workSpace, workSpaceSizeInBytes);
-            '''.format(format=data_format, N=image_dims_list[0], C=image_dims_list[3], H=image_dims_list[1],
-                       W=image_dims_list[2], K=output_dims_list[3], R=output_dims_list[0], S=output_dims_list[1],
-                       padh=padh, padw=padw, vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2],
-                       i=local_count))
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle);')
+            init_code = '''
+                    cudnnCreate(&cudnn_handle_{i});
+                    checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
+                    checkCUDNN(cudnnSetTensor4dDescriptor(xDesc_{i},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*batch_size=*/{N},
+                                               /*channels=*/{C},
+                                               /*height=*/{H},
+                                               /*width=*/{W}));
+    
+                    cudnnCreateFilterDescriptor(&fDesc_{i});
+                    checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*format=*/CUDNN_TENSOR_NHWC,
+                                               /*out_channels=*/{K},
+                                               /*in_channels=*/{C},
+                                               /*kernel_height=*/{R},
+                                               /*kernel_width=*/{S}));
+    
+                    cudnnCreateConvolutionDescriptor(&convDesc_{i});
+                    checkCUDNN(cudnnSetConvolution2dDescriptor(convDesc_{i},
+                                                   /*pad_height=*/{padh},
+                                                   /*pad_width=*/{padw},
+                                                   /*vertical_stride=*/{vstr},
+                                                   /*horizontal_stride=*/{hstr},
+                                                   /*dilation_height=*/{dilh},
+                                                   /*dilation_width=*/{dilw},
+                                                   /*mode=*/CUDNN_CROSS_CORRELATION,
+                                                   /*computeType=*/CUDNN_DATA_FLOAT));
+    
+                    y_first = 0;
+                    yc = 0;
+                    yh = 0;
+                    yw = 0;
+                    checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
+                                                                     &y_first , &yc, &yh, &yw));
+    
+                    checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
+                    checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
+                                               /*format=*/CUDNN_TENSOR_NHWC,
+                                               /*dataType=*/CUDNN_DATA_FLOAT,
+                                               /*batch_size=*/y_first ,
+                                               /*channels=*/yc,
+                                               /*height=*/yh,
+                                               /*width=*/yw));
+    
+                    checkCUDNN(cudnnGetConvolutionBackwardFilterAlgorithm(cudnn_handle_{i},
+                                            xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i},
+                                            CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &algo_{i}));
+    
+                    checkCUDNN(cudnnGetConvolutionBackwardFilterWorkspaceSize(
+                        cudnn_handle_{i}, xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i}, algo_{i}, &workSpaceSizeInBytes_{i}));
+    
+                    cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
+                '''.format(format=data_format, N=image_dims_list[0], C=image_dims_list[3], H=image_dims_list[1],
+                           W=image_dims_list[2], K=output_dims_list[3], R=output_dims_list[0], S=output_dims_list[1],
+                           padh=padh, padw=padw, vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2],
+                           i=local_count)
+            if len(self.graph.init_code) == 0:
+                self.graph.set_init_code(init_code)
+            else:
+                self.graph.set_init_code(self.graph.init_code + init_code)
+            self.graph.set_exit_code('cudnnDestroy(cudnn_handle_{i});'.format(i=local_count))
 
             # change filter format from KRSC to RSCK for tensorflow
             mapInput = self.map_output_filter(node, [1, 2, 3, 0], output, output_dims)
