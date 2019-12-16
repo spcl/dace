@@ -71,7 +71,7 @@ function sdfg_property_to_string(prop) {
             preview += sdfg_property_to_string(index) + ', ';
         }
         return preview.slice(0, -2) + ']';
-    } else if (prop.type === "Range") {
+    } else if (prop.type === "Range" || prop.type === "subsets.Range") {
         let ranges = prop.ranges;
 
         // Generate string from range
