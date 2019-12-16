@@ -1749,41 +1749,45 @@ subgraph cluster_state_{state} {{
             Raises an InvalidSDFGError with the erroneous node/edge
             on failure.
         """
-        # SDFG-level checks
-        if not validate_name(self.name):
-            raise InvalidSDFGError("Invalid name", self, None)
+        try:
+            # SDFG-level checks
+            if not validate_name(self.name):
+                raise InvalidSDFGError("Invalid name", self, None)
 
-        if len(self.source_nodes()) > 1 and self._start_state is None:
-            raise InvalidSDFGError("Starting state undefined", self, None)
+            if len(self.source_nodes()) > 1 and self._start_state is None:
+                raise InvalidSDFGError("Starting state undefined", self, None)
 
-        if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
-            raise InvalidSDFGError("Found multiple states with the same name",
-                                   self, None)
+            if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
+                raise InvalidSDFGError(
+                    "Found multiple states with the same name", self, None)
 
-        # Validate array names
-        for name in self._arrays.keys():
-            if name is not None and not validate_name(name):
-                raise InvalidSDFGError("Invalid array name %s" % name, self,
-                                       None)
+            # Validate array names
+            for name in self._arrays.keys():
+                if name is not None and not validate_name(name):
+                    raise InvalidSDFGError("Invalid array name %s" % name,
+                                           self, None)
 
-        # Check every state separately
-        for sid, state in enumerate(self.nodes()):
-            state.validate(self, sid)
+            # Check every state separately
+            for sid, state in enumerate(self.nodes()):
+                state.validate(self, sid)
 
-        # Interstate edge checks
-        for eid, edge in enumerate(self.edges()):
+            # Interstate edge checks
+            for eid, edge in enumerate(self.edges()):
 
-            # Name validation
-            if len(edge.data.assignments) > 0:
-                for assign in edge.data.assignments.keys():
-                    if not validate_name(assign):
-                        raise InvalidSDFGInterstateEdgeError(
-                            "Invalid interstate symbol name %s" % assign, self,
-                            eid)
+                # Name validation
+                if len(edge.data.assignments) > 0:
+                    for assign in edge.data.assignments.keys():
+                        if not validate_name(assign):
+                            raise InvalidSDFGInterstateEdgeError(
+                                "Invalid interstate symbol name %s" % assign,
+                                self, eid)
 
-        # TODO: Check interstate edges with undefined symbols
+            # TODO: Check interstate edges with undefined symbols
 
-        pass
+        except InvalidSDFGError:
+            # If the SDFG is invalid, save it
+            self.save(os.path.join('_dotgraphs', 'invalid.sdfg'))
+            raise
 
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).
@@ -4025,33 +4029,34 @@ def all_transients(dfg):
         yield node.data
 
 
+def _transients_in_scope(sdfg, scope, scope_dict):
+    return set(node.data
+               for node in scope_dict[scope.entry if scope else scope]
+               if isinstance(node, nd.AccessNode)
+               and sdfg.arrays[node.data].transient)
+
+
 def local_transients(sdfg, dfg, entry_node):
     """ Returns transients local to the scope defined by the specified entry
         node in the dataflow graph. """
-    scope_dict = dfg.scope_dict(node_to_children=False)
-    shared_transients = set(sdfg.shared_transients())
-    in_scope = set()
-    out_scope = set()
-    for node in dfg.nodes():
-        if not isinstance(node, nd.AccessNode):
-            continue
-        if not node.desc(sdfg).transient:
-            continue
-        if node.data in shared_transients:
-            continue
-        if scope_dict[node] == entry_node:
-            in_scope.add(node.data)
-        else:
-            # Since nodes can appear in multiple places, make sure it's not
-            # present anywhere else by keeping track of transients not in this
-            # scope
-            out_scope.add(node.data)
-    transients = dtypes.deduplicate([
-        n.data for n in dfg.nodes()
-        if isinstance(n, dace.graph.nodes.AccessNode) and n.data in in_scope
-        and n.data not in out_scope
-    ])
-    return transients
+    state: SDFGState = dfg._graph
+    scope_dict = state.scope_dict(node_to_children=True)
+    scope_tree = state.scope_tree()
+    current_scope = scope_tree[entry_node]
+
+    # Start by setting shared transients as defined
+    defined_transients = set(sdfg.shared_transients())
+
+    # Get access nodes in current scope
+    transients = _transients_in_scope(sdfg, current_scope, scope_dict)
+
+    # Add transients defined in parent scopes
+    while current_scope is not None:
+        current_scope = current_scope.parent
+        defined_transients.update(
+            _transients_in_scope(sdfg, current_scope, scope_dict))
+
+    return sorted(list(transients - defined_transients))
 
 
 def compile(function_or_sdfg, *args, **kwargs):

@@ -308,30 +308,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             return
 
         # Apply strict state fusions greedily.
-        opt = optimizer.SDFGOptimizer(sdfg, inplace=True)
-        fusions = 0
-        arrays = 0
-        options = [
-            match for match in opt.get_pattern_matches(strict=True)
-            if isinstance(match, (StateFusion, RedundantArray))
-        ]
-        while options:
-            ssdfg = sdfg.sdfg_list[options[0].sdfg_id]
-            options[0].apply(ssdfg)
-            ssdfg.validate()
-            if isinstance(options[0], StateFusion):
-                fusions += 1
-            if isinstance(options[0], RedundantArray):
-                arrays += 1
-
-            options = [
-                match for match in opt.get_pattern_matches(strict=True)
-                if isinstance(match, (StateFusion, RedundantArray))
-            ]
-
-        if Config.get_bool('debugprint') and (fusions > 0 or arrays > 0):
-            print('Automatically applied {} strict state fusions and removed'
-                  ' {} redundant arrays.'.format(fusions, arrays))
+        sdfg.apply_strict_transformations()
 
 
 pattern_matching.Transformation.register_stateflow_pattern(GPUTransformSDFG)

@@ -13,8 +13,8 @@ from networkx.algorithms import isomorphism as iso
 
 @make_properties
 class Transformation(object):
-    """ Base class for transformations, as well as a static registry of 
-        transformations, where new transformations can be added in a 
+    """ Base class for transformations, as well as a static registry of
+        transformations, where new transformations can be added in a
         decentralized manner.
     """
 
@@ -30,7 +30,7 @@ class Transformation(object):
 
     @staticmethod
     def patterns():
-        """ Returns a list of single-state (dataflow) transformations 
+        """ Returns a list of single-state (dataflow) transformations
             currently in the registry. """
 
         pattern_list = sorted(
@@ -39,7 +39,7 @@ class Transformation(object):
 
     @staticmethod
     def stateflow_patterns():
-        """ Returns a list of multiple-state (interstate) transformations 
+        """ Returns a list of multiple-state (interstate) transformations
             currently in the registry. """
 
         pattern_list = sorted(
@@ -107,8 +107,8 @@ class Transformation(object):
 
     @staticmethod
     def expressions():
-        """ Returns a list of Graph objects that will be matched in the 
-            subgraph isomorphism phase. Used as a pre-pass before calling 
+        """ Returns a list of Graph objects that will be matched in the
+            subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
             @see Transformation.can_be_applied
         """
@@ -122,7 +122,7 @@ class Transformation(object):
             :param graph: SDFGState object if this Transformation is
                           single-state, or SDFG object otherwise.
             :param candidate: A mapping between node IDs returned from
-                              `Transformation.expressions` and the nodes in 
+                              `Transformation.expressions` and the nodes in
                               `graph`.
             :param expr_index: The list index from `Transformation.expressions`
                                that was matched.
@@ -134,8 +134,8 @@ class Transformation(object):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        """ Returns a string representation of the pattern match on the 
-            candidate subgraph. Used when identifying matches in the console 
+        """ Returns a string representation of the pattern match on the
+            candidate subgraph. Used when identifying matches in the console
             UI.
         """
         raise NotImplementedError
@@ -145,7 +145,7 @@ class Transformation(object):
             :param sdfg_id: A unique ID of the SDFG.
             :param state_id: The node ID of the SDFG state, if applicable.
             :param subgraph: A mapping between node IDs returned from
-                             `Transformation.expressions` and the nodes in 
+                             `Transformation.expressions` and the nodes in
                              `graph`.
             :param expr_index: The list index from `Transformation.expressions`
                                that was matched.
@@ -214,7 +214,7 @@ class Transformation(object):
         return type(self).__name__
 
     def print_match(self, sdfg):
-        """ Returns a string representation of the pattern match on the 
+        """ Returns a string representation of the pattern match on the
             given SDFG. Used for printing matches in the console UI.
         """
         if not isinstance(sdfg, dace.SDFG):
@@ -239,8 +239,8 @@ class Transformation(object):
 def collapse_multigraph_to_nx(graph: gr.MultiDiGraph) -> nx.DiGraph:
     """ Collapses a directed multigraph into a networkx directed graph.
 
-        In the output directed graph, each node is a number, which contains 
-        itself as node_data['node'], while each edge contains a list of the 
+        In the output directed graph, each node is a number, which contains
+        itself as node_data['node'], while each edge contains a list of the
         data from the original edges as its attribute (edge_data[0...N]).
 
         :param graph: Directed multigraph object to be collapsed.
@@ -293,11 +293,11 @@ def match_expression(graph,
                      edge_match=None,
                      pattern_match=None,
                      strict=False):
-    """ Returns a generator which yields a subgraph mapping from 
+    """ Returns a generator which yields a subgraph mapping from
         `expression_node` to `graph_node`.
         :param graph: Directed multigraph object to be searched for subgraphs.
         :param expressions: List of directed graphs, isomorphic to any
-                            (sub)graph that potentially matches a 
+                            (sub)graph that potentially matches a
                             transformation.
         :param node_match: Function for checking whether two nodes match.
         :param edge_match: Function for checking whether two edges match.

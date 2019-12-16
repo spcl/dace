@@ -48,9 +48,9 @@ class Data(object):
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
-    dtype = TypeClassProperty()
-    shape = ShapeProperty()
-    transient = Property(dtype=bool)
+    dtype = TypeClassProperty(default=dtypes.int32)
+    shape = ShapeProperty(default=[])
+    transient = Property(dtype=bool, default=False)
     storage = Property(
         dtype=dace.dtypes.StorageType,
         desc="Storage location",
@@ -63,7 +63,7 @@ class Data(object):
         default='')
     toplevel = Property(
         dtype=bool, desc="Allocate array outside of state", default=False)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, dtype, shape, transient, storage, location, toplevel,
                  debuginfo):
@@ -118,7 +118,7 @@ class Data(object):
 class Scalar(Data):
     """ Data descriptor of a scalar value. """
 
-    allow_conflicts = Property(dtype=bool)
+    allow_conflicts = Property(dtype=bool, default=False)
 
     def __init__(self,
                  dtype,
@@ -214,7 +214,7 @@ class Array(Data):
     """ Array/constant descriptor (dimensions, type and other properties). """
 
     # Properties
-    allow_conflicts = Property(dtype=bool)
+    allow_conflicts = Property(dtype=bool, default=False)
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
@@ -424,7 +424,7 @@ class Stream(Data):
     # Properties
     strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
-    buffer_size = SymbolicProperty(desc="Size of internal buffer.")
+    buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
     veclen = Property(
         dtype=int, desc="Vector length. Memlets must adhere to this.")
 

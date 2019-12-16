@@ -60,3 +60,45 @@ function replacer(name, val, orig_sdfg) {
 function stringify_sdfg(sdfg) {
     return JSON.stringify(sdfg, (name, val) => replacer(name, val, sdfg));
 }
+
+// Includes various properties and returns their string representation
+function sdfg_property_to_string(prop) {
+    if (prop === null) return prop;
+    if (prop.type === "subsets.Indices") {
+        let indices = prop.indices;
+        let preview = '[';
+        for (let index of indices) {
+            preview += sdfg_property_to_string(index) + ', ';
+        }
+        return preview.slice(0, -2) + ']';
+    } else if (prop.type === "Range" || prop.type === "subsets.Range") {
+        let ranges = prop.ranges;
+
+        // Generate string from range
+        let preview = '[';
+        for (let range of ranges) {
+            preview += sdfg_property_to_string(range.start) + ':' +
+                sdfg_property_to_string(range.end);
+            if (range.step != 1) {
+                preview += ':' + sdfg_property_to_string(range.step);
+                if (range.tile != 1)
+                    preview += ':' + sdfg_property_to_string(range.tile);
+            } else if (range.tile != 1) {
+                preview += '::' + sdfg_property_to_string(range.tile);
+            }
+            preview += ', ';
+        }
+        return preview.slice(0, -2) + ']';
+    } else if (prop.language !== undefined && prop.string_data !== undefined) {
+        // Code
+        return '<pre class="w3-code">' + prop.string_data + '</pre>';
+    } else if (prop.approx !== undefined && prop.main !== undefined) {
+        // SymExpr
+        return prop.main;
+    } else if (prop.constructor == Object) {
+        // General dictionary
+        return JSON.stringify(prop);
+    } else {
+        return prop;
+    }
+}
