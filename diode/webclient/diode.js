@@ -1672,7 +1672,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
         // create a new terminal
         let terminal_config = {
-            title: "Compilation terminal",
+            title: "Terminal",
             type: 'component',
             componentName: 'TerminalComponent',
             componentState: { created: millis }
@@ -3788,7 +3788,7 @@ class DIODE {
 
 
         let config = {
-            title: "CodeIn",
+            title: "Source Code",
             type: 'component',
             componentName: 'CodeInComponent',
             componentState: { created: millis, code_content: content }
@@ -3804,7 +3804,7 @@ class DIODE {
         let millis = this.getPseudorandom();
 
         let config = {
-            title: "DIODE settings",
+            title: "Settings",
             type: 'component',
             componentName: 'SettingsComponent',
             componentState: { created: millis }
@@ -3817,7 +3817,7 @@ class DIODE {
         let millis = this.getPseudorandom();
 
         let config = {
-            title: "Runqueue",
+            title: "Run Queue",
             type: 'component',
             componentName: 'RunqueueComponent',
             componentState: { created: millis }
@@ -4909,7 +4909,7 @@ class DIODE {
             }, val);
         }
         else if(
-            x.metatype == "str" || x.metatype == "float"
+            x.metatype == "str" || x.metatype == "float" || x.metatype == "LambdaProperty"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
@@ -5569,7 +5569,7 @@ class DIODE {
 
         let create_codeout_func = () => {
             let new_codeout_config = {
-                title: "Output code for `" + name + "`",
+                title: "Generated Code",
                 type: 'component',
                 componentName: 'CodeOutComponent',
                 componentState: { created: millis(), code: sdfg, sdfg_name: name }
@@ -5608,7 +5608,7 @@ class DIODE {
             let new_optgraph_config = {
                 type: "column",
                 content: [{
-                    title: name == "" ? "OptGraph" : "OptGraph for `" + name + "`",
+                    title: name == "" ? "Transformations" : "Transformations for `" + name + "`",
                     type: 'component',
                     componentName: 'AvailableTransformationsComponent',
                     componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
@@ -5833,7 +5833,7 @@ class DIODE {
 
         // create a new terminal
         let terminal_config = {
-            title: "Compilation terminal",
+            title: "Terminal",
             type: 'component',
             componentName: 'TerminalComponent',
             componentState: { created: millis }
