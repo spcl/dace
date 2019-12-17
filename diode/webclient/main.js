@@ -683,6 +683,7 @@ function start_DIODE() {
             let editor = ace.edit(new_element[0]);
             editor.setTheme(DIODE.themeString());
             editor.session.setMode("ace/mode/c_cpp");
+            editor.setReadOnly(true);
 
 
             diode_context.setEditorReference(editor);
