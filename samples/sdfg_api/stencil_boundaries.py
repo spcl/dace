@@ -34,7 +34,7 @@ sdfg = dace.SDFG('stencilboundaries')
 # Add arrays and kernel
 sdfg.add_array('A', [H, W], dace.float32)
 sdfg.add_array('B', [H, W], dace.float32)
-sdfg.add_constants({'KERNEL': STENCIL_KERNEL})
+sdfg.add_constant('KERNEL', STENCIL_KERNEL)
 
 mainstate = sdfg.add_state()
 
