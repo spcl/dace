@@ -1025,25 +1025,13 @@ __kernel void \\
                     "in tasklet \"{}\")".format(s, node.name))
 
     def generate_constants(self, sdfg, callsite_stream):
-        # Write constants
-        for name, val in sdfg.constants.items():
-            if isinstance(val, np.ndarray):
-                if isinstance(val, ndarray.ndarray):
-                    dtype = val.descriptor.dtype
-                else:
-                    dtype = dtypes.typeclass(val.dtype.type)
-                const_str = "__constant " + dtype.ctype + \
-                            " " + name + "[" + str(val.size) + "] = {"
-                it = np.nditer(val, order='C')
-                for i in range(val.size - 1):
-                    const_str += str(it[0]) + ", "
-                    it.iternext()
-                const_str += str(it[0]) + "};\n"
-                callsite_stream.write(const_str, sdfg)
-            else:
-                callsite_stream.write(
-                    "__constant %s %s = %s;\n" %
-                    (dtypes._CTYPES[type(val)], name, str(val)), sdfg)
+        # Use framecode's generate_constants, but substitute constexpr for
+        # __constant
+        constant_stream = CodeIOStream()
+        self._frame.generate_constants(sdfg, constant_stream)
+        constant_string = constant_stream.getvalue()
+        constant_string = constant_string.replace("constexpr", "__constant")
+        callsite_stream.write(constant_string, sdfg)
 
 
 class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
