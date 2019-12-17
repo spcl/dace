@@ -4901,7 +4901,7 @@ class DIODE {
             }, val);
         }
         else if(
-            x.metatype == "str" || x.metatype == "float"
+            x.metatype == "str" || x.metatype == "float" || x.metatype == "LambdaProperty"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
