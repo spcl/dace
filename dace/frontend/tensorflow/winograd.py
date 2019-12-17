@@ -414,18 +414,18 @@ def winograd_convolution(dace_session, tf_node):
     state = dace_session.state
     add_cublas_cusolver(dace_session.graph)
     #############Add constants for transformation matrices###############
-    dace_session.graph.add_constants({'Btrans': bt})
-    dace_session.graph.add_constants({'B': b})
+    dace_session.graph.add_constant('Btrans', bt)
+    dace_session.graph.add_constant('B', b)
     bNode = 'B'
     bTransposeNode = 'Btrans'
 
-    dace_session.graph.add_constants({'G': g})
-    dace_session.graph.add_constants({'Gtrans': gt})
+    dace_session.graph.add_constant('G', g)
+    dace_session.graph.add_constant('Gtrans', gt)
     gNode = 'G'
     gTransposeNode = 'Gtrans'
 
-    dace_session.graph.add_constants({'Atrans': at})
-    dace_session.graph.add_constants({'A': a})
+    dace_session.graph.add_constant('Atrans', at)
+    dace_session.graph.add_constant('A', a)
     aNode = 'A'
     aTransposeNode = 'Atrans'
 
