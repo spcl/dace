@@ -551,11 +551,13 @@ def make_compute_sdfg():
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Registers)
     buffer_a_tasklet = buffer_a_state.add_tasklet(
-        "buffer_a", {"a_in"}, {"a_reg", "a_out"}, "if n1 == P - p - 1:"
-        "\n\ta_reg = a_in"
-        "\nelse:"
-        "\n\tif p < P - 1:"
-        "\n\t\ta_out = a_in")
+        "buffer_a", {"a_in"}, {"a_reg", "a_out"}, "a_input = float(0)"
+          "\nif n1 == P-p-1 or p < P - 1: a_input = a_in"
+          "\nif n1 == P - p - 1:"
+          "\n\ta_reg = a_input"
+          "\nelse:"
+          "\n\tif p < P - 1:"
+          "\n\t\ta_out = a_input")
     buffer_a_state.add_memlet_path(
         A_pipe_in,
         buffer_a_tasklet,
