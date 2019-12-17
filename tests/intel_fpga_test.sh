@@ -42,7 +42,7 @@ run_sample() {
 
     #1: generate the opencl
     # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
-    echo -e ${3} | python3 ${1}.py ${@:4} 2> /dev/null|:
+    echo -e ${3} | python3 ${1}.py ${@:4}
 
     #2: compile for emulation
     cd .dacecache/$2/build
