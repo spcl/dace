@@ -5959,9 +5959,11 @@ class DIODE {
         let version_string = "1.0";
         REST_request("/dace/api/v" + version_string + "/run/status/", post_params, (xhr) => {
             if (xhr.readyState === 4 && xhr.status === 200) {
-                // #TODO: Show success/error depending on the exit code
-
-                this.toast("Execution ended", "The execution of the last run has ended", 'info');
+                // Show success/error depending on the exit code
+                if (xhr.response.endsWith(" 0"))
+                    this.toast("Execution ended", "Run ended successfully", 'info');
+                else
+                    this.toast("Execution ended", "Run failed", 'error');
 
                 // Flush remaining outputs
                 let newdata = xhr.response.substr(xhr.seenBytes);
