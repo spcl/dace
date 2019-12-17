@@ -9,6 +9,7 @@ import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
 import copy
+import multiprocessing
 import re
 from diode.remote_execution import AsyncExecutor
 
@@ -345,7 +346,7 @@ class ExecutorServer:
                         continue
 
                     def egen():
-                        yield "{'error': 'Failed to get run reference'}"
+                        yield "ERROR: Failed to get run reference"
 
                     return egen
                 return ret
@@ -426,7 +427,7 @@ class ExecutorServer:
                 'state': 'pending',
                 'reset-perfdata': False
             }
-            self._executor_queue.put(item=val)
+            self._executor_queue.put(val)
 
             self._task_dict[self._run_num] = val
             self._run_num += 1
@@ -448,25 +449,11 @@ class ExecutorServer:
         perfopts = options['perfopts']
         sdfgs, code_tuples, dace_state = compilation_output_tuple
 
-        terminal_queue = queue.Queue()
-
-        # Generator used to pass the serial output through (using HTTP1.1. streaming)
-        def output_feeder(output):
-            if isinstance(output, str):
-                # It's already in a usable format
-                pass
-            else:
-                try:
-                    output = output.decode('utf-8')
-                except UnicodeDecodeError:
-                    # Try again escaping
-                    output = output.decode('unicode_escape')
-            terminal_queue.put(output)
-
+        # Passes output through HTTP1.1 streaming (using yield)
         def runner():
             print("Trying to get lock")
             with self._run_cv:
-                output_feeder("Run starting\n")
+                yield "Run starting\n"
 
                 perfmode = perfopts['mode']
                 perfcores = perfopts['core_counts']
@@ -509,31 +496,34 @@ class ExecutorServer:
                 self._slot_available = False
                 dace_state.set_is_compiled(False)
 
+                terminal_queue = multiprocessing.Queue()
                 async_executor = AsyncExecutor(remote=remote_execution)
                 async_executor.autoquit = True
-                async_executor.executor.output_generator = output_feeder
+                async_executor.executor.output_queue = terminal_queue
                 async_executor.executor.set_config(copied_config)
                 async_executor.run_async(dace_state)
-                async_executor.to_thread_message_queue.put("forcequit")
+                async_executor.to_proc_message_queue.put("forcequit")
 
-                while async_executor.running_thread.is_alive():
+                while async_executor.running_proc.is_alive():
                     try:
-                        new = terminal_queue.get(block=True, timeout=1)
+                        new = terminal_queue.get(timeout=1)
                         yield new
                     except:
-                        # Check if the thread is still running
+                        # Check if the sub-process is still running
                         continue
 
                 # Flush remaining outputs
                 while not terminal_queue.empty():
-                    new = terminal_queue.get(block=True, timeout=1)
+                    new = terminal_queue.get(timeout=1)
                     yield new
 
                 with self._oplock:
                     # Delete from the tasklist
                     del self._task_dict[runindex]
 
-                    print("Run done, notifying")
+                    yield ('Run finished with exit code %d' %
+                           async_executor.running_proc.exitcode)
+
                     self._slot_available = True
 
         return runner

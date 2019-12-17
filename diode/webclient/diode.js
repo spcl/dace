@@ -3648,7 +3648,7 @@ class DIODE {
             </div>
         </div>
     </label>
-    <input id="file-select" type="file"  accept=".py,.m" style="position:absolute;"/>
+    <input id="file-select" type="file"  accept=".py,.m,.sdfg" style="position:absolute;"/>
 </div>
 `,
             buttons: '',
@@ -3778,6 +3778,14 @@ class DIODE {
         this.createNewProject();
 
         let millis = this.getPseudorandom();
+
+        // Assuming SDFG files start with {
+        if (content[0] == '{') {
+            // Prettify JSON object, if not pretty
+            if (content.split('\n').length == 1)
+                content = JSON.stringify(JSON.parse(content), null, 2);
+        }
+
 
         let config = {
             title: "Source Code",
@@ -5691,6 +5699,15 @@ class DIODE {
             let cis = values['sdfg_object'] != undefined;
             let cval = values['input_code'];
 
+            // Assuming SDFG files start with {
+            if (cval[0] == '{') {
+                let sd = parse_sdfg(cval);
+                values['sdfg_object'] = {};
+                values['sdfg_object'][sd.attributes.name] = cval;
+                
+                cis = true;
+            }
+
             if(cis) {
                 cval = values['sdfg_object'];
                 if(typeof(cval) == 'string')
@@ -5959,9 +5976,11 @@ class DIODE {
         let version_string = "1.0";
         REST_request("/dace/api/v" + version_string + "/run/status/", post_params, (xhr) => {
             if (xhr.readyState === 4 && xhr.status === 200) {
-                // #TODO: Show success/error depending on the exit code
-
-                this.toast("Execution ended", "The execution of the last run has ended", 'info');
+                // Show success/error depending on the exit code
+                if (xhr.response.endsWith(" 0"))
+                    this.toast("Execution ended", "Run ended successfully", 'info');
+                else
+                    this.toast("Execution ended", "Run failed", 'error');
 
                 // Flush remaining outputs
                 let newdata = xhr.response.substr(xhr.seenBytes);
