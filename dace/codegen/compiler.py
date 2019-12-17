@@ -298,10 +298,10 @@ def unique_flags(flags):
     return set(re.findall(pattern, flags))
 
 
-def file_changed(filename: str, file_contents: str):
-    # If file did not exist before, it has changed
+def identical_file_exists(filename: str, file_contents: str):
+    # If file did not exist before, return False
     if not os.path.isfile(filename):
-        return True
+        return False
 
     # Read file in blocks and compare strings
     block_size = 65536
@@ -310,15 +310,15 @@ def file_changed(filename: str, file_contents: str):
         while len(file_buffer) > 0:
             block = file_contents[:block_size]
             if file_buffer != block:
-                return True
+                return False
             file_contents = file_contents[block_size:]
             file_buffer = fp.read(block_size)
 
     # More contents appended to the new file
     if len(file_contents) > 0:
-        return True
+        return False
 
-    return False
+    return True
 
 
 def generate_program_folder(sdfg,
@@ -363,7 +363,7 @@ def generate_program_folder(sdfg,
 
         # Save the file only if it changed (keeps old timestamps and saves
         # build time)
-        if file_changed(code_path, clean_code):
+        if not identical_file_exists(code_path, clean_code):
             with open(code_path, "w") as code_file:
                 code_file.write(clean_code)
 
