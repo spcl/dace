@@ -152,8 +152,9 @@ def all_properties_to_json(object_with_properties):
 
 def set_properties_from_json(object_with_properties,
                              json_obj,
-                             context=None):
-
+                             context=None,
+                             ignore_properties=None):
+    ignore_properties = ignore_properties or set()
     try:
         attrs = json_obj['attributes']
     except KeyError:
@@ -163,6 +164,9 @@ def set_properties_from_json(object_with_properties,
     ps = dict(object_with_properties.__properties__)
     source_properties = set(attrs.keys())
     for prop_name, prop in ps.items():
+        if prop_name in ignore_properties:
+            continue
+
         try:
             val = attrs[prop_name]
             # Make sure we use all properties
