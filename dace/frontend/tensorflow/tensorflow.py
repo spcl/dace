@@ -352,7 +352,8 @@ class TFSession:
                 name=None,
                 patterns=[],
                 validate=False,
-                strict=True):
+                strict=True,
+                cudnn=True):
         """ Compiles a subgraph into a callable function, which is equivalent 
             to calling `run()`. 
             :param nodes: Node or an iterable (e.g. list) of nodes to evaluate.
@@ -365,13 +366,14 @@ class TFSession:
             :return: A function that receives a feed_dict, evaluates the nodes,
                      and returns a tuple of values in the same order as nodes.
         """
+        self.cudnn = cudnn and gpu
         from dace.config import Config
         
         # Set libraries for cudnn
-        if os.name == 'nt' and not 'cudnn.lib' in Config.get('compiler','cpu','libs') and gpu:
+        if os.name == 'nt' and not 'cudnn.lib' in Config.get('compiler','cpu','libs') and self.cudnn:
             Config.append('compiler', 'cpu', 'libs', value='cudnn.lib;')
             Config.append('compiler','cpu','libs', value='cuda.lib')
-        elif os.name != 'nt' and not ' libcudnn.so' in Config.get('compiler','cpu','libs') and gpu:
+        elif os.name != 'nt' and not ' libcudnn.so' in Config.get('compiler','cpu','libs') and self.cudnn:
             Config.append('compiler', 'cpu', 'libs', value=' libcudnn.so') 
 
         
