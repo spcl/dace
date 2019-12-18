@@ -406,7 +406,7 @@ class CPPUnparser:
         self.write(';', infer_type)
 
     def _Pass(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        self.fill(";", infer_type)
 
     def _Break(self, t, infer_type=False):
         self.fill("break;", infer_type)
