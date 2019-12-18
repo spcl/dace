@@ -409,6 +409,8 @@ class NestedSDFG(CodeNode):
         if context and 'sdfg' in context:
             ret.sdfg.parent_sdfg = context['sdfg']
 
+        ret.sdfg.update_sdfg_list([])
+
         return ret
 
     def draw_node(self, sdfg, graph):

@@ -201,7 +201,7 @@ class SDFG(OrderedDiGraph):
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
-                 constants: Dict[str, Any] = None,
+                 constants: Dict[str, Tuple[dt.Data, Any]] = None,
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
@@ -220,13 +220,11 @@ class SDFG(OrderedDiGraph):
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        #if not isinstance(arg_types, collections.OrderedDict):
-        #    raise TypeError
-
-        #self._arg_types = arg_types  # OrderedDict(str, typeclass)
-        #self._constants = constants  # type: Dict[str, Any]
         self.arg_types = arg_types or collections.OrderedDict()
-        self.constants_prop = constants or {}
+        self.constants_prop = {}
+        if constants is not None:
+            for cstname, (cst_dtype, cstval) in constants.items():
+                self.add_constant(cstname, cstval, cst_dtype)
 
         self._propagate = propagate
         self._parent = parent
@@ -286,7 +284,8 @@ class SDFG(OrderedDiGraph):
                 dace.serialize.dumps(attrs['constants_prop'])),
             parent=context_info['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(
+            ret, json_obj, ignore_properties={'constants_prop'})
 
         for n in nodes:
             nci = copy.deepcopy(context_info)
@@ -407,11 +406,6 @@ class SDFG(OrderedDiGraph):
             raise ValueError("Invalid state ID")
         self._start_state = state_id
 
-    #@property
-    #def global_code(self):
-    #    """ Returns C++ code, generated in a global scope on the frame-code generated file. """
-    #    return self._global_code
-
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
         self.global_code = {
@@ -419,22 +413,12 @@ class SDFG(OrderedDiGraph):
             'language': dace.dtypes.Language.CPP
         }
 
-    #@property
-    #def init_code(self):
-    #    """ Returns C++ code, generated in the `__dapp_init` function. """
-    #    return self._init_code
-
     def set_init_code(self, cpp_code: str):
         """ Sets C++ code, generated in the `__dapp_init` function. """
         self.init_code = {
             'code_or_block': cpp_code,
             'language': dace.dtypes.Language.CPP
         }
-
-    #@property
-    #def exit_code(self):
-    #    """ Returns C++ code, generated in the `__dapp_exit` function. """
-    #    return self._exit_code
 
     def set_exit_code(self, cpp_code: str):
         """ Sets C++ code, generated in the `__dapp_exit` function. """
@@ -518,10 +502,6 @@ class SDFG(OrderedDiGraph):
         #return self._name
         return self.name
 
-    #@property
-    #def arg_types(self):
-    #    return self._arg_types
-
     @property
     def constants(self):
         """ A dictionary of compile-time constants defined in this SDFG. """
@@ -530,23 +510,37 @@ class SDFG(OrderedDiGraph):
         if self._parent_sdfg is not None:
             result.update(self._parent_sdfg.constants)
 
-        #result.update(self._constants)
-        result.update(self.constants_prop)
+        def cast(dtype: dt.Data, value: Any):
+            """ Cast a value to the given data type. """
+            if isinstance(dtype, dt.Array):
+                return value
+            elif isinstance(dtype, dt.Scalar):
+                return dtype.dtype(value)
+            raise TypeError('Unsupported data type %s' % dtype)
+
+        result.update({k: cast(*v) for k, v in self.constants_prop.items()})
         return result
 
-    def add_constants(self, new_constants: Dict[str, Any]):
-        """ Adds new compile-time constants to this SDFG.
-            :param new_constants: Dictionary of new constants to add.
+    def add_constant(self, name: str, value: Any, dtype: dt.Data = None):
+        """ Adds/updates a new compile-time constant to this SDFG. A constant
+            may either be a scalar or a numpy ndarray thereof.
+            :param name: The name of the constant.
+            :param value: The constant value.
+            :param dtype: Optional data type of the symbol, or None to deduce
+                          automatically.
         """
-        #self._constants.update(new_constants)
-        self.constants_prop.update(new_constants)
 
-    def reset_constants(self, constants: Dict[str, Any]):
-        """ Resets compile-time constants of this SDFG to a given dictionary.
-            :param constants: Dictionary of new constants to set.
-        """
-        #self._constants = constants
-        self.constants_prop = constants
+        def get_type(obj):
+            if isinstance(obj, np.ndarray):
+                return dt.Array(
+                    dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type], shape=obj.shape)
+            elif isinstance(obj, dtypes.typeclass):
+                return dt.Scalar(type(obj))
+            elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
+                return dt.Scalar(dtypes.DTYPE_TO_TYPECLASS[type(obj)])
+            raise TypeError('Unrecognized constant type: %s' % type(obj))
+
+        self.constants_prop[name] = (dtype or get_type(value), value)
 
     @property
     def propagate(self):
@@ -1563,7 +1557,8 @@ subgraph cluster_state_{state} {{
         })
 
         # Update constants
-        self.constants_prop.update(syms)
+        for k, v in syms.items():
+            self.add_constant(k, v)
 
     def compile(self, specialize=None, optimizer=None, output_file=None):
         """ Compiles a runnable binary from this SDFG.

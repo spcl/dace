@@ -138,6 +138,13 @@ required:
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
                    
+            fpga_vendor:
+                type: str
+                default: xilinx 
+                title: FPGA vendor
+                description: >
+                    Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
+                    generating code. 
             #############################################
             # CPU compiler
             cpu:
@@ -253,15 +260,15 @@ required:
 
                     executable:
                         type: str
-                        default: xocc
-                        title: SDAccel compiler executable path 
-                        description: File path or name of SDAccel binary (xocc) 
+                        default: v++ 
+                        title: Vitis compiler executable path 
+                        description: File path or name of Vitis binary (v++) 
 
                     platform:
                         type: str
-                        default: xilinx_vcu1525_dynamic_5_1 
-                        title: Target platform for xocc
-                        description: Platform name of SDAccel target.
+                        default: xilinx_u280_xdma_201920_1 
+                        title: Target platform for Xilinx 
+                        description: Platform name of Vitis/SDx/SDAccel target.
 
                     enable_debugging:
                         type: bool 
@@ -288,9 +295,54 @@ required:
                     build_flags:
                         type: str
                         title: Arguments
-                        description: Kernel build (xocc) C++ flags 
+                        description: Kernel build C++ flags 
                         default: ""
                         
+            #############################################
+            # Intel FPGA compiler flags
+            intel_fpga:
+                type: dict
+                title: Intel FPGA 
+                description: Intel FPGA compiler preferences.
+                required:
+
+                    mode:
+                        type: str 
+                        default: emulator 
+                        title: Compilation mode 
+                        description: >
+                          Target of FPGA kernel build
+                          (emulator/simulator/hardware).
+
+                    executable:
+                        type: str
+                        default: aoc 
+                        title: Compiler path 
+                        description: >
+                          Intel Offline Compiler (aoc) executable path. 
+
+                    board:
+                        type: str
+                        default: a10gx 
+                        title: Target FPGA board 
+
+                    enable_debugging:
+                        type: bool 
+                        default: false 
+                        title: Enable debugging for hardware kernels 
+                        description: Injects debugging cores where available.
+
+                    host_flags:
+                        type: str
+                        title: Host arguments
+                        description: Extra host compiler argument flags
+                        default: "-Wno-unknown-pragmas"
+
+                    kernel_flags:
+                        type: str
+                        title: Kernel flags 
+                        description: High-level synthesis C++ flags 
+                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant"
             #############################################
             # MPI compiler
             mpi:
@@ -322,7 +374,10 @@ required:
                         type: str
                         title: Arguments
                         description: Linker argument flags
-                        default: ''
+                        # Tell linker to use rpath instead of runpath. Intel
+                        # FPGA programs fail to find certain libraries at
+                        # runtime with runpath.
+                        default: '-Wl,--disable-new-dtags'
 
                     additional_args:
                         type: str

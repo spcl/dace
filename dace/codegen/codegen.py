@@ -8,8 +8,9 @@ from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 
 # Import all code generation targets
-from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx
+from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx, intel_fpga
 from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
+
 
 
 class CodegenError(Exception):
@@ -21,10 +22,13 @@ STRING_TO_TARGET = {
     "cuda": cuda.CUDACodeGen,
     "immaterial": immaterial.ImmaterialCodeGen,
     "mpi": mpi.MPICodeGen,
+    "intel_fpga": intel_fpga.IntelFPGACodeGen,
     "xilinx": xilinx.XilinxCodeGen,
 }
 
-_TARGET_REGISTER_ORDER = ['cpu', 'cuda', 'immaterial', 'mpi', 'xilinx']
+_TARGET_REGISTER_ORDER = [
+    'cpu', 'cuda', 'immaterial', 'mpi', 'intel_fpga', 'xilinx'
+]
 
 def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
