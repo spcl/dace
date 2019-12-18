@@ -258,6 +258,8 @@ class MapFusion(pattern_matching.Transformation):
 
         # Isolate First exit node
         ############################
+        edges_to_remove = set()
+        nodes_to_remove = set()
         for edge in graph.in_edges(first_exit):
             memlet_path = graph.memlet_path(edge)
             edge_index = next(
@@ -285,7 +287,7 @@ class MapFusion(pattern_matching.Transformation):
                         break
                 if new_dst is None:
                     # Access node is not used in the second map
-                    graph.remove_node(access_node)
+                    nodes_to_remove.add(access_node)
                     continue
                 # If the source is an access node, modify the memlet to point
                 # to it
@@ -300,10 +302,10 @@ class MapFusion(pattern_matching.Transformation):
                     # Add a transient scalar/array
                     self.fuse_nodes(sdfg, graph, edge, new_dst, new_dst_conn)
 
-                graph.remove_edge(edge)
+                edges_to_remove.add(edge)
 
                 # Remove transient node between the two maps
-                graph.remove_node(access_node)
+                nodes_to_remove.add(access_node)
             else:  # The case where intermediate array node cannot be removed
                 # Node will become an output of the second map exit
                 out_e = memlet_path[edge_index + 1]
@@ -317,11 +319,11 @@ class MapFusion(pattern_matching.Transformation):
                 )
                 second_exit.add_out_connector('OUT_' + conn)
 
-                graph.remove_edge(out_e)
-
                 graph.add_edge(edge.src, edge.src_conn, second_exit,
                                'IN_' + conn, dcpy(edge.data))
                 second_exit.add_in_connector('IN_' + conn)
+
+                edges_to_remove.add(out_e)
 
                 # If the second map needs this node, link the connector
                 # that generated this to the place where it is needed, with a
@@ -332,9 +334,13 @@ class MapFusion(pattern_matching.Transformation):
                     if source_node == access_node:
                         self.fuse_nodes(sdfg, graph, edge, out_e.dst,
                                         out_e.dst_conn)
-                graph.remove_edge(edge)
+
+                edges_to_remove.add(edge)
         ###
         # First scope exit is isolated and can now be safely removed
+        for e in edges_to_remove:
+            graph.remove_edge(e)
+        graph.remove_nodes_from(nodes_to_remove)
         graph.remove_node(first_exit)
 
         # Isolate second_entry node

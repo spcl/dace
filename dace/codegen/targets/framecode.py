@@ -7,7 +7,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.graph import nodes
-from dace import dtypes, config
+from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
 from dace.codegen import cppunparse
@@ -39,10 +39,9 @@ class DaCeCodeGenerator(object):
 
     def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         # Write constants
-        for cstname, cstval in sdfg.constants.items():
-            if isinstance(cstval, np.ndarray):
-                dtype = dtypes.typeclass(cstval.dtype.type)
-                const_str = "constexpr " + dtype.ctype + \
+        for cstname, (csttype, cstval) in sdfg.constants_prop.items():
+            if isinstance(csttype, data.Array):
+                const_str = "constexpr " + csttype.dtype.ctype + \
                     " " + cstname + "[" + str(cstval.size) + "] = {"
                 it = np.nditer(cstval, order='C')
                 for i in range(cstval.size - 1):
@@ -52,7 +51,8 @@ class DaCeCodeGenerator(object):
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(
-                    "constexpr auto %s = %s;\n" % (cstname, str(cstval)), sdfg)
+                    "constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname,
+                                                 str(cstval)), sdfg)
 
     def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream):
         """ Generate a header in every output file that includes custom types
