@@ -1996,7 +1996,7 @@ class TFSession:
                 and 3 in _tensorshape(node.inputs[1])[0:2] and self.winograd):
             winograd_convolution(self, node)
         elif self.cudnn:
-            local_ctr = str(next(_atomic_count))
+            local_count = str(next(_atomic_count))
             state = self.state
             data_format = node.get_attr("data_format").decode("utf-8")
             dilations = node.get_attr("dilations")
@@ -2049,7 +2049,7 @@ class TFSession:
                                              workSpace_{i}, workSpaceSizeInBytes_{i},
                                              &beta,
                                              yDesc_{i}, y));
-                '''.format(i=local_ctr),
+                '''.format(i=local_count),
                 language=dace.Language.CPP,
                 location="gpu"
             )
@@ -2065,10 +2065,10 @@ class TFSession:
                     cudnnConvolutionFwdAlgo_t algo_{i};
                     size_t workSpaceSizeInBytes_{i} = 0;
                     void* workSpace_{i}{{nullptr}};
-                    int y_first = 0;
-                    int yc = 0;
-                    int yh = 0;
-                    int yw = 0;
+                    int out_k = 0;
+                    int out_c = 0;
+                    int out_h = 0;
+                    int out_w = 0;
                     
                     #define checkCUDNN(expression)                           \\
                     {{                                                       \\
@@ -2077,7 +2077,7 @@ class TFSession:
                         printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
                       }}                                                     \\
                     }}
-                '''.format(i=local_ctr))
+                '''.format(i=local_count))
             else:
                 self.graph.set_global_code(self.graph.global_code + '''
                     cudnnHandle_t cudnn_handle_{i};
@@ -2088,7 +2088,7 @@ class TFSession:
                     cudnnConvolutionFwdAlgo_t algo_{i};
                     size_t workSpaceSizeInBytes_{i} = 0;
                     void* workSpace_{i}{{nullptr}};
-                    '''.format(i=local_ctr))
+                    '''.format(i=local_count))
 
             init_code = '''
                 cudnnCreate(&cudnn_handle_{i});
@@ -2120,21 +2120,18 @@ class TFSession:
                                                 /*dilation_width=*/{dilw},
                                                 /*mode=*/CUDNN_CROSS_CORRELATION,
                                                 /*computeType=*/CUDNN_DATA_FLOAT));
-                y_first = 0;
-                yc = 0;
-                yh = 0;
-                yw = 0;
+                                                
                 checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
-                                                                  &y_first , &yc, &yh, &yw));
+                                                                  &out_k , &out_c, &out_h, &out_w));
 
                 cudnnCreateTensorDescriptor(&yDesc_{i});
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
                                             /*format=*/CUDNN_TENSOR_NHWC,
                                             /*dataType=*/CUDNN_DATA_FLOAT,
-                                            /*batch_size=*/y_first ,
-                                            /*channels=*/yc,
-                                            /*image_height=*/yh,
-                                            /*image_width=*/yw));
+                                            /*batch_size=*/out_k ,
+                                            /*channels=*/out_c,
+                                            /*image_height=*/out_h,
+                                            /*image_width=*/out_w));
 
                 checkCUDNN(cudnnGetConvolutionForwardAlgorithm(cudnn_handle_{i},
                                                  xDesc_{i},
@@ -2156,12 +2153,24 @@ class TFSession:
                 cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
             '''.format( N=image_dims_list[0], C=image_dims_list[3], H=image_dims_list[1], W=image_dims_list[2],
                         K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                        vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_ctr)
+                        vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
                 self.graph.set_init_code(self.graph.init_code + init_code)
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle_{i});'.format(i=local_ctr))
+
+            exit_code = '''
+                cudnnDestroy(cudnn_handle_{i});
+                cudnnDestroyTensorDescriptor(xDesc_{i});
+                cudnnDestroyTensorDescriptor(yDesc_{i});
+                cudnnDestroyFilterDescriptor(fDesc_{i});
+                cudnnDestroyConvolutionDescriptor(convDesc_{i});
+                cudaFree(workSpace_{i});
+            '''.format(i=local_count)
+            if len(self.graph.exit_code) == 0:
+                self.graph.set_exit_code(exit_code)
+            else:
+                self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
             state.add_edge(image, None, tasklet, 'x', 
                            Memlet.from_array(image.label, image.desc(self.graph)))
@@ -2973,10 +2982,10 @@ class TFSession:
                     cudnnConvolutionBwdDataAlgo_t algo_{i};
                     size_t workSpaceSizeInBytes_{i} = 0;
                     void* workSpace_{i}{{nullptr}};
-                    int y_first = 0;
-                    int yc = 0;
-                    int yh = 0;
-                    int yw = 0;
+                    int out_k = 0;
+                    int out_c = 0;
+                    int out_h = 0;
+                    int out_w = 0;
                     
                     
                     #define checkCUDNN(expression)                           \\
@@ -3029,22 +3038,18 @@ class TFSession:
                                                /*dilation_width=*/{dilw},
                                                /*mode=*/CUDNN_CROSS_CORRELATION,
                                                /*computeType=*/CUDNN_DATA_FLOAT));
-
-                y_first = 0;
-                yc = 0;
-                yh = 0;
-                yw = 0;
+                                               
                 checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
-                                                                 &y_first , &yc, &yh, &yw));
+                                                                 &out_k , &out_c, &out_h, &out_w));
 
                 checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
                                            /*format=*/CUDNN_TENSOR_NHWC,
                                            /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*batch_size=*/y_first ,
-                                           /*channels=*/yc,
-                                           /*height=*/yh,
-                                           /*width=*/yw));
+                                           /*batch_size=*/out_k ,
+                                           /*channels=*/out_c,
+                                           /*height=*/out_h,
+                                           /*width=*/out_w));
 
                 checkCUDNN(cudnnGetConvolutionBackwardDataAlgorithm(
                             cudnn_handle_{i}, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i},
@@ -3061,7 +3066,18 @@ class TFSession:
                 self.graph.set_init_code(init_code)
             else:
                 self.graph.set_init_code(self.graph.init_code + init_code)
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle_{i});'.format(i=local_count))
+            exit_code = '''
+                cudnnDestroy(cudnn_handle_{i});
+                cudnnDestroyTensorDescriptor(xDesc_{i});
+                cudnnDestroyTensorDescriptor(yDesc_{i});
+                cudnnDestroyFilterDescriptor(fDesc_{i});
+                cudnnDestroyConvolutionDescriptor(convDesc_{i});
+                cudaFree(workSpace_{i});
+            '''.format(i=local_count)
+            if len(self.graph.exit_code) == 0:
+                self.graph.set_exit_code(exit_code)
+            else:
+                self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
             state.add_edge(gradient, None, tasklet, 'dy', 
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
@@ -3377,10 +3393,10 @@ class TFSession:
                     cudnnConvolutionDescriptor_t convDesc_{i};
                     cudnnTensorDescriptor_t yDesc_{i};
                     cudnnConvolutionBwdFilterAlgo_t algo_{i};
-                    int y_first = 0;
-                    int yc = 0;
-                    int yh = 0;
-                    int yw = 0;
+                    int out_k = 0;
+                    int out_c = 0;
+                    int out_h = 0;
+                    int out_w = 0;
                     size_t workSpaceSizeInBytes_{i} = 0;
                     void* workSpace_{i}{{nullptr}};
                     
@@ -3433,22 +3449,18 @@ class TFSession:
                                                    /*dilation_width=*/{dilw},
                                                    /*mode=*/CUDNN_CROSS_CORRELATION,
                                                    /*computeType=*/CUDNN_DATA_FLOAT));
-    
-                    y_first = 0;
-                    yc = 0;
-                    yh = 0;
-                    yw = 0;
+                                                   
                     checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
-                                                                     &y_first , &yc, &yh, &yw));
+                                                                     &out_k , &out_c, &out_h, &out_w));
     
                     checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
                     checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
                                                /*format=*/CUDNN_TENSOR_NHWC,
                                                /*dataType=*/CUDNN_DATA_FLOAT,
-                                               /*batch_size=*/y_first ,
-                                               /*channels=*/yc,
-                                               /*height=*/yh,
-                                               /*width=*/yw));
+                                               /*batch_size=*/out_k ,
+                                               /*channels=*/out_c,
+                                               /*height=*/out_h,
+                                               /*width=*/out_w));
     
                     checkCUDNN(cudnnGetConvolutionBackwardFilterAlgorithm(cudnn_handle_{i},
                                             xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i},
@@ -3466,7 +3478,18 @@ class TFSession:
                 self.graph.set_init_code(init_code)
             else:
                 self.graph.set_init_code(self.graph.init_code + init_code)
-            self.graph.set_exit_code('cudnnDestroy(cudnn_handle_{i});'.format(i=local_count))
+            exit_code = '''
+                cudnnDestroy(cudnn_handle_{i});
+                cudnnDestroyTensorDescriptor(xDesc_{i});
+                cudnnDestroyTensorDescriptor(yDesc_{i});
+                cudnnDestroyFilterDescriptor(fDesc_{i});
+                cudnnDestroyConvolutionDescriptor(convDesc_{i});
+                cudaFree(workSpace_{i});
+            '''.format(i=local_count)
+            if len(self.graph.exit_code) == 0:
+                self.graph.set_exit_code(exit_code)
+            else:
+                self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
             # change filter format from KRSC to RSCK for tensorflow
             mapInput = self.map_output_filter(node, [1, 2, 3, 0], output, output_dims)
