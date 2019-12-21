@@ -488,7 +488,7 @@ def configure_and_compile(program_folder,
         os.makedirs(build_folder)
         try:
             _run_liveoutput(
-                " ".join(cmake_command),
+                cmake_command,
                 shell=True,
                 cwd=build_folder,
                 output_stream=output_stream)
