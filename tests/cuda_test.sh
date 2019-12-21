@@ -164,6 +164,8 @@ runone() {
     runtestopt $1 multistream_custom_cudatest.py $2
 
     runtestopt $1 multiprogram_cudatest.py $2
+
+    runtestopt $1 wcr_cudatest.py $2
 }
 
 runall() {
