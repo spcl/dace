@@ -1,0 +1,4 @@
+[submodule "webclient"]
+	path = webclient
+	url = https://github.com/spcl/dace-webclient
+	branch = master
