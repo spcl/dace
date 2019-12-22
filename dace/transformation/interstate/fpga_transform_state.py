@@ -119,8 +119,11 @@ class FPGATransformState(pattern_matching.Transformation):
                         parent_state = graph.parent.parent
                         if parent_state is not None:
                             for parent_edges in parent_state.edges():
-                                if parent_edges.src_conn == e.dst.data or (isinstance(parent_edges.dst,
-                                            dace.graph.nodes.AccessNode) and e.dst.data == parent_edges.dst.data):
+                                if parent_edges.src_conn == e.dst.data or (
+                                        isinstance(parent_edges.dst,
+                                                   dace.graph.nodes.AccessNode)
+                                        and
+                                        e.dst.data == parent_edges.dst.data):
                                     # This must be copied to device
                                     input_nodes.append(parent_edges.dst)
                                     wcr_input_nodes.add(parent_edges.dst)
@@ -215,6 +218,8 @@ class FPGATransformState(pattern_matching.Transformation):
             nxutil.change_edge_src(sdfg, state, post_state)
             sdfg.add_edge(state, post_state, edges.InterstateEdge())
 
+        veclen_ = 1
+
         # propagate vector info from a nested sdfg
         for src, src_conn, dst, dst_conn, mem in state.edges():
             # need to go inside the nested SDFG and grab the vector length
@@ -222,14 +227,16 @@ class FPGATransformState(pattern_matching.Transformation):
                 # this edge is going to the nested SDFG
                 for inner_state in dst.sdfg.states():
                     for n in inner_state.nodes():
-                        if isinstance(n, dace.graph.nodes.AccessNode) and n.data == dst_conn:
+                        if isinstance(n, dace.graph.nodes.AccessNode
+                                      ) and n.data == dst_conn:
                             # assuming all memlets have the same vector length
                             veclen_ = inner_state.all_edges(n)[0].data.veclen
             if isinstance(src, dace.graph.nodes.NestedSDFG):
                 # this edge is coming from the nested SDFG
                 for inner_state in src.sdfg.states():
                     for n in inner_state.nodes():
-                        if isinstance(n, dace.graph.nodes.AccessNode) and n.data == src_conn:
+                        if isinstance(n, dace.graph.nodes.AccessNode
+                                      ) and n.data == src_conn:
                             # assuming all memlets have the same vector length
                             veclen_ = inner_state.all_edges(n)[0].data.veclen
 
