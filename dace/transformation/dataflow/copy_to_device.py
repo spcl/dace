@@ -68,7 +68,7 @@ class CopyToDevice(pattern_matching.Transformation):
             memdata = sdfg.arrays[dataname]
 
             if isinstance(memdata, data.Array):
-                new_data = sdfg.add_array(
+                sdfg.add_array(
                     'device_' + dataname + '_in',
                     memdata.dtype, [
                         symbolic.overapproximate(r)
@@ -77,7 +77,7 @@ class CopyToDevice(pattern_matching.Transformation):
                     transient=True,
                     storage=storage)
             elif isinstance(memdata, data.Scalar):
-                new_data = sdfg.add_scalar(
+                sdfg.add_scalar(
                     'device_' + dataname + '_in',
                     memdata.dtype,
                     transient=True,
@@ -112,7 +112,7 @@ class CopyToDevice(pattern_matching.Transformation):
             memdata = sdfg.arrays[dataname]
 
             if isinstance(memdata, data.Array):
-                new_data = data.Array(
+                sdfg.add_array(
                     'device_' + dataname + '_out',
                     memdata.dtype, [
                         symbolic.overapproximate(r)
@@ -121,7 +121,7 @@ class CopyToDevice(pattern_matching.Transformation):
                     transient=True,
                     storage=storage)
             elif isinstance(memdata, data.Scalar):
-                new_data = sdfg.add_scalar(
+                sdfg.add_scalar(
                     'device_' + dataname + '_out',
                     memdata.dtype,
                     transient=True,

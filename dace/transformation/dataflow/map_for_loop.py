@@ -99,12 +99,12 @@ class MapToForLoop(pattern_matching.Transformation):
             data_label = '_in_' + memlet.data
             memdata = sdfg.arrays[memlet.data]
             if isinstance(memdata, data.Array):
-                data_array = sdfg.add_array(data_label, memdata.dtype, [
+                sdfg.add_array(data_label, memdata.dtype, [
                     symbolic.overapproximate(r)
                     for r in memlet.bounding_box_size()
                 ])
             elif isinstance(memdata, data.Scalar):
-                data_array = sdfg.add_scalar(data_label, memdata.dtype)
+                sdfg.add_scalar(data_label, memdata.dtype)
             else:
                 raise NotImplementedError()
             data_node = nodes.AccessNode(data_label)
@@ -127,12 +127,12 @@ class MapToForLoop(pattern_matching.Transformation):
                 data_label = '_out_' + memlet.data
                 memdata = sdfg.arrays[memlet.data]
                 if isinstance(memdata, data.Array):
-                    data_array = sdfg.add_array(data_label, memdata.dtype, [
+                    sdfg.add_array(data_label, memdata.dtype, [
                         symbolic.overapproximate(r)
                         for r in memlet.bounding_box_size()
                     ])
                 elif isinstance(memdata, data.Scalar):
-                    data_array = sdfg.add_scalar(data_label, memdata.dtype)
+                    sdfg.add_scalar(data_label, memdata.dtype)
                 else:
                     raise NotImplementedError()
                 data_node = nodes.AccessNode(data_label)

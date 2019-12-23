@@ -1197,21 +1197,28 @@ subgraph cluster_state_{state} {{
         self.add_node(state, is_start_state=is_start_state)
         return state
 
-    def add_array(
-            self,
-            name: str,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            transient=False,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-            allow_conflicts=False,
-            access_order=None,
-    ):
+    def _find_new_name(self, name: str):
+        """ Tries to find a new name by adding an underscore and a number. """
+        index = 0
+        while (name + ('_%d' % index)) in self._arrays:
+            index += 1
+
+        return name + ('_%d' % index)
+
+    def add_array(self,
+                  name: str,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  materialize_func=None,
+                  transient=False,
+                  strides=None,
+                  offset=None,
+                  toplevel=False,
+                  debuginfo=None,
+                  allow_conflicts=False,
+                  access_order=None,
+                  find_new_name=False):
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1220,8 +1227,12 @@ subgraph cluster_state_{state} {{
 
         # If exists, fail
         if name in self._arrays:
-            raise NameError('Array or Stream with name "%s" already exists '
-                            "in SDFG" % name)
+            if not find_new_name:
+                raise NameError(
+                    'Array or Stream with name "%s" already exists '
+                    "in SDFG" % name)
+            else:
+                name = self._find_new_name(name)
 
         # convert strings to int if possible
         newshape = []
@@ -1250,22 +1261,21 @@ subgraph cluster_state_{state} {{
         )
 
         self._arrays[name] = desc
-        return desc
+        return name, desc
 
-    def add_stream(
-            self,
-            name: str,
-            dtype,
-            veclen=1,
-            buffer_size=1,
-            shape=(1, ),
-            storage=dtypes.StorageType.Default,
-            transient=False,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-    ):
+    def add_stream(self,
+                   name: str,
+                   dtype,
+                   veclen=1,
+                   buffer_size=1,
+                   shape=(1, ),
+                   storage=dtypes.StorageType.Default,
+                   transient=False,
+                   strides=None,
+                   offset=None,
+                   toplevel=False,
+                   debuginfo=None,
+                   find_new_name=False):
         """ Adds a stream to the SDFG data descriptor store. """
         if not isinstance(name, str):
             raise TypeError(
@@ -1273,8 +1283,12 @@ subgraph cluster_state_{state} {{
 
         # If exists, fail
         if name in self._arrays:
-            raise NameError('Array or Stream with name "%s" already exists '
-                            "in SDFG" % name)
+            if not find_new_name:
+                raise NameError(
+                    'Array or Stream with name "%s" already exists '
+                    "in SDFG" % name)
+            else:
+                name = self._find_new_name(name)
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -1293,25 +1307,28 @@ subgraph cluster_state_{state} {{
         )
 
         self._arrays[name] = desc
-        return desc
+        return name, desc
 
-    def add_scalar(
-            self,
-            name: str,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            transient=False,
-            toplevel=False,
-            debuginfo=None,
-    ):
+    def add_scalar(self,
+                   name: str,
+                   dtype,
+                   storage=dtypes.StorageType.Default,
+                   transient=False,
+                   toplevel=False,
+                   debuginfo=None,
+                   find_new_name=False):
         """ Adds a scalar to the SDFG data descriptor store. """
         if not isinstance(name, str):
             raise TypeError(
                 "Scalar name must be a string. Got %s" % type(name).__name__)
         # If exists, fail
         if name in self._arrays:
-            raise NameError('Array or Stream with name "%s" already exists '
-                            "in SDFG" % name)
+            if not find_new_name:
+                raise NameError(
+                    'Array or Stream with name "%s" already exists '
+                    "in SDFG" % name)
+            else:
+                name = self._find_new_name(name)
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -1325,22 +1342,21 @@ subgraph cluster_state_{state} {{
         )
 
         self._arrays[name] = desc
-        return desc
+        return name, desc
 
-    def add_transient(
-            self,
-            name,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-            allow_conflicts=False,
-            access_order=None,
-    ):
+    def add_transient(self,
+                      name,
+                      shape,
+                      dtype,
+                      storage=dtypes.StorageType.Default,
+                      materialize_func=None,
+                      strides=None,
+                      offset=None,
+                      toplevel=False,
+                      debuginfo=None,
+                      allow_conflicts=False,
+                      access_order=None,
+                      find_new_name=False):
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(
@@ -1356,7 +1372,7 @@ subgraph cluster_state_{state} {{
             debuginfo=None,
             allow_conflicts=allow_conflicts,
             access_order=access_order,
-        )
+            find_new_name=find_new_name)
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
@@ -3091,19 +3107,18 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     # DEPRECATED FUNCTIONS
     ######################################
-    def add_array(
-            self,
-            name,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            transient=False,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-    ):
+    def add_array(self,
+                  name,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  materialize_func=None,
+                  transient=False,
+                  strides=None,
+                  offset=None,
+                  toplevel=False,
+                  debuginfo=None,
+                  find_new_name=False):
         """ @attention: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
@@ -3112,18 +3127,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
-        self.parent.add_array(
-            name,
-            shape,
-            dtype,
-            storage,
-            materialize_func,
-            transient,
-            strides,
-            offset,
-            toplevel,
-            debuginfo,
-        )
+        self.parent.add_array(name, shape, dtype, storage, materialize_func,
+                              transient, strides, offset, toplevel, debuginfo,
+                              find_new_name)
         return self.add_access(name, debuginfo)
 
     def add_stream(

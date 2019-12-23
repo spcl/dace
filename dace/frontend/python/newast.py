@@ -1137,12 +1137,12 @@ def add_indirection_subgraph(sdfg: SDFG,
     start_src = None
     end_dst = None
     if memlet.num_accesses == 1 and dst is not None:
-        storage = sdfg.add_scalar(tmp_name, array.dtype, transient=True)
+        _, storage = sdfg.add_scalar(tmp_name, array.dtype, transient=True)
     else:
         rng = copy.deepcopy(memlet.subset)
         if isinstance(rng, subsets.Range):
             rng.squeeze()
-        storage = sdfg.add_array(
+        _, storage = sdfg.add_array(
             tmp_name,
             rng.bounding_box_size(),
             array.dtype,

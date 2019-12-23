@@ -394,7 +394,8 @@ class MapReduceFusion(pm.Transformation):
             'tmp',
             memlet_edge.data.subset.bounding_box_size(),
             sdfg.arrays[memlet_edge.data.data].dtype,
-            transient=True)
+            transient=True,
+            find_new_name=True)
         tasklet_tmp_memlet = copy.deepcopy(memlet_edge.data)
         tasklet_tmp_memlet.data = tmp.data
         tasklet_tmp_memlet.subset = ShapeProperty.to_string(tmp.shape)

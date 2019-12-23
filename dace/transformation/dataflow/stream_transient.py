@@ -108,15 +108,14 @@ class StreamTransient(pattern_matching.Transformation):
         dataname = memlet.data
 
         # Create the new node: Temporary stream and an access node
-        newstream = sdfg.add_stream(
+        newname, _ = sdfg.add_stream(
             'tile_' + dataname,
             sdfg.arrays[memlet.data].dtype,
             1,
-            bbox_approx[0],
-            [1],
+            bbox_approx[0], [1],
             transient=True,
-        )
-        snode = nodes.AccessNode('tile_' + dataname)
+            find_new_name=True)
+        snode = nodes.AccessNode(newname)
 
         to_stream_mm = copy.deepcopy(memlet)
         to_stream_mm.data = snode.data
@@ -198,12 +197,13 @@ class AccumulateTransient(pattern_matching.Transformation):
         dataname = memlet.data
 
         # Create a new node with the same size as the output
-        newdata = sdfg.add_array(
+        newname, _ = sdfg.add_array(
             'trans_' + dataname,
             sdfg.arrays[memlet.data].shape,
             sdfg.arrays[memlet.data].dtype,
-            transient=True)
-        dnode = nodes.AccessNode('trans_' + dataname)
+            transient=True,
+            find_new_name=True)
+        dnode = nodes.AccessNode(newname)
 
         to_data_mm = copy.deepcopy(memlet)
         to_data_mm.data = dnode.data

@@ -99,13 +99,13 @@ class DoubleBuffering(pattern_matching.Transformation):
                         old_data = dst.desc(sdfg)
                         if isinstance(old_data, dace.data.Array):
                             new_shape = tuple([2] + list(old_data.shape))
-                            new_data = sdfg.add_array(
+                            sdfg.add_array(
                                 old_data.data,
                                 old_data.dtype,
                                 new_shape,
                                 transient=True)
                         elif isinstance(old_data, data.Scalar):
-                            new_data = sdfg.add_array(
+                            sdfg.add_array(
                                 old_data.data,
                                 old_data.dtype, (2),
                                 transient=True)

@@ -1803,21 +1803,21 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # consumed element and modify the outgoing memlet path ("OUT_stream")
         # TODO: do this before getting to the codegen
         if node.consume.chunksize == 1:
-            consumed_element = sdfg.add_scalar(
+            newname, _ = sdfg.add_scalar(
                 node.consume.label + "_element",
                 input_streamdesc.dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register)
-            ce_node = nodes.AccessNode(node.consume.label + '_element',
-                                       dtypes.AccessType.ReadOnly)
+                storage=dtypes.StorageType.Register,
+                find_new_name=True)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         else:
-            consumed_element = sdfg.add_array(
+            newname, _ = sdfg.add_array(
                 node.consume.label + '_elements', [node.consume.chunksize],
                 input_streamdesc.dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register)
-            ce_node = nodes.AccessNode(node.consume.label + '_elements',
-                                       dtypes.AccessType.ReadOnly)
+                storage=dtypes.StorageType.Register,
+                find_new_name=True)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])
@@ -1961,10 +1961,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # Obtain variable names per output and reduction axis
         axis_vars = []  # Iteration variables for the input dimensions
         output_axis_vars = dict()  # Dict matching the dimensions of the input
-                                   # that are NOT being reduced with the
-                                   # equivalent dimensions of the output array.
+        # that are NOT being reduced with the
+        # equivalent dimensions of the output array.
         output_dims = []  # The equivalent output array dimensions
-                          # of the input dimensions NOT being reduced. 
+        # of the input dimensions NOT being reduced.
         octr = 0  # First index for the dimensions NOT being reduced.
         input_size = input_memlet.subset.size()
         output_size = output_memlet.subset.size()
