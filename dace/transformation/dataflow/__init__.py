@@ -30,5 +30,4 @@ from .tensorflow_redundant_array import TensorflowRedundantArray
 from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
-from .fpga_transform import FPGATransformMap
 from .mpi import MPITransformMap
