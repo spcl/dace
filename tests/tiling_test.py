@@ -16,8 +16,8 @@ MAXITER = dace.symbol('MAXITER')
 def create_sdfg():
 
     sdfg = dace.SDFG('stencil_sdfg_api')
-    arr = sdfg.add_array('A', (H, W), dace.float32)
-    tmparr = sdfg.add_transient('tmp', (H, W), dace.float32)
+    _, arr = sdfg.add_array('A', (H, W), dace.float32)
+    _, tmparr = sdfg.add_transient('tmp', (H, W), dace.float32)
 
     init = sdfg.add_state('init')
     guard = sdfg.add_state('guard')
