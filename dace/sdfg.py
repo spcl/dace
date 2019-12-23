@@ -1398,10 +1398,8 @@ subgraph cluster_state_{state} {{
                            access_order=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
-        name = self.temp_data_name()
-
-        return name, self.add_array(
-            name,
+        return self.add_array(
+            self.temp_data_name(),
             shape,
             dtype,
             storage,
