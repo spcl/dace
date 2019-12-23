@@ -14,7 +14,8 @@ from .tiling import MapTiling
 from .vectorization import Vectorization
 
 # Data-related
-from .stream_transient import StreamTransient, InLocalStorage, OutLocalStorage
+from .stream_transient import StreamTransient
+from .local_storage import InLocalStorage, OutLocalStorage
 from .reduce_expansion import ReduceExpansion
 
 # Complexity reduction
