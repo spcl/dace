@@ -41,6 +41,15 @@ tests/xilinx_test.sh 0
 '''
           }
         }
+        
+        stage('Test Intel FPGA') {
+          steps {
+            sh '''source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
+export DACE_debugprint=1
+tests/intel_fpga_test.sh 
+'''
+          }
+        }
 
         stage('Test MPI') {
           steps {

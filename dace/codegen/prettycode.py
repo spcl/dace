@@ -57,8 +57,11 @@ class CodeIOStream(StringIO):
             # how many spaces we need to add for that
             loc_spaces = max(80 - len(codeline), 2)
 
-            super(CodeIOStream, self).write(codeline + loc_spaces * ' ' +
-                                            location_identifier + '\n')
+            if location_identifier != '':
+                super(CodeIOStream, self).write(codeline + loc_spaces * ' ' +
+                                                location_identifier + '\n')
+            else:  # avoid ending spaces (useful for OpenCL and multiline macros)
+                super(CodeIOStream, self).write(codeline + '\n')
             if brace_balance > 0:
                 self._indent += brace_balance
 

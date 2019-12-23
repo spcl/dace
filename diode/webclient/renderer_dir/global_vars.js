@@ -1,4 +1,6 @@
 var LINEHEIGHT = 10;
+var TASKLET_LOD = 0.35; // Points-per-pixel threshold for drawing tasklet contents
+var SCOPE_LOD = 1.5; // Points-per-pixel threshold for simple version of map nodes (label only)
 var EDGE_LOD = 8; // Points-per-pixel threshold for not drawing memlets/interstate edges
 var NODE_LOD = 5; // Points-per-pixel threshold for not drawing node shapes and labels
 var STATE_LOD = 50; // Pixel threshold for not drawing state contents

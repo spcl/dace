@@ -106,6 +106,9 @@ class Config(object):
         with open(filename, 'r') as f:
             Config._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
+        if Config._config is None:
+            Config._config = {}
+
         # Add defaults from metadata
         modified = _add_defaults(Config._config,
                                  Config._config_metadata['required'])

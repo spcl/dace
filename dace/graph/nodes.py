@@ -139,7 +139,7 @@ class Node(object):
                 curconn = int(cconn)
                 if curconn >= next_number:
                     next_number = curconn + 1
-            except TypeError:  # not integral
+            except (TypeError, ValueError):  # not integral
                 continue
         return next_number
 
@@ -408,6 +408,8 @@ class NestedSDFG(CodeNode):
             ret.sdfg.parent = context['sdfg_state']
         if context and 'sdfg' in context:
             ret.sdfg.parent_sdfg = context['sdfg']
+
+        ret.sdfg.update_sdfg_list([])
 
         return ret
 

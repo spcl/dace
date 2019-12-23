@@ -9,8 +9,11 @@ class CodeObject(object):
         dtype=str,
         desc="Language used for this code (same " +
         "as its file extension)")  # dtype=dtypes.Language?
-    target = Property(
-        dtype=type, desc="Target to use for compilation", allow_none=True)
+    target = Property(dtype=type, desc="Target to use for compilation", allow_none=True)
+    target_type = Property(
+        dtype=str,
+        desc="Sub-target within target (e.g., host or device code)",
+        default="")
     title = Property(dtype=str, desc="Title of code for GUI")
     extra_compiler_kwargs = Property(
         dtype=dict,
@@ -26,6 +29,7 @@ class CodeObject(object):
                  language,
                  target,
                  title,
+                 target_type="",
                  additional_compiler_kwargs=None,
                  linkable=True):
         super(CodeObject, self).__init__()
@@ -34,6 +38,7 @@ class CodeObject(object):
         self.code = code
         self.language = language
         self.target = target
+        self.target_type = target_type
         self.title = title
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
