@@ -115,22 +115,16 @@ class NestStateSubgraph(unittest.TestCase):
 
         # Inner map scope
         sdfg, state = create_tiled_sdfg()
-        sdc = state.scope_dict(True)
         tasklet = next(n for n in state.nodes() if isinstance(n, Tasklet))
         entry = state.entry_node(tasklet)
-        nodes = set(sdc[entry])
-        nodes.add(entry)
-        nest_state_subgraph(sdfg, state, SubgraphView(state, nodes))
+        nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
         sdfg.validate()
 
         # Outer map scope
         sdfg, state = create_tiled_sdfg()
         sdc = state.scope_dict(True)
         entry = next(n for n in sdc[None] if isinstance(n, MapEntry))
-        nodes = sdc[entry] + [entry]
-        inner_entry = next(n for n in nodes if isinstance(n, MapEntry))
-        nodes += sdc[inner_entry]
-        nest_state_subgraph(sdfg, state, SubgraphView(state, nodes))
+        nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
         sdfg.validate()
 
         # Entire state

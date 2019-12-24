@@ -11,12 +11,13 @@ from dace.memlet import EmptyMemlet, Memlet
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
-                        name: Optional[str] = None):
+                        name: Optional[str] = None) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
         :param name: An optional name for the nested SDFG.
+        :return: The nested SDFG node.
         :raise KeyError: Some or all nodes in the subgraph are not located in
                          this state, or the state does not belong to the given
                          SDFG.
@@ -196,3 +197,5 @@ def nest_state_subgraph(sdfg: SDFG,
     # Remove subgraph transients from top-level graph
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
+
+    return nested_sdfg
