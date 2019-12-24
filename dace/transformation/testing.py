@@ -113,6 +113,13 @@ class TransformationTester(Optimizer):
     def optimize(self):
         self._optimize_recursive(self.sdfg, 0)
 
+        if self.failed_tests > 0:
+            raise RuntimeError(
+                '%d / %d transformations passed' %
+                (self.passed_tests, self.passed_tests + self.failed_tests))
+
+        return self.sdfg
+
 
 if __name__ == '__main__':
     import dace

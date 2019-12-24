@@ -58,8 +58,9 @@ runall() {
 }
 
 DACE_compiler_use_cache=0
+DACE_TEST_NAME="${DACE_TEST_NAME:-CPU}"
 
-runall "CPU"
+runall $DACE_TEST_NAME
 
 PASSED=`expr $TESTS - $ERRORS`
 echo "$PASSED / $TESTS tests passed"
