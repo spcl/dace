@@ -1862,7 +1862,7 @@ subgraph cluster_state_{state} {{
             if apply_once and applied:
                 break
 
-        if Config.get_bool('debugprint'):
+        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
