@@ -1412,19 +1412,27 @@ subgraph cluster_state_{state} {{
             allow_conflicts=allow_conflicts,
             access_order=access_order)
 
-    def add_datadesc(self, name: str, datadesc: dt.Data):
+    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False):
         """ Adds an existing data descriptor to the SDFG array store.
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" %
                             type(name).__name__)
         # If exists, fail
         if name in self._arrays:
-            raise NameError('Array or Stream with name "%s" already exists '
-                            "in SDFG" % name)
+            if find_new_name:
+                name = self._find_new_name(name)
+            else:
+                raise NameError(
+                    'Array or Stream with name "%s" already exists '
+                    "in SDFG" % name)
         self._arrays[name] = datadesc
+        return name
 
     def add_loop(
             self,
@@ -2676,7 +2684,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             schedule=dtypes.ScheduleType.Default,
             unroll=False,
             debuginfo=None,
-    ) -> Tuple[nd.Node]:
+    ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
             :param ndrange:   Mapping between range variable names and their
@@ -2702,7 +2710,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             schedule=dtypes.ScheduleType.Default,
             chunksize=1,
             debuginfo=None,
-    ) -> Tuple[nd.Node]:
+    ) -> Tuple[nd.ConsumeEntry, nd.ConsumeExit]:
         """ Adds consume entry and consume exit nodes.
             :param name:      Label
             :param elements:  A 2-tuple signifying the processing element
@@ -2752,7 +2760,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
-    ) -> Tuple[nd.Node]:
+    ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
             :param name:       Tasklet (and wrapping map) name
