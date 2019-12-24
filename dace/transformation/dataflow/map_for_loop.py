@@ -60,7 +60,7 @@ class MapToForLoop(pattern_matching.Transformation):
         nsdfg.add_loop(None, nstate, None, loop_idx,
                        symbolic.symstr(loop_from),
                        '%s < %s' % (loop_idx, symbolic.symstr(loop_to + 1)),
-                       symbolic.symstr(loop_step))
+                       '%s + %s' % (loop_idx, symbolic.symstr(loop_step)))
 
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
