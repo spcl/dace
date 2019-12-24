@@ -1554,6 +1554,7 @@ class TaskletTransformer(ExtNodeTransformer):
                             'Local variable is already a tasklet input or output'
                         )
                     self.inputs[connector] = memlet
+                    return None  # Remove from final tasklet code
                 elif isinstance(node.value.op, ast.RShift):
                     if self.nested:
                         real_name = variables[name]
@@ -1586,6 +1587,7 @@ class TaskletTransformer(ExtNodeTransformer):
                             'Local variable is already a tasklet input or output'
                         )
                     self.outputs[connector] = memlet
+                    return None  # Remove from final tasklet code
         elif isinstance(node.value, ast.Str):
             return self.visit_TopLevelStr(node.value)
 
