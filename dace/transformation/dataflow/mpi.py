@@ -95,7 +95,7 @@ class MPITransformMap(pattern_matching.Transformation):
         map_entry = graph.nodes()[self.subgraph[MPITransformMap._map_entry]]
 
         # Avoiding import loops
-        from dace.transformation.dataflow import StripMining
+        from dace.transformation.dataflow.strip_mining import StripMining
         from dace.transformation.dataflow.local_storage import LocalStorage
 
         rangeexpr = str(map_entry.map.range.num_elements())
