@@ -2300,6 +2300,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self._clear_scopedict_cache()
         super(SDFGState, self).remove_edge(edge)
 
+    def remove_edge_and_connectors(self, edge):
+        self._clear_scopedict_cache()
+        super(SDFGState, self).remove_edge(edge)
+        if edge.src_conn in edge.src.out_connectors:
+            edge.src._out_connectors.remove(edge.src_conn)
+        if edge.dst_conn in edge.dst.in_connectors:
+            edge.dst._in_connectors.remove(edge.dst_conn)
+
     def all_nodes_recursive(self):
         all_nodes = []
         for node in self.nodes():
