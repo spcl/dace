@@ -49,4 +49,8 @@ if __name__ == '__main__':
     sdfg.apply_strict_transformations()
     sdfg(L=L, M=M)
 
-    exit(1 if M[0] != 7.0 else 0)
+    expected = np.array([2.0, 2.0, 7.0, 7.0])
+    result = np.array([L[0], L[1], M[0], M[1]])
+    diff = np.linalg.norm(expected - result)
+    print('Difference:', diff)
+    exit(1 if diff > 1e-6 else 0)
