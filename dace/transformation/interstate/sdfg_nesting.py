@@ -205,8 +205,8 @@ class InlineSDFG(pattern_matching.Transformation):
 
         # All transients of edges between code nodes are also added to parent
         for edge in nstate.edges():
-            if (isinstance(edge.src, nodes.CodeNode) and
-                    isinstance(edge.dst, nodes.CodeNode)):
+            if (isinstance(edge.src, nodes.CodeNode)
+                    and isinstance(edge.dst, nodes.CodeNode)):
                 datadesc = nsdfg.arrays[edge.data.data]
                 if edge.data.data not in transients and datadesc.transient:
                     name = sdfg.add_datadesc(
@@ -214,7 +214,6 @@ class InlineSDFG(pattern_matching.Transformation):
                         datadesc,
                         find_new_name=True)
                     transients[edge.data.data] = name
-
 
         # Collect nodes to add to top-level graph
         new_incoming_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
@@ -273,17 +272,19 @@ class InlineSDFG(pattern_matching.Transformation):
         # Modify all other internal edges pertaining to input/output nodes
         for node in subgraph.nodes():
             if isinstance(node, nodes.AccessNode):
-                if node.data in input_set:
-                    for edge in state.out_edges(node):
-                        if edge not in modified_edges:
-                            edge._data = self._modify_memlet(
-                                edge.data, inputs[input_set[node.data]].data)
-                # Note that data can both be in the input and output sets
-                if node.data in output_set:
-                    for edge in state.in_edges(node):
-                        if edge not in modified_edges:
-                            edge._data = self._modify_memlet(
-                                edge.data, outputs[output_set[node.data]].data)
+                if node.data in input_set or node.data in output_set:
+                    if node.data in input_set:
+                        outer_edge = inputs[input_set[node.data]]
+                    else:
+                        outer_edge = outputs[output_set[node.data]]
+
+                    for edge in state.all_edges(node):
+                        if (edge not in modified_edges
+                                and edge.data.data == node.data):
+                            for e in state.memlet_tree(edge):
+                                if e.data.data == node.data:
+                                    e._data = self._modify_memlet(
+                                        e.data, outer_edge.data)
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
