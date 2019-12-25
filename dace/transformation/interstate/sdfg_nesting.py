@@ -203,6 +203,19 @@ class InlineSDFG(pattern_matching.Transformation):
                         find_new_name=True)
                     transients[node.data] = name
 
+        # All transients of edges between code nodes are also added to parent
+        for edge in nstate.edges():
+            if (isinstance(edge.src, nodes.CodeNode) and
+                    isinstance(edge.dst, nodes.CodeNode)):
+                datadesc = nsdfg.arrays[edge.data.data]
+                if edge.data.data not in transients and datadesc.transient:
+                    name = sdfg.add_datadesc(
+                        '%s_%s' % (nsdfg.label, edge.data.data),
+                        datadesc,
+                        find_new_name=True)
+                    transients[edge.data.data] = name
+
+
         # Collect nodes to add to top-level graph
         new_incoming_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
         new_outgoing_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
