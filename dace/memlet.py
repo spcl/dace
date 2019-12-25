@@ -76,9 +76,9 @@ class Memlet(object):
         """
 
         # Properties
-        self.num_accesses = num_accesses  # type: sympy math
+        self.num_accesses = num_accesses  # type: sympy.expr.Expr
         self.subset = subset  # type: subsets.Subset
-        self.veclen = vector_length  # type: int (in elements, default 1)
+        self.veclen = vector_length  # type: int
         if hasattr(data, 'data'):
             data = data.data
         self.data = data  # type: str
@@ -310,6 +310,9 @@ class MemletTree(object):
             yield from self.parent
             return
 
-        yield self.edge
-        for child in self.children:
-            yield from child
+        def traverse(node):
+            yield node.edge
+            for child in node.children:
+                yield from traverse(child)
+
+        yield from traverse(self)
