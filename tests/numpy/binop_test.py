@@ -6,81 +6,103 @@ import numpy as np
 def addtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A + B
 
+
 @dace.program
 def subtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A - B
+
 
 @dace.program
 def multtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A * B
 
-@dace.program
-def divtest(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 5]):
-   C[:] = A / B
 
 @dace.program
-def floordivtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
+def divtest(A: dace.float64[5, 5], B: dace.float64[5, 5],
+            C: dace.float64[5, 5]):
+    C[:] = A / B
+
+
+@dace.program
+def floordivtest(A: dace.int64[5, 5], B: dace.int64[5, 5],
+                 C: dace.int64[5, 5]):
     C[:] = A // B
+
 
 @dace.program
 def modtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A % B
 
+
 @dace.program
 def powtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
-    C[:] = A ** B
+    C[:] = A**B
+
 
 @dace.program
 def matmulttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A @ B
 
+
 @dace.program
 def lshifttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A << B
+
 
 @dace.program
 def rshifttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A >> B
 
+
 @dace.program
 def bitortest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A | B
+
 
 @dace.program
 def bitxortest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A ^ B
 
+
 @dace.program
 def bitandtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.int64[5, 5]):
     C[:] = A & B
+
 
 @dace.program
 def andtest(A: dace.bool[5, 5], B: dace.bool[5, 5], C: dace.bool[5, 5]):
     C[:] = A and B
 
+
 @dace.program
 def ortest(A: dace.bool[5, 5], B: dace.bool[5, 5], C: dace.bool[5, 5]):
     C[:] = A or B
+
 
 @dace.program
 def eqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A == B
 
+
 @dace.program
 def noteqtest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A != B
+
 
 @dace.program
 def lttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A < B
 
+
 @dace.program
 def ltetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A <= B
 
+
 @dace.program
 def gttest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
     C[:] = A > B
+
 
 @dace.program
 def gtetest(A: dace.int64[5, 5], B: dace.int64[5, 5], C: dace.bool[5, 5]):
@@ -103,28 +125,30 @@ if __name__ == '__main__':
 
     failed_tests = set()
 
-    for opname, op in {'add': '+',
-                       'sub': '-',
-                       'mult': '*',
-                       'div': '/',
-                       'floordiv': '//',
-                       'mod': '%',
-                       'pow': '**',
-                       'matmult': '@',
-                       'lshift': '<<',
-                       'rshift': '>>',
-                       'bitor': '|',
-                       'bitxor': '^',
-                       'bitand': '&',
-                       'and': 'and',
-                       'or': 'or',
-                       'eq': '==',
-                       'noteq': '!=',
-                       'lt': '<',
-                       'lte': '<=',
-                       'gt': '>',
-                       'gte': '>='}.items():
-        
+    for opname, op in {
+            'add': '+',
+            'sub': '-',
+            'mult': '*',
+            'div': '/',
+            'floordiv': '//',
+            'mod': '%',
+            'pow': '**',
+            'matmult': '@',
+            'lshift': '<<',
+            'rshift': '>>',
+            'bitor': '|',
+            'bitxor': '^',
+            'bitand': '&',
+            'and': 'and',
+            'or': 'or',
+            'eq': '==',
+            'noteq': '!=',
+            'lt': '<',
+            'lte': '<=',
+            'gt': '>',
+            'gte': '>='
+    }.items():
+
         def test(A, B, C, np_exec: str = None):
             daceC = C.copy()
             exec('{opn}test(A, B, daceC)'.format(opn=opname))
@@ -143,9 +167,9 @@ if __name__ == '__main__':
                 print('Binary operator {opn}: OK'.format(opn=opname))
             else:
                 failed_tests.add(opname)
-                print('Binary operator {opn}: FAIL ({diff})'.format(opn=opname,
-                                                            diff=norm_diff))
-        
+                print('Binary operator {opn}: FAIL ({diff})'.format(
+                    opn=opname, diff=norm_diff))
+
         if opname == 'div':
             test(Af, Bf, Cf)
         elif opname in {'and', 'or'}:
@@ -154,7 +178,7 @@ if __name__ == '__main__':
             test(Apb, Bpb, Cb)
         else:
             test(A, B, C)
-        
+
     if failed_tests:
         print('FAILED TESTS:')
         for t in failed_tests:

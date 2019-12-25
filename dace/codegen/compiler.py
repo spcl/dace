@@ -99,8 +99,8 @@ class ReloadableDLL(object):
         is_loaded = self._stub.is_library_loaded(lib_cfilename)
         if is_loaded == 1:
             raise DuplicateDLLError(
-                'Library %s is already loaded somewhere else, ' % os.path.
-                basename(self._library_filename) +
+                'Library %s is already loaded somewhere else, ' %
+                os.path.basename(self._library_filename) +
                 'either unload it or use a different name ' +
                 'for the SDFG/program.')
 
@@ -371,7 +371,8 @@ def generate_program_folder(sdfg,
                 code_file.write(clean_code)
 
         if code_object.linkable == True:
-            filelist.append("{},{},{}".format(target_name, target_type, basename))
+            filelist.append("{},{},{}".format(target_name, target_type,
+                                              basename))
 
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -497,8 +498,8 @@ def configure_and_compile(program_folder,
             if Config.get_bool('debugprint'):
                 raise CompilerConfigurationError('Configuration failure')
             else:
-                raise CompilerConfigurationError(
-                    'Configuration failure:\n' + ex.output)
+                raise CompilerConfigurationError('Configuration failure:\n' +
+                                                 ex.output)
 
         with open(cmake_filename, "w") as fp:
             fp.write(cmake_command)
@@ -506,8 +507,8 @@ def configure_and_compile(program_folder,
     # Compile and link
     try:
         _run_liveoutput(
-            "cmake --build . --config %s" %
-            (Config.get('compiler', 'build_type')),
+            "cmake --build . --config %s" % (Config.get(
+                'compiler', 'build_type')),
             shell=True,
             cwd=build_folder,
             output_stream=output_stream)
@@ -518,8 +519,9 @@ def configure_and_compile(program_folder,
         else:
             raise CompilationError('Compiler failure:\n' + ex.output)
 
-    shared_library_path = os.path.join(build_folder, "lib{}.{}".format(
-        program_name, Config.get('compiler', 'library_extension')))
+    shared_library_path = os.path.join(
+        build_folder, "lib{}.{}".format(
+            program_name, Config.get('compiler', 'library_extension')))
 
     return shared_library_path
 
@@ -549,8 +551,9 @@ def get_binary_name(object_name,
         name = os.path.join('.dacecache', object_name, "build",
                             'lib%s.%s' % (object_name, lib_extension))
     else:
-        name = os.path.join('.dacecache', object_name, "build", 'lib%s_%s.%s' %
-                            (object_name, object_hash, lib_extension))
+        name = os.path.join(
+            '.dacecache', object_name, "build",
+            'lib%s_%s.%s' % (object_name, object_hash, lib_extension))
     return name
 
 

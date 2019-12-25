@@ -61,7 +61,6 @@ def make_read_A_sdfg():
 
     loop_body = sdfg.add_state("read_memory")
 
-
     sdfg.add_edge(
         n_inner_begin,
         n_inner_entry,
@@ -100,10 +99,10 @@ def make_read_A_sdfg():
             dace.symbolic.pystr_to_symbolic("1"),
             dace.properties.SubsetProperty.from_string("0"),
             1,
-            other_subset=dace.properties.SubsetProperty.from_string(
-                "n")))
+            other_subset=dace.properties.SubsetProperty.from_string("n")))
 
     return sdfg
+
 
 def make_write_A_sdfg():
 
@@ -112,7 +111,6 @@ def make_write_A_sdfg():
     n_begin = sdfg.add_state("n_begin")
     n_entry = sdfg.add_state("n_entry")
     n_end = sdfg.add_state("n_end")
-
 
     loop_body = sdfg.add_state("write_memory")
 
@@ -169,16 +167,13 @@ def make_compute_sdfg():
     n_entry = sdfg.add_state("n_entry")
     n_end = sdfg.add_state("n_end")
 
-
     state = sdfg.add_state("compute")
 
     # Data nodes
     A_pipe_in = state.add_stream(
         "A_stream_in", dace.int32, storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_out = state.add_stream(
-        "A_stream_out",
-        dace.int32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "A_stream_out", dace.int32, storage=dace.dtypes.StorageType.FPGA_Local)
 
     # N-loop
     sdfg.add_edge(
@@ -206,10 +201,8 @@ def make_compute_sdfg():
 
     # Compute tasklet
 
-    compute_tasklet = state.add_tasklet(
-        "add", {"a_in"}, {"a_out"},
-        "a_out = a_in +1")
-
+    compute_tasklet = state.add_tasklet("add", {"a_in"}, {"a_out"},
+                                        "a_out = a_in +1")
 
     state.add_memlet_path(
         A_pipe_in,
@@ -237,11 +230,9 @@ def make_fpga_state(sdfg):
     read_A_sdfg_node = state.add_nested_sdfg(read_A_sdfg, sdfg, {"mem"},
                                              {"pipe"})
 
-
     compute_sdfg = make_compute_sdfg()
     compute_sdfg_node = state.add_nested_sdfg(
-        compute_sdfg, sdfg, {"A_stream_in"},
-        {"A_stream_out"})
+        compute_sdfg, sdfg, {"A_stream_in"}, {"A_stream_out"})
 
     write_A_sdfg = make_write_A_sdfg()
     write_A_sdfg_node = state.add_nested_sdfg(write_A_sdfg, sdfg, {"pipe"},
@@ -261,19 +252,19 @@ def make_fpga_state(sdfg):
         "A_pipe",
         dace.int32,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_in = state.add_stream(
         "A_pipe",
         dace.int32,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_write = state.add_stream(
         "A_pipe",
         dace.int32,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
     A_pipe_out = state.add_stream(
         "A_pipe",
@@ -299,17 +290,14 @@ def make_fpga_state(sdfg):
         compute_sdfg_node,
         dst_conn="A_stream_in",
         memlet=dace.memlet.Memlet(
-            A_pipe_in,
-            dace.symbolic.pystr_to_symbolic("N/P"),
+            A_pipe_in, dace.symbolic.pystr_to_symbolic("N/P"),
             dace.properties.SubsetProperty.from_string("p"), 1))
     state.add_memlet_path(
         compute_sdfg_node,
         A_pipe_out,
         src_conn="A_stream_out",
         memlet=dace.memlet.Memlet(
-            A_pipe_out,
-            dace.symbolic.pystr_to_symbolic(
-                "N/P"),
+            A_pipe_out, dace.symbolic.pystr_to_symbolic("N/P"),
             dace.properties.SubsetProperty.from_string("p + 1"), 1))
 
     state.add_memlet_path(
@@ -326,7 +314,6 @@ def make_fpga_state(sdfg):
         memlet=dace.memlet.Memlet(
             A_pipe_in, dace.symbolic.pystr_to_symbolic("N"),
             dace.properties.SubsetProperty.from_string("0"), 1))
-
 
     state.add_memlet_path(
         A_pipe_write,
@@ -347,7 +334,6 @@ def make_fpga_state(sdfg):
 
 
 def make_sdfg(specialized):
-
 
     sdfg = dace.SDFG("simple_systolic_array_{}".format(P.get()))
 
@@ -380,12 +366,12 @@ if __name__ == "__main__":
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([N.get()], dtype=dace.int32.type)
-    A[:] = np.random.randint(0,1000,N.get()).astype(dace.int32.type)
+    A[:] = np.random.randint(0, 1000, N.get()).astype(dace.int32.type)
 
     A_Exp = A + P.get()
 
     sdfg.draw_to_file()
-    sdfg(A=A )
+    sdfg(A=A)
     # print("A: ", A)
     # print("A_Exp: ", A_Exp)
     diff = np.abs(A_Exp - A)

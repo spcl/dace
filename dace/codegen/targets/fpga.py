@@ -502,8 +502,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                       DefinedType.Pointer)
 
             else:
-                raise NotImplementedError(
-                    "Unimplemented storage type " + str(nodedesc.storage))
+                raise NotImplementedError("Unimplemented storage type " +
+                                          str(nodedesc.storage))
 
         elif isinstance(nodedesc, dace.data.Scalar):
 
@@ -583,20 +583,23 @@ class FPGACodeGen(TargetCodeGenerator):
 
             if host_to_device:
 
-                callsite_stream.write("{}.CopyFromHost({}, {}, {});".format(
-                    dst_node.data, (offset if not outgoing_memlet else 0),
-                    copysize, src_node.data + (" + {}".format(offset)
-                                               if outgoing_memlet else "")),
-                                      sdfg, state_id, [src_node, dst_node])
+                callsite_stream.write(
+                    "{}.CopyFromHost({}, {}, {});".format(
+                        dst_node.data, (offset if not outgoing_memlet else 0),
+                        copysize,
+                        src_node.data + (" + {}".format(offset)
+                                         if outgoing_memlet else "")), sdfg,
+                    state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                callsite_stream.write("{}.CopyToHost({}, {}, {});".format(
-                    src_node.data, (offset
-                                    if outgoing_memlet else 0), copysize,
-                    dst_node.data + (" + {}".format(offset)
-                                     if not outgoing_memlet else "")), sdfg,
-                                      state_id, [src_node, dst_node])
+                callsite_stream.write(
+                    "{}.CopyToHost({}, {}, {});".format(
+                        src_node.data, (offset
+                                        if outgoing_memlet else 0), copysize,
+                        dst_node.data + (" + {}".format(offset)
+                                         if not outgoing_memlet else "")),
+                    sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
@@ -912,8 +915,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
                             loop_var_type, var, cpu.sym2cpp(begin), var,
-                            cpu.sym2cpp(end + 1), var,
-                            cpu.sym2cpp(skip)), sdfg, state_id, node)
+                            cpu.sym2cpp(end + 1), var, cpu.sym2cpp(skip)),
+                        sdfg, state_id, node)
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -1061,8 +1064,9 @@ class FPGACodeGen(TargetCodeGenerator):
             elif reduction_type == dace.dtypes.ReductionType.Sum:
                 # Set initial value to zero. Helpful for single cycle clock accumulator in Intel.
                 init_value = " = 0"
-            callsite_stream.write("{} {}{};".format(
-                output_type, accumulator, init_value), sdfg, state_id, node)
+            callsite_stream.write(
+                "{} {}{};".format(output_type, accumulator, init_value), sdfg,
+                state_id, node)
 
         # Generate inner loops (for each collapsed dimension)
         input_subset = input_memlet.subset

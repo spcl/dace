@@ -101,8 +101,8 @@ class TensorflowRedundantArray(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} tensorflow redundant arrays using TensorflowRedundantArray transform.".
-            format(TensorflowRedundantArray._arrays_removed))
+            "Automatically removed {} tensorflow redundant arrays using TensorflowRedundantArray transform."
+            .format(TensorflowRedundantArray._arrays_removed))
 
 
 pm.Transformation.register_pattern(TensorflowRedundantArray)

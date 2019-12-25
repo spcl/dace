@@ -256,7 +256,10 @@ if __name__ == '__main__':
                     # Output available transformations in json-format (necessary to apply)
                     sys.stdout.write('"advanced_transform":')
                     sys.stdout.write("{")
-                    get_transformations(resp_json, lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
+                    get_transformations(
+                        resp_json, lambda a, b, c: sys.
+                        stdout.write('"' + b + '":\n' + json.dumps(
+                            c, indent=2) + '\n\n'))
                     sys.stdout.write("}")
                     if "txform_detail" != args.extract[-1]:
                         sys.stdout.write(',')

@@ -716,8 +716,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode):
                 if not uconn:
                     raise SyntaxError(
-                        "Cannot copy memlet without a local connector: {} to {}".
-                        format(str(edge.src), str(edge.dst)))
+                        "Cannot copy memlet without a local connector: {} to {}"
+                        .format(str(edge.src), str(edge.dst)))
 
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
