@@ -1981,73 +1981,90 @@ class MemletTrackingView(object):
 
         return result
 
-    def memlet_tree(self,
-                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
-        """ Given one edge, returns a list of edges representing a tree
-            between its node source(s) and sink(s). Used for memlet tracking.
+    def memlet_tree(self, edge: MultiConnectorEdge) -> mm.MemletTree:
+        """ Given one edge, returns a tree of edges between its node source(s)
+            and sink(s). Used for memlet tracking.
 
             :param edge: An edge within this state.
-            :return: A list of edges from source nodes to destination nodes
-                     (in arbitrary order) that pass through the given edge.
+            :return: A tree of edges whose root is the source/sink node
+                     (depending on direction) and associated children edges.
             """
-        result = {}
+        result = mm.MemletTree(edge)
+        propagate_forward = False
+        propagate_backward = False
+        if ((isinstance(edge.src, nd.EntryNode) and edge.src_conn is not None)
+                or
+            (isinstance(edge.dst, nd.EntryNode) and edge.dst_conn is not None
+             and edge.dst_conn.startswith('IN_'))):
+            propagate_forward = True
+        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None)
+                or
+            (isinstance(edge.dst, nd.ExitNode) and edge.dst_conn is not None)):
+            propagate_backward = True
+
+        # If either both are False (no scopes involved) or both are True
+        # (invalid SDFG), we return only the current edge as a degenerate tree
+        if propagate_forward == propagate_backward:
+            return result
 
         # Obtain the full state (to work with paths that trace beyond a scope)
         state = self._graph
 
-        # If empty memlet, return itself as the path
-        if edge.src_conn is None and edge.dst_conn is None and edge.data.data is None:
-            return [edge]
+        # Collect parents
+        curedge = edge
+        current_treenode = result
+        if propagate_forward:
+            while (isinstance(curedge.src, nd.EntryNode)
+                   and curedge.src_conn is not None):
+                assert curedge.src_conn.startswith('OUT_')
+                cname = curedge.src_conn[4:]
+                current_treenode.parent = mm.MemletTree(
+                    next(
+                        e for e in state.in_edges(curedge.src)
+                        if e.dst_conn == 'IN_%s' % cname))
+                current_treenode = current_treenode.parent
+                curedge = current_treenode.edge
+        elif propagate_backward:
+            while (isinstance(curedge.dst, nd.ExitNode)
+                   and curedge.dst_conn is not None):
+                assert curedge.dst_conn.startswith('IN_')
+                cname = curedge.dst_conn[3:]
+                current_treenode.parent = mm.MemletTree(
+                    next(
+                        e for e in state.out_edges(curedge.dst)
+                        if e.src_conn == 'OUT_%s' % cname))
+                current_treenode = current_treenode.parent
+                curedge = current_treenode.edge
 
-        # Obtain original path
-        path = self.memlet_path(edge)
-        result.update({state.edge_id(e): e for e in path})
+        # Collect children (recursively)
+        def add_children(treenode):
+            if propagate_forward:
+                if not (isinstance(treenode.edge.dst, nd.EntryNode)
+                        and treenode.edge.dst_conn.startswith('IN_')):
+                    return
+                conn = treenode.edge.dst_conn[3:]
+                treenode.children = [
+                    mm.MemletTree(e, parent=treenode)
+                    for e in state.out_edges(treenode.edge.dst)
+                    if e.src_conn == 'OUT_%s' % conn
+                ]
+            elif propagate_backward:
+                if (not isinstance(treenode.edge.src, nd.ExitNode)
+                        or treenode.edge.src_conn is None):
+                    return
+                conn = treenode.edge.src_conn[4:]
+                treenode.children = [
+                    mm.MemletTree(e, parent=treenode)
+                    for e in state.in_edges(treenode.edge.src)
+                    if e.dst_conn == 'IN_%s' % conn
+                ]
+            for child in treenode.children:
+                add_children(child)
 
-        num = len(path)
+        # Start from root node (obtained from above parent traversal)
+        add_children(current_treenode)
 
-        # Add edges from branching memlet paths
-        for i, curedge in enumerate(path):
-            # Trace through scopes using OUT_# -> IN_#
-            if i > 0 and isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
-                if curedge.src_conn is None:
-                    raise ValueError(
-                        "Source connector cannot be None for {}".format(
-                            curedge.src))
-                assert curedge.src_conn.startswith("OUT_")
-
-                # Check for neighboring edges
-                for e in state.out_edges(curedge.src):
-                    if e == curedge:
-                        continue
-                    if e.src_conn == curedge.src_conn:
-                        extra_path = self.memlet_path(e)
-                        result.update(
-                            {state.edge_id(ee): ee
-                             for ee in extra_path})
-
-            # Trace through scopes using IN_# -> OUT_#
-            if i < num - 1 and isinstance(curedge.dst,
-                                          (nd.EntryNode, nd.ExitNode)):
-                if curedge.dst_conn is None:
-                    raise ValueError(
-                        "Destination connector cannot be None for {}".format(
-                            curedge.dst))
-
-                # Map variables are last edges in memlet paths, so this can only
-                # be an edge that enters/exits the scope
-                assert curedge.dst_conn.startswith("IN_")
-
-                # Check for neighboring edges
-                for e in state.in_edges(curedge.dst):
-                    if e == curedge:
-                        continue
-                    if e.dst_conn == curedge.dst_conn:
-                        extra_path = self.memlet_path(e)
-                        result.update(
-                            {state.edge_id(ee): ee
-                             for ee in extra_path})
-
-        return list(result.values())
+        return result
 
 
 class ScopeSubgraphView(SubgraphView, MemletTrackingView):

@@ -484,19 +484,23 @@ class InlineSDFG(pattern_matching.Transformation):
                                               inner_edge.dst,
                                               inner_edge.dst_conn, new_memlet)
                     mtree = state.memlet_tree(new_edge)
-                    mtree = mtree[mtree.index(new_edge) + 1:]
                 else:
                     new_edge = state.add_edge(
                         inner_edge.src, inner_edge.src_conn, top_edge.dst,
                         top_edge.dst_conn, new_memlet)
                     mtree = state.memlet_tree(new_edge)
-                    mtree = mtree[:mtree.index(new_edge)]
 
                 # Modify all memlets going forward/backward
-                for tree_edge in mtree:
-                    result.add(tree_edge)
-                    tree_edge._data = self._modify_memlet(
-                        tree_edge.data, top_edge.data)
+                def traverse(mtree_node):
+                    result.add(mtree_node.edge)
+                    mtree_node.edge._data = self._modify_memlet(
+                        mtree_node.edge.data, top_edge.data)
+                    for child in mtree_node.children:
+                        traverse(child)
+
+                for child in mtree.children:
+                    traverse(child)
+
         return result
 
 

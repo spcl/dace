@@ -1,16 +1,16 @@
 import ast
 from functools import reduce
 import operator
-import copy as cp
+from typing import List
 
 import dace
 import dace.serialize
-from dace import data as dt, subsets, symbolic, dtypes
+from dace import subsets, dtypes
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
-from dace.properties import (
-    Property, make_properties, DataProperty, ShapeProperty, SubsetProperty,
-    SymbolicProperty, TypeClassProperty, DebugInfoProperty, LambdaProperty)
+from dace.properties import (Property, make_properties, DataProperty,
+                             SubsetProperty, SymbolicProperty,
+                             DebugInfoProperty, LambdaProperty)
 
 
 @make_properties
@@ -293,3 +293,23 @@ class EmptyMemlet(Memlet):
 
     def __init__(self):
         super(EmptyMemlet, self).__init__(None, 0, None, 1)
+
+
+class MemletTree(object):
+    """ A tree of memlet edges. """
+
+    def __init__(
+            self, edge, parent=None, children=None
+    ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+        self.edge = edge
+        self.parent = parent
+        self.children = children or []
+
+    def __iter__(self):
+        if self.parent is not None:
+            yield from self.parent
+            return
+
+        yield self.edge
+        for child in self.children:
+            yield from child
