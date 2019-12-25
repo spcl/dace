@@ -760,8 +760,8 @@ class PAPIInstrumentation(InstrumentationProvider):
         # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
         if PAPIInstrumentation.instrument_entry(node, state):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
-                 format(id=unified_id)) +
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n"
+                 .format(id=unified_id)) +
                 PAPIInstrumentation.perf_counter_start_measurement_string(
                     node,
                     unified_id,

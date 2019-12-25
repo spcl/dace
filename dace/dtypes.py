@@ -169,8 +169,6 @@ _FFI_CTYPES = {
     numpy.complex128: ctypes.c_longdouble,
 }
 
-
-
 # Number of bytes per data type
 _BYTES = {
     int: 4,
@@ -192,7 +190,6 @@ _BYTES = {
     numpy.complex64: 8,
     numpy.complex128: 16,
 }
-
 
 
 class typeclass(object):
@@ -263,10 +260,11 @@ class typeclass(object):
 
         if isinstance(s, list) or isinstance(s, tuple):
             return data.Array(self, tuple(s))
-        return data.Array(self, (s,))
+        return data.Array(self, (s, ))
 
     def __repr__(self):
         return self.ctype
+
 
 # _CTYPES_RULES: returns the largest between two types (dace.types.typeclass) according to C semantic
 _CTYPES_RULES = {
@@ -274,91 +272,154 @@ _CTYPES_RULES = {
     # Both operands are integers
     # C Integer promotion rules apply:
     # - if the types are the same, return the type
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))): typeclass(numpy.uint8),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint16))): typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint32))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint64))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.int8))): typeclass(numpy.int8),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.int16))): typeclass(numpy.int16),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int32))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int64))): typeclass(numpy.int64),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))):
+    typeclass(numpy.uint8),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint16))):
+    typeclass(numpy.uint16),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint32))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint64))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.int8))):
+    typeclass(numpy.int8),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.int16))):
+    typeclass(numpy.int16),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.int32))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.int))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.int64))):
+    typeclass(numpy.int64),
 
     # - Otherwise if both operands after promotion have the same signedness
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint32))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint8))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint16))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint8))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint8))): typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int32))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int16))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int8))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int16))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int), typeclass(numpy.int16))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int8))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int), typeclass(numpy.int8))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.int8))): typeclass(numpy.int16),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint32))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint8))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint16))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint8))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint8))):
+    typeclass(numpy.uint16),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.int32))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.int))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.int16))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.int8))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.int16))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int), typeclass(numpy.int16))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.int8))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int), typeclass(numpy.int8))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.int8))):
+    typeclass(numpy.int16),
 
     # - Otherwise, the signedness is different: If the operand with the unsigned type has
     # conversion rank greater or equal than the rank of the type of the signed operand,
     # then the operand with the signed type is implicitly converted to the unsigned type
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int64))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int32))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int8))): typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int32))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int16))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int8))): typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.int16))): typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.int8))): typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.int8))): typeclass(numpy.uint8),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.int64))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.int32))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint64), typeclass(numpy.int8))):
+    typeclass(numpy.uint64),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.int32))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.int16))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.int8))):
+    typeclass(numpy.uint32),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.int16))):
+    typeclass(numpy.uint16),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.int8))):
+    typeclass(numpy.uint16),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.int8))):
+    typeclass(numpy.uint8),
 
     # - Otherwise, the signedness is different and the signed operand's rank is greater than
     # unsigned operand's rank. In this case, if the signed type can represent all values of
     # the unsigned type, then the operand with the unsigned type is implicitly converted to
     # the type of the signed operand.
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint32))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint16))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint8))): typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.uint16))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.uint8))): typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.uint8))): typeclass(numpy.int16),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.uint32))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.uint16))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int64), typeclass(numpy.uint8))):
+    typeclass(numpy.int64),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.uint16))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.uint8))):
+    typeclass(numpy.int32),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.uint8))):
+    typeclass(numpy.int16),
 
     # If any of the operand is float then the result will be in float (of the biggest rank
     # if the two operands are of the same type)
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float64))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float32))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float16))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float32), typeclass(numpy.float32))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.float32), typeclass(numpy.float16))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.float16), typeclass(numpy.float16))): typeclass(numpy.float16),
-
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float16))): typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float16))): typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float16))): typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float16))): typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float16))): typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float16))): typeclass(numpy.float16),
-
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float32))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float32))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float32))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float32))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float32))): typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float32))): typeclass(numpy.float32),
-
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float64))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float64))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float64))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float64))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float64))): typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float64))): typeclass(numpy.float64),
-
+    frozenset((typeclass(numpy.float64), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.float64), typeclass(numpy.float32))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.float64), typeclass(numpy.float16))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.float32), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.float32), typeclass(numpy.float16))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.float16), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.float16))):
+    typeclass(numpy.float16),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.float32))):
+    typeclass(numpy.float32),
+    frozenset((typeclass(numpy.int8), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.int16), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.int32), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.uint8), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.uint16), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
+    frozenset((typeclass(numpy.uint32), typeclass(numpy.float64))):
+    typeclass(numpy.float64),
 }
+
 
 class pointer(typeclass):
     """ A data type for a pointer to an existing typeclass.
@@ -483,7 +544,7 @@ class struct(typeclass):
                 fields.append((k, _FFI_CTYPES[v.type]))
         fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
-        struct_class = type("NewStructClass", (ctypes.Structure,),
+        struct_class = type("NewStructClass", (ctypes.Structure, ),
                             {"_fields_": fields})
         return struct_class
 
@@ -742,11 +803,7 @@ _ALLOWED_MODULES = {
 }
 
 # Lists allowed modules and maps them to OpenCL
-_OPENCL_ALLOWED_MODULES = {
-    "builtins": "",
-    "dace": "",
-    "math": ""
-}
+_OPENCL_ALLOWED_MODULES = {"builtins": "", "dace": "", "math": ""}
 
 
 def ismodule(var):

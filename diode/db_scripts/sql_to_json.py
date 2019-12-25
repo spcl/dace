@@ -1321,8 +1321,8 @@ ORDER BY
             c.execute("CREATE TEMPORARY TABLE `{tablename}` AS ".format(
                 tablename=table_str) + query.format(mode=modestr))
             c.execute(
-                "CREATE INDEX `{t}_ind` ON `default_sel`(SuperSectionID, entryID, threadID, iteration);".
-                format(t=table_str))
+                "CREATE INDEX `{t}_ind` ON `default_sel`(SuperSectionID, entryID, threadID, iteration);"
+                .format(t=table_str))
             # Cool, now we just match by rowid
             PAPISettings.merging_print("Creating temporary table...")
             esel_query = """
@@ -2320,12 +2320,19 @@ VALUES
         cache_op_analysis = CacheOpAnalysis(shared_input_db=cache_conn)
 
         analyses = [
-            ("ThreadAnalysis", thread_analysis, lambda unified_id, ssid, sid: [unified_id, ssid]),
-            ("CriticalPathAnalysis", critical_path_analysis, lambda unified_id, ssid, sid: [int(unified_id) & 0xFFFF, (int(unified_id) >> 16) & 0xFFFF]),
-            ("MemoryAnalysis", memory_analysis, lambda unified_id, ssid, sid: [unified_id, ssid]),
-            ("VectorizationAnalysis", vectorization_analysis, lambda unified_id, ssid, sid: [unified_id, ssid]),
-            ("MemoryOpAnalysis", memory_op_analysis, lambda unified_id, ssid, sid: [unified_id, ssid]),
-            ("CacheOpAnalysis", cache_op_analysis, lambda unified_id, ssid, sid: [unified_id, ssid])
+            ("ThreadAnalysis", thread_analysis,
+             lambda unified_id, ssid, sid: [unified_id, ssid]),
+            ("CriticalPathAnalysis", critical_path_analysis,
+             lambda unified_id, ssid, sid:
+             [int(unified_id) & 0xFFFF, (int(unified_id) >> 16) & 0xFFFF]),
+            ("MemoryAnalysis", memory_analysis,
+             lambda unified_id, ssid, sid: [unified_id, ssid]),
+            ("VectorizationAnalysis", vectorization_analysis,
+             lambda unified_id, ssid, sid: [unified_id, ssid]),
+            ("MemoryOpAnalysis", memory_op_analysis,
+             lambda unified_id, ssid, sid: [unified_id, ssid]),
+            ("CacheOpAnalysis", cache_op_analysis,
+             lambda unified_id, ssid, sid: [unified_id, ssid])
         ]
 
         PAPISettings.canning_print("unified_ids: " + str(unified_ids))

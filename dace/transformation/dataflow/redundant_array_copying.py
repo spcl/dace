@@ -119,8 +119,8 @@ class RedundantArrayCopying(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} redundant arrays using RedundantArrayCopying transform.".
-            format(RedundantArrayCopying._arrays_removed))
+            "Automatically removed {} redundant arrays using RedundantArrayCopying transform."
+            .format(RedundantArrayCopying._arrays_removed))
 
 
 pm.Transformation.register_pattern(RedundantArrayCopying)
@@ -188,8 +188,8 @@ class RedundantArrayCopying2(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} redundant arrays using RedundantArrayCopying2 transform.".
-            format(RedundantArrayCopying2._arrays_removed))
+            "Automatically removed {} redundant arrays using RedundantArrayCopying2 transform."
+            .format(RedundantArrayCopying2._arrays_removed))
 
 
 pm.Transformation.register_pattern(RedundantArrayCopying2)
@@ -258,8 +258,8 @@ class RedundantArrayCopying3(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} redundant arrays using RedundantArrayCopying3 transform.".
-            format(RedundantArrayCopying3._arrays_removed))
+            "Automatically removed {} redundant arrays using RedundantArrayCopying3 transform."
+            .format(RedundantArrayCopying3._arrays_removed))
 
 
 pm.Transformation.register_pattern(RedundantArrayCopying3)
