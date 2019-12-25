@@ -224,9 +224,10 @@ class InlineSDFG(pattern_matching.Transformation):
         # Add nested SDFG into top-level SDFG
 
         # Add nested nodes into original state
-        subgraph = SubgraphView(
-            nstate,
-            set(nstate.nodes()) - (source_accesses | sink_accesses))
+        subgraph = SubgraphView(nstate, [
+            n for n in nstate.nodes()
+            if n not in (source_accesses | sink_accesses)
+        ])
         state.add_nodes_from(subgraph.nodes())
         for edge in subgraph.edges():
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn,
