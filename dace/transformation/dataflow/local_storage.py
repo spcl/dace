@@ -111,8 +111,10 @@ class InLocalStorage(LocalStorage):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        return (isinstance(LocalStorage._node_a, nodes.EntryNode)
-                and isinstance(LocalStorage._node_b, nodes.EntryNode))
+        node_a = graph.nodes()[candidate[LocalStorage._node_a]]
+        node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+        return (isinstance(node_a, nodes.EntryNode)
+                and isinstance(node_b, nodes.EntryNode))
 
 
 @make_properties
@@ -123,8 +125,10 @@ class OutLocalStorage(LocalStorage):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        return (isinstance(LocalStorage._node_a, nodes.ExitNode)
-                and isinstance(LocalStorage._node_b, nodes.ExitNode))
+        node_a = graph.nodes()[candidate[LocalStorage._node_a]]
+        node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+        return (isinstance(node_a, nodes.ExitNode)
+                and isinstance(node_b, nodes.ExitNode))
 
 
 pattern_matching.Transformation.register_pattern(InLocalStorage)
