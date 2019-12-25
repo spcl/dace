@@ -1989,7 +1989,6 @@ class MemletTrackingView(object):
             :return: A tree of edges whose root is the source/sink node
                      (depending on direction) and associated children edges.
             """
-        result = mm.MemletTree(edge)
         propagate_forward = False
         propagate_backward = False
         if ((isinstance(edge.src, nd.EntryNode) and edge.src_conn is not None)
@@ -2005,36 +2004,30 @@ class MemletTrackingView(object):
         # If either both are False (no scopes involved) or both are True
         # (invalid SDFG), we return only the current edge as a degenerate tree
         if propagate_forward == propagate_backward:
-            return result
+            return mm.MemletTree(edge)
 
         # Obtain the full state (to work with paths that trace beyond a scope)
         state = self._graph
 
-        # Collect parents
+        # Find tree root
         curedge = edge
-        current_treenode = result
         if propagate_forward:
             while (isinstance(curedge.src, nd.EntryNode)
                    and curedge.src_conn is not None):
                 assert curedge.src_conn.startswith('OUT_')
                 cname = curedge.src_conn[4:]
-                current_treenode.parent = mm.MemletTree(
-                    next(
-                        e for e in state.in_edges(curedge.src)
-                        if e.dst_conn == 'IN_%s' % cname))
-                current_treenode = current_treenode.parent
-                curedge = current_treenode.edge
+                curedge = next(
+                    e for e in state.in_edges(curedge.src)
+                    if e.dst_conn == 'IN_%s' % cname)
         elif propagate_backward:
             while (isinstance(curedge.dst, nd.ExitNode)
                    and curedge.dst_conn is not None):
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
-                current_treenode.parent = mm.MemletTree(
-                    next(
-                        e for e in state.out_edges(curedge.dst)
-                        if e.src_conn == 'OUT_%s' % cname))
-                current_treenode = current_treenode.parent
-                curedge = current_treenode.edge
+                curedge = next(
+                    e for e in state.out_edges(curedge.dst)
+                    if e.src_conn == 'OUT_%s' % cname)
+        tree_root = mm.MemletTree(curedge)
 
         # Collect children (recursively)
         def add_children(treenode):
@@ -2058,13 +2051,25 @@ class MemletTrackingView(object):
                     for e in state.in_edges(treenode.edge.src)
                     if e.dst_conn == 'IN_%s' % conn
                 ]
+
             for child in treenode.children:
                 add_children(child)
 
         # Start from root node (obtained from above parent traversal)
-        add_children(current_treenode)
+        add_children(tree_root)
 
-        return result
+        # Find edge in tree
+        def traverse(node):
+            if node.edge == edge:
+                return node
+            for child in node.children:
+                res = traverse(child)
+                if res is not None:
+                    return res
+            return None
+
+        # Return node that corresponds to current edge
+        return traverse(tree_root)
 
 
 class ScopeSubgraphView(SubgraphView, MemletTrackingView):
