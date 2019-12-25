@@ -8,4 +8,4 @@ DACE_optimizer_interface="dace.transformation.testing.TransformationTester"
 DACE_TEST_NAME="Transformations"
 
 # Run the end-to-end tests with the TransformationTester
-exec $SCRIPTPATH/e2e_test.sh
+exec $SCRIPTPATH/e2e_test.sh $*
