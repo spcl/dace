@@ -3195,6 +3195,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Map internal SDFG symbols to external symbols (find_and_replace?)
             for aname, arg in args:
+                if arg in self.sdfg.arrays:
+                    continue
                 if arg in self.sdfg.symbols or not isinstance(arg, str):
                     sdfg.replace(aname, arg)
                 # Disallow memlets/nodes to symbol parameters
