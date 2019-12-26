@@ -473,28 +473,28 @@ def make_outer_compute_state(sdfg):
         dtype,
         1,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
     pipes_read = state.add_stream(
         "pipes",
         dtype,
         1,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
     pipes_write = state.add_stream(
         "pipes",
         dtype,
         1,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
     pipes_memory_write = state.add_stream(
         "pipes",
         dtype,
         1,
         transient=True,
-        shape=(P + 1,),
+        shape=(P + 1, ),
         storage=dace.dtypes.StorageType.FPGA_Local)
 
     read_sdfg = make_read_sdfg()

@@ -4,23 +4,22 @@ import dace
 import numpy as np
 import argparse
 
-
 N = dace.symbol('N')
 
+
 @dace.program
-def vector_reduce(x : dace.float32[N], s :  dace.scalar(dace.float32)):
+def vector_reduce(x: dace.float32[N], s: dace.scalar(dace.float32)):
     #transient
     tmp = dace.define_local([N], dtype=x.dtype)
 
     @dace.map
-    def sum(i:_[0:N]):
+    def sum(i: _[0:N]):
         in_x << x[i]
         out >> tmp[i]
 
         out = in_x
+
     dace.reduce(lambda a, b: a + b, tmp, s, axis=(0), identity=0)
-
-
 
 
 if __name__ == "__main__":
@@ -43,15 +42,14 @@ if __name__ == "__main__":
     X = np.random.rand(N.get()).astype(dace.float32.type)
     s = dace.scalar(dace.float32)
 
-    vector_reduce(X,s)
+    vector_reduce(X, s)
     #compute expected result
     s_exp = 0.0
     for x in X:
         s_exp += x
     print(s)
     print(s_exp)
-    diff = np.linalg.norm(s_exp-s) / float(dace.eval(N.get()))
+    diff = np.linalg.norm(s_exp - s) / float(dace.eval(N.get()))
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
-

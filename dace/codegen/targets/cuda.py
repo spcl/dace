@@ -1114,8 +1114,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             if not e.dst_conn.startswith('IN_') and hasattr(e, '_cuda_event'):
                 ev = e._cuda_event
                 callsite_stream.write(
-                    'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'.
-                    format(ev=ev),
+                    'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'
+                    .format(ev=ev),
                     sdfg,
                     state_id, [e.src, e.dst])
 

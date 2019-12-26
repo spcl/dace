@@ -7,7 +7,7 @@ N = dace.symbol("N")
 
 
 @dace.program
-def type_inference(x: dace.float32[N],  y : dace.float32[N]):
+def type_inference(x: dace.float32[N], y: dace.float32[N]):
     @dace.map
     def comp(i: _[0:N]):
         in_x << x[i]
@@ -18,7 +18,7 @@ def type_inference(x: dace.float32[N],  y : dace.float32[N]):
         var1 = int(in_x)
         var2: int = in_y
         var3 = 2.1
-        res = var1+var3*var2
+        res = var1 + var3 * var2
         out = res
 
 
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     # compute expected result
     Z = np.zeros(N.get())
     for i in range(0, N.get()):
-        Z[i] = int(X[i]) + int(Y[i])*2.1
+        Z[i] = int(X[i]) + int(Y[i]) * 2.1
 
     type_inference(X, Y)
 
@@ -53,4 +53,3 @@ if __name__ == "__main__":
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
-

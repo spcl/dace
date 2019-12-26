@@ -79,11 +79,11 @@ def read_grfile(filename, with_weights=False):
 
     V = graph.contents.nvtxs
     E = graph.contents.nedges
-    
-    G_row = np.ctypeslib.as_array(graph.contents.xadj, shape=(V+1,))
-    G_col = np.ctypeslib.as_array(graph.contents.adjncy, shape=(E,))
+
+    G_row = np.ctypeslib.as_array(graph.contents.xadj, shape=(V + 1, ))
+    G_col = np.ctypeslib.as_array(graph.contents.adjncy, shape=(E, ))
     if with_weights:
-        G_val = np.ctypeslib.as_array(graph.contents.adjwgt, shape=(E,))
+        G_val = np.ctypeslib.as_array(graph.contents.adjwgt, shape=(E, ))
 
     # Do not free graph! numpy arrays are constructed from it
     #lib.FreeGraph(graph)

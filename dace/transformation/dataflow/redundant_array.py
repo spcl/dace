@@ -97,8 +97,8 @@ class RedundantArray(pm.Transformation):
     @staticmethod
     def print_debuginfo():
         print(
-            "Automatically removed {} redundant arrays using RedundantArray transform.".
-            format(RedundantArray._arrays_removed))
+            "Automatically removed {} redundant arrays using RedundantArray transform."
+            .format(RedundantArray._arrays_removed))
 
     def modifies_graph(self):
         return True

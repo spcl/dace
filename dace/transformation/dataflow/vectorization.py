@@ -133,14 +133,15 @@ class Vectorization(pattern_matching.Transformation):
                     # propagate to the parent (TODO: handle multiple level of nestings)
                     if sdfg.parent is not None:
                         # Find parent Nested SDFG node
-                        parent_node = next(
-                            n for n in sdfg.parent.nodes()
-                            if isinstance(n, nodes.NestedSDFG) and n.sdfg.name == sdfg.name)
+                        parent_node = next(n for n in sdfg.parent.nodes()
+                                           if isinstance(n, nodes.NestedSDFG)
+                                           and n.sdfg.name == sdfg.name)
 
                         # continue in propagating the vector length following the path that arrives to source_edge or
                         # starts from sink_edge
                         for pe in sdfg.parent.all_edges(parent_node):
-                            if str(pe.dst_conn) == str(source_edge.src) or str(pe.src_conn) == str(sink_edge.dst):
+                            if str(pe.dst_conn) == str(source_edge.src) or str(
+                                    pe.src_conn) == str(sink_edge.dst):
                                 for ppe in graph.memlet_path(pe):
                                     ppe.data.veclen = vector_size
 

@@ -716,8 +716,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode):
                 if not uconn:
                     raise SyntaxError(
-                        "Cannot copy memlet without a local connector: {} to {}".
-                        format(str(edge.src), str(edge.dst)))
+                        "Cannot copy memlet without a local connector: {} to {}"
+                        .format(str(edge.src), str(edge.dst)))
 
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
@@ -1961,10 +1961,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # Obtain variable names per output and reduction axis
         axis_vars = []  # Iteration variables for the input dimensions
         output_axis_vars = dict()  # Dict matching the dimensions of the input
-                                   # that are NOT being reduced with the
-                                   # equivalent dimensions of the output array.
+        # that are NOT being reduced with the
+        # equivalent dimensions of the output array.
         output_dims = []  # The equivalent output array dimensions
-                          # of the input dimensions NOT being reduced. 
+        # of the input dimensions NOT being reduced.
         octr = 0  # First index for the dimensions NOT being reduced.
         input_size = input_memlet.subset.size()
         output_size = output_memlet.subset.size()
