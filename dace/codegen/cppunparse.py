@@ -717,14 +717,14 @@ class CPPUnparser:
         if t.orelse:
             raise SyntaxError('Invalid C++')
 
-    def _generic_With(self, t, is_async=False):
+    def _generic_With(self, t, is_async=False, infer_type=False):
         raise SyntaxError('Invalid C++')
 
-    def _With(self, t):
-        self._generic_With(t)
+    def _With(self, t, infer_type=False):
+        self._generic_With(t, infer_type=infer_type)
 
-    def _AsyncWith(self, t):
-        self._generic_With(t, is_async=True)
+    def _AsyncWith(self, t, infer_type=False):
+        self._generic_With(t, is_async=True, infer_type=infer_type)
 
     # expr
     def _Bytes(self, t):
