@@ -121,8 +121,9 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
-            sdfg.add_datadesc('gpu_' + inodename, newdesc)
-            cloned_arrays[inodename] = 'gpu_' + inodename
+            name = sdfg.add_datadesc(
+                'gpu_' + inodename, newdesc, find_new_name=True)
+            cloned_arrays[inodename] = name
 
         for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
@@ -130,8 +131,9 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
-            sdfg.add_datadesc('gpu_' + onodename, newdesc)
-            cloned_arrays[onodename] = 'gpu_' + onodename
+            name = sdfg.add_datadesc(
+                'gpu_' + onodename, newdesc, find_new_name=True)
+            cloned_arrays[onodename] = name
 
         # Replace nodes
         for state in sdfg.nodes():

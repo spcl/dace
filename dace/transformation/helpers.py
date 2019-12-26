@@ -11,12 +11,14 @@ from dace.memlet import EmptyMemlet, Memlet
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
-                        name: Optional[str] = None) -> nodes.NestedSDFG:
+                        name: Optional[str] = None,
+                        full_data: bool = False) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
         :param name: An optional name for the nested SDFG.
+        :param full_data: If True, nests entire input/output data.
         :return: The nested SDFG node.
         :raise KeyError: Some or all nodes in the subgraph are not located in
                          this state, or the state does not belong to the given
@@ -96,25 +98,6 @@ def nest_state_subgraph(sdfg: SDFG,
     # Create the nested SDFG
     nsdfg = SDFG(name or 'nested_' + state.label)
 
-    # Connected source/sink nodes outside subgraph become global data
-    # descriptors in nested SDFG
-    input_names = []
-    output_names = []
-    for edge in inputs:
-        name = '__in_' + edge.data.data
-        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-        datadesc.transient = False
-        datadesc.shape = edge.data.subset.size()
-        input_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
-    for edge in outputs:
-        name = '__out_' + edge.data.data
-        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-        datadesc.transient = False
-        datadesc.shape = edge.data.subset.size()
-        output_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
-
     # Transients are added to the nested graph as-is
     for name in subgraph_transients:
         nsdfg.add_datadesc(name, sdfg.arrays[name])
@@ -125,6 +108,27 @@ def nest_state_subgraph(sdfg: SDFG,
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
+
+    # Connected source/sink nodes outside subgraph become global data
+    # descriptors in nested SDFG
+    input_names = []
+    output_names = []
+    for edge in inputs:
+        name = 'in_' + edge.data.data
+        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+        datadesc.transient = False
+        if not full_data:
+            datadesc.shape = edge.data.subset.size()
+        input_names.append(
+            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
+    for edge in outputs:
+        name = 'out_' + edge.data.data
+        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+        datadesc.transient = False
+        if not full_data:
+            datadesc.shape = edge.data.subset.size()
+        output_names.append(
+            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
     ###################
 
     # Add scope symbols to the nested SDFG
@@ -162,7 +166,8 @@ def nest_state_subgraph(sdfg: SDFG,
     for original_edge, new_edge in edges_to_offset:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
-            edge.data.subset.offset(original_edge.data.subset, True)
+            if not full_data:
+                edge.data.subset.offset(original_edge.data.subset, True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, sdfg,

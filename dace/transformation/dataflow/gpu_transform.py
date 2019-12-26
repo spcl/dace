@@ -19,9 +19,6 @@ class GPUTransformMap(pattern_matching.Transformation):
         outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    _maps_transformed = 0
-    _arrays_removed = 0
-
     fullcopy = Property(
         desc="Copy whole arrays rather than used subset",
         dtype=bool,
@@ -86,11 +83,17 @@ class GPUTransformMap(pattern_matching.Transformation):
             map_entry = graph.nodes()[self.subgraph[
                 GPUTransformMap._map_entry]]
             nsdfg_node = helpers.nest_state_subgraph(
-                sdfg, graph, graph.scope_subgraph(map_entry))
+                sdfg,
+                graph,
+                graph.scope_subgraph(map_entry),
+                full_data=self.fullcopy)
         else:
             cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
             nsdfg_node = helpers.nest_state_subgraph(
-                sdfg, graph, SubgraphView(graph, [cnode]))
+                sdfg,
+                graph,
+                SubgraphView(graph, [cnode]),
+                full_data=self.fullcopy)
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
