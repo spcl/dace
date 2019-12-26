@@ -33,12 +33,15 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
     toplevel_trans = Property(
         desc="Make all GPU transients top-level", dtype=bool, default=True)
+
     register_trans = Property(
         desc="Make all transients inside GPU maps registers",
         dtype=bool,
         default=True)
+
     sequential_innermaps = Property(
         desc="Make all internal maps Sequential", dtype=bool, default=True)
+
     strict_transform = Property(
         desc='Reapply strict transformations after modifying graph',
         dtype=bool,

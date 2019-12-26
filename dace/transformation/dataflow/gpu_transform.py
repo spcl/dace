@@ -24,6 +24,17 @@ class GPUTransformMap(pattern_matching.Transformation):
         dtype=bool,
         default=False)
 
+    toplevel_trans = Property(
+        desc="Make all GPU transients top-level", dtype=bool, default=False)
+
+    register_trans = Property(
+        desc="Make all transients inside GPU maps registers",
+        dtype=bool,
+        default=False)
+
+    sequential_innermaps = Property(
+        desc="Make all internal maps Sequential", dtype=bool, default=False)
+
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _reduce = nodes.Reduce('lambda: None', None)
 
@@ -97,9 +108,13 @@ class GPUTransformMap(pattern_matching.Transformation):
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
+        transformation = GPUTransformSDFG(0, 0, {}, 0)
+        transformation.register_trans = self.register_trans
+        transformation.sequential_innermaps = self.sequential_innermaps
+        transformation.toplevel_trans = self.toplevel_trans
 
-        nsdfg_node.sdfg.apply_transformations(
-            [GPUTransformSDFG], apply_once=True)
+        transformation.apply(nsdfg_node.sdfg)
+
         # Inline back as necessary
         sdfg.apply_strict_transformations()
 
