@@ -176,9 +176,19 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Reconnect memlets to nested SDFG
     for name, edge in zip(input_names, inputs):
-        state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, edge.data)
+        if full_data:
+            data = Memlet.from_array(edge.data.data,
+                                     sdfg.arrays[edge.data.data])
+        else:
+            data = edge.data
+        state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
     for name, edge in zip(output_names, outputs):
-        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, edge.data)
+        if full_data:
+            data = Memlet.from_array(edge.data.data,
+                                     sdfg.arrays[edge.data.data])
+        else:
+            data = edge.data
+        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
 
     # Connect access nodes to internal input/output data as necessary
     entry = scope.entry
