@@ -1,6 +1,7 @@
 """ Contains classes that implement the map-collapse transformation. """
 
 from copy import deepcopy as dcpy
+from dace.symbolic import symlist
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -42,18 +43,23 @@ class MapCollapse(pattern_matching.Transformation):
 
         # Check that the source of all the incoming edges
         # to the inner map's entry is the outer map's entry.
-        for src, _, _dest, _, _ in graph.in_edges(inner_map_entry):
+        for src, _, _, dst_conn, memlet in graph.in_edges(inner_map_entry):
             if src != outer_map_entry:
                 return False
 
-        # Check the edges between the exits of the two maps.
-        inner_map_exits = graph.exit_nodes(inner_map_entry)
-        outer_map_exits = graph.exit_nodes(outer_map_entry)
-        if len(inner_map_exits) > 1 or len(outer_map_exits) > 1:
-            return False
+            # Check that dynamic input range memlets are independent of
+            # first map range
+            if not dst_conn.startswith('IN_'):
+                memlet_deps = set()
+                for s in memlet.subset:
+                    memlet_deps |= set(map(str, symlist(s)))
+                if any(dep in outer_map_entry.map.params
+                       for dep in memlet_deps):
+                    return False
 
-        inner_map_exit = inner_map_exits[0]
-        outer_map_exit = outer_map_exits[0]
+        # Check the edges between the exits of the two maps.
+        inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
+        outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
 
         # Check that the destination of all the outgoing edges
         # from the inner map's exit is the outer map's exit.
