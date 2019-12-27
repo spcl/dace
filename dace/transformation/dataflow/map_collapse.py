@@ -35,6 +35,13 @@ class MapCollapse(pattern_matching.Transformation):
         inner_map_entry = graph.nodes()[candidate[
             MapCollapse._inner_map_entry]]
 
+        # Check that inner map range is independent of outer range
+        map_deps = set()
+        for s in inner_map_entry.map.range:
+            map_deps |= set(map(str, symlist(s)))
+        if any(dep in outer_map_entry.map.params for dep in map_deps):
+            return False
+
         # Check that the destination of all the outgoing edges
         # from the outer map's entry is the inner map's entry.
         for _src, _, dest, _, _ in graph.out_edges(outer_map_entry):

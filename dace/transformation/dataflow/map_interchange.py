@@ -3,6 +3,7 @@
 from copy import deepcopy as dcpy
 import dace
 from dace.graph import nodes, nxutil
+from dace.symbolic import symlist
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 
@@ -26,8 +27,6 @@ class MapInterchange(pattern_matching.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        # TODO: Add matching condition that the map variables are independent
-        # of each other.
         # TODO: Assuming that the subsets on the edges between the two map
         # entries/exits are the union of separate inner subsets, is it possible
         # that inverting these edges breaks the continuity of union? What about
@@ -38,6 +37,14 @@ class MapInterchange(pattern_matching.Transformation):
             MapInterchange._outer_map_entry]]
         inner_map_entry = graph.nodes()[candidate[
             MapInterchange._inner_map_entry]]
+
+        # Check that inner map range is independent of outer range
+        map_deps = set()
+        for s in inner_map_entry.map.range:
+            map_deps |= set(map(str, symlist(s)))
+        if any(dep in outer_map_entry.map.params for dep in map_deps):
+            return False
+
         # Check that the destination of all the outgoing edges
         # from the outer map's entry is the inner map's entry.
         for e in graph.out_edges(outer_map_entry):
@@ -48,6 +55,15 @@ class MapInterchange(pattern_matching.Transformation):
         for e in graph.in_edges(inner_map_entry):
             if e.src != outer_map_entry:
                 return False
+            # Check that dynamic input range memlets are independent of
+            # first map range
+            if not e.dst_conn.startswith('IN_'):
+                memlet_deps = set()
+                for s in e.data.subset:
+                    memlet_deps |= set(map(str, symlist(s)))
+                if any(dep in outer_map_entry.map.params
+                       for dep in memlet_deps):
+                    return False
 
         # Check the edges between the exits of the two maps.
         inner_map_exits = graph.exit_nodes(inner_map_entry)
