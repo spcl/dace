@@ -229,8 +229,9 @@ class StripMining(pattern_matching.Transformation):
         entry_in_conn = set()
         entry_out_conn = set()
         for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
-            if (src_conn[:4] == 'OUT_' and not isinstance(
-                    sdfg.arrays[memlet.data], dace.data.Scalar)):
+            if (src_conn is not None
+                    and src_conn[:4] == 'OUT_' and not isinstance(
+                        sdfg.arrays[memlet.data], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
@@ -250,15 +251,17 @@ class StripMining(pattern_matching.Transformation):
                     new_memlet.num_accesses = new_memlet.num_elements()
                     new_in_edges[key] = new_memlet
             else:
-                if src_conn[:4] == 'OUT_':
+                if src_conn is not None and src_conn[:4] == 'OUT_':
                     conn = src_conn[4:]
                     in_conn = 'IN_' + conn
                     out_conn = 'OUT_' + conn
                 else:
                     in_conn = src_conn
                     out_conn = src_conn
-                entry_in_conn.add(in_conn)
-                entry_out_conn.add(out_conn)
+                if in_conn:
+                    entry_in_conn.add(in_conn)
+                if out_conn:
+                    entry_out_conn.add(out_conn)
                 new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_entry.out_connectors = entry_out_conn
         map_entry.in_connectors = entry_in_conn
@@ -270,8 +273,9 @@ class StripMining(pattern_matching.Transformation):
         exit_in_conn = set()
         exit_out_conn = set()
         for _src, _, _dst, dst_conn, memlet in graph.in_edges(map_exit):
-            if (dst_conn[:3] == 'IN_' and not isinstance(
-                    sdfg.arrays[memlet.data], dace.data.Scalar)):
+            if (dst_conn is not None
+                    and dst_conn[:3] == 'IN_' and not isinstance(
+                        sdfg.arrays[memlet.data], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
@@ -291,15 +295,17 @@ class StripMining(pattern_matching.Transformation):
                     new_memlet.num_accesses = new_memlet.num_elements()
                     new_out_edges[key] = new_memlet
             else:
-                if dst_conn[:3] == 'IN_':
+                if dst_conn is not None and dst_conn[:3] == 'IN_':
                     conn = dst_conn[3:]
                     in_conn = 'IN_' + conn
                     out_conn = 'OUT_' + conn
                 else:
                     in_conn = src_conn
                     out_conn = src_conn
-                exit_in_conn.add(in_conn)
-                exit_out_conn.add(out_conn)
+                if in_conn:
+                    exit_in_conn.add(in_conn)
+                if out_conn:
+                    exit_out_conn.add(out_conn)
                 new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_exit.in_connectors = exit_in_conn
         map_exit.out_connectors = exit_out_conn
