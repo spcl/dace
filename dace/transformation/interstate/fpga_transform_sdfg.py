@@ -25,10 +25,16 @@ class FPGATransformSDFG(pattern_matching.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        for node, _ in sdfg.all_nodes_recursive():
-            # Consume scopes are currently unsupported
-            if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
+        # Avoid import loops
+        from dace.transformation.interstate import FPGATransformState
+
+        # Condition match depends on matching FPGATransformState for each state
+        for state_id, state in enumerate(sdfg.nodes()):
+            candidate = {FPGATransformState._state: state_id}
+            if not FPGATransformState.can_be_applied(sdfg, candidate,
+                                                     expr_index, sdfg):
                 return False
+
         return True
 
     @staticmethod
