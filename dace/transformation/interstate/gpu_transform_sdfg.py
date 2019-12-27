@@ -71,6 +71,10 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        for node, _ in sdfg.all_nodes_recursive():
+            # Consume scopes are currently unsupported
+            if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
+                return False
         return True
 
     @staticmethod

@@ -49,6 +49,15 @@ class FPGATransformState(pattern_matching.Transformation):
                     and node.desc(sdfg).storage != dtypes.StorageType.Default):
                 return False
 
+            # Consume scopes are currently unsupported
+            if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
+                return False
+            if isinstance(node, nodes.NestedSDFG):
+                for nested_node, _ in node.sdfg.all_nodes_recursive():
+                    if isinstance(nested_node,
+                                  (nodes.ConsumeEntry, nodes.ConsumeExit)):
+                        return False
+
             if not isinstance(node, nodes.MapEntry):
                 continue
 
