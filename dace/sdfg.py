@@ -3079,7 +3079,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Innermost edge memlet
         cur_memlet = memlet
 
-        # Verify that connectors exists
+        # Verify that connectors exist
         if (not isinstance(memlet, dace.memlet.EmptyMemlet)
                 and hasattr(edges[0].src, "out_connectors")
                 and isinstance(edges[0].src, nd.CodeNode) and
@@ -3108,20 +3108,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 dconn = dst_conn if i == 0 else (
                     "IN_" + edge.dst.last_connector())
 
-            # If edge with current data already exists, replace it with
-            # our newly propagated one
-            existing_edges = [
-                e for e in self.edges_between(edge.src, edge.dst)
-                if isinstance(e.src, (nd.EntryNode, nd.ExitNode))
-                and isinstance(e.dst, (nd.EntryNode, nd.ExitNode))
-            ]
-            for e in existing_edges:
-                if e.data.data == cur_memlet.data:
-                    self.remove_edge(e)
-
             # Modify edge to match memlet path
-            edge._src_conn = sconn
-            edge._dst_conn = dconn
+            if not isinstance(cur_memlet, dace.memlet.EmptyMemlet):
+                edge._src_conn = sconn
+                edge._dst_conn = dconn
             edge._data = cur_memlet
 
             # Add connectors to edges
@@ -3139,7 +3129,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Propagate current memlet to produce the next one
             if i < len(edges) - 1:
                 snode = edge.dst if propagate_forward else edge.src
-                cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
+                if not isinstance(cur_memlet, dace.memlet.EmptyMemlet):
+                    cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
 
     # DEPRECATED FUNCTIONS
     ######################################
