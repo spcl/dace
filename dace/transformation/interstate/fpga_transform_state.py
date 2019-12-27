@@ -106,18 +106,12 @@ class FPGATransformState(pattern_matching.Transformation):
         fpga_data = {}
 
         # Input nodes may also be nodes with WCR memlets
-        # We have to recur across nested SDFGs to dinf them
+        # We have to recur across nested SDFGs to find them
         wcr_input_nodes = set()
         stack = []
 
-        for sg in sdfg:
-            stack += [(n, sg) for n in state.nodes()]
-        while len(stack) > 0:
-            node, graph = stack.pop()
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
-                for instate in node.sdfg.states():
-                    stack += [(n, instate) for n in instate.nodes()]
-            elif isinstance(node, dace.graph.nodes.AccessNode):
+        for node, graph in state.all_nodes_recursive():
+            if isinstance(node, dace.graph.nodes.AccessNode):
                 for e in graph.all_edges(node):
                     if e.data.wcr is not None:
                         # This is an output node with wcr
