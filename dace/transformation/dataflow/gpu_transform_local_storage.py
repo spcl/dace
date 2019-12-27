@@ -249,6 +249,17 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtype=array.dtype,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global)
+                elif isinstance(array, data.Stream):
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        strides=[array.strides[d] for d in actual_dims],
+                        offset=[array.offset[d] for d in actual_dims])
                 else:
                     sdfg.add_array(
                         name=cloned_name,
@@ -314,6 +325,17 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtype=array.dtype,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global)
+                elif isinstance(array, data.Stream):
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        strides=[array.strides[d] for d in actual_dims],
+                        offset=[array.offset[d] for d in actual_dims])
                 else:
                     sdfg.add_array(
                         name=cloned_name,
