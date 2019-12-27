@@ -2092,7 +2092,10 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         self._scope_dict_toparent_cached = None
         self._scope_dict_tochildren_cached = None
 
-    def scope_dict(self, node_to_children=False, return_ids=False):
+    def scope_dict(self,
+                   node_to_children=False,
+                   return_ids=False,
+                   validate=True):
         """ Returns a dictionary that segments an SDFG state into
             entry-node/exit-node scopes.
 
@@ -2101,12 +2104,14 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
                                      (ScopeEntry) node. If True, returns a
                                      mapping of each parent node to a list of
                                      children nodes.
-            @type node_to_children: bool
+            :type node_to_children: bool
             :param return_ids: Return node ID numbers instead of node objects.
-            @type return_ids: bool
+            :type return_ids: bool
+            :param validate: Ensure that the graph is not malformed when
+                 computing dictionary.
             :return: The mapping from a node to its parent scope node, or the
                      mapping from a node to a list of children nodes.
-            @rtype: dict(Node, Node) or dict(Node, list(Node))
+            :rtype: dict(Node, Node) or dict(Node, list(Node))
         """
         result = None
         if not node_to_children and self._scope_dict_toparent_cached is not None:
@@ -2121,7 +2126,8 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
                                    result)
 
             # Sanity check
-            assert len(eq) == 0
+            if validate:
+                assert len(eq) == 0
 
             # Cache result
             if node_to_children:
@@ -2499,7 +2505,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         ]
         return copy.copy(self._scope_leaves_cached)
 
-    def scope_dict(self, node_to_children=False, return_ids=False):
+    def scope_dict(self,
+                   node_to_children=False,
+                   return_ids=False,
+                   validate=True):
         """ Returns a dictionary that segments an SDFG state into
             entry-node/exit-node scopes.
 
@@ -2508,12 +2517,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                                      (ScopeEntry) node. If True, returns a
                                      mapping of each parent node to a list of
                                      children nodes.
-            @type node_to_children: bool
+            :type node_to_children: bool
             :param return_ids: Return node ID numbers instead of node objects.
-            @type return_ids: bool
+            :type return_ids: bool
+            :param validate: Ensure that the graph is not malformed when
+                             computing dictionary.
             :return: The mapping from a node to its parent scope node, or the
                      mapping from a node to a list of children nodes.
-            @rtype: dict(Node, Node) or dict(Node, list(Node))
+            :rtype: dict(Node, Node) or dict(Node, list(Node))
         """
         result = None
         if not node_to_children and self._scope_dict_toparent_cached is not None:
@@ -2528,7 +2539,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                                    result)
 
             # Sanity check
-            if len(eq) != 0:
+            if validate and len(eq) != 0:
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             # Cache result
@@ -3045,12 +3056,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             :param *path_nodes: Nodes participating in the path (in the given
                                 order).
-            @keyword memlet: (mandatory) The memlet at the innermost scope
+            :keyword memlet: (mandatory) The memlet at the innermost scope
                              (e.g., the incoming memlet to a tasklet (last
                              node), or an outgoing memlet from an array
                              (first node), followed by scope exits).
-            @keyword src_conn: Connector at the beginning of the path.
-            @keyword dst_conn: Connector at the end of the path.
+            :keyword src_conn: Connector at the beginning of the path.
+            :keyword dst_conn: Connector at the end of the path.
         """
         if memlet is None:
             raise TypeError("Innermost memlet cannot be None")
@@ -3071,7 +3082,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise TypeError("Expected Memlet, got: {}".format(
                 type(memlet).__name__))
 
-        if scope_contains_scope(self.scope_dict(), src_node, dst_node):
+        sdict = self.scope_dict(validate=False)
+        if scope_contains_scope(sdict, src_node, dst_node):
             propagate_forward = False
         else:  # dst node's scope is higher than src node, propagate out
             propagate_forward = True
@@ -3130,7 +3142,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if i < len(edges) - 1:
                 snode = edge.dst if propagate_forward else edge.src
                 if not isinstance(cur_memlet, dace.memlet.EmptyMemlet):
-                    cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
+                    cur_memlet = propagate_memlet(self, cur_memlet, snode,
+                                                  True)
 
     # DEPRECATED FUNCTIONS
     ######################################
