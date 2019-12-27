@@ -26,6 +26,11 @@ class LocalStorage(pattern_matching.Transformation, ABC):
         default=None,
         allow_none=True)
 
+    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
+        super().__init__(sdfg_id, state_id, subgraph, expr_index)
+        self._local_name = None
+        self._data_node = None
+
     @staticmethod
     def expressions():
         return [
@@ -79,6 +84,10 @@ class LocalStorage(pattern_matching.Transformation, ABC):
             transient=True,
             find_new_name=True)
         data_node = nodes.AccessNode(new_data)
+
+        # Store as fields so that other transformations can use them
+        self._local_name = new_data
+        self._data_node = data_node
 
         to_data_mm = copy.deepcopy(invariant_memlet)
         from_data_mm = copy.deepcopy(invariant_memlet)

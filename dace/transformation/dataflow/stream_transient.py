@@ -1,8 +1,9 @@
 """ Contains classes that implement transformations relating to streams
     and transient nodes. """
 import copy
-from dace import data, symbolic, subsets
-from dace.properties import make_properties
+from dace import data, dtypes, symbolic, subsets
+from dace.frontend.operations import detect_reduction_type
+from dace.properties import make_properties, Property
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -145,20 +146,26 @@ class AccumulateTransient(pattern_matching.Transformation):
     _map_exit = nodes.MapExit(nodes.Map("", [], []))
     _outer_map_exit = nodes.MapExit(nodes.Map("", [], []))
 
+    array = Property(
+        dtype=str,
+        desc="Array to create local storage for (if empty, first available)",
+        default=None,
+        allow_none=True)
+
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(StreamTransient._tasklet,
-                                   StreamTransient._map_exit,
-                                   StreamTransient._outer_map_exit)
+            nxutil.node_path_graph(AccumulateTransient._tasklet,
+                                   AccumulateTransient._map_exit,
+                                   AccumulateTransient._outer_map_exit)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        tasklet = graph.nodes()[candidate[StreamTransient._tasklet]]
-        map_exit = graph.nodes()[candidate[StreamTransient._map_exit]]
+        tasklet = graph.nodes()[candidate[AccumulateTransient._tasklet]]
+        map_exit = graph.nodes()[candidate[AccumulateTransient._map_exit]]
 
-        # Check if there is a streaming output
+        # Check if there is an accumulation output
         for _src, _, dest, _, memlet in graph.out_edges(tasklet):
             if memlet.wcr is not None and dest == map_exit:
                 return True
@@ -167,60 +174,36 @@ class AccumulateTransient(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        tasklet = candidate[StreamTransient._tasklet]
-        map_exit = candidate[StreamTransient._map_exit]
-        outer_map_exit = candidate[StreamTransient._outer_map_exit]
+        tasklet = candidate[AccumulateTransient._tasklet]
+        map_exit = candidate[AccumulateTransient._map_exit]
+        outer_map_exit = candidate[AccumulateTransient._outer_map_exit]
 
         return ' -> '.join(
             str(node) for node in [tasklet, map_exit, outer_map_exit])
 
     def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        tasklet = graph.nodes()[self.subgraph[StreamTransient._tasklet]]
-        map_exit = graph.nodes()[self.subgraph[StreamTransient._map_exit]]
-        outer_map_exit = graph.nodes()[self.subgraph[
-            StreamTransient._outer_map_exit]]
-        memlet = None
-        edge = None
-        for e in graph.out_edges(tasklet):
-            memlet = e.data
-            # TODO: What if there's more than one?
-            if e.dst == map_exit and e.data.wcr is not None:
-                break
-        out_memlet = None
-        for e in graph.out_edges(map_exit):
-            out_memlet = e.data
-            if out_memlet.data == memlet.data:
-                edge = e
-                break
-        dataname = memlet.data
+        graph = sdfg.node(self.state_id)
 
-        # Create a new node with the same size as the output
-        newname, _ = sdfg.add_array(
-            'trans_' + dataname,
-            sdfg.arrays[memlet.data].shape,
-            sdfg.arrays[memlet.data].dtype,
-            transient=True,
-            find_new_name=True)
-        dnode = nodes.AccessNode(newname)
+        # Avoid import loop
+        from dace.transformation.dataflow.local_storage import LocalStorage
 
-        to_data_mm = copy.deepcopy(memlet)
-        to_data_mm.data = dnode.data
-        to_data_mm.num_accesses = memlet.num_elements()
+        local_storage_subgraph = {
+            LocalStorage._node_a:
+            self.subgraph[AccumulateTransient._map_exit],
+            LocalStorage._node_b:
+            self.subgraph[AccumulateTransient._outer_map_exit]
+        }
+        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        in_local_storage = LocalStorage(
+            sdfg_id, self.state_id, local_storage_subgraph, self.expr_index)
+        in_local_storage.array = self.array
+        in_local_storage.apply(sdfg)
 
-        to_exit_mm = copy.deepcopy(out_memlet)
-        to_exit_mm.num_accesses = out_memlet.num_elements()
-        memlet.data = dnode.data
-
-        # Reconnect, assuming one edge to the stream
-        graph.remove_edge(edge)
-        graph.add_edge(map_exit, edge.src_conn, dnode, None, to_data_mm)
-        graph.add_edge(dnode, None, outer_map_exit, edge.dst_conn, to_exit_mm)
-
-        return
-
-    def modifies_graph(self):
-        return True
+        # Initialize transient to zero in case of summation
+        # TODO: Initialize transient in other WCR types
+        memlet = graph.in_edges(in_local_storage._data_node)[0].data
+        if detect_reduction_type(memlet.wcr) == dtypes.ReductionType.Sum:
+            in_local_storage._data_node.setzero = True
 
 
 pattern_matching.Transformation.register_pattern(AccumulateTransient)
