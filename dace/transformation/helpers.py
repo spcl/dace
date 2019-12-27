@@ -114,7 +114,7 @@ def nest_state_subgraph(sdfg: SDFG,
     input_names = []
     output_names = []
     for edge in inputs:
-        name = 'in_' + edge.data.data
+        name = '__in_' + edge.data.data
         datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
         datadesc.transient = False
         if not full_data:
@@ -122,7 +122,7 @@ def nest_state_subgraph(sdfg: SDFG,
         input_names.append(
             nsdfg.add_datadesc(name, datadesc, find_new_name=True))
     for edge in outputs:
-        name = 'out_' + edge.data.data
+        name = '__out_' + edge.data.data
         datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
         datadesc.transient = False
         if not full_data:
