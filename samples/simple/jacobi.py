@@ -20,7 +20,7 @@ def jacobi(A, iterations):
     def reset_tmp(y, x):
 
         out >> tmp[y, x]
-        out = 0.0
+        out = dace.float32(0.0)
 
     for t in range(iterations):
 

@@ -41,7 +41,9 @@ class Vectorization(pattern_matching.Transformation):
         for _src, _, _dest, _, memlet in graph.all_edges(tasklet):
 
             # Cases that do not matter for vectorization
-            if isinstance(sdfg.arrays[memlet.data], data.Stream):
+            if memlet.data is None:  # Empty memlets
+                continue
+            if isinstance(sdfg.arrays[memlet.data], data.Stream):  # Streams
                 continue
 
             # Vectorization can not be applied in WCR
@@ -111,6 +113,10 @@ class Vectorization(pattern_matching.Transformation):
         # Vectorize memlets adjacent to the tasklet.
         for edge in graph.all_edges(tasklet):
             _src, _, _dest, _, memlet = edge
+
+            if memlet.data is None:  # Empty memlets
+                continue
+
             lastindex = memlet.subset[-1]
             if isinstance(lastindex, tuple):
                 symbols = set()
