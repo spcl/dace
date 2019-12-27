@@ -10,24 +10,26 @@ from pydoc import locate
 import random
 import shutil
 import sys
-from typing import Any, Dict, Set, Tuple, List, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 import warnings
 import numpy as np
 import sympy as sp
 
 import dace
 import dace.serialize
-from dace import data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic
+from dace import (data as dt, memlet as mm, subsets as sbs, dtypes, properties,
+                  symbolic)
 from dace.config import Config
 from dace.frontend.python import wrappers
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
 from dace.data import validate_name
-from dace.graph import dot, nxutil
+from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
-from dace.properties import make_properties, Property, CodeProperty, OrderedDictProperty
+from dace.properties import (make_properties, Property, CodeProperty,
+                             OrderedDictProperty)
 
 
 def getcaller() -> Tuple[str, int]:
@@ -1825,22 +1827,38 @@ subgraph cluster_state_{state} {{
         from dace.transformation.dataflow import RedundantArray, MergeArrays
         from dace.transformation.interstate import StateFusion, InlineSDFG
 
-        strict_transformations = (StateFusion, RedundantArray, MergeArrays,
-                                  InlineSDFG)
+        strict_transformations = [
+            StateFusion, RedundantArray, MergeArrays, InlineSDFG
+        ]
 
         self.apply_transformations(
             strict_transformations, validate=validate, strict=True)
 
     def apply_transformations(self,
-                              patterns,
-                              validate=True,
-                              strict=False,
-                              states=None,
-                              apply_once=False):
+                              patterns: Union[Type, List[Type]],
+                              validate: bool = True,
+                              strict: bool = False,
+                              states: Optional[List[Any]] = None,
+                              apply_once: bool = False,
+                              properties: Dict[str, Any] = None):
         """ This function applies transformations as given in the argument
-            patterns. """
+            patterns. Operates in-place.
+            :param patterns: A Transformation class or a list thereof to apply.
+            :param validate: If True, validates after every transformation.
+            :param strict: If True, operates in strict transformation mode.
+            :param states: If not None, specifies a subset of states to
+                           apply transformations on.
+            :param apply_once: If True, applies the first found transformation
+                               and returns. Otherwise, applies until no further
+                               transformations are found.
+            :param properties: Properties to set when applying transformations.
+        """
         # Avoiding import loops
         from dace.transformation import optimizer
+        from dace.transformation.pattern_matching import Transformation
+
+        if isinstance(patterns, type) and issubclass(patterns, Transformation):
+            patterns = [patterns]
 
         # Apply strict state fusions greedily.
         opt = optimizer.SDFGOptimizer(self, inplace=True)
@@ -1852,6 +1870,9 @@ subgraph cluster_state_{state} {{
             for match in opt.get_pattern_matches(
                     strict=strict, patterns=patterns, states=states):
                 sdfg = self.sdfg_list[match.sdfg_id]
+                if properties is not None:
+                    for prop_name, prop_val in properties.items():
+                        setattr(match, prop_name, prop_val)
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate:

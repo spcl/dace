@@ -92,7 +92,7 @@ class Optimizer(object):
         for state_id, state in state_enum:
             for pattern in _patterns:
                 yield from pattern_matching.match_pattern(
-                    state_id, state, pattern, sdfg, strict=strict)
+                    state, pattern, sdfg, strict=strict)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
