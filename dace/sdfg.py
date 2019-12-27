@@ -3120,10 +3120,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 dconn = dst_conn if i == 0 else (
                     "IN_" + edge.dst.last_connector())
 
+            if isinstance(cur_memlet, dace.memlet.EmptyMemlet):
+                if propagate_forward:
+                    sconn = src_conn if i == 0 else None
+                    dconn = dst_conn if i == len(edges) - 1 else None
+                else:
+                    sconn = src_conn if i == len(edges) - 1 else None
+                    dconn = dst_conn if i == 0 else None
+
             # Modify edge to match memlet path
-            if not isinstance(cur_memlet, dace.memlet.EmptyMemlet):
-                edge._src_conn = sconn
-                edge._dst_conn = dconn
+            edge._src_conn = sconn
+            edge._dst_conn = dconn
             edge._data = cur_memlet
 
             # Add connectors to edges
@@ -3303,7 +3310,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         conn_to_data[edge.data.data] = edge.dst_conn[3:]
 
                     # We're only interested in edges without connectors
-                    if edge.dst_conn is not None:
+                    if edge.dst_conn is not None or edge.data.data is None:
                         continue
                     edge._dst_conn = "IN_" + str(num_inputs + 1)
                     node._in_connectors.add(edge.dst_conn)
@@ -3337,7 +3344,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         conn_to_data[edge.data.data] = edge.src_conn[4:]
 
                     # We're only interested in edges without connectors
-                    if edge.src_conn is not None:
+                    if edge.src_conn is not None or edge.data.data is None:
                         continue
                     edge._src_conn = "OUT_" + str(num_outputs + 1)
                     node._out_connectors.add(edge.src_conn)
