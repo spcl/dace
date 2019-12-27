@@ -125,6 +125,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
+            if isinstance(inode, data.Scalar):  # Scalars can remain on host
+                continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
@@ -163,7 +165,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
 
         for nname, desc in set(input_nodes):
-            if nname in excluded_copyin:
+            if nname in excluded_copyin or nname not in cloned_arrays:
                 continue
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(
@@ -183,7 +185,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
 
         for nname, desc in set(output_nodes):
-            if nname in excluded_copyout:
+            if nname in excluded_copyout or nname not in cloned_arrays:
                 continue
             src_array = nodes.AccessNode(
                 cloned_arrays[nname], debuginfo=desc.debuginfo)

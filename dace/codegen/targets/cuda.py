@@ -37,6 +37,15 @@ def _expr(val):
     return val
 
 
+def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
+    """ Copy predicate from CPU to GPU that determines when a copy is illegal.
+        Returns True if copy is illegal, False otherwise.
+    """
+    if isinstance(sdfg.arrays[src_node.data], dt.Scalar):
+        return False
+    return True
+
+
 class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA) code generator. """
     target_name = 'cuda'
@@ -114,8 +123,13 @@ class CUDACodeGen(TargetCodeGenerator):
                     dtypes.ScheduleType.GPU_Device,
                     dtypes.ScheduleType.GPU_ThreadBlock
             ]:
+                # NOTE: Only reading to GPU has an exception (for Scalar inputs)
                 dispatcher.register_copy_dispatcher(
-                    st, dtypes.StorageType.Register, sched_type, illegal_copy)
+                    st,
+                    dtypes.StorageType.Register,
+                    sched_type,
+                    illegal_copy,
+                    predicate=cpu_to_gpu_cpred)
                 dispatcher.register_copy_dispatcher(
                     dtypes.StorageType.Register, st, sched_type, illegal_copy)
         # End of illegal copies
@@ -977,8 +991,8 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         syms = syms_copy
         freesyms = {
             k: v
-            for k, v in syms.items()
-            if k not in sdfg.constants and k not in scope_entry.map.params
+            for k, v in syms.items() if k not in sdfg.constants
+            and k not in scope_entry.map.params and k not in params
         }
         symbol_sigs = [
             v.dtype.ctype + ' ' + k for k, v in sorted(freesyms.items())
