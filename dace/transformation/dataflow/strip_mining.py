@@ -4,6 +4,7 @@
 import dace
 from copy import deepcopy as dcpy
 from dace import dtypes, subsets, symbolic
+from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
@@ -125,7 +126,7 @@ class StripMining(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         # Strip-mine selected dimension.
-        _, _, new_map = self.__stripmine(sdfg, graph, self.subgraph)
+        _, _, new_map = self._stripmine(sdfg, graph, self.subgraph)
         return new_map
 
     # def __init__(self, tag=True):
@@ -155,7 +156,18 @@ class StripMining(pattern_matching.Transformation):
     def modifies_graph(self):
         return True
 
-    def __stripmine(self, sdfg, graph, candidate):
+    def _find_new_dim(self, sdfg: SDFG, state: SDFGState,
+                      entry: nodes.MapEntry, prefix: str, target_dim: str):
+        """ Finds a variable that is not already defined in scope. """
+        stree = state.scope_tree()
+        candidate = '%s_%s' % (prefix, target_dim)
+        index = 1
+        while candidate in map(str, stree[entry].defined_vars):
+            candidate = '%s%d_%s' % (prefix, index, target_dim)
+            index += 1
+        return candidate
+
+    def _stripmine(self, sdfg, graph, candidate):
 
         # Retrieve map entry and exit nodes.
         map_entry = graph.nodes()[candidate[StripMining._map_entry]]
@@ -177,7 +189,8 @@ class StripMining(pattern_matching.Transformation):
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
 
         # Create new map. Replace by cloning???
-        new_dim = new_dim_prefix + '_' + target_dim
+        new_dim = self._find_new_dim(sdfg, graph, map_entry, new_dim_prefix,
+                                     target_dim)
         nd_from = 0
         nd_to = symbolic.pystr_to_symbolic(
             'int_ceil(%s + 1 - %s, %s) - 1' %
@@ -314,42 +327,6 @@ class StripMining(pattern_matching.Transformation):
 
         # Return strip-mined dimension.
         return target_dim, new_dim, new_map
-
-    @staticmethod
-    def __modify_edges(sdfg, graph, candidate, target_dim, new_dim):
-        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
-
-        processed = []
-        for src, _dest, memlet, _scope in nxutil.traverse_sdfg_scope(
-                graph, map_entry, True):
-            if memlet in processed:
-                continue
-            processed.append(memlet)
-
-            # Corner cases
-            if isinstance(sdfg.arrays[memlet.data], dace.data.Stream):
-                continue
-            if memlet.wcr is not None:
-                memlet.num_accesses = 1
-                continue
-
-            for i, dim in enumerate(memlet.subset):
-                if isinstance(dim, tuple):
-                    dim = tuple(
-                        symbolic.pystr_to_symbolic(d).subs(
-                            symbolic.pystr_to_symbolic(target_dim),
-                            symbolic.pystr_to_symbolic(
-                                '%s + %s' % (str(new_dim), str(target_dim))))
-                        for d in dim)
-                else:
-                    dim = symbolic.pystr_to_symbolic(dim).subs(
-                        symbolic.pystr_to_symbolic(target_dim),
-                        symbolic.pystr_to_symbolic(
-                            '%s + %s' % (str(new_dim), str(target_dim))))
-
-                memlet.subset[i] = dim
-
-        return
 
 
 pattern_matching.Transformation.register_pattern(StripMining)
