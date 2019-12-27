@@ -1,6 +1,8 @@
 """ Contains classes that implement transformations relating to streams
     and transient nodes. """
+
 import copy
+import warnings
 from dace import data, dtypes, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import make_properties, Property
@@ -204,6 +206,9 @@ class AccumulateTransient(pattern_matching.Transformation):
         memlet = graph.in_edges(in_local_storage._data_node)[0].data
         if detect_reduction_type(memlet.wcr) == dtypes.ReductionType.Sum:
             in_local_storage._data_node.setzero = True
+        else:
+            warnings.warn('AccumulateTransient did not properly initialize'
+                          'newly-created transient!')
 
 
 pattern_matching.Transformation.register_pattern(AccumulateTransient)
