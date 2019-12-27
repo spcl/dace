@@ -307,7 +307,7 @@ class SDFG(OrderedDiGraph):
 
         for k, v in json_obj['scalar_parameters']:
             v = dace.serialize.from_json(v)
-            ret.add_symbol(k, v.dtype)
+            ret.add_symbol(k, v.dtype, override_dtype=True)
 
         ret.validate()
 
