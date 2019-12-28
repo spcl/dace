@@ -83,6 +83,12 @@ def nest_state_subgraph(sdfg: SDFG,
         if datadesc.transient and data not in other_nodes:
             subgraph_transients.add(data)
 
+    # All transients of edges between code nodes are also added to nested graph
+    for edge in subgraph.edges():
+        if (isinstance(edge.src, nodes.CodeNode)
+                and isinstance(edge.dst, nodes.CodeNode)):
+            subgraph_transients.add(edge.data.data)
+
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = set()
