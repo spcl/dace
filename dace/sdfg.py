@@ -867,7 +867,7 @@ class SDFG(OrderedDiGraph):
     def signature_arglist(self, with_types=True, for_call=False):
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
-            :param with_types: If True, includes argment types in the result.
+            :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG. This means that immaterial data
                              will generate "nullptr" arguments instead of the
@@ -4063,7 +4063,15 @@ def interstate_symbols(dfg):
         if isinstance(node, dace.graph.nodes.NestedSDFG):
             a, u = node.sdfg.interstate_symbols()
             assigned.update(a)
+
+            # Filter used symbols if they belong to SDFG input/output connectors
+            u = {
+                k: v
+                for k, v in u.items()
+                if k not in (node.in_connectors | node.out_connectors)
+            }
             used.update(u)
+
     return assigned, used
 
 
