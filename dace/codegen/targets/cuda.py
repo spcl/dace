@@ -961,6 +961,17 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             raise TypeError('Cannot schedule %s directly from non-GPU code' %
                             str(scope_entry.map.schedule))
 
+        # Modify thread-blocks if dynamic ranges are detected
+        for node, graph in dfg_scope.all_nodes_recursive():
+            if isinstance(node, nodes.MapEntry):
+                smap = node.map
+                if (smap.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                        and has_dynamic_map_inputs(graph, node)):
+                    warnings.warn('Thread-block map cannot be used with '
+                                  'dynamic ranges, switching map "%s" to '
+                                  'dynamic thread-block schedule' % smap.label)
+                    smap.schedule = dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+
         # Determine whether to create a global (grid) barrier object
         create_grid_barrier = False
         for node in dfg_scope.nodes():
@@ -1454,9 +1465,20 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             while pscope is not None and pscope.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
                 pscope = sdict[pscope]
             if pscope is None:
-                raise NotImplementedError('Dynamic block map schedule '
-                                          'currently requires block map')
-            bname = pscope.map.params[0]
+                callsite_stream.write('int __dace_tid = threadIdx.x;', sdfg,
+                                      state_id, scope_entry)
+                bname = '__dace_tid'
+            else:
+                bname = pscope.map.params[0]
+
+            # Define all input connectors of this map entry
+            # Note: no need for a C scope around these, as there will not be
+            #       more than one dynamic thread-block map in a GPU device map
+            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                callsite_stream.write(
+                    self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                    scope_entry)
 
             callsite_stream.write(
                 'dace::DynamicMap<{bsize}>::template '
@@ -1619,6 +1641,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function
             callsite_stream.write('});', sdfg, state_id, node)
+            # Close block invocation
+            callsite_stream.write('}', sdfg, state_id, node)
             return
 
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
