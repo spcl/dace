@@ -969,8 +969,8 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                         and has_dynamic_map_inputs(graph, node)):
                     warnings.warn('Thread-block map cannot be used with '
                                   'dynamic ranges, switching map "%s" to '
-                                  'dynamic thread-block schedule' % smap.label)
-                    smap.schedule = dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+                                  'sequential schedule' % smap.label)
+                    smap.schedule = dtypes.ScheduleType.Sequential
 
         # Determine whether to create a global (grid) barrier object
         create_grid_barrier = False
