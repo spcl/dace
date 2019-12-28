@@ -3973,6 +3973,7 @@ def scope_symbols(dfg):
         into (iteration variables, symbols used in subsets). """
     iteration_variables = collections.OrderedDict()
     subset_symbols = collections.OrderedDict()
+    sdict = dfg.scope_dict()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
         if isinstance(n, dace.graph.nodes.NestedSDFG):
@@ -3983,6 +3984,13 @@ def scope_symbols(dfg):
         if not isinstance(n, dace.graph.nodes.EntryNode):
             continue
         if isinstance(n, dace.graph.nodes.MapEntry):
+            # Collect dynamic map range symbols from parent scopes
+            dynamic_symbols = set()
+            parent = n
+            while parent is not None:
+                dynamic_symbols |= parent.in_connectors
+                parent = sdict[parent]
+
             for param in n.params:
                 iteration_variables[param] = dt.Scalar(
                     symbolic.symbol(param).dtype)
@@ -3993,25 +4001,32 @@ def scope_symbols(dfg):
                             subset_symbols.update(
                                 (k.name, dt.Scalar(k.dtype))
                                 for k in i.free_symbols
-                                if k.name not in n.in_connectors)
+                                if k.name not in dynamic_symbols)
                 except TypeError:  # X object is not iterable
                     if isinstance(dim, sp.Expr):
                         subset_symbols.update((k.name, dt.Scalar(k.dtype))
                                               for k in dim.free_symbols
-                                              if k.name not in n.in_connectors)
+                                              if k.name not in dynamic_symbols)
                     else:
                         raise TypeError(
                             "Unexpected map range type for {}: {}".format(
                                 n.map,
                                 type(n.map.range).__name__))
         elif isinstance(n, dace.graph.nodes.ConsumeEntry):
+            # Collect dynamic map range symbols from parent scopes
+            dynamic_symbols = set()
+            parent = n
+            while parent is not None:
+                dynamic_symbols |= parent.in_connectors
+                parent = sdict[parent]
+
             # Add PE index as iteration variable
             iteration_variables[n.consume.pe_index] = dt.Scalar(
                 symbolic.symbol(n.consume.pe_index).dtype)
             if isinstance(n.consume.num_pes, sp.Expr):
                 subset_symbols.update((k.name, dt.Scalar(k.dtype))
                                       for k in n.consume.num_pes.free_symbols
-                                      if k.name not in n.in_connectors)
+                                      if k.name not in dynamic_symbols)
         else:
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))
