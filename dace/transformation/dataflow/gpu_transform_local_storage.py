@@ -431,7 +431,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 else:
                                     newsubset[ind] = (
                                         r - offset[ind],
-                                        r - offset[ind] + 1,
+                                        r - offset[ind],
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(
@@ -516,7 +516,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 else:
                                     newsubset[ind] = (
                                         r - offset[ind],
-                                        r - offset[ind] + 1,
+                                        r - offset[ind],
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(
