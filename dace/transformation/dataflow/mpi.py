@@ -81,6 +81,16 @@ class MPITransformMap(pattern_matching.Transformation):
                 return False
             parent = sdict[parent]
 
+        # Dynamic map ranges not supported (will allocate dynamic memory)
+        if any(not e.dst_conn.startswith('IN_')
+               for e in graph.in_edges(map_entry)):
+            return False
+
+        # MPI schedules currently do not support WCR
+        map_exit = graph.exit_nodes(map_entry)[0]
+        if any(e.data.wcr for e in graph.out_edges(map_exit)):
+            return False
+
         return True
 
     @staticmethod
