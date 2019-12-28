@@ -136,6 +136,13 @@ class OutLocalStorage(LocalStorage):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+
+        # WCR edges not supported (use AccumulateTransient instead
+        if len(graph.edges_between(node_a, node_b)) == 1:
+            edge = graph.edges_between(node_a, node_b)[0]
+            if edge.data.wcr is not None:
+                return False
+
         return (isinstance(node_a, nodes.ExitNode)
                 and isinstance(node_b, nodes.ExitNode))
 
