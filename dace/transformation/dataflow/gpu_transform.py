@@ -58,6 +58,11 @@ class GPUTransformMap(pattern_matching.Transformation):
             if sd.is_devicelevel(sdfg, graph, map_entry):
                 return False
 
+            # Dynamic map ranges cannot become kernels
+            if any(not e.dst_conn.startswith('IN_')
+                   for e in graph.in_edges(map_entry)):
+                return False
+
             # Ensure that map does not include internal arrays that are
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)

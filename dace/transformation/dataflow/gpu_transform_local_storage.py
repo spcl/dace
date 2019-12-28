@@ -88,6 +88,11 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     candidate_map.schedule == dtypes.ScheduleType.Sequential):
                 return False
 
+            # Dynamic map ranges cannot become kernels
+            if any(not e.dst_conn.startswith('IN_')
+                   for e in graph.in_edges(map_entry)):
+                return False
+
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry

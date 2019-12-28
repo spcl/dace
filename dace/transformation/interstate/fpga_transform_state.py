@@ -40,6 +40,13 @@ class FPGATransformState(pattern_matching.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
+        # TODO: Support most of these cases
+        for edge, graph in state.all_edges_recursive():
+            # Code->Code memlets are disallowed (for now)
+            if (isinstance(edge.src, nodes.CodeNode)
+                    and isinstance(edge.dst, nodes.CodeNode)):
+                return False
+
         for node, graph in state.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
