@@ -121,16 +121,6 @@ class MPITransformMap(pattern_matching.Transformation):
 
         outer_map = edges[0].src
 
-        # We need a tasklet for InLocalStorage
-        tasklet = None
-        for e in graph.out_edges(map_entry):
-            if isinstance(e.dst, nodes.CodeNode):
-                tasklet = e.dst
-                break
-
-        if tasklet is None:
-            raise ValueError("Tasklet not found")
-
         # Add MPI schedule attribute to outer map
         outer_map.map._schedule = dtypes.ScheduleType.MPI
 
