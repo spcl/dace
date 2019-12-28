@@ -619,6 +619,16 @@ class SDFG(OrderedDiGraph):
             all_nodes += node.all_nodes_recursive()
         return all_nodes
 
+    def all_edges_recursive(self):
+        """ Iterate over all edges in this SDFG, including state edges,
+            inter-state edges, and recursively edges within nested SDFGs,
+            returning tuples on the form (edge, parent), where the parent is
+            either the SDFG (for states) or a DFG (nodes). """
+        all_edges = [(e, self) for e in self.edges()]
+        for node in self.nodes():
+            all_edges += node.all_edges_recursive()
+        return all_edges
+
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within
             nested SDFGs. Yields 3-tuples of (sdfg, array name, array)."""
@@ -2218,6 +2228,13 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
 
+    def all_edges_recursive(self):
+        all_edges = [(e, self) for e in self.edges()]
+        for node in self.nodes():
+            if isinstance(node, dace.graph.nodes.NestedSDFG):
+                all_edges += node.sdfg.all_edges_recursive()
+        return all_edges
+
 
 # TODO: Use mixin for SDFGState and ScopeSubgraphView for scope dict
 @make_properties
@@ -2364,6 +2381,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if isinstance(node, dace.graph.nodes.NestedSDFG):
                 all_nodes += node.sdfg.all_nodes_recursive()
         return all_nodes
+
+    def all_edges_recursive(self):
+        all_edges = [(e, self) for e in self.edges()]
+        for node in self.nodes():
+            if isinstance(node, dace.graph.nodes.NestedSDFG):
+                all_edges += node.sdfg.all_edges_recursive()
+        return all_edges
 
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """
