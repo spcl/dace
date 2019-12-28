@@ -54,13 +54,43 @@ class MapToForLoop(pattern_matching.Transformation):
         node = nest_state_subgraph(sdfg, graph,
                                    graph.scope_subgraph(map_entry))
 
-        # Create a loop inside the nested SDFG
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
-        nsdfg.add_loop(None, nstate, None, loop_idx,
-                       symbolic.symstr(loop_from),
-                       '%s < %s' % (loop_idx, symbolic.symstr(loop_to + 1)),
-                       '%s + %s' % (loop_idx, symbolic.symstr(loop_step)))
+
+        # If map range is dynamic, replace loop expressions with memlets
+        param_to_edge = {}
+        for edge in nstate.in_edges(map_entry):
+            if not edge.dst_conn.startswith('IN_'):
+                param = '__DACE_P%d' % len(param_to_edge)
+                repldict = {symbolic.pystr_to_symbolic(edge.dst_conn): param}
+                param_to_edge[param] = edge
+                loop_from = loop_from.subs(repldict)
+                loop_to = loop_to.subs(repldict)
+                loop_step = loop_step.subs(repldict)
+
+        # Avoiding import loop
+        from dace.codegen.targets.cpu import cpp_array_expr
+
+        def replace_param(param):
+            param = symbolic.symstr(param)
+            for p, pval in param_to_edge.items():
+                # TODO: This special replacement condition will be removed
+                #       when the code generator is modified to make consistent
+                #       scalar/array decisions.
+                if (isinstance(nsdfg.arrays[pval.data.data], data.Scalar)
+                        or (nsdfg.arrays[pval.data.data].shape[0] == 1
+                            and len(nsdfg.arrays[pval.data.data].shape) == 1)):
+                    param = param.replace(p, pval.data.data)
+                else:
+                    param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
+            return param
+
+        # End of dynamic input range
+
+        # Create a loop inside the nested SDFG
+        nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
+                       '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
+                       '%s + %s' % (loop_idx, replace_param(loop_step)))
 
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
