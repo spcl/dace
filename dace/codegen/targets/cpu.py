@@ -1533,11 +1533,10 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('{', sdfg, state_id, node)
 
         # Define all input connectors of this map entry
-        for e in state_dfg.in_edges(node):
-            if e.dst_conn is not None and not e.dst_conn.startswith('IN_'):
-                callsite_stream.write(
-                    self.memlet_definition(sdfg, e.data, False, e.dst_conn),
-                    sdfg, state_id, node)
+        for e in dace.sdfg.dynamic_map_inputs(state_dfg, node):
+            callsite_stream.write(
+                self.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
+                state_id, node)
 
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]

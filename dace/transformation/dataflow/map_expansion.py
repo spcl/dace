@@ -82,10 +82,7 @@ class MapExpansion(pm.Transformation):
                 dst_conn=edge.dst_conn)
 
         # Modify dynamic map ranges
-        dynamic_edges = [
-            e for e in graph.in_edges(map_entry)
-            if not e.dst_conn.startswith('IN_')
-        ]
+        dynamic_edges = dace.sdfg.dynamic_map_inputs(graph, map_entry)
         for edge in dynamic_edges:
             # Remove old edge and connector
             graph.remove_edge(edge)

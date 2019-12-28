@@ -57,7 +57,7 @@ class MapInterchange(pattern_matching.Transformation):
                 return False
             # Check that dynamic input range memlets are independent of
             # first map range
-            if not e.dst_conn.startswith('IN_'):
+            if e.dst_conn and not e.dst_conn.startswith('IN_'):
                 memlet_deps = set()
                 for s in e.data.subset:
                     memlet_deps |= set(map(str, symlist(s)))

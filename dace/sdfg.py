@@ -2064,6 +2064,7 @@ class MemletTrackingView(object):
         def add_children(treenode):
             if propagate_forward:
                 if not (isinstance(treenode.edge.dst, nd.EntryNode)
+                        and treenode.edge.dst_conn
                         and treenode.edge.dst_conn.startswith('IN_')):
                     return
                 conn = treenode.edge.dst_conn[3:]
@@ -4297,6 +4298,18 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
                 sdfg).src = node.data  # TODO: Move src/sink to node, not array
             return True
     return False
+
+
+def dynamic_map_inputs(state: SDFGState,
+                       map_entry: nd.MapEntry) -> List[MultiConnectorEdge]:
+    return [
+        e for e in state.in_edges(map_entry)
+        if e.dst_conn and not e.dst_conn.startswith('IN_')
+    ]
+
+
+def has_dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> bool:
+    return len(dynamic_map_inputs(state, map_entry)) > 0
 
 
 def _get_optimizer_class(class_override):

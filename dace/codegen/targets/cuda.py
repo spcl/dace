@@ -4,13 +4,14 @@ import ctypes
 import functools
 import os
 import sympy
+import warnings
 
 import dace
 from dace.frontend import operations
 from dace import subsets, symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.graph import nodes
-from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel, is_array_stream_view
+from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
@@ -1125,7 +1126,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # Synchronize all events leading to dynamic map range connectors
         for e in dfg.in_edges(scope_entry):
-            if not e.dst_conn.startswith('IN_') and hasattr(e, '_cuda_event'):
+            if e.dst_conn and not e.dst_conn.startswith('IN_') and hasattr(
+                    e, '_cuda_event'):
                 ev = e._cuda_event
                 callsite_stream.write(
                     'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'
@@ -1200,9 +1202,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Case (1): no thread-block maps
         if len(tb_maps) == 0:
 
-            print('WARNING: Thread-block maps not found in kernel, assuming ' +
-                  'block size of (%s)' %
-                  Config.get('compiler', 'cuda', 'default_block_size'))
+            warnings.warn('Thread-block maps not found in kernel, assuming ' +
+                          'block size of (%s)' %
+                          Config.get('compiler', 'cuda', 'default_block_size'))
             block_size = [
                 int(b) for b in Config.get('compiler', 'cuda',
                                            'default_block_size').split(',')

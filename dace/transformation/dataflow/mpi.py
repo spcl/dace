@@ -1,6 +1,7 @@
 """ Contains the MPITransformMap transformation. """
 
 from dace import dtypes
+from dace.sdfg import has_dynamic_map_inputs
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -82,8 +83,7 @@ class MPITransformMap(pattern_matching.Transformation):
             parent = sdict[parent]
 
         # Dynamic map ranges not supported (will allocate dynamic memory)
-        if any(not e.dst_conn.startswith('IN_')
-               for e in graph.in_edges(map_entry)):
+        if has_dynamic_map_inputs(graph, map_entry):
             return False
 
         # MPI schedules currently do not support WCR

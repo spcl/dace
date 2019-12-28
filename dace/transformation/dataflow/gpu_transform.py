@@ -59,8 +59,7 @@ class GPUTransformMap(pattern_matching.Transformation):
                 return False
 
             # Dynamic map ranges cannot become kernels
-            if any(not e.dst_conn.startswith('IN_')
-                   for e in graph.in_edges(map_entry)):
+            if sd.has_dynamic_map_inputs(graph, map_entry):
                 return False
 
             # Ensure that map does not include internal arrays that are

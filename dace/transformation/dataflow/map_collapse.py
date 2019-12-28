@@ -56,7 +56,7 @@ class MapCollapse(pattern_matching.Transformation):
 
             # Check that dynamic input range memlets are independent of
             # first map range
-            if not dst_conn.startswith('IN_'):
+            if dst_conn is not None and not dst_conn.startswith('IN_'):
                 memlet_deps = set()
                 for s in memlet.subset:
                     memlet_deps |= set(map(str, symlist(s)))

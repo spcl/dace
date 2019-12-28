@@ -60,7 +60,7 @@ class MapToForLoop(pattern_matching.Transformation):
         # If map range is dynamic, replace loop expressions with memlets
         param_to_edge = {}
         for edge in nstate.in_edges(map_entry):
-            if not edge.dst_conn.startswith('IN_'):
+            if edge.dst_conn and not edge.dst_conn.startswith('IN_'):
                 param = '__DACE_P%d' % len(param_to_edge)
                 repldict = {symbolic.pystr_to_symbolic(edge.dst_conn): param}
                 param_to_edge[param] = edge
@@ -105,10 +105,8 @@ class MapToForLoop(pattern_matching.Transformation):
             nstate.remove_edge(edge)
 
         # Remove nodes from dynamic map range
-        nstate.remove_nodes_from([
-            e.src for e in nstate.in_edges(map_entry)
-            if not e.dst_conn.startswith('IN_')
-        ])
+        nstate.remove_nodes_from(
+            [e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
 
