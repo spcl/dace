@@ -4,6 +4,7 @@ import copy
 from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
+import warnings
 
 import dace
 from dace import data, dtypes, subsets, symbolic
@@ -2741,6 +2742,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _squeeze_strides(self, original: data.Array,
                          non_squeezed: ShapeList) -> ShapeList:
+        # Special case: Scalar (0-dimensional array)
+        if len(non_squeezed) == 0:
+            return [1]
+
         strides = original.strides
         squeezed = [
             i for i in range(len(original.strides)) if i not in non_squeezed
@@ -2750,8 +2755,9 @@ class ProgramVisitor(ExtNodeVisitor):
         #       (requires strides to be actual strides/skips rather than "real
         #       length" of each dimension).
         if len(squeezed) > 0:
-            raise NotImplementedError('Squeezed dimensions incompatible with '
-                                      'nested SDFG array references')
+            warnings.warn('Squeezed dimensions incompatible with '
+                          'nested SDFG array references')
+            strides = [s for i, s in enumerate(strides) if i in non_squeezed]
 
         return strides
 
