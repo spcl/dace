@@ -486,6 +486,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_subset = (memlet.subset
                                     if memlet.data == dst_node.data else
                                     memlet.other_subset)
+                    if array_subset is None:  # Need to use entire array
+                        array_subset = subsets.Range.from_array(dst_nodedesc)
+
                     # stream_subset = (memlet.subset
                     #                  if memlet.data == src_node.data else
                     #                  memlet.other_subset)
