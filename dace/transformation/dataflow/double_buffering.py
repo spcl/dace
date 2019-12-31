@@ -164,7 +164,8 @@ class DoubleBuffering(pattern_matching.Transformation):
         # Modify main state's memlets
 
         # Divide by loop stride
-        new_expr = '(%s / %s) %% 2' % (map_param, map_rstride)
+        new_expr = symbolic.pystr_to_symbolic(
+            '(%s / %s) %% 2' % (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
 
         ##############################
@@ -198,7 +199,8 @@ class DoubleBuffering(pattern_matching.Transformation):
 
         nstate.set_label('%s_double_buffered' % map_entry.map.label)
         # Divide by loop stride
-        new_expr = '((%s / %s) + 1) %% 2' % (map_param, map_rstride)
+        new_expr = symbolic.pystr_to_symbolic(
+            '((%s / %s) + 1) %% 2' % (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
 
     @staticmethod

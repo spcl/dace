@@ -33,7 +33,7 @@ if __name__ == '__main__':
     C = np.zeros((256, 256), dtype=np.float32)
 
     sdfg = mm_double_buffered.to_sdfg()
-    sdfg.compile(optimizer='')(A=A, B=B, C=C)
+    sdfg(A=A, B=B, C=C)
 
     diff = np.linalg.norm(expected_C - C) / (256 * 256)
     print('Difference (before):', diff)
