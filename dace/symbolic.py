@@ -508,9 +508,16 @@ def swalk(expr, enter_functions=False):
         yield from swalk(arg)
 
 
+_builtin_userfunctions = {
+    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not'
+}
+
+
 def contains_sympy_functions(expr):
     """ Returns True if expression contains Sympy functions. """
     if is_sympy_userfunction(expr):
+        if str(expr.func) in _builtin_userfunctions:
+            return False
         return True
     for arg in expr.args:
         if contains_sympy_functions(arg):
