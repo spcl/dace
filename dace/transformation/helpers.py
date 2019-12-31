@@ -176,7 +176,7 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(original_edge.data.subset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, sdfg,
+    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
                                         set(input_names) | input_arrays,
                                         set(output_names) | output_arrays)
 
