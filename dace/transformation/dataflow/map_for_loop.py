@@ -4,10 +4,12 @@
 import dace
 from copy import deepcopy as dcpy
 from dace import data, symbolic
+from dace.properties import Property
 from dace.sdfg import SDFG, SDFGState
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.transformation.helpers import nest_state_subgraph
+from typing import Tuple
 
 
 class MapToForLoop(pattern_matching.Transformation):
@@ -41,7 +43,10 @@ class MapToForLoop(pattern_matching.Transformation):
         map_entry = graph.nodes()[candidate[MapToForLoop._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
-    def apply(self, sdfg):
+    def apply(self, sdfg) -> Tuple[nodes.NestedSDFG, SDFGState]:
+        """ Applies the transformation and returns a tuple with the new nested
+            SDFG node and the main state in the for-loop. """
+
         # Retrieve map entry and exit nodes.
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[MapToForLoop._map_entry]]
@@ -109,6 +114,8 @@ class MapToForLoop(pattern_matching.Transformation):
             [e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
+
+        return node, nstate
 
 
 pattern_matching.Transformation.register_pattern(MapToForLoop)
