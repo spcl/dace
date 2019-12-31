@@ -3440,6 +3440,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Node validation
             try:
                 node.validate(sdfg, self)
+            except InvalidSDFGError:
+                raise
             except Exception as ex:
                 raise InvalidSDFGNodeError(
                     "Node validation failed: " + str(ex), sdfg, state_id, nid)
@@ -3629,6 +3631,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Edge validation
             try:
                 e.data.validate(sdfg, self)
+            except InvalidSDFGError:
+                raise
             except Exception as ex:
                 raise InvalidSDFGEdgeError(
                     "Edge validation failed: " + str(ex), sdfg, state_id, eid)
