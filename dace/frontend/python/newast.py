@@ -1738,6 +1738,10 @@ class ProgramVisitor(ExtNodeVisitor):
             for k, v in self.scope_vars.items() if v in self.sdfg.arrays
         })
         result.update({
+            k: self.scope_arrays[v]
+            for k, v in self.scope_vars.items() if v in self.scope_arrays
+        })
+        result.update({
             k: self.sdfg.arrays[v]
             for k, v in self.variables.items() if v in self.sdfg.arrays
         })
@@ -3280,10 +3284,12 @@ class ProgramVisitor(ExtNodeVisitor):
             dst_expr = ParseMemlet(self, self.defined, dst)
             src_name = src_expr.name
             if src_name not in self.sdfg.arrays:
-                src_name = self.variables[src_expr.name]
+                src_name = self._add_read_access(src_expr.name,
+                                                 src_expr.subset, None)
             dst_name = dst_expr.name
             if dst_name not in self.sdfg.arrays:
-                dst_name = self.variables[dst_expr.name]
+                dst_name = self._add_write_access(dst_expr.name,
+                                                  dst_expr.subset, None)
 
             rnode = state.add_read(src_name)
             wnode = state.add_write(dst_name)
