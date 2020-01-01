@@ -151,6 +151,12 @@ def nest_state_subgraph(sdfg: SDFG,
     for e in subgraph.edges():
         nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
+    # Modify nested SDFG parents in subgraph
+    for node in subgraph.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            node.sdfg.parent = nstate
+            node.sdfg.parent_sdfg = nsdfg
+
     # Add access nodes and edges as necessary
     edges_to_offset = []
     for name, edge in zip(input_names, inputs):
