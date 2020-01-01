@@ -986,7 +986,9 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         # Get parameters from input/output memlets to this map
         params = set(d.data for node in dfg_scope.source_nodes() for _,_,_,_,d in dfg.in_edges(node)) | \
                  set(d.data for node in dfg_scope.sink_nodes() for _,_,_,_,d in dfg.out_edges(node))
-        params -= set(e.data.data for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry))
+        params -= set(
+            e.data.data
+            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry))
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
@@ -1146,8 +1148,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     sdfg,
                     state_id, [e.src, e.dst])
             callsite_stream.write(
-                self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
-                state_id, node)
+                self._cpu_codegen.memlet_definition(
+                    sdfg, e.data, False, e.dst_conn), sdfg, state_id, node)
 
         # Invoke kernel call
         callsite_stream.write(
@@ -1347,24 +1349,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
                                                  child, function_stream,
                                                  kernel_stream)
-
-        # Generate register definitions for inter-tasklet memlets
-        dfg = sdfg.nodes()[state_id]
-        scope_dict = dfg.scope_dict()
-        for edge in dfg.edges():
-            # Only interested in edges within current scope
-            if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
-                continue
-            if (isinstance(edge.src, nodes.CodeNode)
-                    and isinstance(edge.dst, nodes.CodeNode)):
-                local_name = edge.data.data
-                # Allocate variable type
-                code = 'dace::vec<%s, %s> %s;' % (
-                    sdfg.arrays[edge.data.data].dtype.ctype,
-                    sym2cpp(edge.data.veclen), local_name)
-                kernel_stream.write(code, sdfg, state_id, [edge.src, edge.dst])
-                self._dispatcher.defined_vars.add(local_name,
-                                                  DefinedType.Scalar)
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
