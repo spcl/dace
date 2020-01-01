@@ -75,6 +75,17 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
                 return False
+
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                # If two top-level tasklets are connected with a code->code
+                # memlet, they will transform into an invalid SDFG
+                if (isinstance(node, nodes.CodeNode)
+                        and state.scope_dict()[node] is None):
+                    if any(
+                            isinstance(e.dst, nodes.CodeNode)
+                            for e in state.out_edges(node)):
+                        return False
         return True
 
     @staticmethod
