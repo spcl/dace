@@ -18,7 +18,7 @@ class TransformationTester(Optimizer):
                  validate=True,
                  generate_code=True,
                  compile=False,
-                 print_exception=False,
+                 print_exception=True,
                  halt_on_exception=False):
         """ Creates a new Transformation tester, which brute-forces applying the
             available transformations up to a certain level.
