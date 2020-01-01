@@ -53,6 +53,12 @@ class Node(object):
             scope_entry_node = None
             scope_exit_nodes = []
 
+        # The scope exit of an entry node is the matching exit node
+        if isinstance(self, EntryNode):
+            scope_exit_nodes = [
+                str(parent.node_id(x)) for x in parent.exit_nodes(self)
+            ]
+
         retdict = {
             "type": typestr,
             "label": labelstr,
@@ -477,6 +483,15 @@ class MapEntry(EntryNode):
     def from_json(json_obj, context=None):
         m = Map("", [], [])
         ret = MapEntry(map=m)
+
+        try:
+            # Set map reference to map exit
+            nid = int(json_obj['scope_exits'][0])
+            exit_node = context['sdfg_state'].node(nid)
+            exit_node.map = m
+        except IndexError:
+            pass
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -511,10 +526,15 @@ class MapExit(ExitNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        # Set map reference to map entry
-        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+        try:
+            # Set map reference to map entry
+            entry_node = context['sdfg_state'].node(
+                int(json_obj['scope_entry']))
 
-        ret = MapExit(map=entry_node.map)
+            ret = MapExit(map=entry_node.map)
+        except IndexError:  # Entry node has a higher ID than exit node
+            ret = MapExit(Map('_', [], []))
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
@@ -646,6 +666,15 @@ class ConsumeEntry(EntryNode):
     def from_json(json_obj, context=None):
         c = Consume("", ['i', 1], None)
         ret = ConsumeEntry(consume=c)
+
+        try:
+            # Set map reference to map exit
+            nid = int(json_obj['scope_exits'][0])
+            exit_node = context['sdfg_state'].node(nid)
+            exit_node.consume = c
+        except IndexError:
+            pass
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -686,10 +715,14 @@ class ConsumeExit(ExitNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        # Set map reference to entry node
-        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+        try:
+            # Set consume reference to entry node
+            entry_node = context['sdfg_state'].node(
+                int(json_obj['scope_entry']))
+            ret = ConsumeExit(consume=entry_node.consume)
+        except IndexError:  # Entry node has a higher ID than exit node
+            ret = ConsumeExit(Consume("", ['i', 1], None))
 
-        ret = ConsumeExit(consume=entry_node.consume)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
