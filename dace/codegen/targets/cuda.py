@@ -986,6 +986,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         # Get parameters from input/output memlets to this map
         params = set(d.data for node in dfg_scope.source_nodes() for _,_,_,_,d in dfg.in_edges(node)) | \
                  set(d.data for node in dfg_scope.sink_nodes() for _,_,_,_,d in dfg.out_edges(node))
+        params -= set(e.data.data for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry))
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
@@ -1136,15 +1137,17 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             scope_entry)
 
         # Synchronize all events leading to dynamic map range connectors
-        for e in dfg.in_edges(scope_entry):
-            if e.dst_conn and not e.dst_conn.startswith('IN_') and hasattr(
-                    e, '_cuda_event'):
+        for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+            if hasattr(e, '_cuda_event'):
                 ev = e._cuda_event
                 callsite_stream.write(
                     'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'
                     .format(ev=ev),
                     sdfg,
                     state_id, [e.src, e.dst])
+            callsite_stream.write(
+                self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
+                state_id, node)
 
         # Invoke kernel call
         callsite_stream.write(
