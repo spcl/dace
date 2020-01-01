@@ -77,15 +77,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 return False
 
         for state in sdfg.nodes():
-            for node in state.nodes():
+            sdict = state.scope_dict(node_to_children=True)
+            for node in sdict[None]:
                 # If two top-level tasklets are connected with a code->code
                 # memlet, they will transform into an invalid SDFG
-                if (isinstance(node, nodes.CodeNode)
-                        and state.scope_dict()[node] is None):
-                    if any(
-                            isinstance(e.dst, nodes.CodeNode)
-                            for e in state.out_edges(node)):
-                        return False
+                if (isinstance(node, nodes.CodeNode) and any(
+                        isinstance(e.dst, nodes.CodeNode)
+                        for e in state.out_edges(node))):
+                    return False
         return True
 
     @staticmethod
@@ -112,7 +111,16 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         and node.desc(sdfg).transient == False):
                     if (state.out_degree(node) > 0
                             and node.data not in input_nodes):
-                        input_nodes.append((node.data, node.desc(sdfg)))
+                        # Special case: nodes that lead to dynamic map ranges
+                        # must stay on host
+                        for e in state.out_edges(node):
+                            last_edge = state.memlet_path(e)[-1]
+                            if (isinstance(last_edge.dst, nodes.EntryNode)
+                                    and last_edge.dst_conn and
+                                    not last_edge.dst_conn.startswith('IN_')):
+                                break
+                        else:
+                            input_nodes.append((node.data, node.desc(sdfg)))
                     if (state.in_degree(node) > 0
                             and node.data not in output_nodes):
                         output_nodes.append((node.data, node.desc(sdfg)))
