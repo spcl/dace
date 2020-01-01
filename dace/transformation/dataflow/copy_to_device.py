@@ -51,13 +51,17 @@ class CopyToDevice(pattern_matching.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
 
-        # Stream inputs/outputs not allowed
         for edge in graph.all_edges(nested_sdfg):
+            # Stream inputs/outputs not allowed
             path = graph.memlet_path(edge)
             if ((isinstance(path[0].src, nodes.AccessNode)
                  and isinstance(sdfg.arrays[path[0].src.data], data.Stream)) or
                 (isinstance(path[-1].dst, nodes.AccessNode)
                  and isinstance(sdfg.arrays[path[-1].dst.data], data.Stream))):
+                return False
+            # WCR outputs with arrays are not allowed
+            if (edge.data.wcr is not None
+                    and edge.data.subset.num_elements() != 1):
                 return False
 
         return True
