@@ -112,6 +112,14 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtypes.StorageType.Register):
                     return False
 
+            # If one of the outputs is a stream, do not match
+            map_exit = graph.exit_nodes(map_entry)[0]
+            for edge in graph.out_edges(map_exit):
+                dst = graph.memlet_path(edge)[-1].dst
+                if (isinstance(dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[dst.data], data.Stream)):
+                    return False
+
             return True
         elif expr_index == 1:
             reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
