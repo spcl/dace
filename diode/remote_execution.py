@@ -15,6 +15,10 @@ from dace.config import Config
 from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
 
 
+def _task(obj):
+    obj.run()
+
+
 class FunctionStreamWrapper(object):
     """ Class that wraps around a function with a stream-like API (write). """
 
@@ -417,7 +421,6 @@ class AsyncExecutor:
         self.executor = Executor(remote)
         self.executor.set_exit_on_error(False)
         self.to_proc_message_queue = multiprocessing.Queue(128)
-        self.from_proc_message_queue = multiprocessing.Queue(128)
         self.running_proc = None
 
         # This determines if a "quit"-message stops the subprocess
@@ -440,11 +443,9 @@ class AsyncExecutor:
             print("Cannot start another sub-process!")
             return
 
-        def task(obj):
-            obj.run()
-
         # Use multiple processes to handle crashing processes
-        self.running_proc = multiprocessing.Process(target=task, args=(self, ))
+        self.running_proc = multiprocessing.Process(
+            target=_task, args=(self, ))
         self.running_proc.start()
 
         self.append_run_async(dace_state, fail_on_nonzero=False)
@@ -481,10 +482,7 @@ class AsyncExecutor:
                 break
 
             # Unwrap and call
-            ret = self.callMethod(self.executor, *msg)
-
-            # Put the return value (including the complete command)
-            self.from_proc_message_queue.put(("retval", ret, *msg))
+            self.callMethod(self.executor, *msg)
 
     def join(self, timeout=None):
         pass

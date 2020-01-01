@@ -541,7 +541,9 @@ def index(path):
         It serves the files from the 'webclient'-directory to user agents.
         Note: This is NOT intended for production environments and security is disregarded!
     """
-    return send_from_directory("webclient", path)
+    return send_from_directory(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "webclient"),
+        path)
 
 
 @app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
@@ -1370,6 +1372,7 @@ def set_settings(settings_array, client_id):
         Config.set(*path, value=val)
 
     Config.save(clientpath)
+    return Config.get()
 
 
 @app.route('/dace/api/v1.0/preferences/<string:operation>', methods=['POST'])
@@ -1436,14 +1439,3 @@ if __name__ == '__main__':
         use_reloader=False)
 
     es.stop()
-else:
-    # Start the executor server
-    es = ExecutorServer()
-    es_ref.append(es)
-
-    import atexit
-
-    def tmp():
-        es.stop()
-
-    atexit.register(tmp)
