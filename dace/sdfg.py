@@ -2728,14 +2728,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             name = sdfg.label
         debuginfo = getdebuginfo(debuginfo)
 
-        if sdfg.parent is not None and sdfg.parent != parent:
-            raise ValueError('SDFG "{}" already has a parent'.format(
-                sdfg.label))
         sdfg.parent = self
-        if parent is not None:
-            sdfg._parent_sdfg = parent
-        else:
-            sdfg._parent_sdfg = self.parent
+        sdfg._parent_sdfg = self.parent
 
         sdfg.update_sdfg_list([])
 
