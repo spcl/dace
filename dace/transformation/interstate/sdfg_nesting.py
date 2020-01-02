@@ -255,8 +255,12 @@ class InlineSDFG(pattern_matching.Transformation):
             k: v.data.data
             for k, v in itertools.chain(inputs.items(), outputs.items())
         })
-        for match, replacement in repldict.items():
-            sd.replace(subgraph, match, replacement)
+        for node in subgraph.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data in repldict:
+                node.data = repldict[node.data]
+        for edge in subgraph.edges():
+            if edge.data.data in repldict:
+                edge.data.data = repldict[edge.data.data]
 
         #######################################################
         # Reconnect inlined SDFG

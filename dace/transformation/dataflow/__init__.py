@@ -17,6 +17,7 @@ from .vectorization import Vectorization
 from .stream_transient import StreamTransient
 from .local_storage import InLocalStorage, OutLocalStorage
 from .reduce_expansion import ReduceExpansion
+from .double_buffering import DoubleBuffering
 
 # Complexity reduction
 from .redundant_array import RedundantArray

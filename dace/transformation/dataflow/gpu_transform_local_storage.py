@@ -88,6 +88,10 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     candidate_map.schedule == dtypes.ScheduleType.Sequential):
                 return False
 
+            # Dynamic map ranges cannot become kernels
+            if sd.has_dynamic_map_inputs(graph, map_entry):
+                return False
+
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry
@@ -106,6 +110,14 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         node.desc(sdfg).storage != dtypes.StorageType.Default
                         and node.desc(sdfg).storage !=
                         dtypes.StorageType.Register):
+                    return False
+
+            # If one of the outputs is a stream, do not match
+            map_exit = graph.exit_nodes(map_entry)[0]
+            for edge in graph.out_edges(map_exit):
+                dst = graph.memlet_path(edge)[-1].dst
+                if (isinstance(dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[dst.data], data.Stream)):
                     return False
 
             return True
@@ -249,6 +261,17 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtype=array.dtype,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global)
+                elif isinstance(array, data.Stream):
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        strides=[array.strides[d] for d in actual_dims],
+                        offset=[array.offset[d] for d in actual_dims])
                 else:
                     sdfg.add_array(
                         name=cloned_name,
@@ -314,6 +337,17 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         dtype=array.dtype,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global)
+                elif isinstance(array, data.Stream):
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        strides=[array.strides[d] for d in actual_dims],
+                        offset=[array.offset[d] for d in actual_dims])
                 else:
                     sdfg.add_array(
                         name=cloned_name,
@@ -404,7 +438,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 else:
                                     newsubset[ind] = (
                                         r - offset[ind],
-                                        r - offset[ind] + 1,
+                                        r - offset[ind],
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(
@@ -489,7 +523,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 else:
                                     newsubset[ind] = (
                                         r - offset[ind],
-                                        r - offset[ind] + 1,
+                                        r - offset[ind],
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(

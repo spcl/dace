@@ -1,6 +1,7 @@
 """ Contains the MPITransformMap transformation. """
 
 from dace import dtypes
+from dace.sdfg import has_dynamic_map_inputs
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -81,6 +82,15 @@ class MPITransformMap(pattern_matching.Transformation):
                 return False
             parent = sdict[parent]
 
+        # Dynamic map ranges not supported (will allocate dynamic memory)
+        if has_dynamic_map_inputs(graph, map_entry):
+            return False
+
+        # MPI schedules currently do not support WCR
+        map_exit = graph.exit_nodes(map_entry)[0]
+        if any(e.data.wcr for e in graph.out_edges(map_exit)):
+            return False
+
         return True
 
     @staticmethod
@@ -120,16 +130,6 @@ class MPITransformMap(pattern_matching.Transformation):
         ]
 
         outer_map = edges[0].src
-
-        # We need a tasklet for InLocalStorage
-        tasklet = None
-        for e in graph.out_edges(map_entry):
-            if isinstance(e.dst, nodes.CodeNode):
-                tasklet = e.dst
-                break
-
-        if tasklet is None:
-            raise ValueError("Tasklet not found")
 
         # Add MPI schedule attribute to outer map
         outer_map.map._schedule = dtypes.ScheduleType.MPI

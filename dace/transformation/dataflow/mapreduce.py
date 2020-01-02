@@ -8,6 +8,7 @@ from dace.graph import nodes, nxutil
 from dace.sdfg import SDFGState
 from dace.transformation import pattern_matching as pm
 from dace.properties import ShapeProperty
+from typing import List, Optional
 
 
 class MapReduceFusion(pm.Transformation):
@@ -152,6 +153,19 @@ class MapReduceFusion(pm.Transformation):
         #        if map_range[1] != symbolic.pystr_to_symbolic(reduce.inslice[dim][1]):
         #            return False  # Range check (reduction axis)
 
+        # Map-Reduce
+        if expr_index == 2:
+            tasklet = graph.nodes()[candidate[MapReduceFusion._tasklet]]
+            tmem = next(
+                e for e in graph.edges_between(tasklet, tmap_exit)
+                if e.data.data == in_array.data).data
+            reduce_node = rmap_entry
+
+            # If memlet already has WCR and it is different from reduce node,
+            # do not match
+            if tmem.wcr is not None and tmem.wcr != reduce_node.wcr:
+                return False
+
         # Verify that reduction ranges match tasklet map
         tout_memlet = graph.in_edges(in_array)[0].data
         rin_memlet = graph.out_edges(in_array)[0].data
@@ -173,9 +187,12 @@ class MapReduceFusion(pm.Transformation):
 
     @staticmethod
     def find_memlet_map_permutation(memlet: Memlet, map: nodes.Map):
-        perm = [None] * len(memlet.subset)
+        perm: List[int] = [None] * len(memlet.subset)
         indices = set()
         for i, dim in enumerate(memlet.subset):
+            if len(set(symbolic.symlist(dim)) & set(map.params)) == 0:
+                perm[i] = -1
+                continue
             if isinstance(memlet.subset, subsets.Range):
                 if memlet.subset.ranges[i][0] != memlet.subset.ranges[i][1]:
                     raise RuntimeError('Range found in MapReduceFusion')
@@ -231,14 +248,20 @@ class MapReduceFusion(pm.Transformation):
 
         in_memlet = graph.in_edges(reduce_node)[0].data
         out_memlet = graph.out_edges(reduce_node)[0].data
-        assert len(tasklet_map.range) == in_memlet.subset.dims()
+        unrelated_axes = [
+            i for i, s in enumerate(tmem.subset)
+            if len(set(symbolic.symlist(s)) & set(tasklet_map.params)) == 0
+        ]
+
+        assert (len(tasklet_map.range) == in_memlet.subset.dims() -
+                len(unrelated_axes))
 
         # Find permutation between tasklet-exit memlet and tasklet map
         tmem_perm = MapReduceFusion.find_memlet_map_permutation(
             tmem, tasklet_map)
         mapred_perm = []
 
-        # Match map ranges with reduce ranges
+        # Match map ranges with reduce axes
         unavailable_ranges = set()
         for i, tmap_rng in enumerate(tasklet_map.range):
             found = False
@@ -253,7 +276,7 @@ class MapReduceFusion(pm.Transformation):
 
         # Ensure all map variables matched with reduce variables
         assert len(tmem_perm) == len(tmem.subset)
-        assert len(mapred_perm) == len(in_memlet.subset)
+        assert len(mapred_perm) == len(in_memlet.subset) - len(unrelated_axes)
 
         # Prepare result from the two permutations and the reduction axes
         result = []
@@ -350,31 +373,30 @@ class MapReduceFusion(pm.Transformation):
                 graph.add_edge(omap_entry, e.src_conn, tmap_entry, e.dst_conn,
                                copy.copy(e.data))
         elif expr_index == 2:  # Reduce node
-            # Find correspondence between map indices and array outputs
-            tmap = tmap_exit.map
-            perm = MapReduceFusion.find_permutation_reduce(
-                tmap, rmap_cr, graph, memlet_edge.data)
-
-            output_subset = [tmap.params[d] for d in perm]
-            if len(output_subset) == 0:  # Output is a scalar
-                output_subset = [0]
-
+            # Find which indices should be removed from new memlet
+            input_edge = graph.in_edges(rmap_cr)[0]
+            axes = rmap_cr.axes or list(range(input_edge.data.subset))
             array_edge = graph.out_edges(rmap_cr)[0]
 
             # Delete relevant edges and nodes
-            graph.remove_edge(memlet_edge)
             graph.remove_nodes_from(nodes_to_remove)
 
-            # Add new edges and nodes
-            #   From tasklet to map exit
-            graph.add_edge(
-                memlet_edge.src, memlet_edge.src_conn, memlet_edge.dst,
-                memlet_edge.dst_conn,
-                Memlet(out_array.data, memlet_edge.data.num_accesses,
-                       subsets.Indices(output_subset), memlet_edge.data.veclen,
-                       rmap_cr.wcr, rmap_cr.identity))
+            # Filter out reduced dimensions from subset
+            filtered_subset = [
+                dim for i, dim in enumerate(memlet_edge.data.subset)
+                if i not in axes
+            ]
+            if len(filtered_subset) == 0:  # Output is a scalar
+                filtered_subset = [0]
 
-            #   From map exit to output array
+            # Modify edge from tasklet to map exit
+            memlet_edge.data.data = out_array.data
+            memlet_edge.data.wcr = rmap_cr.wcr
+            memlet_edge.data.wcr_identity = rmap_cr.identity
+            memlet_edge.data.subset = type(
+                memlet_edge.data.subset)(filtered_subset)
+
+            # Add edge from map exit to output array
             graph.add_edge(
                 memlet_edge.dst, 'OUT_' + memlet_edge.dst_conn[3:],
                 array_edge.dst, array_edge.dst_conn,

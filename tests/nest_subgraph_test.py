@@ -56,7 +56,7 @@ class NestStateSubgraph(unittest.TestCase):
         def multiply(a: dace.float32[N]):
             a *= 2
 
-        sdfg = multiply.to_sdfg()
+        sdfg = multiply.to_sdfg(strict=True)
         for state in sdfg.nodes():
             if any(isinstance(node, Tasklet) for node in state.nodes()):
                 break

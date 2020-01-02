@@ -4,6 +4,7 @@ import copy
 from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
+import warnings
 
 import dace
 from dace import data, dtypes, subsets, symbolic
@@ -1738,6 +1739,10 @@ class ProgramVisitor(ExtNodeVisitor):
             for k, v in self.scope_vars.items() if v in self.sdfg.arrays
         })
         result.update({
+            k: self.scope_arrays[v]
+            for k, v in self.scope_vars.items() if v in self.scope_arrays
+        })
+        result.update({
             k: self.sdfg.arrays[v]
             for k, v in self.variables.items() if v in self.sdfg.arrays
         })
@@ -2735,6 +2740,27 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node,
                                   'Array "%s" used before definition' % name)
 
+    def _squeeze_strides(self, original: data.Array,
+                         non_squeezed: ShapeList) -> ShapeList:
+        # Special case: Scalar (0-dimensional array)
+        if len(non_squeezed) == 0:
+            return [1]
+
+        strides = original.strides
+        squeezed = [
+            i for i in range(len(original.strides)) if i not in non_squeezed
+        ]
+
+        # TODO: Remove squeezed dimensions and multiply strides as necessary
+        #       (requires strides to be actual strides/skips rather than "real
+        #       length" of each dimension).
+        if len(squeezed) > 0:
+            warnings.warn('Squeezed dimensions incompatible with '
+                          'nested SDFG array references')
+            strides = [s for i, s in enumerate(strides) if i in non_squeezed]
+
+        return strides
+
     def _add_access(
             self,
             name: str,
@@ -2765,8 +2791,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
         elif arr_type == data.Array:
-            self.sdfg.add_array(
-                var_name, shape, dtype, strides=squeezed_rng.strides())
+            strides = self._squeeze_strides(parent_array, non_squeezed)
+            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
         else:
@@ -3280,10 +3306,12 @@ class ProgramVisitor(ExtNodeVisitor):
             dst_expr = ParseMemlet(self, self.defined, dst)
             src_name = src_expr.name
             if src_name not in self.sdfg.arrays:
-                src_name = self.variables[src_expr.name]
+                src_name = self._add_read_access(src_name, src_expr.subset,
+                                                 None)
             dst_name = dst_expr.name
             if dst_name not in self.sdfg.arrays:
-                dst_name = self.variables[dst_expr.name]
+                dst_name = self._add_write_access(dst_name, dst_expr.subset,
+                                                  None)
 
             rnode = state.add_read(src_name)
             wnode = state.add_write(dst_name)
@@ -3292,11 +3320,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 Memlet(
                     src_name,
                     src_expr.accesses,
-                    src_expr.subset,
+                    subsets.Range.from_array(self.sdfg.arrays[src_name]),
                     1,
                     wcr=dst_expr.wcr,
-                    wcr_identity=dst_expr.wcr_identity,
-                    other_subset=dst_expr.subset))
+                    wcr_identity=dst_expr.wcr_identity))
             return
 
         # Calling reduction or other SDFGs / functions

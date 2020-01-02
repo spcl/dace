@@ -19,13 +19,21 @@ class GPUTransformMap(pattern_matching.Transformation):
         outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    _maps_transformed = 0
-    _arrays_removed = 0
-
     fullcopy = Property(
         desc="Copy whole arrays rather than used subset",
         dtype=bool,
         default=False)
+
+    toplevel_trans = Property(
+        desc="Make all GPU transients top-level", dtype=bool, default=False)
+
+    register_trans = Property(
+        desc="Make all transients inside GPU maps registers",
+        dtype=bool,
+        default=False)
+
+    sequential_innermaps = Property(
+        desc="Make all internal maps Sequential", dtype=bool, default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _reduce = nodes.Reduce('lambda: None', None)
@@ -50,6 +58,10 @@ class GPUTransformMap(pattern_matching.Transformation):
             if sd.is_devicelevel(sdfg, graph, map_entry):
                 return False
 
+            # Dynamic map ranges cannot become kernels
+            if sd.has_dynamic_map_inputs(graph, map_entry):
+                return False
+
             # Ensure that map does not include internal arrays that are
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)
@@ -58,6 +70,14 @@ class GPUTransformMap(pattern_matching.Transformation):
                         node.desc(sdfg).storage != dtypes.StorageType.Default
                         and node.desc(sdfg).storage !=
                         dtypes.StorageType.Register):
+                    return False
+
+            # If one of the outputs is a stream, do not match
+            map_exit = graph.exit_nodes(map_entry)[0]
+            for edge in graph.out_edges(map_exit):
+                dst = graph.memlet_path(edge)[-1].dst
+                if (isinstance(dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[dst.data], data.Stream)):
                     return False
 
             return True
@@ -86,17 +106,27 @@ class GPUTransformMap(pattern_matching.Transformation):
             map_entry = graph.nodes()[self.subgraph[
                 GPUTransformMap._map_entry]]
             nsdfg_node = helpers.nest_state_subgraph(
-                sdfg, graph, graph.scope_subgraph(map_entry))
+                sdfg,
+                graph,
+                graph.scope_subgraph(map_entry),
+                full_data=self.fullcopy)
         else:
             cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
             nsdfg_node = helpers.nest_state_subgraph(
-                sdfg, graph, SubgraphView(graph, [cnode]))
+                sdfg,
+                graph,
+                SubgraphView(graph, [cnode]),
+                full_data=self.fullcopy)
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
+        transformation = GPUTransformSDFG(0, 0, {}, 0)
+        transformation.register_trans = self.register_trans
+        transformation.sequential_innermaps = self.sequential_innermaps
+        transformation.toplevel_trans = self.toplevel_trans
 
-        nsdfg_node.sdfg.apply_transformations(
-            [GPUTransformSDFG], apply_once=True)
+        transformation.apply(nsdfg_node.sdfg)
+
         # Inline back as necessary
         sdfg.apply_strict_transformations()
 

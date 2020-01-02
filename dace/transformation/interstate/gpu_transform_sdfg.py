@@ -33,12 +33,15 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
     toplevel_trans = Property(
         desc="Make all GPU transients top-level", dtype=bool, default=True)
+
     register_trans = Property(
         desc="Make all transients inside GPU maps registers",
         dtype=bool,
         default=True)
+
     sequential_innermaps = Property(
         desc="Make all internal maps Sequential", dtype=bool, default=True)
+
     strict_transform = Property(
         desc='Reapply strict transformations after modifying graph',
         dtype=bool,
@@ -68,6 +71,20 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        for node, _ in sdfg.all_nodes_recursive():
+            # Consume scopes are currently unsupported
+            if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
+                return False
+
+        for state in sdfg.nodes():
+            sdict = state.scope_dict(node_to_children=True)
+            for node in sdict[None]:
+                # If two top-level tasklets are connected with a code->code
+                # memlet, they will transform into an invalid SDFG
+                if (isinstance(node, nodes.CodeNode) and any(
+                        isinstance(e.dst, nodes.CodeNode)
+                        for e in state.out_edges(node))):
+                    return False
         return True
 
     @staticmethod
@@ -94,7 +111,16 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         and node.desc(sdfg).transient == False):
                     if (state.out_degree(node) > 0
                             and node.data not in input_nodes):
-                        input_nodes.append((node.data, node.desc(sdfg)))
+                        # Special case: nodes that lead to dynamic map ranges
+                        # must stay on host
+                        for e in state.out_edges(node):
+                            last_edge = state.memlet_path(e)[-1]
+                            if (isinstance(last_edge.dst, nodes.EntryNode)
+                                    and last_edge.dst_conn and
+                                    not last_edge.dst_conn.startswith('IN_')):
+                                break
+                        else:
+                            input_nodes.append((node.data, node.desc(sdfg)))
                     if (state.in_degree(node) > 0
                             and node.data not in output_nodes):
                         output_nodes.append((node.data, node.desc(sdfg)))
@@ -118,11 +144,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
+            if isinstance(inode, data.Scalar):  # Scalars can remain on host
+                continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
-            sdfg.add_datadesc('gpu_' + inodename, newdesc)
-            cloned_arrays[inodename] = 'gpu_' + inodename
+            name = sdfg.add_datadesc(
+                'gpu_' + inodename, newdesc, find_new_name=True)
+            cloned_arrays[inodename] = name
 
         for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
@@ -130,8 +159,9 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
-            sdfg.add_datadesc('gpu_' + onodename, newdesc)
-            cloned_arrays[onodename] = 'gpu_' + onodename
+            name = sdfg.add_datadesc(
+                'gpu_' + onodename, newdesc, find_new_name=True)
+            cloned_arrays[onodename] = name
 
         # Replace nodes
         for state in sdfg.nodes():
@@ -154,7 +184,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
 
         for nname, desc in set(input_nodes):
-            if nname in excluded_copyin:
+            if nname in excluded_copyin or nname not in cloned_arrays:
                 continue
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(
@@ -174,7 +204,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
 
         for nname, desc in set(output_nodes):
-            if nname in excluded_copyout:
+            if nname in excluded_copyout or nname not in cloned_arrays:
                 continue
             src_array = nodes.AccessNode(
                 cloned_arrays[nname], debuginfo=desc.debuginfo)

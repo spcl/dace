@@ -71,10 +71,13 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "xilinx", "mode")
-        sdaccel_dir = os.path.dirname(
-            os.path.dirname(
-                make_absolute(Config.get("compiler", "xilinx", "executable"))))
-        sdaccel_platform = Config.get("compiler", "xilinx", "platform")
+        try:
+            sdaccel_dir = os.path.dirname(
+                os.path.dirname(
+                    make_absolute(
+                        Config.get("compiler", "xilinx", "executable"))))
+        except ValueError:
+            sdaccel_dir = ''
 
         kernel_file_name = "DACE_BINARY_DIR \"{}".format(self._program_name)
         if execution_mode == "software_emulation":
