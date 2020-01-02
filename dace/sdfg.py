@@ -1216,7 +1216,6 @@ subgraph cluster_state_{state} {{
             toplevel=False,
             debuginfo=None,
             allow_conflicts=False,
-            access_order=None,
     ):
         """ Adds an array to the SDFG data descriptor store. """
 
@@ -1247,7 +1246,6 @@ subgraph cluster_state_{state} {{
             storage=storage,
             materialize_func=materialize_func,
             allow_conflicts=allow_conflicts,
-            access_order=access_order,
             transient=transient,
             strides=strides,
             offset=offset,
@@ -1345,7 +1343,6 @@ subgraph cluster_state_{state} {{
             toplevel=False,
             debuginfo=None,
             allow_conflicts=False,
-            access_order=None,
     ):
         """ Convenience function to add a transient array to the data
             descriptor store. """
@@ -1361,7 +1358,6 @@ subgraph cluster_state_{state} {{
             toplevel=toplevel,
             debuginfo=None,
             allow_conflicts=allow_conflicts,
-            access_order=access_order,
         )
 
     def temp_data_name(self):
@@ -1384,8 +1380,7 @@ subgraph cluster_state_{state} {{
                            offset=None,
                            toplevel=False,
                            debuginfo=None,
-                           allow_conflicts=False,
-                           access_order=None):
+                           allow_conflicts=False):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         name = self.temp_data_name()
@@ -1401,8 +1396,7 @@ subgraph cluster_state_{state} {{
             offset,
             toplevel=toplevel,
             debuginfo=None,
-            allow_conflicts=allow_conflicts,
-            access_order=access_order)
+            allow_conflicts=allow_conflicts)
 
     def add_datadesc(self, name: str, datadesc: dt.Data):
         """ Adds an existing data descriptor to the SDFG array store.

@@ -2308,8 +2308,6 @@ def ndslice_cpp(slice, dims, rowmajor=True):
             raise SyntaxError(
                 "CPU backend does not yet support ranges as inputs/outputs")
 
-        # TODO(later): Use access order
-
         result.write(sym2cpp(d))
 
         # If not last

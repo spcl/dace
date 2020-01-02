@@ -218,7 +218,6 @@ class Array(Data):
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
-    access_order = ListProperty(element_type=int)
     strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     may_alias = Property(
@@ -235,7 +234,6 @@ class Array(Data):
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
                  location='',
-                 access_order=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -251,11 +249,6 @@ class Array(Data):
         self.allow_conflicts = allow_conflicts
         self.materialize_func = materialize_func
         self.may_alias = may_alias
-
-        if access_order is not None:
-            self.access_order = cp.copy(access_order)
-        else:
-            self.access_order = tuple(i for i in range(len(shape)))
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -275,9 +268,8 @@ class Array(Data):
     def clone(self):
         return Array(self.dtype, self.shape, self.materialize_func,
                      self.transient, self.allow_conflicts, self.storage,
-                     self.location, self.access_order, self.strides,
-                     self.offset, self.may_alias, self.toplevel,
-                     self.debuginfo)
+                     self.location, self.strides, self.offset, self.may_alias,
+                     self.toplevel, self.debuginfo)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -306,9 +298,6 @@ class Array(Data):
 
     def validate(self):
         super(Array, self).validate()
-        if len(self.access_order) != len(self.shape):
-            raise TypeError('Access order must be the same size as shape')
-
         if len(self.strides) != len(self.shape):
             raise TypeError('Strides must be the same size as shape')
 

@@ -151,7 +151,6 @@ class FPGATransformState(pattern_matching.Transformation):
                         transient=True,
                         storage=dtypes.StorageType.FPGA_Global,
                         allow_conflicts=array.allow_conflicts,
-                        access_order=array.access_order,
                         strides=array.strides,
                         offset=array.offset)
                     fpga_data[node.data] = fpga_array
@@ -196,7 +195,6 @@ class FPGATransformState(pattern_matching.Transformation):
                         transient=True,
                         storage=dtypes.StorageType.FPGA_Global,
                         allow_conflicts=array.allow_conflicts,
-                        access_order=array.access_order,
                         strides=array.strides,
                         offset=array.offset)
                     fpga_data[node.data] = fpga_array

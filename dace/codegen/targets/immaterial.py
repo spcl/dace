@@ -187,7 +187,6 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                         sdfg, memlet, False)
                     memlet_range = memlet.subset.ranges[indexdim]
 
-                    # TODO(later): Access order
                     memlet_stride = functools.reduce(
                         lambda x, y: x * y,
                         sdfg.arrays[memlet.data].shape[indexdim + 1:])
