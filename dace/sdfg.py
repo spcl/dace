@@ -1039,8 +1039,14 @@ subgraph cluster_state_{state} {{
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
+        from dace.jupyter import isnotebook, preamble
+
+        result = ''
+        if not isnotebook():
+            result = preamble()
+
         # Create renderer canvas and load SDFG
-        result = """
+        result += """
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
