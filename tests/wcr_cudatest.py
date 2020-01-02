@@ -1,5 +1,6 @@
 import numpy as np
 import dace
+from dace.transformation.interstate import GPUTransformSDFG
 
 from typing import Dict, Tuple
 
@@ -171,82 +172,14 @@ def create_test_sdfg():
     return sdfg
 
 
-my_max_sdfg = create_test_sdfg()
-my_max_sdfg.validate()
-my_max_sdfg
+if __name__ == '__main__':
+    my_max_sdfg = create_test_sdfg()
+    my_max_sdfg.validate()
+    my_max_sdfg.apply_transformations(GPUTransformSDFG, apply_once=True)
 
-BETA = np.random.rand(10).astype(np.float32)
-BETA_MAX = np.zeros(1).astype(np.float32)
+    BETA = np.random.rand(10).astype(np.float32)
+    BETA_MAX = np.zeros(1).astype(np.float32)
 
-from dace.transformation.optimizer import SDFGOptimizer
+    my_max_sdfg(BETA=BETA, BETA_MAX=BETA_MAX)
 
-
-class MyOptimizer(SDFGOptimizer):
-    optimizations_to_apply = ['GPUTransformSDFG$0']
-
-    def optimize(self):
-        import os
-        from dace.config import Config
-
-        pattern_counter = 0
-        for optimization in self.optimizations_to_apply:
-
-            ui_options = sorted(self.get_pattern_matches())
-            ui_options_idx = 0
-            for pattern_match in ui_options:
-                sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
-                print('%d. Transformation %s' %
-                      (ui_options_idx, pattern_match.print_match(sdfg)))
-                ui_options_idx += 1
-
-            if ui_options_idx == 0:
-                print('No viable transformations found')
-                break
-
-            ui_input = optimization
-
-            from dace.transformation.optimizer import _parse_cli_input
-            pattern_name, occurrence, param_dict = _parse_cli_input(ui_input)
-
-            pattern_match = None
-            if (pattern_name is None and occurrence >= 0
-                    and occurrence < ui_options_idx):
-                pattern_match = ui_options[occurrence]
-            elif pattern_name is not None:
-                counter = 0
-                for match in ui_options:
-                    if type(match).__name__ == pattern_name:
-                        if occurrence == counter:
-                            pattern_match = match
-                            break
-                        counter = counter + 1
-
-            if pattern_match is None:
-                print(
-                    'You did not select a valid option. Quitting optimization ...'
-                )
-                break
-
-            match_id = (str(occurrence) if pattern_name is None else
-                        '%s$%d' % (pattern_name, occurrence))
-            sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
-            print('You selected (%s) pattern %s with parameters %s' %
-                  (match_id, pattern_match.print_match(sdfg), str(param_dict)))
-
-            for k, v in param_dict.items():
-                setattr(pattern_match, k, v)
-
-            pattern_match.apply(sdfg)
-            self.applied_patterns.add(type(pattern_match))
-
-            if not pattern_match.annotates_memlets():
-                labeling.propagate_labels_sdfg(self.sdfg)
-
-        return self.sdfg
-
-
-dace.Config.set("optimizer", "interface", value=__name__ + ".MyOptimizer")
-
-my_max_sdfg(BETA=BETA, BETA_MAX=BETA_MAX)
-
-assert (np.max(BETA) == BETA_MAX[0])
+    assert (np.max(BETA) == BETA_MAX[0])

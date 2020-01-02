@@ -1,10 +1,7 @@
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
-import copy
-import itertools
-
 import dace
-from dace import data, memlet, dtypes, sdfg as sd, subsets, symbolic
+from dace import data, memlet, dtypes, sdfg as sd, subsets
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -42,6 +39,44 @@ class FPGATransformState(pattern_matching.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
+
+        # TODO: Support most of these cases
+        for edge, graph in state.all_edges_recursive():
+            # Code->Code memlets are disallowed (for now)
+            if (isinstance(edge.src, nodes.CodeNode)
+                    and isinstance(edge.dst, nodes.CodeNode)):
+                return False
+
+        for node, graph in state.all_nodes_recursive():
+            # Consume scopes are currently unsupported
+            if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
+                return False
+
+            # Streams have strict conditions due to code generator limitations
+            if (isinstance(node, nodes.AccessNode)
+                    and isinstance(sdfg.arrays[node.data], data.Stream)):
+                nodedesc = graph.parent.arrays[node.data]
+                sdict = graph.scope_dict()
+                if nodedesc.storage in [
+                        dtypes.StorageType.CPU_Heap,
+                        dtypes.StorageType.CPU_Pinned,
+                        dtypes.StorageType.CPU_Stack
+                ]:
+                    return False
+
+                # Cannot allocate FIFO from CPU code
+                if sdict[node] is None:
+                    return False
+
+                # Arrays of streams cannot have dynamic size on FPGA
+                if any(
+                        dace.symbolic.issymbolic(s, graph.parent.constants)
+                        for s in nodedesc.strides):
+                    return False
+
+                # Streams cannot be unbounded on FPGA
+                if nodedesc.buffer_size < 1:
+                    return False
 
         for node in state.nodes():
 
@@ -97,18 +132,12 @@ class FPGATransformState(pattern_matching.Transformation):
         fpga_data = {}
 
         # Input nodes may also be nodes with WCR memlets
-        # We have to recur across nested SDFGs to dinf them
+        # We have to recur across nested SDFGs to find them
         wcr_input_nodes = set()
         stack = []
 
-        for sg in sdfg:
-            stack += [(n, sg) for n in state.nodes()]
-        while len(stack) > 0:
-            node, graph = stack.pop()
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
-                for instate in node.sdfg.states():
-                    stack += [(n, instate) for n in instate.nodes()]
-            elif isinstance(node, dace.graph.nodes.AccessNode):
+        for node, graph in state.all_nodes_recursive():
+            if isinstance(node, dace.graph.nodes.AccessNode):
                 for e in graph.all_edges(node):
                     if e.data.wcr is not None:
                         # This is an output node with wcr

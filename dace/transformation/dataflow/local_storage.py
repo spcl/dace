@@ -26,6 +26,11 @@ class LocalStorage(pattern_matching.Transformation, ABC):
         default=None,
         allow_none=True)
 
+    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
+        super().__init__(sdfg_id, state_id, subgraph, expr_index)
+        self._local_name = None
+        self._data_node = None
+
     @staticmethod
     def expressions():
         return [
@@ -80,6 +85,10 @@ class LocalStorage(pattern_matching.Transformation, ABC):
             find_new_name=True)
         data_node = nodes.AccessNode(new_data)
 
+        # Store as fields so that other transformations can use them
+        self._local_name = new_data
+        self._data_node = data_node
+
         to_data_mm = copy.deepcopy(invariant_memlet)
         from_data_mm = copy.deepcopy(invariant_memlet)
         offset = subsets.Indices([r[0] for r in invariant_memlet.subset])
@@ -127,6 +136,13 @@ class OutLocalStorage(LocalStorage):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+
+        # WCR edges not supported (use AccumulateTransient instead
+        if len(graph.edges_between(node_a, node_b)) == 1:
+            edge = graph.edges_between(node_a, node_b)[0]
+            if edge.data.wcr is not None:
+                return False
+
         return (isinstance(node_a, nodes.ExitNode)
                 and isinstance(node_b, nodes.ExitNode))
 

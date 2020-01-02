@@ -615,15 +615,10 @@ def merge_maps(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
 
     # Create merged map by inheriting attributes from outer map and using
     # the merge functions for parameters and ranges.
-    merged_map = dace.graph.nodes.Map(
-        label='_merged_' + outer_map.label + '_' + inner_map.label,
-        params=param_merge(outer_map.params, inner_map.params),
-        ndrange=range_merge(outer_map.range, inner_map.range),
-        schedule=outer_map.schedule,
-        unroll=outer_map.unroll,
-        is_async=outer_map.is_async,
-        flatten=outer_map.flatten,
-        debuginfo=outer_map.debuginfo)
+    merged_map = copy.deepcopy(outer_map)
+    merged_map.label = 'merged_' + outer_map.label
+    merged_map.params = param_merge(outer_map.params, inner_map.params)
+    merged_map.range = range_merge(outer_map.range, inner_map.range)
 
     merged_entry = dace.graph.nodes.MapEntry(merged_map)
     merged_entry.in_connectors = outer_map_entry.in_connectors
@@ -638,8 +633,10 @@ def merge_maps(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
     # Redirect inner in edges.
     inner_in_edges = graph.out_edges(inner_map_entry)
     for edge in graph.edges_between(outer_map_entry, inner_map_entry):
-        in_conn_num = edge.dst_conn[3:]
-        out_conn = 'OUT_' + in_conn_num
+        if edge.dst_conn is None:  # Empty memlets
+            out_conn = None
+        else:
+            out_conn = 'OUT_' + edge.dst_conn[3:]
         inner_edge = [e for e in inner_in_edges if e.src_conn == out_conn][0]
         graph.remove_edge(edge)
         graph.remove_edge(inner_edge)
@@ -649,8 +646,10 @@ def merge_maps(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
     # Redirect inner out edges.
     inner_out_edges = graph.in_edges(inner_map_exit)
     for edge in graph.edges_between(inner_map_exit, outer_map_exit):
-        out_conn_num = edge.src_conn[4:]
-        in_conn = 'IN_' + out_conn_num
+        if edge.src_conn is None:  # Empty memlets
+            in_conn = None
+        else:
+            in_conn = 'IN_' + edge.src_conn[4:]
         inner_edge = [e for e in inner_out_edges if e.dst_conn == in_conn][0]
         graph.remove_edge(edge)
         graph.remove_edge(inner_edge)

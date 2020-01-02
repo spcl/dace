@@ -92,7 +92,7 @@ class Optimizer(object):
         for state_id, state in state_enum:
             for pattern in _patterns:
                 yield from pattern_matching.match_pattern(
-                    state_id, state, pattern, sdfg, strict=strict)
+                    state, pattern, sdfg, strict=strict)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
@@ -275,8 +275,8 @@ class SDFGOptimizer(Optimizer):
             if SAVE_DOTS:
                 filename = 'after_%d_%s_b4lprop' % (
                     pattern_counter + 1, type(pattern_match).__name__)
-                self.sdfg.draw_to_file(filename + '.dot')
                 self.sdfg.save(os.path.join('_dotgraphs', filename + '.sdfg'))
+                self.sdfg.draw_to_file(filename + '.dot')
 
             if not pattern_match.annotates_memlets():
                 labeling.propagate_labels_sdfg(self.sdfg)
@@ -286,9 +286,9 @@ class SDFGOptimizer(Optimizer):
                 if SAVE_DOTS:
                     filename = 'after_%d_%s' % (pattern_counter,
                                                 type(pattern_match).__name__)
-                    self.sdfg.draw_to_file(filename + '.dot')
                     self.sdfg.save(
                         os.path.join('_dotgraphs', filename + '.sdfg'))
+                    self.sdfg.draw_to_file(filename + '.dot')
 
                     if VISUALIZE:
                         time.sleep(0.7)

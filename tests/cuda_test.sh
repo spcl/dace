@@ -166,6 +166,8 @@ runone() {
     runtestopt $1 multiprogram_cudatest.py $2
 
     runtestopt $1 wcr_cudatest.py $2
+    
+    runopt $1 samples/simple/axpy.py $2 'GPUTransformSDFG$0'
 }
 
 runall() {

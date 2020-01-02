@@ -486,6 +486,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_subset = (memlet.subset
                                     if memlet.data == dst_node.data else
                                     memlet.other_subset)
+                    if array_subset is None:  # Need to use entire array
+                        array_subset = subsets.Range.from_array(dst_nodedesc)
+
                     # stream_subset = (memlet.subset
                     #                  if memlet.data == src_node.data else
                     #                  memlet.other_subset)
@@ -1533,11 +1536,10 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('{', sdfg, state_id, node)
 
         # Define all input connectors of this map entry
-        for e in state_dfg.in_edges(node):
-            if not e.dst_conn.startswith('IN_'):
-                callsite_stream.write(
-                    self.memlet_definition(sdfg, e.data, False, e.dst_conn),
-                    sdfg, state_id, node)
+        for e in dace.sdfg.dynamic_map_inputs(state_dfg, node):
+            callsite_stream.write(
+                self.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
+                state_id, node)
 
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
