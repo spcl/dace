@@ -11,6 +11,8 @@ import dace
 from dace.config import Config
 from dace.frontend import operations
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
+                                         find_outgoing_edges)
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType
 from dace.graph import nodes, nxutil
@@ -2583,35 +2585,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 
-def find_incoming_edges(node, dfg):
-    # If it's an entire SDFG, look in each state
-    if isinstance(dfg, SDFG):
-        result = []
-        for state in dfg.nodes():
-            result.extend(list(state.in_edges(node)))
-        return result
-    else:  # If it's one state
-        return list(dfg.in_edges(node))
-
-
-def find_outgoing_edges(node, dfg):
-    # If it's an entire SDFG, look in each state
-    if isinstance(dfg, SDFG):
-        result = []
-        for state in dfg.nodes():
-            result.extend(list(state.out_edges(node)))
-        return result
-    else:  # If it's one state
-        return list(dfg.out_edges(node))
-
-
-def sym2cpp(s):
-    """ Converts an array of symbolic variables (or one) to C++ strings. """
-    if not isinstance(s, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(s))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in s]
-
-
 class DaCeKeywordRemover(ExtNodeTransformer):
     """ Removes memlets and other DaCe keywords from a Python AST, and
         converts array accesses to C++ methods that can be generated.
@@ -2792,11 +2765,6 @@ class StructInitializer(ExtNodeTransformer):
                 node)
 
         return self.generic_visit(node)
-
-
-def unique(seq):
-    seen = set()
-    return [x for x in seq if not (x in seen or seen.add(x))]
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
