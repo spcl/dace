@@ -1667,22 +1667,15 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             output_dims = output_memlet.subset.data_dims()
 
             reduce_all_axes = (node.axes is None or len(node.axes) == input_dims)
-            reduce_last_axes = sorted(node.axes) == list(range(input_dims - len(node.axes), input_dims))
+            if reduce_all_axes:
+                reduce_last_axes = False
+            else:
+                reduce_last_axes = sorted(node.axes) == list(range(input_dims - len(node.axes), input_dims))
 
             if (not reduce_all_axes) and (not reduce_last_axes):
                 raise NotImplementedError(
                     'Multiple axis reductions not supported on GPUs. Please '
                     'apply ReduceExpansion or make reduce axes to be last in the array')
-            if reduce_all_axes:
-                reduce_last_axes = False
-
-            if reduce_last_axes:
-                num_reduce_axes = len(node.axes)
-                not_reduce_axes = reduce_shape[:-num_reduce_axes]
-                reduce_axes = reduce_shape[-num_reduce_axes:]
-
-                num_segments = ' * '.join([_topy(s) for s in not_reduce_axes])
-                segment_size = ' * '.join([_topy(s) for s in reduce_axes])
 
             # Verify that data is on the GPU
             if input_data.desc(sdfg).storage not in [
@@ -1725,6 +1718,13 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 reduce_range_use = 'num_items'
                 reduce_range_call = num_items
             elif reduce_last_axes:
+                num_reduce_axes = len(node.axes)
+                not_reduce_axes = reduce_shape[:-num_reduce_axes]
+                reduce_axes = reduce_shape[-num_reduce_axes:]
+
+                num_segments = ' * '.join([_topy(s) for s in not_reduce_axes])
+                segment_size = ' * '.join([_topy(s) for s in reduce_axes])
+
                 reduce_type = 'DeviceSegmentedReduce'
                 iterator = 'dace::stridedIterator({size})'.format(size=segment_size)
                 reduce_range = '{num}, {it}, {it} + 1'.format(
@@ -1733,6 +1733,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 iterator_use = 'dace::stridedIterator(segment_size)'
                 reduce_range_use = 'num_segments, {it}, {it} + 1'.format(it=iterator_use)
                 reduce_range_call = '%s, %s' % (num_segments, segment_size)
+
 
             # Call CUB to get the storage size, allocate and free it
             self.scope_entry_stream.write(
