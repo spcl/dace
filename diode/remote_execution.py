@@ -451,7 +451,11 @@ class AsyncExecutor:
         self.append_run_async(dace_state, fail_on_nonzero=False)
 
     def append_run_async(self, dace_state, fail_on_nonzero=False):
-        self.to_proc_message_queue.put(("run", dace_state, fail_on_nonzero))
+        self.to_proc_message_queue.put(
+            ("run", (dace_state.dace_code,
+                     dace_state.dace_filename, dace_state.source_code,
+                     dace_state.sdfg.to_json(), dace_state.remote),
+             fail_on_nonzero))
 
     def add_async_task(self, task):
         self.to_proc_message_queue.put(("execute_task", self, task))
@@ -465,6 +469,13 @@ class AsyncExecutor:
             _, subargs = args
 
             return self.execute_task(subargs)
+        elif name == "run":
+            # Convert arguments back to dace_state, deserializing the SDFG
+            from diode.DaceState import DaceState
+            dace_state = DaceState(args[0][0], args[0][1], args[0][2],
+                                   SDFG.from_json(args[0][3]), args[0][4])
+            args = (dace_state, *args[1:])
+
         return getattr(obj, name)(*args)
 
     def run(self):
