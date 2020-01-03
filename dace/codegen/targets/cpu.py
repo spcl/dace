@@ -11,6 +11,8 @@ import dace
 from dace.config import Config
 from dace.frontend import operations
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
+                                         find_outgoing_edges)
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType
 from dace.graph import nodes, nxutil
@@ -172,7 +174,7 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
 
         # Compute array size
-        arrsize = " * ".join([sym2cpp(s) for s in nodedesc.strides])
+        arrsize = nodedesc.total_size
 
         if isinstance(nodedesc, data.Scalar):
             callsite_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
@@ -244,22 +246,24 @@ class CPUCodeGen(TargetCodeGenerator):
               ):  # TODO: immaterial arrays should not allocate memory
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
-                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype, arrsize),
+                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
+                 sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
             )
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             if node.setzero:
-                callsite_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
-                                      (name, nodedesc.dtype.ctype, arrsize))
+                callsite_stream.write(
+                    "memset(%s, 0, sizeof(%s)*%s);" %
+                    (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Stack
               or nodedesc.storage == dtypes.StorageType.Register):
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
-                    (nodedesc.dtype.ctype, name, arrsize),
+                    (nodedesc.dtype.ctype, name, sym2cpp(arrsize)),
                     sdfg,
                     state_id,
                     node,
@@ -268,7 +272,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
             callsite_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name,
-                                                  arrsize),
+                                                  sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
@@ -1155,9 +1159,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Try to turn into degenerate/strided ND copies
         result = ndcopy_to_strided_copy(
             copy_shape,
-            src_nodedesc.strides,
+            src_nodedesc.shape,
             src_strides,
-            dst_nodedesc.strides,
+            dst_nodedesc.shape,
             dst_strides,
             memlet.subset,
             src_subset,
@@ -2308,12 +2312,12 @@ def ndslice_cpp(slice, dims, rowmajor=True):
             raise SyntaxError(
                 "CPU backend does not yet support ranges as inputs/outputs")
 
-        # TODO(later): Use access order
-
         result.write(sym2cpp(d))
 
         # If not last
         if i < len(slice) - 1:
+            # We use the shape as-is since this function is intended for
+            # constant arrays only
             strdims = [str(dim) for dim in dims[i + 1:]]
             result.write(
                 "*%s + " % "*".join(strdims))  # Multiply by leading dimensions
@@ -2585,35 +2589,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 
-def find_incoming_edges(node, dfg):
-    # If it's an entire SDFG, look in each state
-    if isinstance(dfg, SDFG):
-        result = []
-        for state in dfg.nodes():
-            result.extend(list(state.in_edges(node)))
-        return result
-    else:  # If it's one state
-        return list(dfg.in_edges(node))
-
-
-def find_outgoing_edges(node, dfg):
-    # If it's an entire SDFG, look in each state
-    if isinstance(dfg, SDFG):
-        result = []
-        for state in dfg.nodes():
-            result.extend(list(state.out_edges(node)))
-        return result
-    else:  # If it's one state
-        return list(dfg.out_edges(node))
-
-
-def sym2cpp(s):
-    """ Converts an array of symbolic variables (or one) to C++ strings. """
-    if not isinstance(s, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(s))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in s]
-
-
 class DaCeKeywordRemover(ExtNodeTransformer):
     """ Removes memlets and other DaCe keywords from a Python AST, and
         converts array accesses to C++ methods that can be generated.
@@ -2794,11 +2769,6 @@ class StructInitializer(ExtNodeTransformer):
                 node)
 
         return self.generic_visit(node)
-
-
-def unique(seq):
-    seen = set()
-    return [x for x in seq if not (x in seen or seen.add(x))]
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate

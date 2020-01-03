@@ -154,21 +154,22 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     @staticmethod
     def define_stream(dtype, vector_length, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
-        if str(array_size) == "1":
+        if cpu.sym2cpp(array_size) == "1":
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}(\"{}\");".format(
                 dtype.ctype, vector_length, buffer_size, var_name, var_name))
         else:
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}[{}];\n".format(
-                dtype.ctype, vector_length, buffer_size, var_name, array_size))
+                dtype.ctype, vector_length, buffer_size, var_name,
+                cpu.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
-                var_name, var_name, array_size))
+                var_name, var_name, cpu.sym2cpp(array_size)))
 
     @staticmethod
     def define_local_array(dtype, vector_length, var_name, array_size, storage,
                            shape, function_stream, kernel_stream, sdfg,
                            state_id, node):
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
-            dtype.ctype, vector_length, var_name, array_size))
+            dtype.ctype, vector_length, var_name, cpu.sym2cpp(array_size)))
         if storage == dace.dtypes.StorageType.FPGA_Registers:
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "complete\n".format(var_name))
