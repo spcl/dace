@@ -15,6 +15,10 @@ from dace.config import Config
 from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
 
 
+def _task(obj):
+    obj.run()
+
+
 class FunctionStreamWrapper(object):
     """ Class that wraps around a function with a stream-like API (write). """
 
@@ -417,7 +421,6 @@ class AsyncExecutor:
         self.executor = Executor(remote)
         self.executor.set_exit_on_error(False)
         self.to_proc_message_queue = multiprocessing.Queue(128)
-        self.from_proc_message_queue = multiprocessing.Queue(128)
         self.running_proc = None
 
         # This determines if a "quit"-message stops the subprocess
@@ -440,17 +443,19 @@ class AsyncExecutor:
             print("Cannot start another sub-process!")
             return
 
-        def task(obj):
-            obj.run()
-
         # Use multiple processes to handle crashing processes
-        self.running_proc = multiprocessing.Process(target=task, args=(self, ))
+        self.running_proc = multiprocessing.Process(
+            target=_task, args=(self, ))
         self.running_proc.start()
 
         self.append_run_async(dace_state, fail_on_nonzero=False)
 
     def append_run_async(self, dace_state, fail_on_nonzero=False):
-        self.to_proc_message_queue.put(("run", dace_state, fail_on_nonzero))
+        self.to_proc_message_queue.put(
+            ("run", (dace_state.dace_code,
+                     dace_state.dace_filename, dace_state.source_code,
+                     dace_state.sdfg.to_json(), dace_state.remote),
+             fail_on_nonzero))
 
     def add_async_task(self, task):
         self.to_proc_message_queue.put(("execute_task", self, task))
@@ -464,6 +469,13 @@ class AsyncExecutor:
             _, subargs = args
 
             return self.execute_task(subargs)
+        elif name == "run":
+            # Convert arguments back to dace_state, deserializing the SDFG
+            from diode.DaceState import DaceState
+            dace_state = DaceState(args[0][0], args[0][1], args[0][2],
+                                   SDFG.from_json(args[0][3]), args[0][4])
+            args = (dace_state, *args[1:])
+
         return getattr(obj, name)(*args)
 
     def run(self):
@@ -481,10 +493,7 @@ class AsyncExecutor:
                 break
 
             # Unwrap and call
-            ret = self.callMethod(self.executor, *msg)
-
-            # Put the return value (including the complete command)
-            self.from_proc_message_queue.put(("retval", ret, *msg))
+            self.callMethod(self.executor, *msg)
 
     def join(self, timeout=None):
         pass

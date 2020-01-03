@@ -541,7 +541,9 @@ def index(path):
         It serves the files from the 'webclient'-directory to user agents.
         Note: This is NOT intended for production environments and security is disregarded!
     """
-    return send_from_directory("webclient", path)
+    return send_from_directory(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "webclient"),
+        path)
 
 
 @app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
@@ -1370,6 +1372,7 @@ def set_settings(settings_array, client_id):
         Config.set(*path, value=val)
 
     Config.save(clientpath)
+    return Config.get()
 
 
 @app.route('/dace/api/v1.0/preferences/<string:operation>', methods=['POST'])
@@ -1416,6 +1419,12 @@ if __name__ == '__main__':
         action="store_true",
         help="Restore the backup file")
 
+    parser.add_argument(
+        "-e",
+        "--executor",
+        action="store_true",
+        help="Run as an executor server instead of DIODE server")
+
     parser.add_argument("-p", "--port", type=int, help="Port to listen on")
 
     args = parser.parse_args()
@@ -1429,21 +1438,23 @@ if __name__ == '__main__':
 
     es = ExecutorServer()
     es_ref.append(es)
-    app.run(
-        host='localhost' if args.localhost else "0.0.0.0",
-        debug=True,
-        port=args.port,
-        use_reloader=False)
 
-    es.stop()
-else:
-    # Start the executor server
-    es = ExecutorServer()
-    es_ref.append(es)
+    if not args.executor:
+        app.run(
+            host='localhost' if args.localhost else "0.0.0.0",
+            debug=True,
+            port=args.port,
+            use_reloader=False)
 
-    import atexit
-
-    def tmp():
         es.stop()
+    else:
+        import atexit
 
-    atexit.register(tmp)
+        def tmp():
+            es.stop()
+
+        atexit.register(tmp)
+
+        # Wait for an event that will never arrive (passive wait)
+        event = threading.Event()
+        event.wait()
