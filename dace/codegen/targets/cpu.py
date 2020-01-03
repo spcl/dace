@@ -246,22 +246,24 @@ class CPUCodeGen(TargetCodeGenerator):
               ):  # TODO: immaterial arrays should not allocate memory
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
-                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype, arrsize),
+                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
+                 sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
             )
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             if node.setzero:
-                callsite_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
-                                      (name, nodedesc.dtype.ctype, arrsize))
+                callsite_stream.write(
+                    "memset(%s, 0, sizeof(%s)*%s);" %
+                    (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Stack
               or nodedesc.storage == dtypes.StorageType.Register):
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
-                    (nodedesc.dtype.ctype, name, arrsize),
+                    (nodedesc.dtype.ctype, name, sym2cpp(arrsize)),
                     sdfg,
                     state_id,
                     node,
@@ -270,7 +272,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
             callsite_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name,
-                                                  arrsize),
+                                                  sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,

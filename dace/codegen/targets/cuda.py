@@ -276,7 +276,8 @@ void __dace_exit_cuda({params}) {{
         result = StringIO()
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
-        arrsize_malloc = arrsize + ' * sizeof(%s)' % nodedesc.dtype.ctype
+        arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize),
+                                              nodedesc.dtype.ctype)
         dataname = node.data
 
         # Different types of GPU arrays
@@ -305,8 +306,8 @@ void __dace_exit_cuda({params}) {{
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             if is_dynamically_sized:
                 raise NotImplementedError('Dynamic shared memory unsupported')
-            result.write("__shared__ %s %s[%s];\n" % (nodedesc.dtype.ctype,
-                                                      dataname, arrsize))
+            result.write("__shared__ %s %s[%s];\n" %
+                         (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
             if node.setzero:
                 result.write(
@@ -315,13 +316,13 @@ void __dace_exit_cuda({params}) {{
                         type=nodedesc.dtype.ctype,
                         block_size=', '.join(_topy(self._block_dims)),
                         ptr=dataname,
-                        elements=arrsize))
+                        elements=sym2cpp(arrsize)))
         elif nodedesc.storage == dtypes.StorageType.GPU_Stack:
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
             szstr = ' = {0}' if node.setzero else ''
             result.write("%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, dataname,
-                                             arrsize, szstr))
+                                             sym2cpp(arrsize), szstr))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
         else:
             raise NotImplementedError("CUDA: Unimplemented storage type " +

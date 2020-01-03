@@ -412,7 +412,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise dace.codegen.codegen.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
-            if arrsize != "1":
+            if cpu.sym2cpp(arrsize) != "1":
                 # Is a stream array
                 self._dispatcher.defined_vars.add(dataname,
                                                   DefinedType.StreamArray)
@@ -447,7 +447,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             "auto {} = hlslib::ocl::GlobalContext()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({});".format(dataname, nodedesc.dtype.ctype,
-                                           arrsize))
+                                           cpu.sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
