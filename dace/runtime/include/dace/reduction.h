@@ -7,8 +7,11 @@
 #include "math.h"  // for ::min, ::max
 
 #ifdef __CUDACC__
+    #include "../../../external/cub/cub/device/device_segmented_reduce.cuh"
     #include "../../../external/cub/cub/device/device_reduce.cuh"
     #include "../../../external/cub/cub/block/block_reduce.cuh"
+    #include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
+    #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
 
 // Specializations for reductions implemented in frameworks like OpenMP, MPI
@@ -309,6 +312,27 @@ namespace dace {
             return _wcr_fixed<REDTYPE, T>()(a, b);
         }
     };
+
+
+#ifdef __CUDACC__
+    struct StridedIteratorHelper {
+	explicit StridedIteratorHelper(size_t stride)
+	    : stride(stride) {}
+	size_t stride;
+
+	__host__ __device__ __forceinline__
+	size_t operator()(const size_t &index) const {
+	    return index * stride;
+	}
+    };
+
+    inline auto stridedIterator(size_t stride) {
+        cub::CountingInputIterator<int> counting_iterator(0);
+        StridedIteratorHelper conversion_op(stride);
+        cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
+        return itr;
+    }
+#endif
 
 }  // namespace dace
 

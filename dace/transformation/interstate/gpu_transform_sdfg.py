@@ -183,7 +183,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         copyin_state = sdfg.add_state(sdfg.label + '_copyin')
         sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
 
-        for nname, desc in set(input_nodes):
+        for nname, desc in dtypes.deduplicate(input_nodes):
             if nname in excluded_copyin or nname not in cloned_arrays:
                 continue
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
@@ -203,7 +203,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for state in end_states:
             sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
 
-        for nname, desc in set(output_nodes):
+        for nname, desc in dtypes.deduplicate(output_nodes):
             if nname in excluded_copyout or nname not in cloned_arrays:
                 continue
             src_array = nodes.AccessNode(

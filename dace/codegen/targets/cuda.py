@@ -1689,6 +1689,24 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Options: Device-wide reduction (even from device code),
         #          block-wide reduction, sequential reduction (for loop)
         if node.schedule == dtypes.ScheduleType.GPU_Device:
+
+            input_dims = input_memlet.subset.dims()
+            output_dims = output_memlet.subset.data_dims()
+
+            reduce_all_axes = (node.axes is None
+                               or len(node.axes) == input_dims)
+            if reduce_all_axes:
+                reduce_last_axes = False
+            else:
+                reduce_last_axes = sorted(node.axes) == list(
+                    range(input_dims - len(node.axes), input_dims))
+
+            if (not reduce_all_axes) and (not reduce_last_axes):
+                raise NotImplementedError(
+                    'Multiple axis reductions not supported on GPUs. Please '
+                    'apply ReduceExpansion or make reduce axes to be last in the array'
+                )
+
             # Verify that data is on the GPU
             if input_data.desc(sdfg).storage not in [
                     dtypes.StorageType.GPU_Global,
@@ -1723,16 +1741,42 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             """.format(sdfg=sdfg.name, state=state_id, node=node_id), sdfg,
                 state_id, node)
 
+            if reduce_all_axes:
+                reduce_type = 'DeviceReduce'
+                reduce_range = num_items
+                reduce_range_def = 'size_t num_items'
+                reduce_range_use = 'num_items'
+                reduce_range_call = num_items
+            elif reduce_last_axes:
+                num_reduce_axes = len(node.axes)
+                not_reduce_axes = reduce_shape[:-num_reduce_axes]
+                reduce_axes = reduce_shape[-num_reduce_axes:]
+
+                num_segments = ' * '.join([_topy(s) for s in not_reduce_axes])
+                segment_size = ' * '.join([_topy(s) for s in reduce_axes])
+
+                reduce_type = 'DeviceSegmentedReduce'
+                iterator = 'dace::stridedIterator({size})'.format(
+                    size=segment_size)
+                reduce_range = '{num}, {it}, {it} + 1'.format(
+                    num=num_segments, it=iterator)
+                reduce_range_def = 'size_t num_segments, size_t segment_size'
+                iterator_use = 'dace::stridedIterator(segment_size)'
+                reduce_range_use = 'num_segments, {it}, {it} + 1'.format(
+                    it=iterator_use)
+                reduce_range_call = '%s, %s' % (num_segments, segment_size)
+
             # Call CUB to get the storage size, allocate and free it
             self.scope_entry_stream.write(
                 """
-                cub::DeviceReduce::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
-                                          ({intype}*)nullptr, ({outtype}*)nullptr, {num_items}{redop});
+                cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
+                                          ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop});
                 cudaMalloc(&__cub_storage_{sdfg}_{state}_{node}, __cub_ssize_{sdfg}_{state}_{node});
 """.format(sdfg=sdfg.name,
             state=state_id,
             node=node_id,
-            num_items=num_items,
+            reduce_type=reduce_type,
+            reduce_range=reduce_range,
             redop=reduce_op,
             intype=input_data.desc(sdfg).dtype.ctype,
             outtype=output_data.desc(sdfg).dtype.ctype,
@@ -1753,17 +1797,19 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             # Write reduction function definition
             self._localcode.write(
                 """
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output,
-                                      size_t num_items);
-void __dace_reduce_{id}({intype} *input, {outtype} *output, size_t num_items)
+DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def});
+void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def})
 {{
-    cub::DeviceReduce::{kname}(__cub_storage_{id}, __cub_ssize_{id},
-                                input, output, num_items{redop}, {stream});
+    cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
+                                input, output, {reduce_range_use}{redop}, {stream});
 }}
             """.format(
                     id=idstr,
                     intype=input_data.desc(sdfg).dtype.ctype,
                     outtype=output_data.desc(sdfg).dtype.ctype,
+                    reduce_type=reduce_type,
+                    reduce_range_def=reduce_range_def,
+                    reduce_range_use=reduce_range_use,
                     kname=kname,
                     redop=reduce_op,
                     stream=cudastream), sdfg, state_id, node)
@@ -1771,71 +1817,25 @@ void __dace_reduce_{id}({intype} *input, {outtype} *output, size_t num_items)
             # Write reduction function definition in caller file
             function_stream.write(
                 """
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output,
-                                      size_t num_items);
+DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def});
             """.format(
                     id=idstr,
+                    reduce_range_def=reduce_range_def,
                     intype=input_data.desc(sdfg).dtype.ctype,
                     outtype=output_data.desc(sdfg).dtype.ctype), sdfg,
                 state_id, node)
 
             # Call reduction function where necessary
-            input_dims = input_memlet.subset.dims()
-            output_dims = output_memlet.subset.data_dims()
-            if (node.axes is None or len(node.axes) == input_dims):
-                callsite_stream.write(
-                    '__dace_reduce_{id}({input}, {output}, {num_items});'.
-                    format(
-                        id=idstr,
-                        input=input,
-                        output=output,
-                        num_items=num_items), sdfg, state_id, node)
-            else:
-                raise NotImplementedError(
-                    'Multiple axis reductions not supported on GPUs. Please '
-                    'apply ReduceExpansion')
-                # Generate for loops around CUB calls and properly offset input
-                # and output arrays
-                #for axis in range(output_dims):
-                #    if axis not in node.axes:
-                #        callsite_stream.write(
-                #            'for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{'.
-                #            format(
-                #                var='__o%d' % axis,
-                #                begin=output_subset[axis][0],
-                #                end=output_subset[axis][1] + 1,
-                #                skip=output_subset[axis][2]), sdfg, state_id, node)
-                #
-                ### Obtain variable names per output and reduction axis
-                #axis_vars = []
-                #octr = 0
-                #for d in range(input_dims):
-                #    if d not in axes:
-                #        axis_vars.append('__o%d' % octr)
-                #        octr += 1
-                #
-                #input = (input_memlet.data.name + ' + ' + cpp_array_expr(
-                #            sdfg, input_memlet, with_brackets=False))
-                #output = (output_memlet.data.name + ' + ' + cpp_array_expr(
-                #            sdfg, output_memlet, with_brackets=False))
-                #num_items =
-                #
-                #callsite_stream.write(
-                #    '__dace_reduce_{id}({input}, {output}, {num_items});'
-                #    .format(
-                #        id=idstr,
-                #        input=input,
-                #        output=output,
-                #        num_items=num_items), sdfg, state_id, node)
-                #
-                ##cpp_array_expr(sdfg,
-                ##            output_memlet,
-                ##            offset=['__o%d' % i for i in range(output_dims)],
-                ##            relative_offset=False))
-                ##        invar = cpp_array_expr(sdfg,
-                ##            input_memlet, offset=axis_vars, relative_offset=False)
-                #for axis in range(output_dims):
-                #    callsite_stream.write('}\n', sdfg, state_id, node)
+            callsite_stream.write(
+                '__dace_reduce_{id}({input}, {output}, {reduce_range_call});'.
+                format(
+                    id=idstr,
+                    input=input,
+                    output=output,
+                    reduce_range_call=reduce_range_call), sdfg, state_id, node)
+
+            synchronize_streams(sdfg, dfg, state_id, node, node,
+                                callsite_stream)
             return
 
         # Block-wide reduction
