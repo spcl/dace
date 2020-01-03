@@ -2271,7 +2271,21 @@ def ndcopy_to_strided_copy(
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if src_copylen == copy_length and dst_copylen == copy_length:
+
+    # Simplify expressions
+    copy_length = copy_length.simplify()
+    src_copylen = src_copylen.simplify()
+    dst_copylen = dst_copylen.simplify()
+
+    # Detect 1D copies. The first condition is the general one, whereas the
+    # second one applies when the arrays are completely equivalent in strides
+    # and shapes to the copy. The second condition is there because sometimes
+    # the symbolic math engine fails to produce the same expressions for both
+    # arrays.
+    if ((src_copylen == copy_length and dst_copylen == copy_length)
+            or (tuple(src_shape) == tuple(copy_shape)
+                and tuple(dst_shape) == tuple(copy_shape)
+                and tuple(src_strides) == tuple(dst_strides))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
