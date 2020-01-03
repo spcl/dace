@@ -174,7 +174,7 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
 
         # Compute array size
-        arrsize = " * ".join([sym2cpp(s) for s in nodedesc.strides])
+        arrsize = nodedesc.total_size
 
         if isinstance(nodedesc, data.Scalar):
             callsite_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
@@ -1157,9 +1157,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Try to turn into degenerate/strided ND copies
         result = ndcopy_to_strided_copy(
             copy_shape,
-            src_nodedesc.strides,
+            src_nodedesc.shape,
             src_strides,
-            dst_nodedesc.strides,
+            dst_nodedesc.shape,
             dst_strides,
             memlet.subset,
             src_subset,
@@ -2314,6 +2314,8 @@ def ndslice_cpp(slice, dims, rowmajor=True):
 
         # If not last
         if i < len(slice) - 1:
+            # We use the shape as-is since this function is intended for
+            # constant arrays only
             strdims = [str(dim) for dim in dims[i + 1:]]
             result.write(
                 "*%s + " % "*".join(strdims))  # Multiply by leading dimensions

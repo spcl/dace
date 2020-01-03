@@ -274,11 +274,8 @@ void __dace_exit_cuda({params}) {{
                                         function_stream, callsite_stream)
 
         result = StringIO()
-        arrsize = ' * '.join([
-            cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in nodedesc.strides
-        ])
-        is_dynamically_sized = any(
-            symbolic.issymbolic(s, sdfg.constants) for s in nodedesc.strides)
+        arrsize = nodedesc.total_size
+        is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = arrsize + ' * sizeof(%s)' % nodedesc.dtype.ctype
         dataname = node.data
 

@@ -187,9 +187,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                         sdfg, memlet, False)
                     memlet_range = memlet.subset.ranges[indexdim]
 
-                    memlet_stride = functools.reduce(
-                        lambda x, y: x * y,
-                        sdfg.arrays[memlet.data].shape[indexdim + 1:])
+                    memlet_stride = sdfg.arrays[memlet.data].strides[indexdim]
                     memlet_stride = sym2cpp(memlet_stride)
 
                     memlet_params.append(

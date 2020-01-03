@@ -589,8 +589,8 @@ def matrix_transpose_cublas(state: State,
             cutype=_to_cudatype(A.dtype.type),
             rows=A.shape[1],
             cols=A.shape[0],
-            astride=A.strides[1],
-            bstride=B.strides[1],
+            astride=A.strides[0],
+            bstride=B.strides[0],
             alpha=alpha),
         language=dace.dtypes.Language.CPP)
 

@@ -385,13 +385,9 @@ class FPGACodeGen(TargetCodeGenerator):
                        callsite_stream):
         result = StringIO()
         nodedesc = node.desc(sdfg)
-        arrsize = " * ".join([
-            cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
-            for s in nodedesc.strides
-        ])
-        is_dynamically_sized = any(
-            dace.symbolic.issymbolic(s, sdfg.constants)
-            for s in nodedesc.strides)
+        arrsize = nodedesc.total_size
+        is_dynamically_sized = dace.symbolic.issymbolic(
+            arrsize, sdfg.constants)
 
         dataname = node.data
 
@@ -471,8 +467,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 veclen = self._memory_widths[node.data]
                 generate_scalar = False
                 if veclen > 1:
-                    arrsize_symbolic = functools.reduce(
-                        sp.mul.Mul, nodedesc.strides)
+                    arrsize_symbolic = nodedesc.total_size
                     arrsize_eval = dace.symbolic.eval(
                         arrsize_symbolic / veclen)
                     if cpu.sym2cpp(arrsize_eval) == "1":

@@ -1203,20 +1203,19 @@ subgraph cluster_state_{state} {{
         self.add_node(state, is_start_state=is_start_state)
         return state
 
-    def add_array(
-            self,
-            name: str,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            transient=False,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-            allow_conflicts=False,
-    ):
+    def add_array(self,
+                  name: str,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  materialize_func=None,
+                  transient=False,
+                  strides=None,
+                  offset=None,
+                  toplevel=False,
+                  debuginfo=None,
+                  allow_conflicts=False,
+                  total_size=None):
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1251,7 +1250,7 @@ subgraph cluster_state_{state} {{
             offset=offset,
             toplevel=toplevel,
             debuginfo=debuginfo,
-        )
+            total_size=total_size)
 
         self._arrays[name] = desc
         return desc
@@ -1265,7 +1264,6 @@ subgraph cluster_state_{state} {{
             shape=(1, ),
             storage=dtypes.StorageType.Default,
             transient=False,
-            strides=None,
             offset=None,
             toplevel=False,
             debuginfo=None,
@@ -1290,7 +1288,6 @@ subgraph cluster_state_{state} {{
             shape=shape,
             storage=storage,
             transient=transient,
-            strides=strides,
             offset=offset,
             toplevel=toplevel,
             debuginfo=debuginfo,
@@ -1331,19 +1328,18 @@ subgraph cluster_state_{state} {{
         self._arrays[name] = desc
         return desc
 
-    def add_transient(
-            self,
-            name,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-            allow_conflicts=False,
-    ):
+    def add_transient(self,
+                      name,
+                      shape,
+                      dtype,
+                      storage=dtypes.StorageType.Default,
+                      materialize_func=None,
+                      strides=None,
+                      offset=None,
+                      toplevel=False,
+                      debuginfo=None,
+                      allow_conflicts=False,
+                      total_size=None):
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(
@@ -1356,9 +1352,9 @@ subgraph cluster_state_{state} {{
             strides,
             offset,
             toplevel=toplevel,
-            debuginfo=None,
+            debuginfo=debuginfo,
             allow_conflicts=allow_conflicts,
-        )
+            total_size=total_size)
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
@@ -1380,7 +1376,8 @@ subgraph cluster_state_{state} {{
                            offset=None,
                            toplevel=False,
                            debuginfo=None,
-                           allow_conflicts=False):
+                           allow_conflicts=False,
+                           total_size=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         name = self.temp_data_name()
@@ -1395,8 +1392,9 @@ subgraph cluster_state_{state} {{
             strides,
             offset,
             toplevel=toplevel,
-            debuginfo=None,
-            allow_conflicts=allow_conflicts)
+            debuginfo=debuginfo,
+            allow_conflicts=allow_conflicts,
+            total_size=total_size)
 
     def add_datadesc(self, name: str, datadesc: dt.Data):
         """ Adds an existing data descriptor to the SDFG array store.
@@ -3091,19 +3089,18 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     # DEPRECATED FUNCTIONS
     ######################################
-    def add_array(
-            self,
-            name,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            transient=False,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-    ):
+    def add_array(self,
+                  name,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  materialize_func=None,
+                  transient=False,
+                  strides=None,
+                  offset=None,
+                  toplevel=False,
+                  debuginfo=None,
+                  total_size=None):
         """ @attention: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
@@ -3123,7 +3120,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             offset,
             toplevel,
             debuginfo,
-        )
+            total_size=total_size)
         return self.add_access(name, debuginfo)
 
     def add_stream(
@@ -3135,7 +3132,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             shape=(1, ),
             storage=dtypes.StorageType.Default,
             transient=False,
-            strides=None,
             offset=None,
             toplevel=False,
             debuginfo=None,
@@ -3156,7 +3152,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             shape,
             storage,
             transient,
-            strides,
             offset,
             toplevel,
             debuginfo,
@@ -3184,18 +3179,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                                debuginfo)
         return self.add_access(name, debuginfo)
 
-    def add_transient(
-            self,
-            name,
-            shape,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            materialize_func=None,
-            strides=None,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
-    ):
+    def add_transient(self,
+                      name,
+                      shape,
+                      dtype,
+                      storage=dtypes.StorageType.Default,
+                      materialize_func=None,
+                      strides=None,
+                      offset=None,
+                      toplevel=False,
+                      debuginfo=None,
+                      total_size=None):
         """ @attention: This function is deprecated. """
         return self.add_array(
             name,
@@ -3208,7 +3202,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             offset,
             toplevel,
             debuginfo,
-        )
+            total_size=total_size)
 
     # SDFG queries
     ######################################

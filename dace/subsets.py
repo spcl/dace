@@ -195,7 +195,7 @@ class Range(Subset):
             _expr(rb) + k * _expr(rs)
             for k, (rb, _, rs) in zip(i, self.ranges)) + tuple(ti)
 
-    def at(self, i, global_shape):
+    def at(self, i, strides):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
 
@@ -203,9 +203,7 @@ class Range(Subset):
 
             :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
-            :param global_shape: The full size of the set that we are
-                                 subsetting (e.g., full array strides/padded
-                                 shape).
+            :param strides: The strides of the array we are subsetting.
             :return: Absolute 1D index at coordinate i.
         """
         coord = self.coord_at(i)
@@ -214,7 +212,7 @@ class Range(Subset):
         # Cancel out stride since we determine the initial offset only here
         return sum(
             _expr(s) * _expr(astr) / _expr(rs) for s, (_, _, rs), astr in zip(
-                coord, self.ranges, self.absolute_strides(global_shape)))
+                coord, self.ranges, self.absolute_strides(strides)))
 
     def data_dims(self):
         return (
@@ -242,11 +240,9 @@ class Range(Subset):
             be larger than `dims()` depending on tile sizes. """
         # ..., stride2*size1*size0, stride1*size0, stride0, ..., tile strides
         return [
-            rs * reduce(sp.mul.Mul, global_shape[i + 1:], 1)
-            for i, (_, _, rs) in enumerate(self.ranges)
+            rs * global_shape[i] for i, (_, _, rs) in enumerate(self.ranges)
         ] + [
-            reduce(sp.mul.Mul, global_shape[i + 1:], 1)
-            for i, ts in enumerate(self.tile_sizes) if ts != 1
+            global_shape[i] for i, ts in enumerate(self.tile_sizes) if ts != 1
         ]
 
     def strides(self):
@@ -607,21 +603,18 @@ class Indices(Subset):
 
         return tuple(r for r in self.indices)
 
-    def at(self, i, global_shape):
+    def at(self, i, strides):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
             :param i: A tuple of the same dimensionality as subset.dims().
-            :param global_shape: The full size of the set that we are
-                                 subsetting (e.g., full array strides/padded
-                                 shape).
+            :param strides: The strides of the array we are subsetting.
             :return: Absolute 1D index at coordinate i.
         """
         coord = self.coord_at(i)
 
         # Return i0 + i1*size0 + i2*size1*size0 + ....
-        return sum(s * reduce(sp.mul.Mul, global_shape[i + 1:], 1)
-                   for i, s in enumerate(coord))
+        return sum(s * strides[i] for i, s in enumerate(coord))
 
     def pystr(self):
         return str(self.indices)
