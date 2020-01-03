@@ -2262,18 +2262,16 @@ def ndcopy_to_strided_copy(
 
     # If the copy is contiguous, the difference between the first and last
     # pointers should be the shape of the copy
-    first_src_index = src_subset.at([0] * src_subset.dims(), src_shape)
-    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_shape)
+    first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
+    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
     last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
-                                   src_shape)
+                                   src_strides)
     last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
-                                   dst_shape)
+                                   dst_strides)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if (tuple(copy_shape) == tuple(src_shape)
-            and tuple(copy_shape) == tuple(dst_shape)) or (
-                src_copylen == copy_length and dst_copylen == copy_length):
+    if src_copylen == copy_length and dst_copylen == copy_length:
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
