@@ -1419,6 +1419,12 @@ if __name__ == '__main__':
         action="store_true",
         help="Restore the backup file")
 
+    parser.add_argument(
+        "-e",
+        "--executor",
+        action="store_true",
+        help="Run as an executor server instead of DIODE server")
+
     parser.add_argument("-p", "--port", type=int, help="Port to listen on")
 
     args = parser.parse_args()
@@ -1432,10 +1438,23 @@ if __name__ == '__main__':
 
     es = ExecutorServer()
     es_ref.append(es)
-    app.run(
-        host='localhost' if args.localhost else "0.0.0.0",
-        debug=True,
-        port=args.port,
-        use_reloader=False)
 
-    es.stop()
+    if not args.executor:
+        app.run(
+            host='localhost' if args.localhost else "0.0.0.0",
+            debug=True,
+            port=args.port,
+            use_reloader=False)
+
+        es.stop()
+    else:
+        import atexit
+
+        def tmp():
+            es.stop()
+
+        atexit.register(tmp)
+
+        # Wait for an event that will never arrive (passive wait)
+        event = threading.Event()
+        event.wait()
