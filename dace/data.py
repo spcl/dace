@@ -156,7 +156,11 @@ class Scalar(Data):
 
     @property
     def strides(self):
-        return self.shape
+        return [1]
+
+    @property
+    def total_size(self):
+        return 1
 
     @property
     def offset(self):
@@ -209,18 +213,41 @@ def set_materialize_func(obj, val):
     obj._materialize_func = val
 
 
+def _prod(sequence):
+    return functools.reduce(lambda a, b: a * b, sequence, 1)
+
+
 @make_properties
 class Array(Data):
     """ Array/constant descriptor (dimensions, type and other properties). """
 
     # Properties
-    allow_conflicts = Property(dtype=bool, default=False)
+    allow_conflicts = Property(
+        dtype=bool,
+        default=False,
+        desc='If enabled, allows more than one '
+        'memlet to write to the same memory location without conflict '
+        'resolution.')
+
     # TODO: Should we use a Code property here?
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
-    access_order = ListProperty(element_type=int)
-    strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
-    offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
+
+    strides = ListProperty(
+        element_type=symbolic.pystr_to_symbolic,
+        desc='For each dimension, the number of elements to '
+        'skip in order to obtain the next element in '
+        'that dimension.')
+
+    total_size = SymbolicProperty(
+        default=1,
+        desc='The total allocated size of the array. Can be used for'
+        ' padding.')
+
+    offset = ListProperty(
+        element_type=symbolic.pystr_to_symbolic,
+        desc='Initial offset to translate all indices by.')
+
     may_alias = Property(
         dtype=bool,
         default=False,
@@ -235,12 +262,12 @@ class Array(Data):
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
                  location='',
-                 access_order=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
                  toplevel=False,
-                 debuginfo=None):
+                 debuginfo=None,
+                 total_size=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location,
                                     toplevel, debuginfo)
@@ -252,15 +279,12 @@ class Array(Data):
         self.materialize_func = materialize_func
         self.may_alias = may_alias
 
-        if access_order is not None:
-            self.access_order = cp.copy(access_order)
-        else:
-            self.access_order = tuple(i for i in range(len(shape)))
-
         if strides is not None:
             self.strides = cp.copy(strides)
         else:
-            self.strides = cp.copy(list(shape))
+            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+
+        self.total_size = total_size or _prod(shape)
 
         if offset is not None:
             self.offset = cp.copy(offset)
@@ -275,9 +299,8 @@ class Array(Data):
     def clone(self):
         return Array(self.dtype, self.shape, self.materialize_func,
                      self.transient, self.allow_conflicts, self.storage,
-                     self.location, self.access_order, self.strides,
-                     self.offset, self.may_alias, self.toplevel,
-                     self.debuginfo)
+                     self.location, self.strides, self.offset, self.may_alias,
+                     self.toplevel, self.debuginfo, self.total_size)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -306,9 +329,6 @@ class Array(Data):
 
     def validate(self):
         super(Array, self).validate()
-        if len(self.access_order) != len(self.shape):
-            raise TypeError('Access order must be the same size as shape')
-
         if len(self.strides) != len(self.shape):
             raise TypeError('Strides must be the same size as shape')
 
@@ -422,7 +442,6 @@ class Stream(Data):
     """ Stream (or stream array) data descriptor. """
 
     # Properties
-    strides = ListProperty(element_type=symbolic.pystr_to_symbolic)
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
     veclen = Property(
@@ -436,7 +455,6 @@ class Stream(Data):
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  location='',
-                 strides=None,
                  offset=None,
                  toplevel=False,
                  debuginfo=None):
@@ -446,13 +464,6 @@ class Stream(Data):
 
         self.veclen = veclen
         self.buffer_size = buffer_size
-
-        if strides is not None:
-            if len(strides) != len(shape):
-                raise TypeError('Strides must be the same size as shape')
-            self.strides = cp.copy(strides)
-        else:
-            self.strides = cp.copy(list(shape))
 
         if offset is not None:
             if len(offset) != len(shape):
@@ -467,9 +478,6 @@ class Stream(Data):
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
 
-        # Take care of symbolic expressions
-        attrs['strides'] = list(map(str, attrs['strides']))
-
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
         return retdict
@@ -482,13 +490,6 @@ class Stream(Data):
         # Create dummy object
         ret = Stream(dace.dtypes.int8, 1, 1)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
-        # TODO: FIXME:
-        # Since the strides are a list-property (normal Property()),
-        # loading from/to string (and, consequently, from/to json)
-        # leads to validation errors (contains Strings/Integers, not sympy symbols).
-        # To fix this, it needs a custom class
-        # For now, this is a workaround:
-        ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
 
         # Check validity now
         ret.validate()
@@ -497,10 +498,18 @@ class Stream(Data):
     def __repr__(self):
         return 'Stream (dtype=%s, shape=%s)' % (self.dtype, self.shape)
 
+    @property
+    def total_size(self):
+        return _prod(self.shape)
+
+    @property
+    def strides(self):
+        return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
+
     def clone(self):
         return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
-                      self.transient, self.storage, self.location,
-                      self.strides, self.offset, self.toplevel, self.debuginfo)
+                      self.transient, self.storage, self.location, self.offset,
+                      self.toplevel, self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
@@ -557,12 +566,11 @@ class Stream(Data):
 
     def size_string(self):
         return (" * ".join([
-            cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
-            for s in self.strides
+            cppunparse.pyexpr2cpp(dace.symbolic.symstr(s)) for s in self.shape
         ]))
 
     def is_stream_array(self):
-        return functools.reduce(lambda a, b: a * b, self.strides) != 1
+        return _prod(self.shape) != 1
 
     def covers_range(self, rng):
         if len(rng) != len(self.shape):

@@ -2791,7 +2791,10 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
         elif arr_type == data.Array:
-            strides = self._squeeze_strides(parent_array, non_squeezed)
+            if non_squeezed:
+                strides = [parent_array.strides[d] for d in non_squeezed]
+            else:
+                strides = [1]
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)

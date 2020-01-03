@@ -148,8 +148,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
         else:
             depth_attribute = ""
-        if str(array_size) != "1":
-            size_str = "[" + array_size + "]"
+        if cpu.sym2cpp(array_size) != "1":
+            size_str = "[" + cpu.sym2cpp(array_size) + "]"
         else:
             size_str = ""
         kernel_stream.write("channel {} {}{}{};".format(
@@ -164,7 +164,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         else:
             attributes = ""
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes,
-                                                    var_name, array_size))
+                                                    var_name,
+                                                    cpu.sym2cpp(array_size)))
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):

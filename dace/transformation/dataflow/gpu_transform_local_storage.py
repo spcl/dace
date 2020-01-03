@@ -281,8 +281,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
-                        access_order=tuple(
-                            [array.access_order[d] for d in actual_dims]),
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
@@ -357,8 +355,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
-                        access_order=tuple(
-                            [array.access_order[d] for d in actual_dims]),
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
