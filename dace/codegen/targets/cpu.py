@@ -2272,10 +2272,10 @@ def ndcopy_to_strided_copy(
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
 
-    # Simplify expressions
-    copy_length = copy_length.simplify()
-    src_copylen = src_copylen.simplify()
-    dst_copylen = dst_copylen.simplify()
+    # Make expressions symbolic and simplify
+    copy_length = symbolic.pystr_to_symbolic(copy_length).simplify()
+    src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
+    dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
 
     # Detect 1D copies. The first condition is the general one, whereas the
     # second one applies when the arrays are completely equivalent in strides
