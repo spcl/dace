@@ -270,7 +270,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         buffer_size=array.buffer_size,
                         storage=dtypes.StorageType.GPU_Global,
                         transient=True,
-                        strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims])
                 else:
                     sdfg.add_array(
@@ -344,7 +343,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         buffer_size=array.buffer_size,
                         storage=dtypes.StorageType.GPU_Global,
                         transient=True,
-                        strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims])
                 else:
                     sdfg.add_array(

@@ -91,10 +91,10 @@ class DoubleBuffering(pattern_matching.Transformation):
         for transient in transients_to_modify:
             desc: data.Array = sdfg.arrays[transient]
             # Using non-python syntax to ensure properties change
+            desc.strides = [desc.total_size] + list(desc.strides)
             desc.shape = [2] + list(desc.shape)
-            desc.strides = [2] + list(desc.strides)
-            desc.access_order = [0] + [i + 1 for i in desc.access_order]
             desc.offset = [0] + list(desc.offset)
+            desc.total_size = desc.total_size * 2
 
         ##############################
         # Modify memlets to use map parameter as buffer index

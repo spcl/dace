@@ -68,10 +68,9 @@ class FPGATransformState(pattern_matching.Transformation):
                 if sdict[node] is None:
                     return False
 
-                # Arrays of streams cannot have dynamic size on FPGA
-                if any(
-                        dace.symbolic.issymbolic(s, graph.parent.constants)
-                        for s in nodedesc.strides):
+                # Arrays of streams cannot have symbolic size on FPGA
+                if dace.symbolic.issymbolic(nodedesc.total_size,
+                                            graph.parent.constants):
                     return False
 
                 # Streams cannot be unbounded on FPGA
