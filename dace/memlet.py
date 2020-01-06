@@ -296,7 +296,20 @@ class EmptyMemlet(Memlet):
 
 
 class MemletTree(object):
-    """ A tree of memlet edges. """
+    """ A tree of memlet edges.
+
+        Since memlets can form paths through scope nodes, and since these
+        paths can split in "OUT_*" connectors, a memlet edge can be extended
+        to a memlet tree. The tree is always rooted at the outermost-scope node,
+        which can mean that it forms a tree of directed edges going forward
+        (in the case where memlets go through scope-entry nodes) or backward
+        (through scope-exit nodes).
+
+        Memlet trees can be used to obtain all edges pertaining to a single
+        memlet using the `memlet_tree` function in SDFGState. This collects
+        all siblings of the same edge and their children, for instance if
+        multiple inputs from the same access node are used.
+    """
 
     def __init__(
             self, edge, parent=None, children=None

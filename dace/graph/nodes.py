@@ -489,7 +489,8 @@ class MapEntry(EntryNode):
             nid = int(json_obj['scope_exits'][0])
             exit_node = context['sdfg_state'].node(nid)
             exit_node.map = m
-        except IndexError:
+        except IndexError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in MapExit
             pass
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
@@ -533,6 +534,7 @@ class MapExit(ExitNode):
 
             ret = MapExit(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in MapEntry
             ret = MapExit(Map('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
@@ -672,7 +674,8 @@ class ConsumeEntry(EntryNode):
             nid = int(json_obj['scope_exits'][0])
             exit_node = context['sdfg_state'].node(nid)
             exit_node.consume = c
-        except IndexError:
+        except IndexError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in ConsumeExit
             pass
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
@@ -721,6 +724,7 @@ class ConsumeExit(ExitNode):
                 int(json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
         except IndexError:  # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
