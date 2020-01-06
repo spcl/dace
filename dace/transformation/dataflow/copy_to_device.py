@@ -49,6 +49,21 @@ class CopyToDevice(pattern_matching.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
+
+        for edge in graph.all_edges(nested_sdfg):
+            # Stream inputs/outputs not allowed
+            path = graph.memlet_path(edge)
+            if ((isinstance(path[0].src, nodes.AccessNode)
+                 and isinstance(sdfg.arrays[path[0].src.data], data.Stream)) or
+                (isinstance(path[-1].dst, nodes.AccessNode)
+                 and isinstance(sdfg.arrays[path[-1].dst.data], data.Stream))):
+                return False
+            # WCR outputs with arrays are not allowed
+            if (edge.data.wcr is not None
+                    and edge.data.subset.num_elements() != 1):
+                return False
+
         return True
 
     @staticmethod
@@ -60,36 +75,45 @@ class CopyToDevice(pattern_matching.Transformation):
         state = sdfg.nodes()[self.state_id]
         nested_sdfg = state.nodes()[self.subgraph[CopyToDevice._nested_sdfg]]
         storage = self.storage
+        created_arrays = set()
 
         for _, edge in enumerate(state.in_edges(nested_sdfg)):
 
             src, src_conn, dst, dst_conn, memlet = edge
             dataname = memlet.data
+            if dataname is None:
+                continue
             memdata = sdfg.arrays[dataname]
 
-            if isinstance(memdata, data.Array):
-                new_data = sdfg.add_array(
-                    'device_' + dataname + '_in',
-                    memdata.dtype, [
-                        symbolic.overapproximate(r)
-                        for r in memlet.bounding_box_size()
-                    ],
-                    transient=True,
-                    storage=storage)
-            elif isinstance(memdata, data.Scalar):
-                new_data = sdfg.add_scalar(
-                    'device_' + dataname + '_in',
-                    memdata.dtype,
-                    transient=True,
-                    storage=storage)
-            else:
-                raise NotImplementedError
+            name = 'device_' + dataname + '_in'
+            if name not in created_arrays:
+                if isinstance(memdata, data.Array):
+                    name, _ = sdfg.add_array(
+                        'device_' + dataname + '_in',
+                        shape=[
+                            symbolic.overapproximate(r)
+                            for r in memlet.bounding_box_size()
+                        ],
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage,
+                        find_new_name=True)
+                elif isinstance(memdata, data.Scalar):
+                    name, _ = sdfg.add_scalar(
+                        'device_' + dataname + '_in',
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage,
+                        find_new_name=True)
+                else:
+                    raise NotImplementedError
+                created_arrays.add(name)
 
-            data_node = nodes.AccessNode('device_' + dataname + '_in')
+            data_node = nodes.AccessNode(name)
 
             to_data_mm = dcpy(memlet)
             from_data_mm = dcpy(memlet)
-            from_data_mm.data = 'device_' + dataname + '_in'
+            from_data_mm.data = name
             offset = []
             for ind, r in enumerate(memlet.subset):
                 offset.append(r[0])
@@ -109,31 +133,38 @@ class CopyToDevice(pattern_matching.Transformation):
 
             src, src_conn, dst, dst_conn, memlet = edge
             dataname = memlet.data
+            if dataname is None:
+                continue
             memdata = sdfg.arrays[dataname]
 
-            if isinstance(memdata, data.Array):
-                new_data = data.Array(
-                    'device_' + dataname + '_out',
-                    memdata.dtype, [
-                        symbolic.overapproximate(r)
-                        for r in memlet.bounding_box_size()
-                    ],
-                    transient=True,
-                    storage=storage)
-            elif isinstance(memdata, data.Scalar):
-                new_data = sdfg.add_scalar(
-                    'device_' + dataname + '_out',
-                    memdata.dtype,
-                    transient=True,
-                    storage=storage)
-            else:
-                raise NotImplementedError
+            name = 'device_' + dataname + '_out'
+            if name not in created_arrays:
+                if isinstance(memdata, data.Array):
+                    name, _ = sdfg.add_array(
+                        name,
+                        shape=[
+                            symbolic.overapproximate(r)
+                            for r in memlet.bounding_box_size()
+                        ],
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage,
+                        find_new_name=True)
+                elif isinstance(memdata, data.Scalar):
+                    name, _ = sdfg.add_scalar(
+                        name,
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage)
+                else:
+                    raise NotImplementedError
+                created_arrays.add(name)
 
-            data_node = nodes.AccessNode('device_' + dataname + '_out')
+            data_node = nodes.AccessNode(name)
 
             to_data_mm = dcpy(memlet)
             from_data_mm = dcpy(memlet)
-            to_data_mm.data = 'device_' + dataname + '_out'
+            to_data_mm.data = name
             offset = []
             for ind, r in enumerate(memlet.subset):
                 offset.append(r[0])

@@ -1,7 +1,7 @@
 import dace
 
 sdfg = dace.SDFG('toplevel_interstate_test')
-tmpdesc = sdfg.add_transient('tmp', [1], dace.int32)
+_, tmpdesc = sdfg.add_transient('tmp', [1], dace.int32)
 
 # State that sets tmp
 state = sdfg.add_state()

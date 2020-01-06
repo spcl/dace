@@ -1,6 +1,7 @@
 """ Contains the MPITransformMap transformation. """
 
-from dace import dtypes, symbolic
+from dace import dtypes
+from dace.sdfg import has_dynamic_map_inputs
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -81,6 +82,15 @@ class MPITransformMap(pattern_matching.Transformation):
                 return False
             parent = sdict[parent]
 
+        # Dynamic map ranges not supported (will allocate dynamic memory)
+        if has_dynamic_map_inputs(graph, map_entry):
+            return False
+
+        # MPI schedules currently do not support WCR
+        map_exit = graph.exit_nodes(map_entry)[0]
+        if any(e.data.wcr for e in graph.out_edges(map_exit)):
+            return False
+
         return True
 
     @staticmethod
@@ -95,12 +105,8 @@ class MPITransformMap(pattern_matching.Transformation):
         map_entry = graph.nodes()[self.subgraph[MPITransformMap._map_entry]]
 
         # Avoiding import loops
-        from dace.transformation.dataflow import StripMining
-        from dace.transformation.dataflow.stream_transient import (
-            InLocalStorage)
-        from dace.transformation.dataflow.stream_transient import (
-            OutLocalStorage)
-        from dace.graph import labeling
+        from dace.transformation.dataflow.strip_mining import StripMining
+        from dace.transformation.dataflow.local_storage import LocalStorage
 
         rangeexpr = str(map_entry.map.range.num_elements())
 
@@ -125,31 +131,19 @@ class MPITransformMap(pattern_matching.Transformation):
 
         outer_map = edges[0].src
 
-        # We need a tasklet for InLocalStorage
-        tasklet = None
-        for e in graph.out_edges(map_entry):
-            if isinstance(e.dst, nodes.CodeNode):
-                tasklet = e.dst
-                break
-
-        if tasklet is None:
-            raise ValueError("Tasklet not found")
-
         # Add MPI schedule attribute to outer map
         outer_map.map._schedule = dtypes.ScheduleType.MPI
 
         # Now create a transient for each array
         for e in edges:
             in_local_storage_subgraph = {
-                InLocalStorage._outer_map_entry:
-                graph.node_id(outer_map),
-                InLocalStorage._inner_map_entry:
-                self.subgraph[MPITransformMap._map_entry]
+                LocalStorage._node_a: graph.node_id(outer_map),
+                LocalStorage._node_b: self.subgraph[MPITransformMap._map_entry]
             }
             sdfg_id = sdfg.sdfg_list.index(sdfg)
-            in_local_storage = InLocalStorage(sdfg_id, self.state_id,
-                                              in_local_storage_subgraph,
-                                              self.expr_index)
+            in_local_storage = LocalStorage(sdfg_id, self.state_id,
+                                            in_local_storage_subgraph,
+                                            self.expr_index)
             in_local_storage.array = e.data.data
             in_local_storage.apply(sdfg)
 
@@ -162,17 +156,15 @@ class MPITransformMap(pattern_matching.Transformation):
         for e in graph.out_edges(out_map_exit):
             name = e.data.data
             outlocalstorage_subgraph = {
-                OutLocalStorage._inner_map_exit: graph.node_id(in_map_exit),
-                OutLocalStorage._outer_map_exit: graph.node_id(out_map_exit)
+                LocalStorage._node_a: graph.node_id(in_map_exit),
+                LocalStorage._node_b: graph.node_id(out_map_exit)
             }
             sdfg_id = sdfg.sdfg_list.index(sdfg)
-            outlocalstorage = OutLocalStorage(sdfg_id, self.state_id,
-                                              outlocalstorage_subgraph,
-                                              self.expr_index)
+            outlocalstorage = LocalStorage(sdfg_id, self.state_id,
+                                           outlocalstorage_subgraph,
+                                           self.expr_index)
             outlocalstorage.array = name
             outlocalstorage.apply(sdfg)
-
-        return
 
 
 pattern_matching.Transformation.register_pattern(MPITransformMap)

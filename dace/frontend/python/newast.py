@@ -4,6 +4,7 @@ import copy
 from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
+import warnings
 
 import dace
 from dace import data, dtypes, subsets, symbolic
@@ -1137,12 +1138,12 @@ def add_indirection_subgraph(sdfg: SDFG,
     start_src = None
     end_dst = None
     if memlet.num_accesses == 1 and dst is not None:
-        storage = sdfg.add_scalar(tmp_name, array.dtype, transient=True)
+        _, storage = sdfg.add_scalar(tmp_name, array.dtype, transient=True)
     else:
         rng = copy.deepcopy(memlet.subset)
         if isinstance(rng, subsets.Range):
             rng.squeeze()
-        storage = sdfg.add_array(
+        _, storage = sdfg.add_array(
             tmp_name,
             rng.bounding_box_size(),
             array.dtype,
@@ -1736,6 +1737,10 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update({
             k: self.sdfg.arrays[v]
             for k, v in self.scope_vars.items() if v in self.sdfg.arrays
+        })
+        result.update({
+            k: self.scope_arrays[v]
+            for k, v in self.scope_vars.items() if v in self.scope_arrays
         })
         result.update({
             k: self.sdfg.arrays[v]
@@ -3200,6 +3205,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Map internal SDFG symbols to external symbols (find_and_replace?)
             for aname, arg in args:
+                if arg in self.sdfg.arrays:
+                    continue
                 if arg in self.sdfg.symbols or not isinstance(arg, str):
                     sdfg.replace(aname, arg)
                 # Disallow memlets/nodes to symbol parameters
@@ -3281,10 +3288,12 @@ class ProgramVisitor(ExtNodeVisitor):
             dst_expr = ParseMemlet(self, self.defined, dst)
             src_name = src_expr.name
             if src_name not in self.sdfg.arrays:
-                src_name = self.variables[src_expr.name]
+                src_name = self._add_read_access(src_name, src_expr.subset,
+                                                 None)
             dst_name = dst_expr.name
             if dst_name not in self.sdfg.arrays:
-                dst_name = self.variables[dst_expr.name]
+                dst_name = self._add_write_access(dst_name, dst_expr.subset,
+                                                  None)
 
             rnode = state.add_read(src_name)
             wnode = state.add_write(dst_name)
@@ -3293,11 +3302,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 Memlet(
                     src_name,
                     src_expr.accesses,
-                    src_expr.subset,
+                    subsets.Range.from_array(self.sdfg.arrays[src_name]),
                     1,
                     wcr=dst_expr.wcr,
-                    wcr_identity=dst_expr.wcr_identity,
-                    other_subset=dst_expr.subset))
+                    wcr_identity=dst_expr.wcr_identity))
             return
 
         # Calling reduction or other SDFGs / functions

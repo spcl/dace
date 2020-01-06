@@ -177,4 +177,4 @@ class FPGATransformMap(pattern_matching.Transformation):
         return True
 
 
-pattern_matching.Transformation.register_pattern(FPGATransformMap)
+# pattern_matching.Transformation.register_pattern(FPGATransformMap)

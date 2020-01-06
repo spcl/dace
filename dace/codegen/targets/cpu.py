@@ -490,6 +490,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_subset = (memlet.subset
                                     if memlet.data == dst_node.data else
                                     memlet.other_subset)
+                    if array_subset is None:  # Need to use entire array
+                        array_subset = subsets.Range.from_array(dst_nodedesc)
+
                     # stream_subset = (memlet.subset
                     #                  if memlet.data == src_node.data else
                     #                  memlet.other_subset)
@@ -1537,11 +1540,10 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('{', sdfg, state_id, node)
 
         # Define all input connectors of this map entry
-        for e in state_dfg.in_edges(node):
-            if not e.dst_conn.startswith('IN_'):
-                callsite_stream.write(
-                    self.memlet_definition(sdfg, e.data, False, e.dst_conn),
-                    sdfg, state_id, node)
+        for e in dace.sdfg.dynamic_map_inputs(state_dfg, node):
+            callsite_stream.write(
+                self.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
+                state_id, node)
 
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
@@ -1807,21 +1809,21 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # consumed element and modify the outgoing memlet path ("OUT_stream")
         # TODO: do this before getting to the codegen
         if node.consume.chunksize == 1:
-            consumed_element = sdfg.add_scalar(
+            newname, _ = sdfg.add_scalar(
                 node.consume.label + "_element",
                 input_streamdesc.dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register)
-            ce_node = nodes.AccessNode(node.consume.label + '_element',
-                                       dtypes.AccessType.ReadOnly)
+                storage=dtypes.StorageType.Register,
+                find_new_name=True)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         else:
-            consumed_element = sdfg.add_array(
+            newname, _ = sdfg.add_array(
                 node.consume.label + '_elements', [node.consume.chunksize],
                 input_streamdesc.dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register)
-            ce_node = nodes.AccessNode(node.consume.label + '_elements',
-                                       dtypes.AccessType.ReadOnly)
+                storage=dtypes.StorageType.Register,
+                find_new_name=True)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])
@@ -2260,18 +2262,30 @@ def ndcopy_to_strided_copy(
 
     # If the copy is contiguous, the difference between the first and last
     # pointers should be the shape of the copy
-    first_src_index = src_subset.at([0] * src_subset.dims(), src_shape)
-    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_shape)
+    first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
+    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
     last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
-                                   src_shape)
+                                   src_strides)
     last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
-                                   dst_shape)
+                                   dst_strides)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if (tuple(copy_shape) == tuple(src_shape)
-            and tuple(copy_shape) == tuple(dst_shape)) or (
-                src_copylen == copy_length and dst_copylen == copy_length):
+
+    # Make expressions symbolic and simplify
+    copy_length = symbolic.pystr_to_symbolic(copy_length).simplify()
+    src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
+    dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
+
+    # Detect 1D copies. The first condition is the general one, whereas the
+    # second one applies when the arrays are completely equivalent in strides
+    # and shapes to the copy. The second condition is there because sometimes
+    # the symbolic math engine fails to produce the same expressions for both
+    # arrays.
+    if ((src_copylen == copy_length and dst_copylen == copy_length)
+            or (tuple(src_shape) == tuple(copy_shape)
+                and tuple(dst_shape) == tuple(copy_shape)
+                and tuple(src_strides) == tuple(dst_strides))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]

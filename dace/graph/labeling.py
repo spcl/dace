@@ -673,10 +673,13 @@ def _propagate_node(dfg_state, node):
         ]
 
     for edge in external_edges:
-        internal_edge = next(
-            e for e in internal_edges if e.data.data == edge.data.data)
-        new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
-                                      True)
+        if isinstance(edge.data, EmptyMemlet):
+            new_memlet = EmptyMemlet()
+        else:
+            internal_edge = next(
+                e for e in internal_edges if e.data.data == edge.data.data)
+            new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
+                                          True)
         edge._data = new_memlet
 
 

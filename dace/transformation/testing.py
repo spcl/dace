@@ -18,7 +18,7 @@ class TransformationTester(Optimizer):
                  validate=True,
                  generate_code=True,
                  compile=False,
-                 print_exception=False,
+                 print_exception=True,
                  halt_on_exception=False):
         """ Creates a new Transformation tester, which brute-forces applying the
             available transformations up to a certain level.
@@ -112,6 +112,13 @@ class TransformationTester(Optimizer):
 
     def optimize(self):
         self._optimize_recursive(self.sdfg, 0)
+
+        if self.failed_tests > 0:
+            raise RuntimeError(
+                '%d / %d transformations passed' %
+                (self.passed_tests, self.passed_tests + self.failed_tests))
+
+        return self.sdfg
 
 
 if __name__ == '__main__':

@@ -296,6 +296,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         """
         axes = node.axes
 
+        # If axes were not defined, use all input dimensions
+        if axes is None:
+            axes = tuple(range(input_subset.dims()))
+
         # Check if this is the first iteration of accumulating into this
         # location
 

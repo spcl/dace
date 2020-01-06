@@ -14,8 +14,10 @@ from .tiling import MapTiling
 from .vectorization import Vectorization
 
 # Data-related
-from .stream_transient import StreamTransient, InLocalStorage, OutLocalStorage
+from .stream_transient import StreamTransient
+from .local_storage import InLocalStorage, OutLocalStorage
 from .reduce_expansion import ReduceExpansion
+from .double_buffering import DoubleBuffering
 
 # Complexity reduction
 from .redundant_array import RedundantArray
@@ -30,5 +32,4 @@ from .tensorflow_redundant_array import TensorflowRedundantArray
 from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
-from .fpga_transform import FPGATransformMap
 from .mpi import MPITransformMap

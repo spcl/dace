@@ -132,14 +132,14 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
             if len(actual_dims) == 0:  # abort
                 actual_dims = [len(full_shape) - 1]
             if isinstance(array, dace.data.Scalar):
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[1],
                     dtype=array.dtype,
                     transient=True,
                     storage=dace.dtypes.StorageType.GPU_Global)
             else:
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[full_shape[d] for d in actual_dims],
                     dtype=array.dtype,
@@ -194,14 +194,14 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
             if len(actual_dims) == 0:  # abort
                 actual_dims = [len(full_shape) - 1]
             if isinstance(array, dace.data.Scalar):
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[1],
                     dtype=array.dtype,
                     transient=True,
                     storage=dace.dtypes.StorageType.GPU_Global)
             else:
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[full_shape[d] for d in actual_dims],
                     dtype=array.dtype,
