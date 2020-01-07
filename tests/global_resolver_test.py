@@ -4,7 +4,7 @@ from dace.frontend.python.newast import GlobalResolver
 from dace.frontend.python import astutils
 
 
-def test():
+def toresolve():
     a = 5
     if a == 5:
         b = 7
@@ -18,7 +18,7 @@ def test():
 
 class TestGlobalResolver(unittest.TestCase):
     def test_simple(self):
-        test_ast, _, _, _ = astutils.function_to_ast(test)
+        test_ast, _, _, _ = astutils.function_to_ast(toresolve)
         code = astunparse.unparse(
             GlobalResolver({
                 'b': 9,

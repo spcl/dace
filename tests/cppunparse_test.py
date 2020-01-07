@@ -3,7 +3,7 @@ from dace.codegen import cppunparse
 import six
 
 
-def test_py2cpp(func, expected_string):
+def _test_py2cpp(func, expected_string):
     result = cppunparse.py2cpp(func)
     if result != expected_string:
         print("ERROR in py2cpp, expected:\n%s\n\ngot:\n%s\n" %
@@ -12,7 +12,7 @@ def test_py2cpp(func, expected_string):
     return True
 
 
-def test_pyexpr2cpp(func, expected_string):
+def _test_pyexpr2cpp(func, expected_string):
     result = cppunparse.pyexpr2cpp(func)
     if result != expected_string:
         print("ERROR in pyexpr2cpp, expected:\n%s\n\ngot:\n%s\n" %
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     print('cppunparse unit test')
     success = True
 
-    success &= test_py2cpp(
+    success &= _test_py2cpp(
         """def notype(a, b):
     a = a + 5
     c = a + b
@@ -46,7 +46,7 @@ if __name__ == '__main__':
 }""")
 
     if six.PY3:
-        success &= test_py2cpp(
+        success &= _test_py2cpp(
             """def typed(a: int, b: float) -> float:
     c = a + b
     return c*b
@@ -56,11 +56,11 @@ if __name__ == '__main__':
 }""")
 
     # Ternary operators, strings
-    success &= test_py2cpp("""printf('%f\\n', a if b else c);""",
-                           """printf("%f\\n", (b ? a : c));""")
+    success &= _test_py2cpp("""printf('%f\\n', a if b else c);""",
+                            """printf("%f\\n", (b ? a : c));""")
 
     # Global functions, operators
-    success &= test_py2cpp(
+    success &= _test_py2cpp(
         gfunc, """auto gfunc(auto woo) {
     auto i = 0;
     auto result = 0;
@@ -76,13 +76,13 @@ if __name__ == '__main__':
         exit(1 >> 3)
 
     # Local functions
-    success &= test_py2cpp(lfunc, """auto lfunc() {
+    success &= _test_py2cpp(lfunc, """auto lfunc() {
     exit((1 >> 3));
 }""")
 
     # void return value
     if six.PY3:
-        success &= test_py2cpp("""
+        success &= _test_py2cpp("""
 def lfunc() -> None:
     exit(1 >> 3)
 """, """void lfunc() {
@@ -90,18 +90,18 @@ def lfunc() -> None:
 }""")
 
     # Local variable tracking
-    success &= test_py2cpp('l = 1 + a; l = l + 8;', """auto l = (1 + a);
+    success &= _test_py2cpp('l = 1 + a; l = l + 8;', """auto l = (1 + a);
 l = (l + 8);""")
 
     # Operations (augmented assignment)
     if six.PY3:
-        success &= test_py2cpp('l *= 3; l //= 8', """l *= 3;
+        success &= _test_py2cpp('l *= 3; l //= 8', """l *= 3;
 l = dace::math::ifloor(l / 8);""")
 
-    success &= test_pyexpr2cpp('a << 3', '(a << 3)')
+    success &= _test_pyexpr2cpp('a << 3', '(a << 3)')
 
     # Array assignment
-    success &= test_py2cpp('A[i] = b[j]', """A[i] = b[j];""")
+    success &= _test_py2cpp('A[i] = b[j]', """A[i] = b[j];""")
 
     print('Result: %s' % ('PASSED' if success else 'FAILED'))
     if not success:
