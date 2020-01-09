@@ -8,3 +8,7 @@
 [submodule "dace/external/hlslib"]
 	path = dace/external/hlslib
 	url = https://github.com/definelicht/hlslib.git
+
+[submodule "dace/external/SMI"]
+	path = dace/external/SMI
+	url = https://github.com/spcl/SMI
