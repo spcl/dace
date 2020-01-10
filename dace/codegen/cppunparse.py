@@ -551,7 +551,7 @@ class CPPUnparser:
         else:
             self.write(repr(value))
 
-    def _Constant(self, t):
+    def _Constant(self, t, infer_type=False):
         value = t.value
         if isinstance(value, tuple):
             self.write("(")
