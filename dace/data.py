@@ -33,8 +33,8 @@ def create_datadescriptor(obj):
         return obj.descriptor
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
-            return Array(
-                dtype=dtypes.typeclass(obj.dtype.type), shape=obj.shape)
+            return Array(dtype=dtypes.typeclass(obj.dtype.type),
+                         shape=obj.shape)
         if symbolic.issymbolic(obj):
             return Scalar(symbolic.symtype(obj))
         if isinstance(obj, dtypes.typeclass):
@@ -51,18 +51,18 @@ class Data(object):
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(
-        dtype=dace.dtypes.StorageType,
-        desc="Storage location",
-        choices=dace.dtypes.StorageType,
-        default=dace.dtypes.StorageType.Default,
-        from_string=lambda x: dtypes.StorageType[x])
+    storage = Property(dtype=dace.dtypes.StorageType,
+                       desc="Storage location",
+                       choices=dace.dtypes.StorageType,
+                       default=dace.dtypes.StorageType.Default,
+                       from_string=lambda x: dtypes.StorageType[x])
     location = Property(
-        dtype=str,  # Dict[str, symbolic]
+        dtype=dict,
         desc='Full storage location identifier (e.g., rank, GPU ID)',
-        default='')
-    toplevel = Property(
-        dtype=bool, desc="Allocate array outside of state", default=False)
+        default={})
+    toplevel = Property(dtype=bool,
+                        desc="Allocate array outside of state",
+                        default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, dtype, shape, transient, storage, location, toplevel,
@@ -125,7 +125,7 @@ class Scalar(Data):
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
-                 location='',
+                 location={},
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
@@ -230,8 +230,9 @@ class Array(Data):
         'resolution.')
 
     # TODO: Should we use a Code property here?
-    materialize_func = Property(
-        dtype=str, allow_none=True, setter=set_materialize_func)
+    materialize_func = Property(dtype=str,
+                                allow_none=True,
+                                setter=set_materialize_func)
 
     strides = ListProperty(
         element_type=symbolic.pystr_to_symbolic,
@@ -244,15 +245,13 @@ class Array(Data):
         desc='The total allocated size of the array. Can be used for'
         ' padding.')
 
-    offset = ListProperty(
-        element_type=symbolic.pystr_to_symbolic,
-        desc='Initial offset to translate all indices by.')
+    offset = ListProperty(element_type=symbolic.pystr_to_symbolic,
+                          desc='Initial offset to translate all indices by.')
 
-    may_alias = Property(
-        dtype=bool,
-        default=False,
-        desc='This pointer may alias with other pointers in '
-        'the same function')
+    may_alias = Property(dtype=bool,
+                         default=False,
+                         desc='This pointer may alias with other pointers in '
+                         'the same function')
 
     def __init__(self,
                  dtype,
@@ -261,7 +260,7 @@ class Array(Data):
                  transient=False,
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location={},
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -444,8 +443,14 @@ class Stream(Data):
     # Properties
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
-    veclen = Property(
-        dtype=int, desc="Vector length. Memlets must adhere to this.")
+    veclen = Property(dtype=int,
+                      desc="Vector length. Memlets must adhere to this.")
+    remote = Property(
+        dtype=bool,
+        default=False,
+        desc=
+        "States if the stream is a remote one. Used for distributed FPGA support"
+    )
 
     def __init__(self,
                  dtype,
@@ -454,16 +459,18 @@ class Stream(Data):
                  shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location={},
                  offset=None,
                  toplevel=False,
-                 debuginfo=None):
+                 debuginfo=None,
+                 remote=False):
 
         if shape is None:
             shape = (1, )
 
         self.veclen = veclen
         self.buffer_size = buffer_size
+        self.remote = remote
 
         if offset is not None:
             if len(offset) != len(shape):
@@ -552,9 +559,9 @@ class Stream(Data):
                 dace.dtypes.StorageType.GPU_Shared,
                 dace.dtypes.StorageType.GPU_Stack
         ]:
-            return 'dace::GPUStream<%s, %s> %s' % (
-                str(self.dtype.ctype), 'true'
-                if sp.log(self.buffer_size, 2).is_Integer else 'false', name)
+            return 'dace::GPUStream<%s, %s> %s' % (str(
+                self.dtype.ctype), 'true' if sp.log(
+                    self.buffer_size, 2).is_Integer else 'false', name)
 
         return 'dace::Stream<%s> %s' % (str(self.dtype.ctype), name)
 
