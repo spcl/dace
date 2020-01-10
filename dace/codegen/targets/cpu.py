@@ -241,9 +241,12 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream)
 
+        # TODO: immaterial arrays should not allocate memory
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or nodedesc.storage == dtypes.StorageType.Immaterial
-              ):  # TODO: immaterial arrays should not allocate memory
+              or (nodedesc.storage in [
+                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
                 (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
@@ -345,11 +348,15 @@ class CPUCodeGen(TargetCodeGenerator):
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         nodedesc = node.desc(sdfg)
+        arrsize = nodedesc.total_size
         if isinstance(nodedesc, data.Scalar):
             return
         elif isinstance(nodedesc, data.Stream):
             return
-        elif nodedesc.storage == dtypes.StorageType.CPU_Heap:
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or (nodedesc.storage in [
+                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
             callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
                                   node)
         else:
