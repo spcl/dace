@@ -4,6 +4,7 @@ import functools
 import itertools
 import sympy as sp
 from six import StringIO
+import warnings
 
 from dace.codegen import cppunparse
 
@@ -247,6 +248,15 @@ class CPUCodeGen(TargetCodeGenerator):
               or (nodedesc.storage in [
                   dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
               ] and symbolic.issymbolic(arrsize, sdfg.constants))):
+
+            if nodedesc.storage in [
+                    dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+            ]:
+                warnings.warn(
+                    'Variable-length array %s with size %s '
+                    'detected and was allocated on heap instead of '
+                    '%s' % (name, sym2cpp(arrsize), nodedesc.storage))
+
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
                 (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
