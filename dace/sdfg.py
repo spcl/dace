@@ -1631,10 +1631,6 @@ subgraph cluster_state_{state} {{
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        # Propagate memlets in the graph
-        if self._propagate:
-            propagate_labels_sdfg(sdfg)
-
         # Specialize SDFG to its symbol values
         if (specialize is None and Config.get_bool(
                 "optimizer", "autospecialize")) or specialize == True:
@@ -1643,6 +1639,10 @@ subgraph cluster_state_{state} {{
         # Optimize SDFG using the CLI or external hooks
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
+            # Propagate memlets in the graph
+            if self._propagate:
+                propagate_labels_sdfg(sdfg)
+
             opt = optclass(sdfg)
             sdfg = opt.optimize()
 
@@ -2844,6 +2844,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
+            propagate=True
     ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -2914,8 +2915,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if external_edges:
             for inp, inpnode in inpdict.items():
                 # Add external edge
-                outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry,
-                                                True)
+                if propagate:
+                    outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry,
+                                                    True)
+                else:
+                    outer_memlet = tomemlet[inp]
                 self.add_edge(inpnode, None, map_entry, "IN_" + inp,
                               outer_memlet)
 
@@ -2944,8 +2948,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if external_edges:
             for out, outnode in outdict.items():
                 # Add external edge
-                outer_memlet = propagate_memlet(self, tomemlet[out], map_exit,
-                                                True)
+                if propagate:
+                    outer_memlet = propagate_memlet(self, tomemlet[out], map_exit,
+                                                    True)
+                else:
+                    outer_memlet = tomemlet[out]
                 self.add_edge(map_exit, "OUT_" + out, outnode, None,
                               outer_memlet)
 
@@ -3093,7 +3100,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         *path_nodes,
                         memlet=None,
                         src_conn=None,
-                        dst_conn=None):
+                        dst_conn=None,
+                        propagate=True):
         """ Adds a path of memlet edges between the given nodes, propagating
             from the given innermost memlet.
 
@@ -3192,8 +3200,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if i < len(edges) - 1:
                 snode = edge.dst if propagate_forward else edge.src
                 if not isinstance(cur_memlet, dace.memlet.EmptyMemlet):
-                    cur_memlet = propagate_memlet(self, cur_memlet, snode,
-                                                  True)
+                    if propagate:
+                        cur_memlet = propagate_memlet(self, cur_memlet, snode,
+                                                      True)
 
     # DEPRECATED FUNCTIONS
     ######################################
