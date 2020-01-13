@@ -2002,9 +2002,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(node, ast.Num):
             return str(node.n)
         else:
-            return _pyexpr_to_symbolic(self.defined, node)
-            # raise DaceSyntaxError(self, node,
-            #                       "Expected ast.Name or ast.Num as value")
+            return str(_pyexpr_to_symbolic(self.defined, node))
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
