@@ -156,7 +156,15 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
     @staticmethod
     def define_stream(dtype, vector_length, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream):
+                      function_stream, kernel_stream, remote):
+        """
+           Defines a stream. The last argument is a boolean value indicating whether this is a remote stream or not.
+           For Xilinx, remote streams are not supported
+        """
+
+        if remote:
+            raise dace.codegen.codegen.CodegenError(
+                "Remote streams are not supported in Xilinx")
         if cpu.sym2cpp(array_size) == "1":
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}(\"{}\");".format(
                 dtype.ctype, vector_length, buffer_size, var_name, var_name))

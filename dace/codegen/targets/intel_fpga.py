@@ -42,11 +42,18 @@ REDUCTION_TYPE_TO_PYEXPR = {
     dace.dtypes.ReductionType.Bitwise_Xor: "^"
 }
 
+TYPE_TO_SMI_TYPE ={
+    "char": "SMI_CHAR",
+    "int": "SMI_INT",
+    "float": "SMI_FLOAT",
+    "double": "SMI_DOUBLE"
+}
 
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'
     language = 'hls'
+    smi_included = False
 
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga_vendor")
@@ -74,8 +81,13 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             "-DDACE_INTELFPGA_KERNEL_FLAGS=\"{}\"".format(kernel_flags),
             "-DDACE_INTELFPGA_MODE={}".format(mode),
             "-DDACE_INTELFPGA_TARGET_BOARD=\"{}\"".format(target_board),
-            "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging)
+          #  "-DDACE_ENABLE_SMI=ON" #TODO: this must be handled differently
         ]
+
+
+
+
         return options
 
     def get_generated_codeobjects(self):
@@ -142,7 +154,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         return [host_code_obj] + kernel_code_objs
 
     def define_stream(self, dtype, vector_length, buffer_size, var_name,
-                      array_size, function_stream, kernel_stream):
+                      array_size, function_stream, kernel_stream, remote):
+        """
+        Defines a stream. The last argument is a boolean value indicating whether this is a remote stream or not.
+        """
         vec_type = self.make_vector_type(dtype, vector_length, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
@@ -152,8 +167,14 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             size_str = "[" + cpu.sym2cpp(array_size) + "]"
         else:
             size_str = ""
-        kernel_stream.write("channel {} {}{}{};".format(
-            vec_type, var_name, size_str, depth_attribute))
+        if remote:
+            # remote streams (SMI transient channels) are not top-level entities
+            if not self.smi_included:
+                kernel_stream.write("#include <smi.h>\n\n")
+                self.smi_included = False
+        else:
+            kernel_stream.write("channel {} {}{}{};".format(
+                vec_type, var_name, size_str, depth_attribute))
 
     def define_local_array(self, dtype, vector_length, var_name, array_size,
                            storage, shape, function_stream, kernel_stream,
@@ -235,15 +256,21 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr):
+                   index, read_expr, wcr, dst_node=None, sdfg=None):
         """
-        Creates write expression, taking into account wcr if present
+        Creates write expression, taking into account wcr if present.
+        Optional parameters are useful if remote streams are used.
         """
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "write_channel_intel({}, {});".format(write_expr, read_expr)
+            if dst_node is not None and dst_node.desc(sdfg).remote:
+                #remote stream push
+                # TODO: this works only if read_expr is a variable. Is this ok?
+                return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
+            else:
+                return "write_channel_intel({}, {});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             if index != "0":
                 return "write_channel_intel({}[{}], {});".format(
@@ -759,6 +786,7 @@ __kernel void \\
         memlet = edge.data
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
+
         memlet_type = self.make_vector_type(
             data_desc.dtype, self._memory_widths[data_name], False)
         offset = cpu.cpp_offset_expr(data_desc, memlet.subset, None,
@@ -810,14 +838,39 @@ __kernel void \\
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-                    result += "{} {} = read_channel_intel({});".format(
-                        memlet_type, connector, data_name)
+                    if data_desc.remote:
+                        result += "{} {};\n".format(memlet_type, connector)
+                        result += "SMI_Pop(&{}, &{});".format(data_name, connector)
+                    else:
+                        result += "{} {} = read_channel_intel({});".format(
+                            memlet_type, connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
             else:
-                # Desperate times call for desperate measures
-                result += "#define {} {} // God save us".format(
-                    connector, data_name)
+
+                # remote output stream, open the corresponding transient channel
+
+                if is_output and isinstance(dst_node.desc(sdfg), dace.data.Stream) and  dst_node.desc(sdfg).remote:
+                    #TODO: implement correct opening. Handle communicator rank and ports
+                    result +="SMI_Comm comm;" # TMP
+                    dest_rank = 1
+                    port = 0
+                    result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, comm);".format(
+                        connector, memlet.num_accesses, TYPE_TO_SMI_TYPE[memlet_type], dest_rank, port
+                    )
+                elif not is_output and isinstance(src_node.desc(sdfg),dace.data.Stream) and src_node.desc(sdfg).remote:
+                    # remote input stream, open the corresponding transient channel
+                    #TODO handle communicator, rank and ports
+                    result += "SMI_Comm comm;"  # TMP
+                    rcv_rank = 0
+                    port = 0
+                    result += "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, comm);".format(
+                        connector, memlet.num_accesses, TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port
+                    )
+                else:
+                    # Desperate times call for desperate measures
+                    result += "#define {} {} // God save us".format(
+                        connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Stream)
         elif def_type == DefinedType.StreamArray:
@@ -879,7 +932,7 @@ __kernel void \\
             write_expr = self.make_write(dst_def_type, memlet_type, data_name,
                                          self._memory_widths[data_name],
                                          data_name, offset, read_expr,
-                                         memlet.wcr)
+                                         memlet.wcr, edge.dst, sdfg)
 
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
@@ -930,7 +983,8 @@ __kernel void \\
                 data_desc = sdfg.arrays[data_name]
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.num_accesses != 1):
-                    callsite_stream.write("#undef {}".format(memlet_name),
+                    if not data_desc.remote:
+                        callsite_stream.write("#undef {}".format(memlet_name),
                                           sdfg, sdfg.node_id(dfg), node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,

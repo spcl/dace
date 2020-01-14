@@ -423,7 +423,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language-specific implementation
             self.define_stream(nodedesc.dtype, nodedesc.veclen,
                                nodedesc.buffer_size, dataname, arrsize,
-                               function_stream, result)
+                               function_stream, result, nodedesc.remote)
 
         elif isinstance(nodedesc, dace.data.Array):
 

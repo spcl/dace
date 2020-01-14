@@ -1291,7 +1291,8 @@ subgraph cluster_state_{state} {{
                    offset=None,
                    toplevel=False,
                    debuginfo=None,
-                   find_new_name=False):
+                   find_new_name=False,
+                   remote=False):
         """ Adds a stream to the SDFG data descriptor store. """
         if not isinstance(name, str):
             raise TypeError(
@@ -1319,6 +1320,7 @@ subgraph cluster_state_{state} {{
             offset=offset,
             toplevel=toplevel,
             debuginfo=debuginfo,
+            remote=remote
         )
 
         self._arrays[name] = desc
