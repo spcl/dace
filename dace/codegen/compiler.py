@@ -347,7 +347,7 @@ def generate_program_folder(sdfg,
 
         name = code_object.name
         extension = code_object.language
-        target_name = code_object.target.target_name
+        target_name = code_object.target_name
         target_type = code_object.target_type
 
         # Create target folder
@@ -424,6 +424,7 @@ def configure_and_compile(program_folder,
         line.strip().split(",")
         for line in open(os.path.join(program_folder, "dace_files.csv"), "r")
     ]
+    #TODO va messo qui smi
 
     # Get absolute paths and targets for all source files
     files = []

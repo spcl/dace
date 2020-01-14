@@ -11,6 +11,10 @@ class CodeObject(object):
         "as its file extension)")  # dtype=dtypes.Language?
     target = Property(
         dtype=type, desc="Target to use for compilation", allow_none=True)
+    target_name = Property(
+        dtype=str,
+        desc="Target name",
+        default="")
     target_type = Property(
         dtype=str,
         desc="Sub-target within target (e.g., host or device code)",
@@ -31,6 +35,7 @@ class CodeObject(object):
                  target,
                  title,
                  target_type="",
+                 target_name="",
                  additional_compiler_kwargs=None,
                  linkable=True):
         super(CodeObject, self).__init__()
@@ -40,6 +45,7 @@ class CodeObject(object):
         self.language = language
         self.target = target
         self.target_type = target_type
+        self.target_name = target_name
         self.title = title
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable

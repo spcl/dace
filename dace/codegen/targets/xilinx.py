@@ -139,6 +139,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             "cpp",
             XilinxCodeGen,
             "Xilinx",
+            target_name=self.target_name,
             target_type="host")
 
         kernel_code_objs = [
@@ -148,6 +149,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 "cpp",
                 XilinxCodeGen,
                 "Xilinx",
+                target_name=self.target_name,
                 target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]

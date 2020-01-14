@@ -22,6 +22,7 @@ STRING_TO_TARGET = {
     "immaterial": immaterial.ImmaterialCodeGen,
     "mpi": mpi.MPICodeGen,
     "intel_fpga": intel_fpga.IntelFPGACodeGen,
+    "intel_fpga_smi": intel_fpga.IntelFPGACodeGen,
     "xilinx": xilinx.XilinxCodeGen,
 }
 
@@ -142,9 +143,8 @@ def generate_code(sdfg) -> List[CodeObject]:
     global_code, frame_code, used_targets = frame.generate_code(sdfg, None)
     target_objects = [
         CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
-                   'Frame')
+                   'Frame', target_name="cpu")
     ]
-
     # Create code objects for each target
     for tgt in used_targets:
         target_objects.extend(tgt.get_generated_codeobjects())
@@ -156,7 +156,8 @@ def generate_code(sdfg) -> List[CodeObject]:
         'h',
         cpu.CPUCodeGen,
         'CallHeader',
-        linkable=False)
+        linkable=False,
+        target_name="cpu")
     target_objects.append(dummy)
 
     # add a dummy main function to show how to call the SDFG
@@ -166,7 +167,8 @@ def generate_code(sdfg) -> List[CodeObject]:
         'cpp',
         cpu.CPUCodeGen,
         'DummyMain',
-        linkable=False)
+        linkable=False,
+        target_name="cpu")
     target_objects.append(dummy)
 
     return target_objects

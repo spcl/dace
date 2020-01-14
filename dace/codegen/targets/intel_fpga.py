@@ -82,7 +82,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             "-DDACE_INTELFPGA_MODE={}".format(mode),
             "-DDACE_INTELFPGA_TARGET_BOARD=\"{}\"".format(target_board),
             "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging)
-          #  "-DDACE_ENABLE_SMI=ON" #TODO: this must be handled differently
         ]
 
 
@@ -138,6 +137,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             "cpp",
             IntelFPGACodeGen,
             "Intel FPGA",
+            target_name="intel_fpga_smi" if self.smi_included else "intel_fpga",
             target_type="host")
 
         kernel_code_objs = [
@@ -147,7 +147,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 "cl",
                 IntelFPGACodeGen,
                 "Intel FPGA",
-                target_type="device")
+                target_name="intel_fpga_smi" if self.smi_included else "intel_fpga",
+                target_type="device",
+                additional_compiler_kwargs={"smi": self.smi_included})
             for (kernel_name, code) in self._kernel_codes
         ]
 
@@ -171,7 +173,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             # remote streams (SMI transient channels) are not top-level entities
             if not self.smi_included:
                 kernel_stream.write("#include <smi.h>\n\n")
-                self.smi_included = False
+                self.smi_included = True
+
         else:
             kernel_stream.write("channel {} {}{}{};".format(
                 vec_type, var_name, size_str, depth_attribute))
@@ -470,6 +473,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
+        smi_args = False                # True if smi_args (if needed) have been already added
 
         # Treat scalars and symbols the same, assuming there are no scalar
         # outputs
@@ -491,6 +495,16 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             if isinstance(p, dace.data.Array):
                 arg = self.make_kernel_argument(
                     p, pname, self._memory_widths[pname], is_output, True)
+            elif isinstance(p, dace.data.Stream) and p.remote and not smi_args:
+                # we need to add the communicator
+                smi_args = True
+                kernel_args_opencl.append("const SMI_Comm smi_comm")
+                kernel_args_call.append("smi_comm")
+                kernel_args_host.append("smi_comm")
+                #TODO to be finished
+                continue
+
+
             else:
                 arg = self.make_kernel_argument(p, pname, 1, is_output, True)
             if arg is not None:
@@ -557,7 +571,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         # ----------------------------------------------------------------------
 
         self._dispatcher.defined_vars.enter_scope(subgraph)
-
         module_body_stream = CodeIOStream()
 
         if unrolled_loops == 0:
