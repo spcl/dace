@@ -544,19 +544,20 @@ class CPPUnparser:
         self.dispatch(t.body)
         self.leave()
 
-    def _write_constant(self, value):
+    def _write_constant(self, value, infer_type=False):
+        result = repr(value)
         if isinstance(value, (float, complex)):
             # Substitute overflowing decimal literal for AST infinities.
-            self.write(repr(value).replace("inf", INFSTR))
+            self.write(result.replace("inf", INFSTR), infer_type)
         else:
-            self.write(repr(value))
+            self.write(result.replace('\'', '\"'), infer_type)
 
-    def _Constant(self, t):
+    def _Constant(self, t, infer_type=False):
         value = t.value
         if isinstance(value, tuple):
             self.write("(")
             if len(value) == 1:
-                self._write_constant(value[0])
+                self._write_constant(value[0], infer_type)
                 self.write(",")
             else:
                 interleave(lambda: self.write(", "), self._write_constant,
@@ -727,26 +728,12 @@ class CPPUnparser:
         self._generic_With(t, is_async=True, infer_type=infer_type)
 
     # expr
-    def _Bytes(self, t):
-        self.write(repr(t.s))
+    def _Bytes(self, t, infer_type=False):
+        self._write_constant(t.s, infer_type)
 
     def _Str(self, tree, infer_type=False):
-        result = ''
-        if six.PY3:
-            result = repr(tree.s)
-        else:
-            # if from __future__ import unicode_literals is in effect,
-            # then we want to output string literals using a 'b' prefix
-            # and unicode literals with no prefix.
-            if "unicode_literals" not in self.future_imports:
-                result = repr(tree.s)
-            elif isinstance(tree.s, str):
-                result = "b" + repr(tree.s)
-            elif isinstance(tree.s, unicode):
-                result = repr(tree.s).lstrip("u")
-            else:
-                assert False, "shouldn't get here"
-        self.write(result.replace('\'', '\"'), infer_type)
+        result = tree.s
+        self._write_constant(result, infer_type)
         return dace.pointer(dace.int8) if infer_type else None
 
     format_conversions = {97: 'a', 114: 'r', 115: 's'}
