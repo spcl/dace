@@ -1,6 +1,6 @@
 import dace
 from dace.memlet import Memlet
-import dacelibs.blas as blas
+import dacelets.blas as blas
 import numpy as np
 import sys
 
@@ -115,13 +115,15 @@ def test_dot(implementation, dtype, sdfg):
 
 ###############################################################################
 
-test_dot("32-bit pure SDFG", np.float32, make_sdfg("pure", dace.float32))
-test_dot("64-bit pure SDFG", np.float64, make_sdfg("pure", dace.float64))
-test_dot("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
-test_dot("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
-test_dot("32-bit cuBLAS", np.float32,
-         make_sdfg("cuBLAS", dace.float32, dace.StorageType.GPU_Global))
-test_dot("64-bit cuBLAS", np.float64,
-         make_sdfg("cuBLAS", dace.float64, dace.StorageType.GPU_Global))
+if __name__ == "__main__":
+
+    test_dot("32-bit pure SDFG", np.float32, make_sdfg("pure", dace.float32))
+    test_dot("64-bit pure SDFG", np.float64, make_sdfg("pure", dace.float64))
+    test_dot("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
+    test_dot("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
+    test_dot("32-bit cuBLAS", np.float32,
+             make_sdfg("cuBLAS", dace.float32, dace.StorageType.GPU_Global))
+    test_dot("64-bit cuBLAS", np.float64,
+             make_sdfg("cuBLAS", dace.float64, dace.StorageType.GPU_Global))
 
 ###############################################################################

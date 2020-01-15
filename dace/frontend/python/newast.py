@@ -21,7 +21,7 @@ from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
-import dacelibs.blas as blas
+import dacelets.blas as blas
 
 import numpy as np
 import sympy
@@ -273,7 +273,7 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
     outshape = (inparr.shape[1], inparr.shape[0])
     outname, outarr = sdfg.add_temp_transient(outshape, restype,
                                               inparr.storage)
-    num_elements = reduce(lambda x, y: x * y, inparr.shape)                                       
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
@@ -1377,8 +1377,8 @@ class GlobalResolver(ast.NodeTransformer):
 
 
 class TaskletTransformer(ExtNodeTransformer):
-    """ A visitor that traverses a data-centric tasklet, removes memlet 
-        annotations and returns input and output memlets. 
+    """ A visitor that traverses a data-centric tasklet, removes memlet
+        annotations and returns input and output memlets.
     """
 
     def __init__(self,
@@ -1394,7 +1394,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  variables: Dict[str, str] = dict(),
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str],
                                 str] = dict()):
-        """ Creates an AST parser for tasklets. 
+        """ Creates an AST parser for tasklets.
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
         """
@@ -1430,7 +1430,7 @@ class TaskletTransformer(ExtNodeTransformer):
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
     def parse_tasklet(self, tasklet_ast: TaskletType):
-        """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets. 
+        """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
             :param tasklet_ast: The Tasklet's Python AST to parse.
             :return: 3-tuple of (Tasklet node, input memlets, output memlets).
             @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
@@ -1708,7 +1708,7 @@ class TaskletTransformer(ExtNodeTransformer):
 
 
 class ProgramVisitor(ExtNodeVisitor):
-    """ A visitor that traverses a data-centric Python program AST and 
+    """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
     """
 
@@ -1727,7 +1727,7 @@ class ProgramVisitor(ExtNodeVisitor):
             nested: bool = False,
             tmp_idx: int = 0):
         """ ProgramVisitor init method
-        
+
         Arguments:
             name {str} -- Name of DaCe program
             filename {str} -- Name of file containing DaCe program
@@ -1738,7 +1738,7 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
             other_sdfgs {Dict[str, Union[SDFG, DaceProgram]]} -- Other SDFGs
-        
+
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
             tmp_idx {int} -- First idx for tmp transient names (default: {0})
@@ -1799,13 +1799,13 @@ class ProgramVisitor(ExtNodeVisitor):
     def parse_program(self, program: ast.FunctionDef,
                       is_tasklet: bool = False):
         """ Parses a DaCe program or tasklet
-        
+
         Arguments:
             program {ast.FunctionDef} -- DaCe program or tasklet
-        
+
         Keyword Arguments:
             is_tasklet {bool} -- True, if program is tasklet (default: {False})
-        
+
         Returns:
             Tuple[SDFG, Dict, Dict] -- Parsed SDFG, its inputs and outputs
         """
@@ -2043,15 +2043,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_for_indices(self, node: ast.Expr):
         """Parses the indices of a for-loop statement
-        
+
         Arguments:
             node {ast.Expr} -- Target of ast.For node
-        
+
         Raises:
             DaceSyntaxError: If target is not ast.Tuple
             DaceSyntaxError: If index is not ast.Name
             DaceSyntaxError: If index ID is duplicate
-        
+
         Returns:
             List[str] -- List of index IDs
         """
@@ -2081,13 +2081,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_value(self, node: Union[ast.Name, ast.Num]):
         """Parses a value
-        
+
         Arguments:
             node {Union[ast.Name, ast.Num]} -- Value node
-        
+
         Raises:
             DaceSyntaxError: If node is not ast.Name or ast.Num
-        
+
         Returns:
             str -- Value id or number as string
         """
@@ -2103,10 +2103,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
-        
+
         Arguments:
             node {ast.Slice} -- Slice node
-        
+
         Returns:
             Tuple[str] -- Range in (from, to, step) format
         """
@@ -2116,10 +2116,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_index_as_range(self, node: ast.Index):
         """Parses an index as range
-        
+
         Arguments:
             node {ast.Index} -- Index node
-        
+
         Returns:
             Tuple[str] -- Range in (from, to, step) format
         """
@@ -2129,15 +2129,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_for_iterator(self, node: ast.Expr):
         """Parses the iterator of a for-loop statement
-        
+
         Arguments:
             node {ast.Expr} -- Iterator (iter) of ast.For node
-        
+
         Raises:
             DaceSyntaxError: If iterator is not ast.Subscript
             DaceSyntaxError: If iterator type is not supported
             NotImplementedError: If iterator type is not implemented
-        
+
         Returns:
             Tuple[str, List[str]] -- Iterator type and iteration ranges
         """
@@ -3061,14 +3061,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_shape(self, node: Union[ast.List, ast.Tuple, ast.Attribute]):
         """Parses the shape of an array
-        
+
         Arguments:
             node {Union[ast.List, ast.Tuple, ast.Attribute]} -- Shape node
-        
+
         Raises:
             DaceSyntaxError: If shape node is ast.Attribute, but the attribute is not a shape
             DaceSyntaxError: If shape node is neither a list/tuple nor an attribute
-        
+
         Returns:
             List[Union[str, int, dace.symbol]] -- Shape
         """
@@ -3093,14 +3093,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_dtype(self, node: ast.Attribute):
         """Parses the dtype of an array
-        
+
         Arguments:
             node {ast.Attribute} -- Dtype node
-        
+
         Raises:
             DaceSyntaxError: If dtype node is an ast.Attribute, but the attribute is not a dtype
             DaceSyntaxError: If dtype node is not ast.Attribute
-        
+
         Returns:
             Any -- Dtype
         """
@@ -3123,10 +3123,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_ndarray(self, node: ast.Call):
         """Parses a call to numpy.ndarray
-        
+
         Arguments:
             node {ast.Call} -- Call node
-        
+
         Returns:
             Tuple[shape, dtype] -- Shape and dtype of the array
         """

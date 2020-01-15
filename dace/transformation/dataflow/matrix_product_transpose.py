@@ -5,13 +5,13 @@ import dace
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
-from dacelibs.blas import nodes as blas_nodes
+from dacelets.blas import nodes as blas_nodes
 
 
 @make_properties
 class MatrixProductTranspose(pattern_matching.Transformation):
     """ Implements the matrix-matrix product transpose transformation.
-    
+
         T(A) @ T(B) = T(B @ A)
     """
 
