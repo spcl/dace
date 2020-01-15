@@ -68,7 +68,7 @@ tests/mpi_test.sh'''
     }
     stage('Report') {
       steps {
-        sh '''python3 -m coverage combine . test/ test/*/
+        sh '''python3 -m coverage combine . tests/ tests/*/
         python3 -m coverage report
         python3 -m coverage xml
         curl -s https://codecov.io/bash | bash
