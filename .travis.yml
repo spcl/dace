@@ -14,4 +14,9 @@ before_install:
 install:
   - pip install .
 
-script: NOSTATUSBAR=1 ./test_all.sh
+script:
+  - export NOSTATUSBAR=1
+  - export PYTHONPATH=`pwd`:$PYTHONPATH
+  - export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+  - ./test_all.sh
+  - cd tests; coverage combine; coverage report
