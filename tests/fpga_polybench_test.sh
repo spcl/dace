@@ -19,6 +19,7 @@ FAILED_TESTS=""
 TIMEDOUT_TESTS=""
 POLYBENCH_INPUT="mini"
 TESTS=0
+PYTHON_BINARY="${PYTHON_BINARY:python3}"
 
 TEST_TIMEOUT="30s"
 
@@ -53,7 +54,7 @@ run_sample_intel() {
   #1: generate the opencl
   #remove previously built version. This helps to avoid stall in case the program does not terminates
   rm -fr .dacecache/$2 2>/dev/null
-  echo -e "FPGATransformSDFG\$${3}\ny" | python3 $1.py -size ${POLYBENCH_INPUT} 2>/dev/null | :
+  echo -e "FPGATransformSDFG\$${3}\ny" | $PYTHON_BINARY $1.py -size ${POLYBENCH_INPUT} 2>/dev/null | :
 
   #2: compile for emulation
   cd .dacecache/$2/build
@@ -71,7 +72,7 @@ run_sample_intel() {
   fi
 
   #3: execute the emulation with timeout
-  echo -e "FPGATransformSDFG\$${3}\ny" | timeout $TEST_TIMEOUT python3 $1.py -size ${POLYBENCH_INPUT}
+  echo -e "FPGATransformSDFG\$${3}\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $1.py -size ${POLYBENCH_INPUT}
 
   ret_status=$?
   if [ $ret_status -ne 0 ]; then
@@ -101,7 +102,7 @@ run_sample_xilinx() {
   echo -e "${YELLOW}Running test $1...${NC}"
 
   #1: execute the benchmark with timeout
-  echo -e "FPGATransformSDFG\$${3}\ny" | timeout $TEST_TIMEOUT python3 $1.py -size ${POLYBENCH_INPUT} ${@:3}
+  echo -e "FPGATransformSDFG\$${3}\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $1.py -size ${POLYBENCH_INPUT} ${@:3}
   ret_status=$?
   if [ $ret_status -ne 0 ]; then
     echo "Result " $ret_status

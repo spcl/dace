@@ -8,6 +8,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 ERRORS=0
@@ -42,7 +43,7 @@ run_sample() {
 
     #1: generate the opencl
     # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
-    echo -e ${3} | python3 ${1}.py ${@:4}
+    echo -e ${3} | $PYTHON_BINARY ${1}.py ${@:4}
 
     #2: compile for emulation
     cd .dacecache/$2/build
@@ -54,7 +55,7 @@ run_sample() {
 
     #3: execute the emulation
     cd ../../../
-    echo -e $3 | python3 $1.py ${@:4}
+    echo -e $3 | $PYTHON_BINARY $1.py ${@:4}
 
     if [ $? -ne 0 ]; then
         bail "$1 (${RED}Wrong emulation result${NC})"

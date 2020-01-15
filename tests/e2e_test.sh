@@ -4,6 +4,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:python3}"
 
 ERRORS=0
 FAILED_TESTS=""
@@ -16,45 +17,41 @@ NC='\033[0m'
         
 
 runtest() {
-    yes | timeout $TEST_TIMEOUT $1 $PYTHONPATH/samples/simple/$2
+    yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/simple/$1
     if [ $? -ne 0 ]; then
-        /bin/echo -e "${RED}ERROR${NC} in test $1 $2 ($3)" 1>&2
+        /bin/echo -e "${RED}ERROR${NC} in test $1 ($2)" 1>&2
         ERRORS=`expr $ERRORS + 1`
-        FAILED_TESTS="${FAILED_TESTS}    $1 $2 ($3)\n"
+        FAILED_TESTS="${FAILED_TESTS}    $1 ($2)\n"
     fi
     TESTS=`expr $TESTS + 1`
 }
 
 runtestopt() {
-    echo "$4\ny" | timeout $TEST_TIMEOUT $1 $PYTHONPATH/samples/simple/$2
+    echo "$3\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/simple/$1
     if [ $? -ne 0 ]; then
-        /bin/echo -e "${RED}ERROR${NC} in test $1 $2 ($3, optimized)" 1>&2
+        /bin/echo -e "${RED}ERROR${NC} in test $1 ($2, optimized)" 1>&2
         ERRORS=`expr $ERRORS + 1`
-        FAILED_TESTS="${FAILED_TESTS}    $1 $2 ($3, optimized)\n"
+        FAILED_TESTS="${FAILED_TESTS}    $1 ($2, optimized)\n"
     fi
     TESTS=`expr $TESTS + 1`
 }
 
 
 runone() {
-    echo "Running $1"
-    runtest $1 axpy.py $2
-    runtest $1 ddot.py $2
-    runtest $1 fibonacci.py $2
-    runtest $1 filter.py $2
-    runtest $1 gemm.py $2
-    runtest $1 histogram.py $2
-    runtest $1 histogram_declarative.py $2
-    runtest $1 jacobi.py $2
-    runtest $1 mandelbrot.py $2
-    runtest $1 mat_add.py $2
-    runtest $1 spmv.py $2
-    runtest $1 sum.py $2
-    runtest $1 transpose.py $2
-}
-
-runall() {
-    runone python3 $1
+    echo "Running $PYTHON_BINARY"
+    runtest axpy.py $1
+    runtest ddot.py $1
+    runtest fibonacci.py $1
+    runtest filter.py $1
+    runtest gemm.py $1
+    runtest histogram.py $1
+    runtest histogram_declarative.py $1
+    runtest jacobi.py $1
+    runtest mandelbrot.py $1
+    runtest mat_add.py $1
+    runtest spmv.py $1
+    runtest sum.py $1
+    runtest transpose.py $1
 }
 
 DACE_compiler_use_cache=0
