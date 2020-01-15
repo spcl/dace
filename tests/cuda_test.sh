@@ -127,7 +127,7 @@ runopt() {
     return 0
 }
 
-runone() {
+runall() {
     echo "Running $PYTHON_BINARY"
     runtestopt cuda_grid_test.py $1
     runtestopt cuda_grid_test.py $1 'GPUTransformMap$0'
@@ -171,9 +171,6 @@ runone() {
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
 }
 
-runall() {
-    runone "$PYTHON_BINARY" $1
-}
 
 # Check if GPU tests can be run
 nvidia-smi >/dev/null 2>&1
