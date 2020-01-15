@@ -68,7 +68,7 @@ tests/mpi_test.sh'''
     }
     stage('Report') {
       steps {
-        sh '''cd tests; coverage combine; coverage report; coverage xml'''
+        sh '''coverage combine; coverage report; coverage xml'''
       }
     }
   }
