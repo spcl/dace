@@ -12,7 +12,7 @@ before_install:
   - sudo apt-get install libyaml-dev cmake
 
 install:
-  - pip install .
+  - pip install ".[test]" .
 
 script:
   - export NOSTATUSBAR=1
