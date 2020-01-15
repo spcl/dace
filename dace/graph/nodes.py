@@ -278,8 +278,6 @@ class Tasklet(CodeNode):
         default="")
     code_exit = CodeProperty(
         desc="Extra code that is called on DaCe runtime cleanup", default="")
-    # location = Property(
-    #     dtype=str, desc="Tasklet execution location descriptor")
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -390,7 +388,6 @@ class NestedSDFG(CodeNode):
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
-    location = Property(dtype=str, desc="SDFG execution location descriptor")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
