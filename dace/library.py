@@ -10,8 +10,11 @@ def library(lib):
     if lib.__name__ in _DACE_REGISTERED_LIBRARIES:
         raise ValueError("Duplicate library found: " + lib.__name__)
     if not hasattr(lib, "nodes"):
-        raise ValueError("DaCe library class must expose the field a "
+        raise ValueError("DaCe library class must implement a "
                          "list of library nodes in the field \"nodes\".")
+    if not hasattr(lib, "default_implementation"):
+        raise ValueError("DaCe library class must implement the field "
+                         "\"default_implementation\" (can be None).")
     if not hasattr(lib, "transformations"):
         raise ValueError(
             "DaCe library class must expose a "

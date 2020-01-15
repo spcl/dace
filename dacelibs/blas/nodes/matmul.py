@@ -206,16 +206,11 @@ class MatMul(dace.graph.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    # location = dace.properties.Property(
-    #     dtype=str,
-    #     desc="Execution location descriptor (e.g., GPU identifier)",
-    #     allow_none=True)
 
     def __init__(self, name, dtype=None, location=None):
         super().__init__(
             name, location=location, inputs={'_a', '_b'}, outputs={'_c'})
         self.dtype = dtype
-        # self.location = location
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)

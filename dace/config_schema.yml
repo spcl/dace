@@ -751,3 +751,12 @@ required:
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+
+            blas_implementation:
+                type: str
+                default: pure
+                title: Default BLAS Implementation
+                description: >
+                    Default library to use when implementing BLAS library nodes
+                    encountered in an SDFG, if no other implementation has been
+                    explicitly specified.

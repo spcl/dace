@@ -7,7 +7,6 @@ import dace
 import itertools
 import dace.serialize
 from typing import Set
-from dace.config import Config
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
@@ -946,10 +945,6 @@ class LibraryNode(CodeNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
-        if hasattr(type(self), "default_implementation"):
-            self.implementation = self.default_implementation
-        else:
-            self.implementation = None
 
     # Overrides subclasses to return LibraryNode as their JSON type
     @property
@@ -957,16 +952,25 @@ class LibraryNode(CodeNode):
         return 'LibraryNode'
 
     def expand(self, sdfg, *args, **kwargs):
-        """Shorthand to create and perform the expansion transformation
-           for this library node."""
-        implementation = Config.get('experimental',
-                                    'library_node_implementation')
+        """Create and perform the expansion transformation for this library
+           node."""
+        implementation = self.implementation
+        # If not explicitly set, try the node default
+        if implementation is None:
+            implementation = type(self).default_implementation
+        # If no node default, try library default
+        if implementation is None:
+            import dace.library  # Avoid cyclic dependency
+            lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)
+                                                          ._dace_library_name]
+            implementation = lib.default_implementation
+        # Otherwise we don't know how to expand
+        if implementation is None:
+            raise ValueError("No implementation or default "
+                             "implementation specified.")
         if implementation not in self.implementations.keys():
-            implementation = self.default_implementation
-            if implementation is None:
-                raise ValueError("No implementation or default "
-                                 "implementation specified.")
-        Transformation = type(self).implementations[implementation]
+            raise KeyError("Unknown implementation: " + implementation)
+        transformation_type = type(self).implementations[implementation]
         states = sdfg.states_for_node(self)
         if len(states) < 1:
             raise ValueError("Node \"" + str(self) +
@@ -978,8 +982,8 @@ class LibraryNode(CodeNode):
         state = states[0]
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         state_id = sdfg.nodes().index(state)
-        subgraph = {Transformation._match_node: state.node_id(self)}
-        transformation = Transformation(sdfg_id, state_id, subgraph, 0)
+        subgraph = {transformation_type._match_node: state.node_id(self)}
+        transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
         transformation.apply(sdfg, *args, **kwargs)
 
     def draw_node(self, sdfg, state):
