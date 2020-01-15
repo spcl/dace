@@ -13,6 +13,7 @@ pipeline {
                     echo "Installing DaCe"
                     pip3 install --ignore-installed --upgrade --user ".[test]" .
                     pip3 install --user cmake
+                    pip3 install --user coverage
                 '''
       }
     }
