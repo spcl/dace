@@ -986,6 +986,18 @@ class LibraryNode(CodeNode):
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
         transformation.apply(sdfg, *args, **kwargs)
 
+    @classmethod
+    def register_implementation(clc, name, transformation_type):
+        """Register an implementation to belong to this library node type."""
+        clc.implementations[name] = transformation_type
+        match_node_name = "__" + transformation_type.__name__
+        if (hasattr(transformation_type, "_match_node")
+                and transformation_type._match_node != match_node_name):
+            raise ValueError(
+                "Transformation " + transformation_type.__name__ +
+                " is already registered with a different library node.")
+        transformation_type._match_node = clc(match_node_name)
+
     def draw_node(self, sdfg, state):
         return dot.draw_node(sdfg, state, self, shape="folder")
 

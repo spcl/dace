@@ -49,9 +49,11 @@ def node(n):
         raise ValueError(
             "Library node class \"" + n.__name__ +
             "\" must define default_implementation (can be None).")
-    # Add the node type to all implementations for matching
-    for Transformation in n.implementations.values():
-        Transformation._match_node = n("__" + Transformation.__name__)
+    # Remove and re-register each implementation
+    implementations = n.implementations
+    n.implementations = type(n.implementations)()
+    for name, transformation_type in implementations.items():
+        n.register_implementation(name, transformation_type)
     n._dace_library_node = True
     return n
 
