@@ -116,15 +116,11 @@ class Dot(dace.graph.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    # location = dace.properties.Property(
-    #     dtype=str,
-    #     desc="Execution location descriptor (e.g., GPU identifier)",
-    #     allow_none=True)
 
-    def __init__(self, name, dtype=None, location=None, *args, **kwargs):
-        super().__init__(name, *args, **kwargs)
+    def __init__(self, name, dtype=None, *args, **kwargs):
+        super().__init__(
+            name, *args, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)
         self.dtype = dtype
-        # self.location = location
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
