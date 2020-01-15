@@ -21,3 +21,6 @@ script:
   - export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
   - ./test_all.sh
   - cd tests; coverage combine . */; coverage report; coverage xml
+
+after_success:
+  - codecov
