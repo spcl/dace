@@ -115,7 +115,6 @@ class FPGATransformMap(pattern_matching.Transformation):
                     transient=True,
                     storage=dtypes.StorageType.FPGA_Global,
                     allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
                     strides=array.strides,
                     offset=array.offset)
                 cloned_arrays[array_node.data] = 'fpga_' + array_node.data
@@ -137,7 +136,6 @@ class FPGATransformMap(pattern_matching.Transformation):
                     transient=True,
                     storage=dtypes.StorageType.FPGA_Global,
                     allow_conflicts=array.allow_conflicts,
-                    access_order=array.access_order,
                     strides=array.strides,
                     offset=array.offset)
                 cloned_arrays[array_node.data] = 'fpga_' + array_node.data
@@ -179,4 +177,4 @@ class FPGATransformMap(pattern_matching.Transformation):
         return True
 
 
-pattern_matching.Transformation.register_pattern(FPGATransformMap)
+# pattern_matching.Transformation.register_pattern(FPGATransformMap)

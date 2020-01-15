@@ -1,16 +1,16 @@
 import ast
 from functools import reduce
 import operator
-import copy as cp
+from typing import List
 
 import dace
 import dace.serialize
-from dace import data as dt, subsets, symbolic, dtypes
+from dace import subsets, dtypes
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
-from dace.properties import (
-    Property, make_properties, DataProperty, ShapeProperty, SubsetProperty,
-    SymbolicProperty, TypeClassProperty, DebugInfoProperty, LambdaProperty)
+from dace.properties import (Property, make_properties, DataProperty,
+                             SubsetProperty, SymbolicProperty,
+                             DebugInfoProperty, LambdaProperty)
 
 
 @make_properties
@@ -23,8 +23,8 @@ class Memlet(object):
 
     # Properties
     veclen = Property(dtype=int, desc="Vector length")
-    num_accesses = SymbolicProperty()
-    subset = SubsetProperty()
+    num_accesses = SymbolicProperty(default=0)
+    subset = SubsetProperty(default=subsets.Range([]))
     other_subset = SubsetProperty(allow_none=True)
     data = DataProperty()
     debuginfo = DebugInfoProperty()
@@ -76,9 +76,9 @@ class Memlet(object):
         """
 
         # Properties
-        self.num_accesses = num_accesses  # type: sympy math
+        self.num_accesses = num_accesses  # type: sympy.expr.Expr
         self.subset = subset  # type: subsets.Subset
-        self.veclen = vector_length  # type: int (in elements, default 1)
+        self.veclen = vector_length  # type: int
         if hasattr(data, 'data'):
             data = data.data
         self.data = data  # type: str
@@ -293,3 +293,39 @@ class EmptyMemlet(Memlet):
 
     def __init__(self):
         super(EmptyMemlet, self).__init__(None, 0, None, 1)
+
+
+class MemletTree(object):
+    """ A tree of memlet edges.
+
+        Since memlets can form paths through scope nodes, and since these
+        paths can split in "OUT_*" connectors, a memlet edge can be extended
+        to a memlet tree. The tree is always rooted at the outermost-scope node,
+        which can mean that it forms a tree of directed edges going forward
+        (in the case where memlets go through scope-entry nodes) or backward
+        (through scope-exit nodes).
+
+        Memlet trees can be used to obtain all edges pertaining to a single
+        memlet using the `memlet_tree` function in SDFGState. This collects
+        all siblings of the same edge and their children, for instance if
+        multiple inputs from the same access node are used.
+    """
+
+    def __init__(
+            self, edge, parent=None, children=None
+    ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+        self.edge = edge
+        self.parent = parent
+        self.children = children or []
+
+    def __iter__(self):
+        if self.parent is not None:
+            yield from self.parent
+            return
+
+        def traverse(node):
+            yield node.edge
+            for child in node.children:
+                yield from traverse(child)
+
+        yield from traverse(self)

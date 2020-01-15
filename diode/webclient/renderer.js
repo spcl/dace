@@ -19,7 +19,7 @@ class CanvasManager {
         this.animate_target = null;
 
         this.request_scale = false;
-        this.scale_factor = {x: 1, y: 1};
+        this.scalef = 1.0;
 
         this._destroying = false;
 
@@ -139,8 +139,7 @@ class CanvasManager {
 
     scale(diff, x=0, y=0) {
         this.stopAnimation();
-        if(this.request_scale || Math.abs(diff) < 0.0001 || this.contention > 0) {
-            //console.log("Blocking potential race");
+        if(this.request_scale || this.contention > 0) {
             return;
         }
         this.contention++;
@@ -148,18 +147,14 @@ class CanvasManager {
 
         this.scale_origin.x = x;
         this.scale_origin.y = y;
-        this.scale_factor.x += diff;
-        this.scale_factor.y += diff;
 
-        this.scale_factor.x = Math.max(0.001, this.scale_factor.x);
-        this.scale_factor.y = Math.max(0.001, this.scale_factor.y);
-        {
-            let sv = diff < 0 ? 0.9 : 1.1;
-            let pt = this.svgPoint(this.scale_origin.x, this.scale_origin.y).matrixTransform(this.user_transform.inverse());
-            this.user_transform = this.user_transform.translate(pt.x, pt.y);
-            this.user_transform = this.user_transform.scale(sv, sv, 1, 0, 0, 0);
-            this.user_transform = this.user_transform.translate(-pt.x, -pt.y);
-        }
+        let sv = diff;
+        let pt = this.svgPoint(this.scale_origin.x, this.scale_origin.y).matrixTransform(this.user_transform.inverse());
+        this.user_transform = this.user_transform.translate(pt.x, pt.y);
+        this.user_transform = this.user_transform.scale(sv, sv, 1, 0, 0, 0);
+        this.scalef *= sv;
+        this.user_transform = this.user_transform.translate(-pt.x, -pt.y);
+        
         this.contention--;
     }
 
@@ -200,6 +195,8 @@ class CanvasManager {
         // Uniform scaling
         this.user_transform = this.user_transform.scale(scale, scale, 1, 0, 0, 0);
         this.user_transform = this.user_transform.translate(tx, ty);
+        this.scale_origin = {x: 0, y: 0};
+        this.scalef = 1.0;
     }
 
     translate(x, y) {
@@ -215,16 +212,19 @@ class CanvasManager {
         return this.svgPoint(0, ypos).matrixTransform(this.user_transform.inverse()).y;
     }
 
-    getScale() {
-        return this.noJitter(this.scale_factor.x); // We don't allow non-uniform scaling.
-    }
-
     noJitter(x) {
         x = parseFloat(x.toFixed(3));
         x = Math.round(x * 100) / 100;
         return x;
     }
 
+    points_per_pixel() {
+        // Since we are using uniform scaling, (bottom-top)/height and
+        // (right-left)/width should be equivalent
+        let left = this.mapPixelToCoordsX(0);
+        let right = this.mapPixelToCoordsX(this.canvas.width);
+        return (right - left) / this.canvas.width;
+    }
 
     draw(now = null) {
         if(this._destroying)
@@ -455,6 +455,10 @@ function relayout_sdfg(ctx, sdfg) {
                                          y: topleft.y + STATE_MARGIN});
     });
 
+    let bb = calculateBoundingBox(g);
+    g.width = bb.width;
+    g.height = bb.height;
+
     return g;
 }
 
@@ -675,9 +679,20 @@ class SDFGRenderer {
         // Add buttons
         this.toolbar = document.createElement('div');
         this.toolbar.style = 'position:absolute; top:10px; left: 10px;';
+        let d;
+
+        // Menu bar
+        /*
+        let d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">menu</i>';
+        d.style = 'padding-bottom: 0px;';
+        d.onclick = () => {};
+        d.title = 'Menu';
+        this.toolbar.appendChild(d);
+        */
 
         // Zoom to fit
-        let d = document.createElement('button');
+        d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
         d.style = 'padding-bottom: 0px;';
         d.onclick = () => this.zoom_to_view();
@@ -1022,79 +1037,79 @@ class SDFGRenderer {
     on_mouse_event(event, comp_x_func, comp_y_func, evtype="click") {
         let dirty = false; // Whether to redraw at the end
 
-        if (evtype === "touchstart" || evtype === "mousedown") {
-            let ev = (evtype === "touchstart") ? event.touches[0] : event;
-            this.drag_start = ev;
-            if (evtype === "touchstart" && e.targetTouches.length == 2)
-                this.drag_second_start = event.touches[1];
-
-        } else if (evtype === "touchend" || evtype === "mouseup") {
+        if (evtype === "mousedown" || evtype === "touchstart") {
+            this.drag_start = event;
+        } else if (evtype === "mouseup") {
             this.drag_start = null;
-            this.drag_second_start = null;
-
-        } else if (evtype === "mousemove" || evtype === "touchmove") {
+        } else if (evtype === "touchend") {
+            if (event.touches.length == 0)
+                this.drag_start = null;
+            else
+                this.drag_start = event;
+        } else if (evtype === "mousemove") {
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
-            // Zoom (pinching)
-            if (evtype === "touchmove" && e.targetTouches.length == 2) {
-                // Find distance between two points and center, zoom to that
-                let centerX = (comp_x_func(this.drag_start) + comp_x_func(this.drag_second_start)) / 2.0;
-                let centerY = (comp_y_func(this.drag_start) + comp_y_func(this.drag_second_start)) / 2.0;
-                let x1 = comp_x_func(this.drag_start), x2 = comp_x_func(this.drag_second_start);
-                let y1 = comp_y_func(this.drag_start), y2 = comp_y_func(this.drag_second_start);
-                let initialDistance = Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
-
-                x1 = comp_x_func(event.touches[0]);
-                x2 = comp_x_func(event.touches[1]);
-                y1 = comp_y_func(event.touches[0]);
-                y2 = comp_y_func(event.touches[1]);
-                let currentDistance = Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
-
-                // TODO: Better scaling formula w.r.t. distance between touches
-                this.canvas_manager.scale((currentDistance - initialDistance) / 30000.0,
-                    centerX, centerY);
-
-                this.drag_start = event.touches[0];
-                this.drag_second_start = event.touches[1];
+            if (this.drag_start && event.buttons & 1) {
+                // Only accept the primary mouse button as dragging source
+                this.canvas_manager.translate(event.movementX, event.movementY);
 
                 // Mark for redraw
                 dirty = true;
-            } else if (evtype === 'mousemove' || event.targetTouches.length === 1) { // dragging
-                let ev = (evtype === 'touchmove') ? event.touches[0] : event;
-                if (evtype === 'touchmove') {
-                    ev.buttons = 1;
-                    ev.movementX = ev.clientX - this.drag_start.clientX;
-                    ev.movementY = ev.clientY - this.drag_start.clientY;
-                }
-
-
-                if (this.drag_start && ev.buttons & 1) {
-                    // Only accept the primary (~left) mouse button as dragging source
-                    let movement = [
-                        ev.movementX,
-                        ev.movementY
-                    ];
-
-                    this.canvas_manager.translate(...movement);
-
-                    // Mark for redraw
-                    dirty = true;
-                    this.draw_async();
-                    return false;
-                } else {
-                    this.drag_start = null;
-                    if (ev.buttons & 1)
-                        return true; // Don't stop propagation
-                }
+                this.draw_async();
+                return false;
+            } else {
+                this.drag_start = null;
+                if (event.buttons & 1)
+                    return true; // Don't stop propagation
             }
+        } else if (evtype === "touchmove") {
+            if (this.drag_start.touches.length != event.touches.length) {
+                // Different number of touches, ignore and reset drag_start
+                this.drag_start = event;
+            } else if (event.touches.length == 1) { // Move/drag
+                this.canvas_manager.translate(event.touches[0].clientX - this.drag_start.touches[0].clientX,
+                                              event.touches[0].clientY - this.drag_start.touches[0].clientY);
+                this.drag_start = event;
 
-        } else if (evtype === 'wheel') {
+                // Mark for redraw
+                dirty = true;
+                this.draw_async();
+                return false;
+            } else if (event.touches.length == 2) {
+                // Find relative distance between two touches before and after.
+                // Then, center and zoom to their midpoint.
+                let touch1 = this.drag_start.touches[0];
+                let touch2 = this.drag_start.touches[1];
+                let x1 = touch1.clientX, x2 = touch2.clientX;
+                let y1 = touch1.clientY, y2 = touch2.clientY;
+                let oldCenter = [(x1 + x2) / 2.0, (y1 + y2) / 2.0];
+                let initialDistance = Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+                x1 = event.touches[0].clientX; x2 = event.touches[1].clientX;
+                y1 = event.touches[0].clientY; y2 = event.touches[1].clientY;
+                let currentDistance = Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+                let newCenter = [(x1 + x2) / 2.0, (y1 + y2) / 2.0];
+
+                // First, translate according to movement of center point
+                this.canvas_manager.translate(newCenter[0] - oldCenter[0],
+                                              newCenter[1] - oldCenter[1]);
+                // Then scale
+                this.canvas_manager.scale(currentDistance / initialDistance,
+                                          newCenter[0], newCenter[1]);
+
+                this.drag_start = event;
+
+                // Mark for redraw
+                dirty = true;
+                this.draw_async();
+                return false;
+            }
+        } else if (evtype === "wheel") {
             // Get physical x,y coordinates (rather than canvas coordinates)
             let br = this.canvas.getBoundingClientRect();
             let x = event.clientX - br.x;
             let y = event.clientY - br.y;
-            this.canvas_manager.scale(-event.deltaY / 1000.0, x, y);
+            this.canvas_manager.scale(event.deltaY > 0 ? 0.9 : 1.1, x, y);
             dirty = true;
         }
         // End of mouse-move/touch-based events

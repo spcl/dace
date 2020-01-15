@@ -89,6 +89,20 @@ class Property:
         self._dtype = dtype
         self._default = default
 
+        if allow_none is False and default is None:
+            try:
+                self._default = dtype()
+            except TypeError:
+                if hasattr(self, 'dtype'):
+                    try:
+                        self._default = self.dtype()
+                    except TypeError:
+                        raise TypeError(
+                            'Default not properly defined for property')
+                else:
+                    raise TypeError(
+                        'Default not properly defined for property')
+
         if choices is not None:
             for choice in choices:
                 if dtype is None:
@@ -548,7 +562,7 @@ class SDFGReferenceProperty(Property):
 
         # Parse the string of the JSON back into an SDFG object
         # Need to use regular json.loads instead of dace.serialize.dumps
-        return dace.SDFG.from_json(json.loads(obj))
+        return dace.SDFG.from_json(json.loads(obj), context)
 
 
 class RangeProperty(Property):
@@ -574,6 +588,11 @@ class RangeProperty(Property):
 
 class DebugInfoProperty(Property):
     """ Custom Property type for DebugInfo members. """
+
+    def __init__(self, **kwargs):
+        if 'default' not in kwargs:
+            kwargs['default'] = DebugInfo(0, 0, 0, 0)
+        super().__init__(dtype=DebugInfo, **kwargs)
 
     @property
     def dtype(self):
@@ -633,16 +652,6 @@ class DebugInfoProperty(Property):
         if info_available:
             di = DebugInfo(f, sl, sc, el, ec)
         return di
-
-    def to_json(self, s):
-        if not isinstance(s, DebugInfo):
-            return None
-        return s.to_json()
-
-    def from_json(self, s, sdfg=None):
-        if s is None: return None
-
-        return s
 
 
 class ParamsProperty(Property):
@@ -749,7 +758,7 @@ class LambdaProperty(Property):
 
     @property
     def dtype(self):
-        return str
+        return None
 
     @staticmethod
     def from_string(s):
@@ -898,7 +907,7 @@ class CodeProperty(Property):
         if isinstance(obj, str):
             return obj
         # Grab the originally parsed string if any
-        if obj._as_string is not None and obj._as_string != "":
+        if hasattr(obj, "_as_string") and obj._as_string:
             return obj._as_string
         # It's probably good enough to assume that there is an original string
         # if the language was not Python, so we just throw the string to the

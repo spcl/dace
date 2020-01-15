@@ -45,7 +45,7 @@ class StateFusion(pattern_matching.Transformation):
         if len(out_edges) != 1:
             return False
         # The interstate edge must not have a condition.
-        if out_edges[0].data.condition.as_string != "":
+        if not out_edges[0].data.is_unconditional():
             return False
         # The interstate edge may have assignments, as long as there are input
         # edges to the first state, that can absorb them.
@@ -193,6 +193,11 @@ class StateFusion(pattern_matching.Transformation):
         ]
 
         # Merge second state to first state
+        # First keep a backup of the topological sorted order of the nodes
+        order = [
+            x for x in reversed(list(nx.topological_sort(first_state._nx)))
+            if isinstance(x, nodes.AccessNode)
+        ]
         for node in second_state.nodes():
             first_state.add_node(node)
         for src, src_conn, dst, dst_conn, data in second_state.edges():
@@ -217,6 +222,14 @@ class StateFusion(pattern_matching.Transformation):
             nxutil.change_edge_dest(first_state, node, new_node)
             first_state.remove_node(node)
             second_input.remove(new_node)
+        # Check if any input nodes of the second state have to be merged with
+        # non-input/output nodes of the first state.
+        for node in second_input:
+            if first_state.in_degree(node) == 0:
+                n = next((x for x in order if x.label == node.label), None)
+                if n:
+                    nxutil.change_edge_src(first_state, node, n)
+                    first_state.remove_node(node)
 
         # Redirect edges and remove second state
         nxutil.change_edge_src(sdfg, second_state, first_state)

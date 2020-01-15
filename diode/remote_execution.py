@@ -1,11 +1,10 @@
+import multiprocessing
 import os
 import sys
 import stat
 import tempfile
 import traceback
 import subprocess
-import threading
-import queue
 import runpy
 from typing import List, Callable, Any, AnyStr
 from string import Template
@@ -14,6 +13,10 @@ from dace.codegen.compiler import generate_program_folder, configure_and_compile
 from dace.codegen.codegen import CodeObject
 from dace.config import Config
 from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
+
+
+def _task(obj):
+    obj.run()
 
 
 class FunctionStreamWrapper(object):
@@ -30,6 +33,19 @@ class FunctionStreamWrapper(object):
         pass
 
 
+def _output_feeder(terminal: multiprocessing.Queue, output: AnyStr):
+    if isinstance(output, str):
+        # It's already in a usable format
+        pass
+    else:
+        try:
+            output = output.decode('utf-8')
+        except UnicodeDecodeError:
+            # Try again escaping
+            output = output.decode('unicode_escape')
+    terminal.put(output)
+
+
 class Executor(object):
     """ DaCe program execution management class for DIODE. """
 
@@ -43,7 +59,7 @@ class Executor(object):
 
         self._config = None
 
-        self.output_generator = None
+        self.output_queue = None
 
     def set_exit_on_error(self, do_exit):
         self.exit_on_error = do_exit
@@ -221,9 +237,9 @@ class Executor(object):
     def show_output(self, outstr):
         """ Displays output of any ongoing compilation or computation. """
 
-        if self.output_generator is not None:
+        if self.output_queue is not None:
             # Pipe the output
-            self.output_generator(outstr)
+            _output_feeder(self.output_queue, outstr)
             return
 
         if isinstance(outstr, str):
@@ -404,14 +420,13 @@ class AsyncExecutor:
     def __init__(self, remote):
         self.executor = Executor(remote)
         self.executor.set_exit_on_error(False)
-        self.to_thread_message_queue = queue.Queue(128)
-        self.from_thread_message_queue = queue.Queue(128)
-        self.running_thread = None
+        self.to_proc_message_queue = multiprocessing.Queue(128)
+        self.running_proc = None
 
-        # This determines if a "quit"-message stops the thread
+        # This determines if a "quit"-message stops the subprocess
         self.autoquit = True
 
-        self.sync_run_lock = threading.Lock()
+        self.sync_run_lock = multiprocessing.Lock()
 
     def run_sync(self, func):
 
@@ -424,23 +439,26 @@ class AsyncExecutor:
         deferred()
 
     def run_async(self, dace_state, fail_on_nonzero=False):
-        if self.running_thread is not None and self.running_thread.is_alive():
-            print("Cannot start another thread!")
+        if self.running_proc is not None and self.running_proc.is_alive():
+            print("Cannot start another sub-process!")
             return
 
-        def task():
-            self.run()
-
-        self.running_thread = threading.Thread(target=task)
-        self.running_thread.start()
+        # Use multiple processes to handle crashing processes
+        self.running_proc = multiprocessing.Process(
+            target=_task, args=(self, ))
+        self.running_proc.start()
 
         self.append_run_async(dace_state, fail_on_nonzero=False)
 
     def append_run_async(self, dace_state, fail_on_nonzero=False):
-        self.to_thread_message_queue.put(("run", dace_state, fail_on_nonzero))
+        self.to_proc_message_queue.put(
+            ("run", (dace_state.dace_code,
+                     dace_state.dace_filename, dace_state.source_code,
+                     dace_state.sdfg.to_json(), dace_state.remote),
+             fail_on_nonzero))
 
     def add_async_task(self, task):
-        self.to_thread_message_queue.put(("execute_task", self, task))
+        self.to_proc_message_queue.put(("execute_task", self, task))
 
     def execute_task(self, task):
         return task()
@@ -451,14 +469,21 @@ class AsyncExecutor:
             _, subargs = args
 
             return self.execute_task(subargs)
+        elif name == "run":
+            # Convert arguments back to dace_state, deserializing the SDFG
+            from diode.DaceState import DaceState
+            dace_state = DaceState(args[0][0], args[0][1], args[0][2],
+                                   SDFG.from_json(args[0][3]), args[0][4])
+            args = (dace_state, *args[1:])
+
         return getattr(obj, name)(*args)
 
     def run(self):
         while True:
             # Read a message (blocking)
-            msg = self.to_thread_message_queue.get()
+            msg = self.to_proc_message_queue.get()
             if msg == "quit":
-                if self.to_thread_message_queue.empty() and self.autoquit:
+                if self.to_proc_message_queue.empty() and self.autoquit:
                     print("Quitting async execution")
                     break
                 else:
@@ -468,10 +493,7 @@ class AsyncExecutor:
                 break
 
             # Unwrap and call
-            ret = self.callMethod(self.executor, *msg)
-
-            # Put the return value (including the complete command)
-            self.from_thread_message_queue.put(("retval", ret, *msg))
+            self.callMethod(self.executor, *msg)
 
     def join(self, timeout=None):
         pass

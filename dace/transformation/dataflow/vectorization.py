@@ -41,8 +41,12 @@ class Vectorization(pattern_matching.Transformation):
         for _src, _, _dest, _, memlet in graph.all_edges(tasklet):
 
             # Cases that do not matter for vectorization
-            if isinstance(sdfg.arrays[memlet.data], data.Stream):
+            if memlet.data is None:  # Empty memlets
                 continue
+            if isinstance(sdfg.arrays[memlet.data], data.Stream):  # Streams
+                continue
+
+            # Vectorization can not be applied in WCR
             if memlet.wcr is not None:
                 return False
 
@@ -107,8 +111,12 @@ class Vectorization(pattern_matching.Transformation):
         map_entry.map.range[-1] = (dim_from, dim_to, vector_size)
 
         # Vectorize memlets adjacent to the tasklet.
-        for _src, _, _dest, _, memlet in graph.all_edges(tasklet):
-            subset = memlet.subset
+        for edge in graph.all_edges(tasklet):
+            _src, _, _dest, _, memlet = edge
+
+            if memlet.data is None:  # Empty memlets
+                continue
+
             lastindex = memlet.subset[-1]
             if isinstance(lastindex, tuple):
                 symbols = set()
@@ -118,14 +126,33 @@ class Vectorization(pattern_matching.Transformation):
             else:
                 symbols = symbolic.pystr_to_symbolic(
                     memlet.subset[-1]).free_symbols
+
             if param in symbols:
                 try:
-                    memlet.veclen = vector_size
+                    # propagate vector length inside this SDFG
+                    for e in graph.memlet_path(edge):
+                        e.data.veclen = vector_size
+
+                    source_edge = graph.memlet_path(edge)[0]
+                    sink_edge = graph.memlet_path(edge)[-1]
+
+                    # propagate to the parent (TODO: handle multiple level of nestings)
+                    if sdfg.parent is not None:
+                        # Find parent Nested SDFG node
+                        parent_node = next(n for n in sdfg.parent.nodes()
+                                           if isinstance(n, nodes.NestedSDFG)
+                                           and n.sdfg.name == sdfg.name)
+
+                        # continue in propagating the vector length following the path that arrives to source_edge or
+                        # starts from sink_edge
+                        for pe in sdfg.parent.all_edges(parent_node):
+                            if str(pe.dst_conn) == str(source_edge.src) or str(
+                                    pe.src_conn) == str(sink_edge.dst):
+                                for ppe in graph.memlet_path(pe):
+                                    ppe.data.veclen = vector_size
+
                 except AttributeError:
-                    return
-
-        # TODO: Create new map for non-vectorizable part.
-
+                    raise
         return
 
     def modifies_graph(self):

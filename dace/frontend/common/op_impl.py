@@ -132,14 +132,14 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
             if len(actual_dims) == 0:  # abort
                 actual_dims = [len(full_shape) - 1]
             if isinstance(array, dace.data.Scalar):
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[1],
                     dtype=array.dtype,
                     transient=True,
                     storage=dace.dtypes.StorageType.GPU_Global)
             else:
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[full_shape[d] for d in actual_dims],
                     dtype=array.dtype,
@@ -147,8 +147,6 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                     transient=True,
                     storage=dace.dtypes.StorageType.GPU_Global,
                     allow_conflicts=array.allow_conflicts,
-                    access_order=tuple(
-                        [array.access_order[d] for d in actual_dims]),
                     strides=[array.strides[d] for d in actual_dims],
                     offset=[array.offset[d] for d in actual_dims])
             cloned_arrays[array_node.data] = cloned_name
@@ -196,14 +194,14 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
             if len(actual_dims) == 0:  # abort
                 actual_dims = [len(full_shape) - 1]
             if isinstance(array, dace.data.Scalar):
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[1],
                     dtype=array.dtype,
                     transient=True,
                     storage=dace.dtypes.StorageType.GPU_Global)
             else:
-                cloned_array = sdfg.add_array(
+                sdfg.add_array(
                     name=cloned_name,
                     shape=[full_shape[d] for d in actual_dims],
                     dtype=array.dtype,
@@ -211,8 +209,6 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                     transient=True,
                     storage=dace.dtypes.StorageType.GPU_Global,
                     allow_conflicts=array.allow_conflicts,
-                    access_order=tuple(
-                        [array.access_order[d] for d in actual_dims]),
                     strides=[array.strides[d] for d in actual_dims],
                     offset=[array.offset[d] for d in actual_dims])
             cloned_arrays[array_node.data] = cloned_name
@@ -593,8 +589,8 @@ def matrix_transpose_cublas(state: State,
             cutype=_to_cudatype(A.dtype.type),
             rows=A.shape[1],
             cols=A.shape[0],
-            astride=A.strides[1],
-            bstride=B.strides[1],
+            astride=A.strides[0],
+            bstride=B.strides[0],
             alpha=alpha),
         language=dace.dtypes.Language.CPP)
 

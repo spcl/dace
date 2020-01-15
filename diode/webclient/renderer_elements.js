@@ -23,6 +23,10 @@ class SDFGElement {
         return this.data.attributes;
     }
 
+    type() {
+        return this.data.type;
+    }
+
     label() {
         return this.data.label;
     }
@@ -93,12 +97,45 @@ class State extends SDFGElement {
         ctx.strokeStyle = "black";
     }
 
+    simple_draw(renderer, ctx, mousepos) {
+        // Fast drawing function for small states
+        let topleft = this.topleft();
+
+        ctx.fillStyle = "#deebf7";
+        ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
+        ctx.fillStyle = "#000000";
+
+        if (mousepos && this.intersect(mousepos.x, mousepos.y))
+            renderer.tooltip = this.tooltip();
+        // Draw state name in center without contents (does not look good)
+        /*
+        let FONTSIZE = Math.min(renderer.canvas_manager.points_per_pixel() * 16, 100);
+        let label = this.label();
+
+        let oldfont = ctx.font;
+        ctx.font = FONTSIZE + "px Arial";
+
+        let textmetrics = ctx.measureText(label);
+        ctx.fillText(label, this.x - textmetrics.width / 2.0, this.y - this.height / 6.0 + FONTSIZE / 2.0);
+
+        ctx.font = oldfont;
+        */
+    }
+
+    tooltip() {
+        return "State: " + this.label();
+    }
+
     attributes() {
         return this.data.state.attributes;
     }
 
     label() {
         return this.data.state.label;
+    }
+
+    type() {
+        return this.data.state.type;
     }
 }
 
@@ -114,12 +151,24 @@ class Node extends SDFGElement {
         ctx.fillText(this.label(), this.x - textw/2, this.y + LINEHEIGHT/4);
     }
 
+    simple_draw(renderer, ctx, mousepos) {
+        // Fast drawing function for small nodes
+        let topleft = this.topleft();
+        ctx.fillStyle = "white";
+        ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
+        ctx.fillStyle = "black";
+    }
+
     label() {
         return this.data.node.label;
     }
 
     attributes() {
         return this.data.node.attributes;
+    }
+
+    type() {
+        return this.data.node.type;
     }
 
     set_layout() {
@@ -176,8 +225,7 @@ class Edge extends SDFGElement {
     }
 
     set_layout() {
-        this.width = this.data.width;
-        this.height = this.data.height;
+        // NOTE: Setting this.width/height will disrupt dagre in self-edges
     }
 
     intersect(x, y, w = 0, h = 0) {
@@ -283,8 +331,17 @@ class ScopeNode extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
-        var textmetrics = ctx.measureText(this.label());
-        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
+
+        let far_label = this.attributes().label;
+        if (this.scopeend()) {  // Get label from scope entry
+            let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
+            far_label = entry.attributes.label;
+        }
+
+        drawAdaptiveText(ctx, renderer, far_label,
+                         this.label(), this.x, this.y, 
+                         this.width, this.height, 
+                         SCOPE_LOD);
     }
 }
 
@@ -316,6 +373,43 @@ class Tasklet extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
+
+        let ppp = renderer.canvas_manager.points_per_pixel();
+        if (ppp < TASKLET_LOD) {
+            // If we are close to the tasklet, show its contents
+            let code = this.attributes().code.string_data;
+            let lines = code.split('\n');
+            let maxline = 0, maxline_len = 0;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].length > maxline_len) {
+                    maxline = i;
+                    maxline_len = lines[i].length;
+                }
+            }
+            let oldfont = ctx.font;
+            ctx.font = "10px courier new";
+            let textmetrics = ctx.measureText(lines[maxline]);
+
+            // Fit font size to 80% height and width of tasklet
+            let height = lines.length * LINEHEIGHT*1.05;
+            let width = textmetrics.width;
+            let TASKLET_WRATIO = 0.9, TASKLET_HRATIO = 0.5;
+            let hr = height / (this.height * TASKLET_HRATIO);
+            let wr = width / (this.width * TASKLET_WRATIO);
+            let FONTSIZE = Math.min(10 / hr, 10 / wr);
+            let text_yoffset = FONTSIZE/4;
+
+            ctx.font = FONTSIZE + "px courier new";
+            // Set the start offset such that the middle row of the text is in this.y
+            let y = this.y + text_yoffset - ((lines.length-1)/2) * FONTSIZE*1.05;
+            for (let i = 0; i < lines.length; i++)
+                ctx.fillText(lines[i], this.x - (this.width*TASKLET_WRATIO) / 2.0,
+                             y + i*FONTSIZE*1.05);
+
+            ctx.font = oldfont;
+            return;
+        }
+
         let textmetrics = ctx.measureText(this.label());
         ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y + LINEHEIGHT / 2.0);
     }
@@ -335,8 +429,12 @@ class Reduce extends Node {
         ctx.fillStyle = "white";
         ctx.fill();
         ctx.fillStyle = "black";
-        let textmetrics = ctx.measureText(this.label());
-        ctx.fillText(this.label(), this.x - textmetrics.width / 2.0, this.y - this.height / 4.0 + LINEHEIGHT / 2.0);
+
+        let far_label = this.label().substring(4, this.label().indexOf(','));
+        drawAdaptiveText(ctx, renderer, far_label,
+                         this.label(), this.x, this.y - this.height*0.2,
+                         this.width, this.height,
+                         SCOPE_LOD);
     }
 }
 
@@ -398,10 +496,13 @@ class LibraryNode extends Node {
 
 // Draw an entire SDFG
 function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
+    let ppp = renderer.canvas_manager.points_per_pixel();
+
     // Render state machine
     let g = sdfg_dagre;
-    g.nodes().forEach( v => { g.node(v).draw(renderer, ctx, mousepos); });
-    g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
+    if (ppp < EDGE_LOD)
+        g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
+
 
     visible_rect = renderer.visible_rect;
 
@@ -409,15 +510,18 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
     g.nodes().forEach( v => {
         let node = g.node(v);
 
+        if (ppp >= STATE_LOD || node.width / ppp < STATE_LOD) {
+            node.simple_draw(renderer, ctx, mousepos);
+            return;
+        }
         // Skip invisible states
         if (!node.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
             return;
 
-        let ng = node.data.graph;
-        let layout = node.data.state.attributes.layout;
+        node.draw(renderer, ctx, mousepos);
 
-        
-        
+        let ng = node.data.graph;
+
         if (!node.data.state.attributes.is_collapsed && ng)
         {
             ng.nodes().forEach(v => {
@@ -425,11 +529,17 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
 
                 if (!n.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
                     return;
+                if (ppp >= NODE_LOD) {
+                    n.simple_draw(renderer, ctx, mousepos);
+                    return;
+                }
 
                 n.draw(renderer, ctx, mousepos);
                 n.in_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
                 n.out_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
             });
+            if (ppp >= EDGE_LOD)
+                return;
             ng.edges().forEach(e => {
                 let edge = ng.edge(e);
                 if (!edge.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
@@ -499,6 +609,35 @@ function offset_state(state, state_graph, offset) {
 
 
 ///////////////////////////////////////////////////////
+
+function drawAdaptiveText(ctx, renderer, far_text, close_text,
+                          x, y, w, h, ppp_thres, max_font_size=50,
+                          font_multiplier=16) {
+    let ppp = renderer.canvas_manager.points_per_pixel();
+    let label = close_text;
+    let FONTSIZE = Math.min(ppp * font_multiplier, max_font_size);
+    let yoffset = LINEHEIGHT / 2.0;
+    let oldfont = ctx.font;
+    if (ppp >= ppp_thres) { // Far text
+        ctx.font = FONTSIZE + "px sans-serif";
+        label = far_text;
+        yoffset = FONTSIZE / 2.0 - h / 6.0;
+    }
+
+    let textmetrics = ctx.measureText(label);
+    let tw = textmetrics.width;
+    if (ppp >= ppp_thres && tw > w) {
+        FONTSIZE = FONTSIZE / (tw / w);
+        ctx.font = FONTSIZE + "px sans-serif";
+        yoffset = FONTSIZE / 2.0 - h / 6.0;
+        tw = w;
+    }
+
+    ctx.fillText(label, x - tw / 2.0, y + yoffset);
+
+    if (ppp >= ppp_thres)
+        ctx.font = oldfont;
+}
 
 function drawHexagon(ctx, x, y, w, h, offset) {
     let topleft = {x: x - w / 2.0, y: y - h / 2.0};

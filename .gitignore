@@ -181,3 +181,5 @@ rgf_dense_saved.sdfg
 /diode/sdfv_tmp*.html
 
 _build/
+
+/*.sdfg

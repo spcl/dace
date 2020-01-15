@@ -457,6 +457,10 @@ class SubgraphView(Graph):
     def is_multigraph(self):
         return self._graph.is_multigraph()
 
+    @property
+    def graph(self):
+        return self._graph
+
 
 @dace.serialize.serializable
 class DiGraph(Graph):

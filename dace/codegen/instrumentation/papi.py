@@ -1,4 +1,5 @@
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen.targets.common import sym2cpp
 from dace.graph.nodes import EntryNode, ExitNode, MapEntry, MapExit, Tasklet
 from dace.graph.graph import SubgraphView
 from dace.memlet import Memlet
@@ -25,68 +26,6 @@ from dace.graph import nodes
 # Helper function to get the module path
 if __name__ == "__main__":
     print("path: " + os.path.dirname(__file__))
-
-
-############# COPIED FROM cpu.py TO AVOID IMPORT LOOPS. TODO: Move elsewhere #############
-def sym2cpp(s):
-    """ Converts an array of symbolic variables (or one) to C++ strings. """
-    if not isinstance(s, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(s))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in s]
-
-
-def cpp_offset_expr(d, subset_in, offset=None, packed_veclen=1):
-    """ Creates a C++ expression that can be added to a pointer in order
-        to offset it to the beginning of the given subset and offset.
-        :param d: The data structure to use for sizes/strides.
-        :param subset: The subset to offset by.
-        :param offset: An additional list of offsets or a Subset object
-        :param packed_veclen: If packed types are targeted, specifies the
-                              vector length that the final offset should be
-                              divided by.
-        :return: A string in C++ syntax with the correct offset
-    """
-    subset = copy.deepcopy(subset_in)
-
-    # Offset according to parameters
-    if offset is not None:
-        if isinstance(offset, subsets.Subset):
-            subset.offset(offset, False)
-        else:
-            subset.offset(subsets.Indices(offset), False)
-
-    # Then, offset according to array
-    subset.offset(subsets.Indices(d.offset), False)
-
-    # Obtain start range from offsetted subset
-    slice = [0] * len(d.strides)  # subset.min_element()
-
-    index = subset.at(slice, d.strides)
-    if packed_veclen > 1:
-        index /= packed_veclen
-
-    return sym2cpp(index)
-
-
-def cpp_array_expr(sdfg,
-                   memlet,
-                   with_brackets=True,
-                   offset=None,
-                   relative_offset=True,
-                   packed_veclen=1):
-    """ Converts an Indices/Range object to a C++ array access string. """
-    s = memlet.subset if relative_offset else subsets.Indices(offset)
-    o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o,
-                                    packed_veclen)
-
-    if with_brackets:
-        return "%s[%s]" % (memlet.data, offset_cppstr)
-    else:
-        return offset_cppstr
-
-
-############# END OF COPY FROM cpu.py #############
 
 
 class PAPISettings(object):
@@ -760,8 +699,8 @@ class PAPIInstrumentation(InstrumentationProvider):
         # This implementation only allows to measure on a per-task basis (instead of per-thread). This is much more overhead.
         if PAPIInstrumentation.instrument_entry(node, state):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
-                 format(id=unified_id)) +
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n"
+                 .format(id=unified_id)) +
                 PAPIInstrumentation.perf_counter_start_measurement_string(
                     node,
                     unified_id,

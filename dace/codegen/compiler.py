@@ -9,6 +9,7 @@ import ctypes
 import os
 import six
 import shutil
+import hashlib
 import subprocess
 import re
 from typing import List
@@ -297,6 +298,29 @@ def unique_flags(flags):
     return set(re.findall(pattern, flags))
 
 
+def identical_file_exists(filename: str, file_contents: str):
+    # If file did not exist before, return False
+    if not os.path.isfile(filename):
+        return False
+
+    # Read file in blocks and compare strings
+    block_size = 65536
+    with open(filename, 'r') as fp:
+        file_buffer = fp.read(block_size)
+        while len(file_buffer) > 0:
+            block = file_contents[:block_size]
+            if file_buffer != block:
+                return False
+            file_contents = file_contents[block_size:]
+            file_buffer = fp.read(block_size)
+
+    # More contents appended to the new file
+    if len(file_contents) > 0:
+        return False
+
+    return True
+
+
 def generate_program_folder(sdfg,
                             code_objects: List[CodeObject],
                             out_path: str,
@@ -324,9 +348,12 @@ def generate_program_folder(sdfg,
         name = code_object.name
         extension = code_object.language
         target_name = code_object.target.target_name
+        target_type = code_object.target_type
 
         # Create target folder
         target_folder = os.path.join(src_path, target_name)
+        if target_type:
+            target_folder = os.path.join(target_folder, target_type)
         try:
             os.makedirs(target_folder)
         except FileExistsError:
@@ -335,12 +362,17 @@ def generate_program_folder(sdfg,
         # Write code to file
         basename = "{}.{}".format(name, extension)
         code_path = os.path.join(target_folder, basename)
-        with open(code_path, "w") as code_file:
-            clean_code = re.sub(r'[ \t]*////__DACE:[^\n]*', '',
-                                code_object.code)
-            code_file.write(clean_code)
+        clean_code = re.sub(r'[ \t]*////__DACE:[^\n]*', '', code_object.code)
 
-        filelist.append("{},{}".format(target_name, basename))
+        # Save the file only if it changed (keeps old timestamps and saves
+        # build time)
+        if not identical_file_exists(code_path, clean_code):
+            with open(code_path, "w") as code_file:
+                code_file.write(clean_code)
+
+        if code_object.linkable == True:
+            filelist.append("{},{},{}".format(target_name, target_type,
+                                              basename))
 
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -405,8 +437,11 @@ def configure_and_compile(program_folder,
     # Get absolute paths and targets for all source files
     files = []
     targets = {}  # {target name: target class}
-    for target_name, file_name in file_list:
-        path = os.path.join(src_folder, target_name, file_name)
+    for target_name, target_type, file_name in file_list:
+        if target_type:
+            path = os.path.join(target_name, target_type, file_name)
+        else:
+            path = os.path.join(target_name, file_name)
         files.append(path)
         targets[target_name] = codegen.STRING_TO_TARGET[target_name]
 
@@ -416,6 +451,7 @@ def configure_and_compile(program_folder,
         "cmake",
         "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
         '"' + os.path.join(dace_path, "codegen") + '"',
+        "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
         "-DDACE_PROGRAM_NAME={}".format(program_name),
     ]
@@ -521,12 +557,14 @@ def configure_and_compile(program_folder,
             Config.get('compiler', 'linker', 'additional_args') +
             " ".join(cmake_link_flags)),
     ]
+    cmake_command = ' '.join(cmake_command)
 
+    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     ##############################################
     # Configure
     try:
         _run_liveoutput(
-            " ".join(cmake_command),
+            cmake_command,
             shell=True,
             cwd=build_folder,
             output_stream=output_stream)
@@ -538,7 +576,7 @@ def configure_and_compile(program_folder,
         os.makedirs(build_folder)
         try:
             _run_liveoutput(
-                " ".join(cmake_command),
+                cmake_command,
                 shell=True,
                 cwd=build_folder,
                 output_stream=output_stream)
@@ -549,6 +587,9 @@ def configure_and_compile(program_folder,
             else:
                 raise CompilerConfigurationError('Configuration failure:\n' +
                                                  ex.output)
+
+        with open(cmake_filename, "w") as fp:
+            fp.write(cmake_command)
 
     # Compile and link
     try:

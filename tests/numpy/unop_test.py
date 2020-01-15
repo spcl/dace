@@ -6,13 +6,16 @@ import numpy as np
 def uaddtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B[:] = +A
 
+
 @dace.program
 def usubtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B[:] = -A
 
+
 @dace.program
 def nottest(A: dace.bool[5, 5], B: dace.bool[5, 5]):
     B[:] = not A
+
 
 @dace.program
 def inverttest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
@@ -27,11 +30,13 @@ if __name__ == '__main__':
 
     failed_tests = set()
 
-    for opname, op in {'uadd': '+',
-                       'usub': '-',
-                       'not': 'not',
-                       'invert': '~'}.items():
-        
+    for opname, op in {
+            'uadd': '+',
+            'usub': '-',
+            'not': 'not',
+            'invert': '~'
+    }.items():
+
         def test(A, B, np_exec: str = None):
             daceB = B.copy()
             exec('{opn}test(A, daceB)'.format(opn=opname))
@@ -48,14 +53,14 @@ if __name__ == '__main__':
                 print('Unary operator {opn}: OK'.format(opn=opname))
             else:
                 failed_tests.add(opname)
-                print('Unary operator {opn}: FAIL ({diff})'.format(opn=opname,
-                                                            diff=norm_diff))
-        
+                print('Unary operator {opn}: FAIL ({diff})'.format(
+                    opn=opname, diff=norm_diff))
+
         if opname == 'not':
             test(Ab, Bb, np_exec='numpyB[:] = np.logical_{op}(A, B)')
         else:
             test(A, B)
-        
+
     if failed_tests:
         print('FAILED TESTS:')
         for t in failed_tests:

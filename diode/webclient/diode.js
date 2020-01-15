@@ -1672,7 +1672,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
         // create a new terminal
         let terminal_config = {
-            title: "Compilation terminal",
+            title: "Terminal",
             type: 'component',
             componentName: 'TerminalComponent',
             componentState: { created: millis }
@@ -3648,7 +3648,7 @@ class DIODE {
             </div>
         </div>
     </label>
-    <input id="file-select" type="file"  accept=".py,.m" style="position:absolute;"/>
+    <input id="file-select" type="file"  accept=".py,.m,.sdfg" style="position:absolute;"/>
 </div>
 `,
             buttons: '',
@@ -3779,8 +3779,16 @@ class DIODE {
 
         let millis = this.getPseudorandom();
 
+        // Assuming SDFG files start with {
+        if (content[0] == '{') {
+            // Prettify JSON object, if not pretty
+            if (content.split('\n').length == 1)
+                content = JSON.stringify(JSON.parse(content), null, 2);
+        }
+
+
         let config = {
-            title: "CodeIn",
+            title: "Source Code",
             type: 'component',
             componentName: 'CodeInComponent',
             componentState: { created: millis, code_content: content }
@@ -3796,7 +3804,7 @@ class DIODE {
         let millis = this.getPseudorandom();
 
         let config = {
-            title: "DIODE settings",
+            title: "Settings",
             type: 'component',
             componentName: 'SettingsComponent',
             componentState: { created: millis }
@@ -3809,7 +3817,7 @@ class DIODE {
         let millis = this.getPseudorandom();
 
         let config = {
-            title: "Runqueue",
+            title: "Run Queue",
             type: 'component',
             componentName: 'RunqueueComponent',
             componentState: { created: millis }
@@ -4248,16 +4256,11 @@ class DIODE {
                 let __r_s = __main(__var_rng.val.start);
                 let __r_e = __main(__var_rng.val.end);
                 let __r_step = __main(__var_rng.val.step);
-                
-                let __access_order = data.attributes.access_order;
-                // Access order reverse lookup
-                let __rev_access_order = __access_order.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
 
                 // Remember: Inclusive ranges
                 for(let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
                     // Add this to the full evaluation
-                    // Use the access order from the data property; this means remap if necessary.
-                    let __a_i = __access_indices.map((x, i) => [x, i]).sort((a, b) => __rev_access_order[a[1]] - __rev_access_order[b[1]]).map(x => x[0]);
+                    let __a_i = __access_indices.map((x, i) => [x, i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
                     
 
                     __a_i = __a_i.map(__y => feval("let " + __it + " = " + __x + ";" + __y.var));
@@ -4901,7 +4904,7 @@ class DIODE {
             }, val);
         }
         else if(
-            x.metatype == "str" || x.metatype == "float"
+            x.metatype == "str" || x.metatype == "float" || x.metatype == "LambdaProperty"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
@@ -5561,7 +5564,7 @@ class DIODE {
 
         let create_codeout_func = () => {
             let new_codeout_config = {
-                title: "Output code for `" + name + "`",
+                title: "Generated Code",
                 type: 'component',
                 componentName: 'CodeOutComponent',
                 componentState: { created: millis(), code: sdfg, sdfg_name: name }
@@ -5600,7 +5603,7 @@ class DIODE {
             let new_optgraph_config = {
                 type: "column",
                 content: [{
-                    title: name == "" ? "OptGraph" : "OptGraph for `" + name + "`",
+                    title: name == "" ? "Transformations" : "Transformations for `" + name + "`",
                     type: 'component',
                     componentName: 'AvailableTransformationsComponent',
                     componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
@@ -5691,10 +5694,19 @@ class DIODE {
             let cis = values['sdfg_object'] != undefined;
             let cval = values['input_code'];
 
+            // Assuming SDFG files start with {
+            if (cval[0] == '{') {
+                let sd = parse_sdfg(cval);
+                values['sdfg_object'] = {};
+                values['sdfg_object'][sd.attributes.name] = cval;
+                
+                cis = true;
+            }
+
             if(cis) {
                 cval = values['sdfg_object'];
                 if(typeof(cval) == 'string')
-                    cval = JSON.parse(cval);
+                    cval = parse_sdfg(cval);
             }
 
             calling_context.project().request(["clear-errors"], () => {});
@@ -5816,7 +5828,7 @@ class DIODE {
 
         // create a new terminal
         let terminal_config = {
-            title: "Compilation terminal",
+            title: "Terminal",
             type: 'component',
             componentName: 'TerminalComponent',
             componentState: { created: millis }
@@ -5959,9 +5971,11 @@ class DIODE {
         let version_string = "1.0";
         REST_request("/dace/api/v" + version_string + "/run/status/", post_params, (xhr) => {
             if (xhr.readyState === 4 && xhr.status === 200) {
-                // #TODO: Show success/error depending on the exit code
-
-                this.toast("Execution ended", "The execution of the last run has ended", 'info');
+                // Show success/error depending on the exit code
+                if (xhr.response.endsWith(" 0"))
+                    this.toast("Execution ended", "Run ended successfully", 'info');
+                else
+                    this.toast("Execution ended", "Run failed", 'error');
 
                 // Flush remaining outputs
                 let newdata = xhr.response.substr(xhr.seenBytes);

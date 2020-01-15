@@ -37,7 +37,6 @@ def draw_edge_explicit(srcName, dstName, edge, sdfg, graph, **extraOpts):
 def draw_edge(sdfg, graph, edge, **extraOpts):
     srcName = 's%d_%d' % (sdfg.node_id(graph), graph.node_id(edge.src))
     dstName = 's%d_%d' % (sdfg.node_id(graph), graph.node_id(edge.dst))
-
     return draw_edge_explicit(srcName, dstName, edge, sdfg, graph)
 
 
@@ -88,8 +87,8 @@ def draw_node(sdfg, graph, obj, **kwargs):
         connector_code = []
         for conn in sorted(obj.in_connectors):
             connector_code.append(
-                '<TD PORT="in_{conn}" BORDER="1" CELLPADDING="1"><FONT POINT-SIZE="10">{conn}</FONT></TD>'.
-                format(conn=conn))
+                '<TD PORT="in_{conn}" BORDER="1" CELLPADDING="1"><FONT POINT-SIZE="10">{conn}</FONT></TD>'
+                .format(conn=conn))
         code += '<TD WIDTH="20"></TD>'.join(connector_code)
         code += '<TD WIDTH="20"></TD></TR></TABLE></TD></TR>'
 
@@ -104,8 +103,8 @@ def draw_node(sdfg, graph, obj, **kwargs):
         connector_code = []
         for conn in sorted(obj.out_connectors):
             connector_code.append(
-                '<TD PORT="out_{conn}" BORDER="1" CELLPADDING="1"><FONT POINT-SIZE="10">{conn}</FONT></TD>'.
-                format(conn=conn))
+                '<TD PORT="out_{conn}" BORDER="1" CELLPADDING="1"><FONT POINT-SIZE="10">{conn}</FONT></TD>'
+                .format(conn=conn))
         code += '<TD WIDTH="20"></TD>'.join(connector_code)
         code += '<TD WIDTH="20"></TD></TR></TABLE></TD></TR>'
 

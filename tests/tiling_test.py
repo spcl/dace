@@ -16,8 +16,8 @@ MAXITER = dace.symbol('MAXITER')
 def create_sdfg():
 
     sdfg = dace.SDFG('stencil_sdfg_api')
-    arr = sdfg.add_array('A', (H, W), dace.float32)
-    tmparr = sdfg.add_transient('tmp', (H, W), dace.float32)
+    _, arr = sdfg.add_array('A', (H, W), dace.float32)
+    _, tmparr = sdfg.add_transient('tmp', (H, W), dace.float32)
 
     init = sdfg.add_state('init')
     guard = sdfg.add_state('guard')
@@ -98,10 +98,7 @@ if __name__ == "__main__":
 
     sdfg, body = create_sdfg()
     sdfg.fill_scope_connectors()
-    optimizer = SDFGOptimizer(sdfg, inplace=True)
-    for match in optimizer.get_pattern_matches(
-            states=[body], patterns=[MapTiling]):
-        match.apply(sdfg)
+    sdfg.apply_transformations([MapTiling], states=[body], apply_once=True)
     for node in body.nodes():
         if (isinstance(node, dace.graph.nodes.MapEntry)
                 and node.label[:-2] == 'stencil'):

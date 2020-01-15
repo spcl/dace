@@ -31,12 +31,10 @@ if __name__ == '__main__':
     C = np.random.rand(32).astype(np.float32)
 
     s1 = prog1.to_sdfg()
-    opt1 = optimizer.SDFGOptimizer(s1, inplace=True)
-    list(opt1.get_pattern_matches(patterns=[GPUTransformMap]))[0].apply(s1)
+    s1.apply_transformations([GPUTransformMap], apply_once=True)
 
     s2 = prog2.to_sdfg()
-    opt2 = optimizer.SDFGOptimizer(s2, inplace=True)
-    list(opt2.get_pattern_matches(patterns=[GPUTransformMap]))[0].apply(s2)
+    s2.apply_transformations([GPUTransformMap], apply_once=True)
 
     s1func = s1.compile(optimizer='')
     s2func = s2.compile(optimizer='')

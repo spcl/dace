@@ -53,21 +53,21 @@ class PropertyTests(unittest.TestCase):
 
         from_string = dace.memlet.Memlet.__properties__["data"].from_string
 
-        sdfg = dace.SDFG("test_sdfg", OrderedDict([("foo",
-                                                    dace.dtypes.float32)]))
+        sdfg = dace.SDFG("test_sdfg",
+                         OrderedDict([("foo", dace.dtypes.float32)]))
 
         state0 = dace.SDFGState("s0", sdfg)
         state1 = dace.SDFGState("s1", sdfg)
         sdfg.add_node(state0)
         sdfg.add_node(state1)
 
-        arr0 = sdfg.add_array("arr0", (16, 16), dace.dtypes.float32)
+        _, arr0 = sdfg.add_array("arr0", (16, 16), dace.dtypes.float32)
         data0 = dace.graph.nodes.AccessNode('arr0')
 
         state0.add_node(data0)
-        arr1 = sdfg.add_array("arr1", (16, 16), dace.dtypes.float32)
+        sdfg.add_array("arr1", (16, 16), dace.dtypes.float32)
         state0.add_node(dace.graph.nodes.AccessNode('arr1'))
-        arr2 = sdfg.add_array("arr2", (16, 16), dace.dtypes.float32)
+        sdfg.add_array("arr2", (16, 16), dace.dtypes.float32)
         state1.add_node(dace.graph.nodes.AccessNode('arr2'))
 
         memlet = dace.memlet.Memlet('arr2', 1, "0:N", 1)

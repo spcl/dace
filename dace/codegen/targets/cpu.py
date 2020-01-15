@@ -4,6 +4,7 @@ import functools
 import itertools
 import sympy as sp
 from six import StringIO
+import warnings
 
 from dace.codegen import cppunparse
 
@@ -11,6 +12,8 @@ import dace
 from dace.config import Config
 from dace.frontend import operations
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
+                                         find_outgoing_edges)
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType
 from dace.graph import nodes, nxutil
@@ -172,7 +175,7 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
 
         # Compute array size
-        arrsize = " * ".join([sym2cpp(s) for s in nodedesc.strides])
+        arrsize = nodedesc.total_size
 
         if isinstance(nodedesc, data.Scalar):
             callsite_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
@@ -239,27 +242,41 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream)
 
+        # TODO: immaterial arrays should not allocate memory
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or nodedesc.storage == dtypes.StorageType.Immaterial
-              ):  # TODO: immaterial arrays should not allocate memory
+              or (nodedesc.storage in [
+                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
+
+            if nodedesc.storage in [
+                    dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+            ]:
+                warnings.warn(
+                    'Variable-length array %s with size %s '
+                    'detected and was allocated on heap instead of '
+                    '%s' % (name, sym2cpp(arrsize), nodedesc.storage))
+
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
-                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype, arrsize),
+                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
+                 sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
             )
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             if node.setzero:
-                callsite_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
-                                      (name, nodedesc.dtype.ctype, arrsize))
+                callsite_stream.write(
+                    "memset(%s, 0, sizeof(%s)*%s);" %
+                    (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Stack
               or nodedesc.storage == dtypes.StorageType.Register):
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
-                    (nodedesc.dtype.ctype, name, arrsize),
+                    (nodedesc.dtype.ctype, name, sym2cpp(arrsize)),
                     sdfg,
                     state_id,
                     node,
@@ -268,7 +285,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
             callsite_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name,
-                                                  arrsize),
+                                                  sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
@@ -341,11 +358,15 @@ class CPUCodeGen(TargetCodeGenerator):
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         nodedesc = node.desc(sdfg)
+        arrsize = nodedesc.total_size
         if isinstance(nodedesc, data.Scalar):
             return
         elif isinstance(nodedesc, data.Stream):
             return
-        elif nodedesc.storage == dtypes.StorageType.CPU_Heap:
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or (nodedesc.storage in [
+                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
             callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
                                   node)
         else:
@@ -486,6 +507,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_subset = (memlet.subset
                                     if memlet.data == dst_node.data else
                                     memlet.other_subset)
+                    if array_subset is None:  # Need to use entire array
+                        array_subset = subsets.Range.from_array(dst_nodedesc)
+
                     # stream_subset = (memlet.subset
                     #                  if memlet.data == src_node.data else
                     #                  memlet.other_subset)
@@ -716,8 +740,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode):
                 if not uconn:
                     raise SyntaxError(
-                        "Cannot copy memlet without a local connector: {} to {}".
-                        format(str(edge.src), str(edge.dst)))
+                        "Cannot copy memlet without a local connector: {} to {}"
+                        .format(str(edge.src), str(edge.dst)))
 
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
@@ -1155,9 +1179,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Try to turn into degenerate/strided ND copies
         result = ndcopy_to_strided_copy(
             copy_shape,
-            src_nodedesc.strides,
+            src_nodedesc.shape,
             src_strides,
-            dst_nodedesc.strides,
+            dst_nodedesc.shape,
             dst_strides,
             memlet.subset,
             src_subset,
@@ -1536,11 +1560,10 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('{', sdfg, state_id, node)
 
         # Define all input connectors of this map entry
-        for e in state_dfg.in_edges(node):
-            if not e.dst_conn.startswith('IN_'):
-                callsite_stream.write(
-                    self.memlet_definition(sdfg, e.data, False, e.dst_conn),
-                    sdfg, state_id, node)
+        for e in dace.sdfg.dynamic_map_inputs(state_dfg, node):
+            callsite_stream.write(
+                self.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
+                state_id, node)
 
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
@@ -1806,21 +1829,21 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         # consumed element and modify the outgoing memlet path ("OUT_stream")
         # TODO: do this before getting to the codegen
         if node.consume.chunksize == 1:
-            consumed_element = sdfg.add_scalar(
+            newname, _ = sdfg.add_scalar(
                 node.consume.label + "_element",
                 input_streamdesc.dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register)
-            ce_node = nodes.AccessNode(node.consume.label + '_element',
-                                       dtypes.AccessType.ReadOnly)
+                storage=dtypes.StorageType.Register,
+                find_new_name=True)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         else:
-            consumed_element = sdfg.add_array(
+            newname, _ = sdfg.add_array(
                 node.consume.label + '_elements', [node.consume.chunksize],
                 input_streamdesc.dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register)
-            ce_node = nodes.AccessNode(node.consume.label + '_elements',
-                                       dtypes.AccessType.ReadOnly)
+                storage=dtypes.StorageType.Register,
+                find_new_name=True)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])
@@ -1937,21 +1960,64 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             output_memlet.veclen,
         )
 
+        # Example:
+        #
+        # inp = array(K, M, N)
+        # out = array(L, M, N)
+        # out[i] = reduce(lambda a, b: a + b, inp, axes=0)
+        #
+        # Pseudocode:
+        # for m in range(M):
+        #     for n in range(N):
+        #         for k in range(K):
+        #             out[i, m, n] += inp[k, m, n]
+
+        # The number of output dimensions is equal to the number of input
+        # dimensions, minus the number of dimensions being reduced (axes)
+        # Example:
+        # 3D array inp reduced to a 2D array
+        # NOTE: The number of output dimensions is less or equal to the number
+        # of dimensions of the output array, where the result is stored.
+        input_num_dims = input_memlet.subset.dims()
         # If axes were not defined, use all input dimensions
-        input_dims = input_memlet.subset.dims()
-        output_dims = output_memlet.subset.data_dims()
         if axes is None:
-            axes = tuple(range(input_dims))
+            axes = tuple(range(input_num_dims))
+        output_num_dims = input_num_dims - len(axes)
 
         # Obtain variable names per output and reduction axis
-        axis_vars = []
-        octr = 0
-        for d in range(input_dims):
+        axis_vars = []  # Iteration variables for the input dimensions
+        output_axis_vars = dict()  # Dict matching the dimensions of the input
+        # that are NOT being reduced with the
+        # equivalent dimensions of the output array.
+        output_dims = []  # The equivalent output array dimensions
+        # of the input dimensions NOT being reduced.
+        octr = 0  # First index for the dimensions NOT being reduced.
+        input_size = input_memlet.subset.size()
+        output_size = output_memlet.subset.size()
+        for d in range(input_num_dims):
             if d in axes:
+                # Dimension is being reduced.
                 axis_vars.append("__i%d" % d)
             else:
+                # Dimension is NOT being reduced.
                 axis_vars.append("__o%d" % octr)
+                ri = input_size[d]
+                # Iterate over the dimensions of the output memlet and find
+                # the one that is matching with the input memlet dimension.
+                for i, ro in enumerate(output_size):
+                    # This is needed in case where there are multiple NOT
+                    # reduced dimensions with the same size.
+                    if i in output_axis_vars.keys():
+                        continue
+                    if ri == ro:
+                        output_dims.append(i)
+                        output_axis_vars[i] = octr
+                        break
                 octr += 1
+        # Example:
+        # __i0 -> first dimension of inp (size K)
+        # __o0 -> second dimension of inp and out (size M)
+        # __o1 -> third dimensions of inp and out (size N)
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.instrument]
@@ -1961,16 +2027,17 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                                 inner_stream, function_stream)
 
         # Write OpenMP loop pragma if there are output dimensions
-        if output_dims > 0:
+        if output_num_dims > 0:
             callsite_stream.write(loop_header, sdfg, state_id, node)
 
         # Generate outer loops
         output_subset = output_memlet.subset
-        for axis in range(output_dims):
+        for axis in output_dims:
+            octr = output_axis_vars[axis]
             callsite_stream.write(
                 "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
                 format(
-                    var="__o%d" % axis,
+                    var="__o%d" % octr,
                     begin=output_subset[axis][0],
                     end=output_subset[axis][1] + 1,
                     skip=output_subset[axis][2],
@@ -1981,9 +2048,12 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             )
 
             end_braces += 1
+        # Example:
+        # for (int __o0 = 0; __o0 < M; __o0 += 1) {
+        #     for (int __o1 = 0; __o1 < N; __o1 += 1) {
 
         use_tmpout = False
-        if len(axes) == input_dims:
+        if len(axes) == input_num_dims:
             # Add OpenMP reduction clause if reducing all axes
             if (redtype != dtypes.ReductionType.Custom
                     and node.schedule == dtypes.ScheduleType.CPU_Multicore):
@@ -2005,11 +2075,15 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
             sdfg,
             output_memlet,
-            offset=["__o%d" % i for i in range(output_dims)],
+            offset=[("__o%d" % output_axis_vars[i])
+                    if i in output_axis_vars.keys() else r[0]
+                    for i, r in enumerate(output_subset)],
             relative_offset=False,
         ))
+        # Example (pseudocode):
+        # out[i, __o0, __o1]
 
-        if len(axes) != input_dims and node.identity is not None:
+        if len(axes) != input_num_dims and node.identity is not None:
             # Write code for identity value in multiple axes
             callsite_stream.write(
                 "%s = %s;" % (outvar, sym2cpp(node.identity)), sdfg, state_id,
@@ -2035,6 +2109,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 node,
             )
             end_braces += 1
+        # Example:
+        # for (int __i0 = 0; __i0 < K; __i0 += 1) {
 
         # Generate reduction code
         credtype = "dace::ReductionType::" + str(
@@ -2069,8 +2145,23 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
             # Store back tmpout into the true output
             if i == end_braces - 1 and use_tmpout:
+                # TODO: This is a targeted fix that has to be generalized when
+                # refactoring code generation. The issue is related to an
+                # inconsistency on whether an output connector generates a tmp
+                # scalar variable to be used with __write or a pointer to the
+                # output array.
+                scalar_output = True
+                for r in output_subset:
+                    if r != 0 and r != (0, 0, 1):
+                        scalar_output = False
+                        break
+                arr = sdfg.arrays[output_memlet.data]
+                if scalar_output and sdfg.parent_sdfg and not arr.transient:
+                    out_var = output_memlet.data
+                else:
+                    out_var = cpp_array_expr(sdfg, output_memlet)
                 callsite_stream.write(
-                    "%s = __tmpout;" % cpp_array_expr(sdfg, output_memlet),
+                    "%s = __tmpout;" % out_var,
                     sdfg,
                     state_id,
                     node,
@@ -2191,18 +2282,30 @@ def ndcopy_to_strided_copy(
 
     # If the copy is contiguous, the difference between the first and last
     # pointers should be the shape of the copy
-    first_src_index = src_subset.at([0] * src_subset.dims(), src_shape)
-    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_shape)
+    first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
+    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
     last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
-                                   src_shape)
+                                   src_strides)
     last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
-                                   dst_shape)
+                                   dst_strides)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
-    if (tuple(copy_shape) == tuple(src_shape)
-            and tuple(copy_shape) == tuple(dst_shape)) or (
-                src_copylen == copy_length and dst_copylen == copy_length):
+
+    # Make expressions symbolic and simplify
+    copy_length = symbolic.pystr_to_symbolic(copy_length).simplify()
+    src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
+    dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
+
+    # Detect 1D copies. The first condition is the general one, whereas the
+    # second one applies when the arrays are completely equivalent in strides
+    # and shapes to the copy. The second condition is there because sometimes
+    # the symbolic math engine fails to produce the same expressions for both
+    # arrays.
+    if ((src_copylen == copy_length and dst_copylen == copy_length)
+            or (tuple(src_shape) == tuple(copy_shape)
+                and tuple(dst_shape) == tuple(copy_shape)
+                and tuple(src_strides) == tuple(dst_strides))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
@@ -2243,12 +2346,12 @@ def ndslice_cpp(slice, dims, rowmajor=True):
             raise SyntaxError(
                 "CPU backend does not yet support ranges as inputs/outputs")
 
-        # TODO(later): Use access order
-
         result.write(sym2cpp(d))
 
         # If not last
         if i < len(slice) - 1:
+            # We use the shape as-is since this function is intended for
+            # constant arrays only
             strdims = [str(dim) for dim in dims[i + 1:]]
             result.write(
                 "*%s + " % "*".join(strdims))  # Multiply by leading dimensions
@@ -2520,35 +2623,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 
-def find_incoming_edges(node, dfg):
-    # If it's an entire SDFG, look in each state
-    if isinstance(dfg, SDFG):
-        result = []
-        for state in dfg.nodes():
-            result.extend(list(state.in_edges(node)))
-        return result
-    else:  # If it's one state
-        return list(dfg.in_edges(node))
-
-
-def find_outgoing_edges(node, dfg):
-    # If it's an entire SDFG, look in each state
-    if isinstance(dfg, SDFG):
-        result = []
-        for state in dfg.nodes():
-            result.extend(list(state.out_edges(node)))
-        return result
-    else:  # If it's one state
-        return list(dfg.out_edges(node))
-
-
-def sym2cpp(s):
-    """ Converts an array of symbolic variables (or one) to C++ strings. """
-    if not isinstance(s, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(s))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in s]
-
-
 class DaCeKeywordRemover(ExtNodeTransformer):
     """ Removes memlets and other DaCe keywords from a Python AST, and
         converts array accesses to C++ methods that can be generated.
@@ -2729,11 +2803,6 @@ class StructInitializer(ExtNodeTransformer):
                 node)
 
         return self.generic_visit(node)
-
-
-def unique(seq):
-    seen = set()
-    return [x for x in seq if not (x in seen or seen.add(x))]
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate

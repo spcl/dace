@@ -25,7 +25,7 @@ def bla(A, B, alpha):
         al << alpha
         a << A[0, 0]
         b >> B[0, 0]
-        b = alpha * a
+        b = al * a
 
 
 @dp.program

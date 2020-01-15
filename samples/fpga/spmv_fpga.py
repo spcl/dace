@@ -367,9 +367,9 @@ if __name__ == "__main__":
     nnz.set(args["nnz"])
 
     print(
-        'Sparse Matrix-Vector Multiplication {}x{} ({} non-zero elements, {}specialized)'.
-        format(W.get(), H.get(), nnz.get(), "not "
-               if not args["specialize"] else ""))
+        'Sparse Matrix-Vector Multiplication {}x{} ({} non-zero elements, {}specialized)'
+        .format(W.get(), H.get(), nnz.get(), "not "
+                if not args["specialize"] else ""))
 
     A_row = dace.ndarray([H + 1], dtype=itype)
     A_col = dace.ndarray([nnz], dtype=itype)

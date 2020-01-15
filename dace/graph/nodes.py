@@ -55,6 +55,12 @@ class Node(object):
             scope_entry_node = None
             scope_exit_nodes = []
 
+        # The scope exit of an entry node is the matching exit node
+        if isinstance(self, EntryNode):
+            scope_exit_nodes = [
+                str(parent.node_id(x)) for x in parent.exit_nodes(self)
+            ]
+
         retdict = {
             "type": typestr,
             "label": labelstr,
@@ -141,7 +147,7 @@ class Node(object):
                 curconn = int(cconn)
                 if curconn >= next_number:
                     next_number = curconn + 1
-            except TypeError:  # not integral
+            except (TypeError, ValueError):  # not integral
                 continue
         return next_number
 
@@ -264,7 +270,7 @@ class Tasklet(CodeNode):
     """
 
     # label = Property(dtype=str, desc="Name of the tasklet")
-    code = CodeProperty(desc="Tasklet code")
+    code = CodeProperty(desc="Tasklet code", default="")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
     code_init = CodeProperty(
@@ -377,13 +383,14 @@ class NestedSDFG(CodeNode):
 
     # label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = SDFGReferenceProperty(dtype=graph.OrderedDiGraph, desc="The SDFG")
+    sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
-    # location = Property(dtype=str, desc="SDFG execution location descriptor")
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
+    location = Property(dtype=str, desc="SDFG execution location descriptor")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
@@ -425,6 +432,8 @@ class NestedSDFG(CodeNode):
             ret.sdfg.parent = context['sdfg_state']
         if context and 'sdfg' in context:
             ret.sdfg.parent_sdfg = context['sdfg']
+
+        ret.sdfg.update_sdfg_list([])
 
         return ret
 
@@ -492,6 +501,16 @@ class MapEntry(EntryNode):
     def from_json(json_obj, context=None):
         m = Map("", [], [])
         ret = MapEntry(map=m)
+
+        try:
+            # Set map reference to map exit
+            nid = int(json_obj['scope_exits'][0])
+            exit_node = context['sdfg_state'].node(nid)
+            exit_node.map = m
+        except IndexError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in MapExit
+            pass
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -526,10 +545,16 @@ class MapExit(ExitNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        # Set map reference to map entry
-        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+        try:
+            # Set map reference to map entry
+            entry_node = context['sdfg_state'].node(
+                int(json_obj['scope_entry']))
 
-        ret = MapExit(map=entry_node.map)
+            ret = MapExit(map=entry_node.map)
+        except IndexError:  # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in MapEntry
+            ret = MapExit(Map('_', [], []))
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
@@ -575,12 +600,14 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ParamsProperty(desc="Mapped parameters")
-    range = RangeProperty(desc="Ranges of map parameters")
+    range = RangeProperty(
+        desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Map schedule",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
@@ -659,6 +686,16 @@ class ConsumeEntry(EntryNode):
     def from_json(json_obj, context=None):
         c = Consume("", ['i', 1], None)
         ret = ConsumeEntry(consume=c)
+
+        try:
+            # Set map reference to map exit
+            nid = int(json_obj['scope_exits'][0])
+            exit_node = context['sdfg_state'].node(nid)
+            exit_node.consume = c
+        except IndexError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in ConsumeExit
+            pass
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -699,10 +736,15 @@ class ConsumeExit(ExitNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        # Set map reference to entry node
-        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+        try:
+            # Set consume reference to entry node
+            entry_node = context['sdfg_state'].node(
+                int(json_obj['scope_entry']))
+            ret = ConsumeExit(consume=entry_node.consume)
+        except IndexError:  # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in ConsumeEntry
+            ret = ConsumeExit(Consume("", ['i', 1], None))
 
-        ret = ConsumeExit(consume=entry_node.consume)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -750,13 +792,14 @@ class Consume(object):
     # Properties
     label = Property(dtype=str, desc="Name of the consume node")
     pe_index = Property(dtype=str, desc="Processing element identifier")
-    num_pes = SymbolicProperty(desc="Number of processing elements")
+    num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Consume schedule",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     chunksize = Property(
         dtype=int,
         desc="Maximal size of elements to consume at a time",
@@ -828,13 +871,14 @@ class Reduce(Node):
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)
-    wcr = LambdaProperty()
+    wcr = LambdaProperty(default='lambda a,b: a')
     identity = Property(dtype=object, allow_none=True)
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="Reduction execution policy",
         choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x])
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
