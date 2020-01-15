@@ -4,6 +4,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:python3}"
 
 ERRORS=0
 FAILED_TESTS=""
@@ -54,7 +55,7 @@ runone() {
 }
 
 runall() {
-    runone python3 $1
+    runone $PYTHON_BINARY $1
 }
 
 DACE_compiler_use_cache=0

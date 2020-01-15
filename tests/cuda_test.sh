@@ -4,6 +4,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
@@ -171,8 +172,7 @@ runone() {
 }
 
 runall() {
-    #runone python2 $1
-    runone python3 $1
+    runone $PYTHON_BINARY $1
 }
 
 # Check if GPU tests can be run
