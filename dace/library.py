@@ -111,5 +111,14 @@ def get_environment(env_name):
     return env
 
 
+# Mapping from string to dacelet
+def get_library(lib_name):
+    try:
+        lib = dace.library._DACE_REGISTERED_LIBRARIES[lib_name]
+    except KeyError:
+        raise KeyError("Undefined DaCe library {}.".format(lib_name))
+    return lib
+
+
 _DACE_REGISTERED_LIBRARIES = {}
 _DACE_REGISTERED_ENVIRONMENTS = {}
