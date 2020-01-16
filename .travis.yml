@@ -19,6 +19,7 @@ install:
 script:
   - export NOSTATUSBAR=1
   - export PYTHONPATH=`pwd`:$PYTHONPATH
+  - export COVERAGE_RCFILE=`pwd`/.coveragerc
   - export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
   - ./test_all.sh
   - cd tests; coverage combine . */; coverage report; coverage xml
