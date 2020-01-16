@@ -2985,42 +2985,7 @@ class DIODE_Project {
     }
 
     save() {
-        /*
-            Saves all elements of this project to its own slot in the local storage
-            (such that it can be opened again even if the window was closed).
-            
-        */
-
-        let snapshots = this.getTransformationSnapshots();
-        if(typeof(snapshots) == 'string')
-            snapshots = JSON.parse(snapshots);
-        let y = {
-            project_id: this._project_id,
-            data: this._diode.goldenlayout.toConfig(),
-            snapshots: snapshots,
-            last_saved: new Date().toLocaleDateString(),
-            description: "<No description>"
-        };
-        let save_val = JSON.stringify(y);
-        
-        // The sdfg is not sufficiently unique.
-        let save_name = prompt("Enter project name");
-
-        window.localStorage.setItem("project_" + save_name, save_val);
-
-        let sp = window.localStorage.getItem("saved_projects");
-        if(sp == null) {
-            sp = [];
-        }
-        else {
-            sp = JSON.parse(sp);
-        }
-
-        sp = [save_name, ...sp];
-        window.localStorage.setItem("saved_projects", JSON.stringify(sp));
-
-            
-
+        // TODO: Save current open file
     }
 
     request(list, callback, options={}) {
