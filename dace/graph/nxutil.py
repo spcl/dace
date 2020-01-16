@@ -162,59 +162,6 @@ def dfs_topological_sort(G, sources=None, parent=False, condition=None):
                 stack.pop()
 
 
-def dfs_conditional(G, source, condition, reversed=False):
-    """ Traverse a graph (DFS) only through edges that match a condition. """
-    if isinstance(source, list): nodes = source
-    else: nodes = [source]
-
-    def in_edges_reversed(graph):
-        def _in_edges_reversed(node):
-            for e in graph.in_edges(node):
-                ecpy = copy.copy(e)
-                ecpy.reverse()
-                yield ecpy
-
-        return _in_edges_reversed
-
-    get_children = G.out_edges if not reversed else in_edges_reversed(G)
-
-    visited = set()
-    for start in nodes:
-        if start in visited:
-            continue
-        visited.add(start)
-        stack = [(start, get_children(start).__iter__())]
-        while stack:
-            parent, children = stack[-1]
-            try:
-                e = next(children)
-                if e.dst not in visited:
-                    visited.add(e.dst)
-                    if condition(e.src, e.dst, e.data):
-                        yield e
-                        stack.append((e.dst, get_children(e.dst).__iter__()))
-            except StopIteration:
-                stack.pop()
-
-
-def bfs_conditional(G, source, condition):
-    """ Traverse a graph (BFS) only through edges that match a condition. """
-
-    visited = set([source])
-    queue = deque([(source, G.out_edges(source).__iter__())])
-    while queue:
-        parent, children = queue[0]
-        try:
-            e = next(children)
-            if e.dst not in visited:
-                visited.add(e.dst)
-                if condition(e.src, e.dst, e.data):
-                    yield e
-                    queue.append((e.dst, G.out_edges(child).__iter__()))
-        except StopIteration:
-            queue.popleft()
-
-
 def traverse_sdfg_scope(G, source, yield_edges=True):
     """ Traverse an SDFG scope (nodes dominated by a ScopeEntry and 
         post-dominated by a ScopeExit). 
@@ -289,13 +236,6 @@ def gen_label(prefix=""):
                 indices[pos + 1] += 1
 
 
-def indstr(x):
-    try:
-        return int(x)
-    except TypeError:  # int() argument must be a string, a bytes-like object or a number, not [X]
-        return str(x)
-
-
 def range_to_str(ranges, limit_length=50):
     """ Converts one or multiple range tuples to a string. """
 
@@ -356,60 +296,6 @@ def str_to_range(rangeStr):
             step = entries[2]
         ranges[i] = (iMin, iMax, step)
     return ranges
-
-
-def make_list(val):
-    """ If a scalar or string is passed make it a list, otherwise do nothing. 
-    """
-    try:
-        len(val)
-        if not isinstance(val, str):
-            return val
-    except TypeError:
-        pass
-    return [val]
-
-
-def make_2d(ranges):
-    """ If a 1D list is passed, make it 2D, otherwise do nothing. """
-    if isinstance(ranges, Subscript):
-        return [ranges]
-    firstElem = ranges[0]
-    try:
-        if isinstance(firstElem, Subscript):
-            return ranges
-        len(firstElem)
-        if not isinstance(firstElem, str):
-            return ranges
-    except TypeError:
-        pass
-    return [ranges]
-
-
-def label_of(obj):
-    """ Fetches the label of an object, or generates one if it doesn't exist. 
-    """
-    try:
-        return obj.label
-    except AttributeError:
-        try:
-            return obj.name
-        except AttributeError:
-            try:
-                return next(type(obj)._nameGen)
-            except AttributeError:
-                type(obj)._nameGen = gen_label(type(obj).__name__ + " ")
-                obj.label = next(type(obj)._nameGen)
-                return obj.label
-
-
-def fullrange(ndslice, var_size):
-    """ Returns True iff the ND-slice represents the full array size. """
-    for dim, (b, e, s) in zip(var_size, ndslice):
-        if b != 0 or e != symbolic.pystr_to_symbolic(
-                dtypes.symbol_name_or_value(dim)) or s != 1:
-            return False
-    return True
 
 
 def change_edge_dest(
@@ -521,79 +407,6 @@ def find_sink_nodes(graph):
         :return: A list of the sink nodes found.
     """
     return [n for n in graph.nodes() if graph.out_degree(n) == 0]
-
-
-def replace_subgraph(graph: dace.graph.graph.OrderedDiGraph,
-                     old: dace.graph.graph.OrderedDiGraph,
-                     new: dace.graph.graph.OrderedDiGraph):
-    """ Replaces a subgraph of a graph with a new one. If replacement is not
-        possible, it returns False.
-
-        The function replaces the 'old' subgraph of the input graph with the 
-        'new' subgraph. Both the 'old' and the 'new' subgraphs must have 
-        unique source and sink nodes. Graph edges incoming to the source of 
-        the 'old' subgraph have their destination changed to the source of 
-        the 'new subgraph. Likewise, graph edges outgoing from the sink of 
-        the 'old subgraph have their source changed to the sink of the 'new' 
-        subgraph.
-
-        :param graph: The graph upon which the replacement will be applied.
-        :param old: The subgraph to be replaced.
-        :param new: The replacement subgraph.
-
-        :return: True if the replacement succeeded, otherwise False.
-    """
-
-    # 1. Find the source node of 'old' subgraph.
-    # 1.1. Retrieve the source nodes of the 'old' subgraph.
-    old_source_nodes = find_source_nodes(old)
-    # 1.2. Verify the existence of a unique source in the 'old' subgraph.
-    if len(old_source_nodes) != 1:
-        return False
-    old_source = old_source_nodes[0]
-
-    # 2. Find the sink node of the 'old' subgraph.
-    # 2.1. Retrieve the sink nodes of the 'old' subgraph.
-    old_sink_nodes = find_sink_nodes(old)
-    # 2.2. Verify the existence of a unique sink in the 'old' subgraph.
-    if len(old_sink_nodes) != 1:
-        return False
-    old_sink = old_sink_nodes[0]
-
-    # 3. Find the source node of 'new' subgraph.
-    # 3.1. Retrieve the source nodes of the 'new' subgraph.
-    new_source_nodes = find_source_nodes(new)
-    # 3.2. Verify the existence of a unique source in the 'new' subgraph.
-    if len(new_source_nodes) != 1:
-        return False
-    new_source = new_source_nodes[0]
-
-    # 4. Find the sink node of the 'new' subgraph.
-    # 4.1. Retrieve the sink nodes of the 'new' subgraph.
-    new_sink_nodes = find_sink_nodes(new)
-    # 4.2. Verify the existence of a unique sink in the 'new' subgraph.
-    if len(new_sink_nodes) != 1:
-        return False
-    new_sink = new_sink_nodes[0]
-
-    # 5. Add the 'new' subgraph to the graph.
-    # 5.1. Add the nodes of the 'new' subgraph to the graph.
-    graph.add_nodes_from(new.nodes())
-    # 5.2. Add the edges of the 'new' subgraph to the graph.
-    for e in new.edges():
-        graph.add_edge(*e)
-
-    # 6. Create new incoming edges to the source of the 'new' subgraph.
-    change_edge_dest(graph, old_source, new_source)
-
-    # 7. Create new outgoing edges from the sink of the 'new' subgraph.
-    change_edge_src(graph, old_sink, new_sink)
-
-    # 8. Remove all nodes of the 'old' subgraph from the graph.
-    graph.remove_nodes_from(old.nodes())
-
-    # 10. Subgraph replacement has succeeded. Return true.
-    return True
 
 
 def merge_maps(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
