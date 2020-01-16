@@ -37,7 +37,7 @@ runtestopt() {
 }
 
 
-runone() {
+runall() {
     echo "Running $PYTHON_BINARY"
     runtest axpy.py $1
     runtest ddot.py $1
