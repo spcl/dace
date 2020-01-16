@@ -5055,6 +5055,10 @@ class DIODE {
             console.warn("Ignoring property type ", x.metatype);
             return elem;
         }
+        else if(x.metatype == "SDFGReferenceProperty") {
+            // Nothing to display
+            return elem;
+        }
         else if(x.metatype == "SubsetProperty") {
             if(x.value == null) {
                 elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
