@@ -16,3 +16,6 @@ exclude_lines =
     if 0:
     if False:
     if __name__ == .__main__.:
+# Omit files that cannot be tested
+omit =
+    dace/jupyter.py
