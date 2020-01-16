@@ -1392,12 +1392,25 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             }
         }];
 
-        let tmp = () => {
+        let tmp = (x) => {
             // Compile after the transformation has been saved
             this.diode.gatherProjectElementsAndCompile(this, {
                 optpath: named
             }, {
                 sdfg_over_code: true
+            }, () => {
+               this.project().saveSnapshot(x['sdfg_object'], named);
+
+               this.project().request(['update-tfh'], x => {
+                    this.operation_running = false;
+                }, {
+                    on_timeout: () => {
+                        this.operation_running = false;
+                    }
+                });
+            }, () => {
+                // On failure
+                this.operation_running = false;
             });
         };
 
@@ -1406,17 +1419,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             if(typeof(x.sdfg_object) == 'string')
                 x.sdfg_object = JSON.parse(x.sdfg_object);
 
-            this.project().saveSnapshot(x['sdfg_object'], named);
-
-            this.project().request(['update-tfh'], x => {
-                this.operation_running = false;
-            }, {
-                on_timeout: () => {
-                    this.operation_running = false;
-                }
-            });
-
-            setTimeout(tmp, 10);
+            setTimeout(tmp, 10, x);
         }, {});
     }
 
@@ -5612,7 +5615,8 @@ class DIODE {
         }
     }
 
-    gatherProjectElementsAndCompile(calling_context, direct_passing = {}, options = {}) {
+    gatherProjectElementsAndCompile(calling_context, direct_passing = {}, options = {},
+                                    on_success = undefined, on_failure = undefined) {
         /*
             This method collects all available elements that can be used for compilation.
 
@@ -5688,7 +5692,7 @@ class DIODE {
                 runopts['repetitions'] = 5; // TODO(later): Allow users to configure number
                 runopts['code_is_sdfg'] = cis;
                 runopts['runnercode'] = values['input_code'];
-                this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts);
+                this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts, on_success, on_failure);
             }
             else {
                 let cb = (resp) => {
@@ -5702,7 +5706,7 @@ class DIODE {
                 {
                     optpath_cb: cb,
                     code_is_sdfg: cis,
-                });
+                }, on_success, on_failure);
 
             }
         }
@@ -5710,7 +5714,8 @@ class DIODE {
         calling_context.project().request(reqlist, on_collected, { timeout: 500, on_timeout: on_collected });
     }
 
-    compile(calling_context, code, optpath = undefined, sdfg_node_properties = undefined, options = {}) {
+    compile(calling_context, code, optpath = undefined, sdfg_node_properties = undefined, options = {},
+            on_success = undefined, on_failure = undefined) {
         /*
             options:
                 .code_is_sdfg: If true, the code parameter is treated as a serialized SDFG
@@ -5741,6 +5746,8 @@ class DIODE {
                 if(peek['error'] != undefined) {
                     // There was at least one error - handle all of them
                     this.handleErrors(calling_context, peek);
+                    if (on_failure !== undefined)
+                        on_failure();
                 }
                 else {
                     // Data is no longer stale
@@ -5754,6 +5761,8 @@ class DIODE {
                     else {
                         options.optpath_cb(o['compounds']);
                     }
+                    if (on_success !== undefined)
+                        on_success();
                 }
             }
         });
@@ -5876,7 +5885,9 @@ class DIODE {
         this.addContentItem(newconf);
     }
 
-    compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options={}) {
+    compile_and_run(calling_context, terminal_identifier, code, optpath = undefined,
+                    sdfg_node_properties = undefined, options={}, on_success = undefined,
+                    on_failure = undefined) {
         /*
             .runnercode: [opt] Code provided with SDFG to invoke the SDFG program. 
         */
@@ -5909,6 +5920,8 @@ class DIODE {
             else {
                 alert("Error! Check console");
                 console.error("Unknown instrumentation mode", remaining_settings['Instrumentation']);
+                if(on_failure !== undefined) on_failure();
+                return;
             }
             //post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
             let not = remaining_settings['Number of threads'];
@@ -5927,7 +5940,10 @@ class DIODE {
                     if(tmp['error']) {
                         // Normal, users should poll on a different channel now.
                         this.display_current_execution_status(calling_context, terminal_identifier, client_id);
-                    }
+                        if (on_failure !== undefined)
+                            on_failure();
+                    } else if (on_success !== undefined)
+                        on_success();
                 }
             });
         });
