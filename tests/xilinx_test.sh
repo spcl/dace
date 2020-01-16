@@ -9,6 +9,7 @@ DACE_debugprint="${DACE_debugprint:-0}"
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0
+PYTHON_BINARY="${PYTHON_BINARY:python3}"
 
 TEST_TIMEOUT=10
 
@@ -33,7 +34,7 @@ run_sample() {
     #  3-x - Other args to forward to kernel
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
-    yes | python3 ../samples/fpga/$1.py ${@:4}
+    yes | $PYTHON_BINARY ../samples/fpga/$1.py ${@:4}
     if [ $? -ne 0 ]; then
       bail "$1 (${RED}simulation failed${NC})"
       return 1
