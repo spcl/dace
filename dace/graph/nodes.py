@@ -437,6 +437,11 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not data.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        connectors = self.in_connectors | self.out_connectors
+        for dname, desc in self.sdfg.arrays.items():
+            if not desc.transient and dname not in connectors:
+                raise NameError('Data descriptor "%s" not found in nested '
+                                'SDFG connectors' % dname)
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
