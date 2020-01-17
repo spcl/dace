@@ -63,14 +63,21 @@ class InlineSDFG(pattern_matching.Transformation):
                 return False
             out_connectors.add(edge.src_conn)
 
-        # Ensure output connectors have no additional outputs (if in a scope)
+        # Ensure output connectors have no additional outputs (if in a scope),
+        # and ensure no two connectors are directly connected to each other
         if graph.entry_node(nested_sdfg) is not None:
+            all_connectors = in_connectors | out_connectors
             nstate = nested_sdfg.sdfg.node(0)
             for node in nstate.nodes():
-                if (isinstance(node, nodes.AccessNode)
-                        and node.data in out_connectors
-                        and nstate.out_degree(node) > 0):
-                    return False
+                if isinstance(node, nodes.AccessNode):
+                    if (node.data in out_connectors
+                            and nstate.out_degree(node) > 0):
+                        return False
+                    if (node.data in in_connectors and any(
+                            e.dst.data in all_connectors
+                            for e in nstate.out_edges
+                            if isinstance(e.dst, nodes.AccessNode))):
+                        return False
 
         return True
 
@@ -93,9 +100,11 @@ class InlineSDFG(pattern_matching.Transformation):
         if len(internal_memlet.subset) < len(external_memlet.subset):
             ones = [i for i, d in enumerate(shape) if d == 1]
 
-            # Special case: If internal memlet is a range of size 1 with (0,0,1),
-            #               ignore it when unsqueezing
+            # Special case: If internal memlet is one element and the top
+            # memlet uses all its dimensions, ignore the internal element
+            # TODO: There must be a better solution
             if (len(internal_memlet.subset) == 1
+                    and ones == list(range(len(shape)))
                     and (internal_memlet.subset[0] == (0, 0, 1)
                          or internal_memlet.subset[0] == 0)):
                 to_unsqueeze = ones[1:]

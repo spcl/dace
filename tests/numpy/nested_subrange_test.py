@@ -32,10 +32,35 @@ def subrange_of_subrange(A: dace.float32[2, 3, 4, 5], B: dace.float32[4]):
     B[:] = A[:, 0, :, 0][0, :]
 
 
+@dace.program
+def subrange_of_subrange_nested(A: dace.float32[2, 3, 4, 5],
+                                B: dace.float32[4]):
+    for i, j, k in dace.map[0:3, 0:5, 0:2]:
+        B[:] = A[:, i, :, j][k, :]
+
+
 def onetest(program):
     A = np.random.rand(2, 3, 4).astype(np.float32)
     expected = A[0, :, :] + A[1, :, :]
     B = np.random.rand(3, 4).astype(np.float32)
+
+    sdfg = program.to_sdfg()
+    sdfg(A=A, B=B)
+
+    diff = np.linalg.norm(expected - B)
+    print('Difference:', diff)
+    assert diff < 1e-5
+
+
+def onetest_subrange_of_subrange(program):
+    A = np.random.rand(2, 3, 4, 5).astype(np.float32)
+    expected = A[0, 0, :, 0]
+    for i in range(2):
+        for j in range(3):
+            for k in range(5):
+                A[i, j, :, k] = expected
+
+    B = np.random.rand(4).astype(np.float32)
 
     sdfg = program.to_sdfg()
     sdfg(A=A, B=B)
@@ -62,16 +87,11 @@ def test_subrange3():
 
 
 def test_subrange_of_subrange():
-    A = np.random.rand(2, 3, 4, 5).astype(np.float32)
-    expected = A[0, 0, :, 0]
-    B = np.random.rand(4).astype(np.float32)
+    onetest_subrange_of_subrange(subrange_of_subrange)
 
-    sdfg = subrange_of_subrange.to_sdfg()
-    sdfg(A=A, B=B)
 
-    diff = np.linalg.norm(expected - B)
-    print('Difference:', diff)
-    assert diff < 1e-5
+def test_subrange_of_subrange_nested():
+    onetest_subrange_of_subrange(subrange_of_subrange_nested)
 
 
 if __name__ == '__main__':
@@ -80,3 +100,4 @@ if __name__ == '__main__':
     test_subrange2()
     test_subrange3()
     test_subrange_of_subrange()
+    test_subrange_of_subrange_nested()
