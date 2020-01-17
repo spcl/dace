@@ -817,7 +817,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
         if isinstance(dim, tuple):
             rb = _pyexpr_to_symbolic(das, dim[0] or 0)
             re = _pyexpr_to_symbolic(das, dim[1]
-                                     or array.shape[indices[idx]]) - 1
+                                     or array.shape[indices[i]]) - 1
             rs = _pyexpr_to_symbolic(das, dim[2] or 1)
             ndslice[i] = (rb, re, rs)
             offsets.append(i)
@@ -3531,48 +3531,49 @@ class ProgramVisitor(ExtNodeVisitor):
 
             name = rname(node)
             true_name = defined_vars[name]
-            true_node = copy.deepcopy(node)
-            true_node.value.id = true_name
-            rng = dace.subsets.Range(
-                astutils.subscript_to_slice(true_node, defined_arrays)[1])
+            if (true_name not in self.sdfg.arrays
+                    or self.sdfg.arrays[true_name].transient is False):
+                true_node = copy.deepcopy(node)
+                true_node.value.id = true_name
+                rng = dace.subsets.Range(
+                    astutils.subscript_to_slice(true_node, defined_arrays)[1])
 
-            return self._add_read_access(name, rng, node)
+                return self._add_read_access(name, rng, node)
 
+        # Obtain array
+        array, arrtype = self._gettype(node.value)
+        if arrtype == 'str' or arrtype in dtypes._CTYPES:
+            raise DaceSyntaxError(self, node,
+                                  'Type "%s" cannot be sliced' % arrtype)
+
+        # Try to construct memlet from subscript
+        # expr: MemletExpr = ParseMemlet(self, self.defined, node)
+        # TODO: This needs to be formalized better
+        node.value = ast.Name(id=array)
+        expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
+        arrobj = self.sdfg.arrays[array]
+
+        # TODO: Check dimensionality of access and extend as necessary
+
+        # Add slicing state
+        self._add_state('slice_%s_%d' % (array, node.lineno))
+        rnode = self.last_state.add_read(array)
+        if _subset_has_indirection(expr.subset):
+            memlet = Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
+                            expr.wcr_identity)
+            tmp = self.sdfg.temp_data_name()
+            return add_indirection_subgraph(self.sdfg, self.last_state, rnode,
+                                            None, memlet, tmp, self)
         else:
-            # Obtain array
-            array, arrtype = self._gettype(node.value)
-            if arrtype == 'str' or arrtype in dtypes._CTYPES:
-                raise DaceSyntaxError(self, node,
-                                      'Type "%s" cannot be sliced' % arrtype)
-
-            # Try to construct memlet from subscript
-            # expr: MemletExpr = ParseMemlet(self, self.defined, node)
-            # TODO: This needs to be formalized better
-            node.value.id = array
-            expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
-            arrobj = self.sdfg.arrays[array]
-
-            # TODO: Check dimensionality of access and extend as necessary
-
-            # Add slicing state
-            self._add_state('slice_%s_%d' % (array, node.lineno))
-            rnode = self.last_state.add_read(array)
-            if _subset_has_indirection(expr.subset):
-                memlet = Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                                expr.wcr_identity)
-                tmp = self.sdfg.temp_data_name()
-                return add_indirection_subgraph(self.sdfg, self.last_state,
-                                                rnode, None, memlet, tmp, self)
-            else:
-                other_subset = copy.deepcopy(expr.subset)
-                other_subset.squeeze()
-                tmp, tmparr = self.sdfg.add_temp_transient(
-                    other_subset.size(), arrobj.dtype, arrobj.storage)
-                wnode = self.last_state.add_write(tmp)
-                self.last_state.add_nedge(
-                    rnode, wnode,
-                    Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                           expr.wcr_identity, other_subset))
-                return tmp
+            other_subset = copy.deepcopy(expr.subset)
+            other_subset.squeeze()
+            tmp, tmparr = self.sdfg.add_temp_transient(
+                other_subset.size(), arrobj.dtype, arrobj.storage)
+            wnode = self.last_state.add_write(tmp)
+            self.last_state.add_nedge(
+                rnode, wnode,
+                Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
+                       expr.wcr_identity, other_subset))
+            return tmp
 
     ##################################
