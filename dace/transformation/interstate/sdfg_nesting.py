@@ -63,13 +63,14 @@ class InlineSDFG(pattern_matching.Transformation):
                 return False
             out_connectors.add(edge.src_conn)
 
-        # Ensure output connectors have no additional outputs
-        nstate = nested_sdfg.sdfg.node(0)
-        for node in nstate.nodes():
-            if (isinstance(node, nodes.AccessNode)
-                    and node.data in out_connectors
-                    and nstate.out_degree(node) > 0):
-                return False
+        # Ensure output connectors have no additional outputs (if in a scope)
+        if graph.entry_node(nested_sdfg) is not None:
+            nstate = nested_sdfg.sdfg.node(0)
+            for node in nstate.nodes():
+                if (isinstance(node, nodes.AccessNode)
+                        and node.data in out_connectors
+                        and nstate.out_degree(node) > 0):
+                    return False
 
         return True
 
