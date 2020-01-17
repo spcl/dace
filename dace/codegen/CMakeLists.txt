@@ -132,6 +132,10 @@ if(DACE_ENABLE_INTELFPGA)
   include_directories(SYSTEM ${IntelFPGAOpenCL_INCLUDE_DIRS})
   add_definitions(-DDACE_INTELFPGA)
   set(DACE_LIBS ${DACE_LIBS} ${IntelFPGAOpenCL_LIBRARIES})
+  if(DACE_ENABLE_SMI)
+    set(DACE_SMI_DIR ${CMAKE_SOURCE_DIR}/../external/SMI)
+    include_directories(SYSTEM ${DACE_SMI_DIR}/include)
+  endif()
 endif()
 
 # Create CUDA object files
@@ -354,7 +358,6 @@ endif() # DACE_ENABLE_XILINX
 if(DACE_ENABLE_INTELFPGA)
 
   if(DACE_ENABLE_SMI)
-  	set(DACE_SMI_DIR ${CMAKE_SOURCE_DIR}/../external/SMI)
   	set(SMI_SCRIPT ${DACE_SMI_DIR}/codegen/main.py)
   	set(SMI_TOPOLOGY_SCRIPT ${DACE_SMI_DIR}/codegen/topology_file_generator.py)
   	set(CMAKE_FIND_PACKAGE_SORT_ORDER NATURAL)
@@ -391,8 +394,10 @@ if(DACE_ENABLE_INTELFPGA)
 
   if(DACE_ENABLE_SMI)
 
-  	# Add SMI include directory
-  	set(DACE_AOC_BUILD_FLAGS ${DACE_AOC_BUILD_FLAGS}  -I${CMAKE_SOURCE_DIR}/../external/SMI/include) 
+  	# Add SMI include directory to AOC
+  	set(DACE_AOC_BUILD_FLAGS ${DACE_AOC_BUILD_FLAGS}  -I${DACE_SMI_DIR}/include)
+
+
 
   	# TODO parse optional arguments (dace.conf?)
     set(EXTRA_ARGS ${ARGN})
@@ -415,7 +420,6 @@ if(DACE_ENABLE_INTELFPGA)
 
     #TODO Find a way to add the topology file
     #For the moment being I generate a dummy topology file
-
    	set(TOPOLOGY_FILE topology.json)
     SET(DACE_KERNEL_NAMES_WE_LIST)
     foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
@@ -440,6 +444,7 @@ if(DACE_ENABLE_INTELFPGA)
       set(DACE_KERNEL_GENERATED_PATH ${DACE_KERNEL_BIN_DIR}/${DACE_KERNEL_NAME})
       set(SMI_GENERATED_PATH ${DACE_KERNEL_SRC_DIR}/smi_generated_device.cl)
 
+
       file(RELATIVE_PATH KERNEL_GENERATED_RELATIVE ${DACE_KERNEL_SRC_DIR} ${DACE_KERNEL_FILE})
 
       set(KERNEL_TARGET ${TARGET_NAME}_${DACE_KERNEL_NAME}_codegen_device)
@@ -456,7 +461,7 @@ if(DACE_ENABLE_INTELFPGA)
       add_custom_target(${KERNEL_TARGET}
           COMMAND python3
               ${SMI_SCRIPT} codegen-device
-              --include '${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/../runtime/include ${CMAKE_SOURCE_DIR}/../external/SMI/include ${CMAKE_CURRENT_BINARY_DIR}'
+              --include '${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/../runtime/include ${DACE_SMI_DIR}/include ${CMAKE_CURRENT_BINARY_DIR}'
               --consecutive-read-limit '${OPT_CONSECUTIVE_READS}'
               --max-ranks '${OPT_MAX_RANKS}'
               --p2p-rendezvous '${OPT_P2P_RENDEZVOUS}'
@@ -469,13 +474,13 @@ if(DACE_ENABLE_INTELFPGA)
               ${KERNEL_GENERATED_RELATIVE}
           WORKING_DIRECTORY ${WORKDIR}
       )
+
       add_dependencies(${KERNEL_TARGET} rewriter generate_topology_file)
-      message("Kernel binary directory: ${DACE_KERNEL_BIN_DIR}")
       # compile FPGA code
       set(FPGA_SRC_FILES "${SMI_GENERATED_PATH};${DACE_KERNEL_GENERATED_PATH}")
 
       # generate report
-      set(FPGA_REPORT_TARGET intelfpga_report_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE})
+      set(FPGA_REPORT_TARGET intelfpga_smi_report_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE})
       add_custom_target(${FPGA_REPORT_TARGET}
               COMMAND ${IntelFPGAOpenCL_AOC} ${DACE_AOC_BUILD_FLAGS} ${FPGA_SRC_FILES} -rtl -report
               WORKING_DIRECTORY ${DACE_KERNEL_BIN_DIR}
@@ -483,7 +488,7 @@ if(DACE_ENABLE_INTELFPGA)
       add_dependencies(${FPGA_REPORT_TARGET} ${KERNEL_TARGET})
 
       # build hardware
-      set(FPGA_BUILD_TARGET intelfpga_compile_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE}_hardware)
+      set(FPGA_BUILD_TARGET intelfpga_smi_compile_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE}_hardware)
       add_custom_target(${FPGA_BUILD_TARGET}
           COMMAND ${IntelFPGAOpenCL_AOC} ${DACE_AOC_BUILD_FLAGS} ${FPGA_SRC_FILES}
           WORKING_DIRECTORY ${KERNEL_BIN_DIR}
@@ -492,7 +497,7 @@ if(DACE_ENABLE_INTELFPGA)
     endforeach()
 
     # generate routing
-    set(ROUTING_TARGET intelfpga_routing_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE})
+    set(ROUTING_TARGET intelfpga_smi_routing_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE})
     add_custom_target(${ROUTING_TARGET}
             COMMAND python3
                 ${SMI_SCRIPT} route
@@ -505,9 +510,9 @@ if(DACE_ENABLE_INTELFPGA)
         add_dependencies(${ROUTING_TARGET} ${TARGET})
     endforeach()
 
-    # generate host code
-    set(HOST_GENERATED_TARGET intelfpga_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE}_codegen_host)
-    set(SMI_HOST_GENERATED_PATH ${WORKDIR}/smi_generated_host.c)
+    # generate host code in the src directory
+    set(HOST_GENERATED_TARGET intelfpga_smi_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE}_codegen_host)
+    set(SMI_HOST_GENERATED_PATH ${DACE_SRC_DIR}/intel_fpga_smi/host/smi_generated_host.c)
     add_custom_target(${HOST_GENERATED_TARGET}
             COMMAND python3
                 ${SMI_SCRIPT} codegen-host
@@ -517,7 +522,8 @@ if(DACE_ENABLE_INTELFPGA)
     )
     add_dependencies(${HOST_GENERATED_TARGET} ${ROUTING_TARGET})
 
-    # TODO
+    # TODO:
+    # - includere directory smi_routes
     # compile host code
     # set(HOST_TARGET ${DACE_PROGRAM_NAME}_host)
     # add_executable(${HOST_TARGET} ${HOST_SOURCE})
@@ -527,7 +533,7 @@ if(DACE_ENABLE_INTELFPGA)
     # add_dependencies(${HOST_TARGET} ${HOST_GENERATED_TARGET})
 
     # generate emulation
-    set(EMULATOR_TARGET intelfpga_compile_${DACE_PROGRAM_NAME}_emulator)
+    set(EMULATOR_TARGET intelfpga_smi_compile_${DACE_PROGRAM_NAME}_emulator)
     list(LENGTH DACE_INTELFPGA_KERNEL_FILES KERNELS_LENGTH)
     add_custom_target(${EMULATOR_TARGET})
 

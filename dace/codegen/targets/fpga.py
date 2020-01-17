@@ -1280,7 +1280,6 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
             .format(
                 host_function_name=host_function_name,
                 kernel_args_opencl=", ".join(kernel_args_opencl)))
-
         header_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
             host_function_name, ", ".join(kernel_args_opencl)))
 
