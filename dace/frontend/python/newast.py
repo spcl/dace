@@ -3531,8 +3531,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
             name = rname(node)
             true_name = defined_vars[name]
+
+            # If this subscript originates from an external array, create the
+            # subset in the edge going to the connector, as well as a local
+            # reference to the subset
             if (true_name not in self.sdfg.arrays
-                    or self.sdfg.arrays[true_name].transient is False):
+                    and isinstance(node.value, ast.Name)):
                 true_node = copy.deepcopy(node)
                 true_node.value.id = true_name
                 rng = dace.subsets.Range(
