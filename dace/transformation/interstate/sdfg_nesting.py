@@ -75,7 +75,7 @@ class InlineSDFG(pattern_matching.Transformation):
                         return False
                     if (node.data in in_connectors and any(
                             e.dst.data in all_connectors
-                            for e in nstate.out_edges
+                            for e in nstate.out_edges(node)
                             if isinstance(e.dst, nodes.AccessNode))):
                         return False
 
