@@ -2227,16 +2227,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     add_indirection_subgraph(self.sdfg, state, read_node,
                                              internal_node, memlet, conn, self)
                     continue
-                # if (memlet.data, memlet.subset, 'w') in self.accesses:
-                #     vname = self.accesses[(memlet.data, memlet.subset, 'w')][0]
-                #     memlet = dace.Memlet.from_array(vname, self.sdfg.arrays[vname])
-                # elif (memlet.data, memlet.subset, 'r') in self.accesses:
-                #     vname = self.accesses[(memlet.data, memlet.subset, 'r')][0]
-                #     memlet = dace.Memlet.from_array(vname, self.sdfg.arrays[vname])
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
-                    scope_memlet = propagate_memlet(state, memlet, entry_node,
-                                                    True, arr)
+                    if entry_node:
+                        scope_memlet = propagate_memlet(
+                            state, memlet, entry_node, True, arr)
+                    else:
+                        scope_memlet = copy.deepcopy(memlet)
                     irng = memlet.subset
                     orng = copy.deepcopy(scope_memlet.subset)
                     outer_indices = []
@@ -2260,10 +2257,11 @@ class ProgramVisitor(ExtNodeVisitor):
                         memlet = Memlet.simple(vname, str(irng))
                     else:
                         name = memlet.data
-                        vname = "{c}_in_from_{s}_{n}".format(
+                        vname = "{c}_in_from_{s}{n}".format(
                             c=conn,
                             s=self.sdfg.nodes().index(state),
-                            n=state.node_id(entry_node))
+                            n=('_%s' % state.node_id(entry_node)
+                               if entry_node else ''))
                         self.accesses[(name, scope_memlet.subset,
                                        'r')] = (vname, orng)
                         orig_shape = orng.size()
@@ -2333,14 +2331,17 @@ class ProgramVisitor(ExtNodeVisitor):
                     if exit_node is None:
                         write_node = state.add_write(memlet.data)
                     add_indirection_subgraph(self.sdfg, state, internal_node,
-                                             exit_node, memlet, conn, self,
+                                             write_node, memlet, conn, self,
                                              True)
                     continue
                 inner_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
-                    scope_memlet = propagate_memlet(state, memlet, entry_node,
-                                                    True, arr)
+                    if entry_node:
+                        scope_memlet = propagate_memlet(
+                            state, memlet, entry_node, True, arr)
+                    else:
+                        scope_memlet = copy.deepcopy(memlet)
                     irng = memlet.subset
                     orng = copy.deepcopy(scope_memlet.subset)
                     outer_indices = []
@@ -2361,10 +2362,11 @@ class ProgramVisitor(ExtNodeVisitor):
                         inner_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
-                        vname = "{c}_out_of_{s}_{n}".format(
+                        vname = "{c}_out_of_{s}{n}".format(
                             c=conn,
                             s=self.sdfg.nodes().index(state),
-                            n=state.node_id(exit_node))
+                            n=('_%s' % state.node_id(exit_node)
+                               if exit_node else ''))
                         self.accesses[(name, scope_memlet.subset,
                                        'w')] = (vname, orng)
                         orig_shape = orng.size()
@@ -3149,8 +3151,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
             argdict = {
-                conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
-                for conn, arg in args if arg in self.sdfg.arrays
+                conn: Memlet.from_array(arg, self.defined[arg])
+                for conn, arg in args if arg in self.defined
             }
             inputs = {
                 k: v
@@ -3203,7 +3205,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Map internal SDFG symbols to external symbols (find_and_replace?)
             for aname, arg in args:
-                if arg in self.sdfg.arrays:
+                if arg in self.defined:
                     continue
                 if arg in self.sdfg.symbols or not isinstance(arg, str):
                     sdfg.replace(aname, arg)
