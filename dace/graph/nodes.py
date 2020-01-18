@@ -868,13 +868,13 @@ class Reduce(Node):
     def __init__(self,
                  wcr,
                  axes,
-                 wcr_identity=None,
+                 identity=None,
                  schedule=dtypes.ScheduleType.Default,
                  debuginfo=None):
         super(Reduce, self).__init__()
         self.wcr = wcr  # type: ast._Lambda
         self.axes = axes
-        self.identity = wcr_identity
+        self.identity = identity
         self.schedule = schedule
         self.debuginfo = debuginfo
 

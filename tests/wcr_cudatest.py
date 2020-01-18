@@ -163,7 +163,7 @@ def create_test_sdfg():
     BETA = state.add_access('BETA')
 
     beta_max_reduce = state.add_reduce(
-        wcr="lambda a, b: max(a, b)", axes=(0, ), wcr_identity=-999999)
+        wcr="lambda a, b: max(a, b)", axes=(0, ), identity=-999999)
     state.add_edge(BETA, None, beta_max_reduce, None,
                    dace.memlet.Memlet.simple(BETA.data, '0:10'))
     state.add_edge(beta_max_reduce, None, BETA_MAX, None,

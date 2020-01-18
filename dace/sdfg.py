@@ -2964,7 +2964,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             self,
             wcr,
             axes,
-            wcr_identity=None,
+            identity=None,
             schedule=dtypes.ScheduleType.Default,
             debuginfo=None,
     ):
@@ -2972,7 +2972,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :param wcr: A lambda function representing the reduction operation
             :param axes: A tuple of axes to reduce the input memlet from, or
                          None for all axes
-            :param wcr_identity: If not None, initializes output memlet values
+            :param identity: If not None, initializes output memlet values
                                  with this value
             :param schedule: Reduction schedule type
 
@@ -2980,7 +2980,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """
         debuginfo = getdebuginfo(debuginfo)
         result = nd.Reduce(
-            wcr, axes, wcr_identity, schedule, debuginfo=debuginfo)
+            wcr, axes, identity, schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
