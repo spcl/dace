@@ -243,8 +243,9 @@ class PAPIInstrumentation(InstrumentationProvider):
 
             # Define the performance store (autocleanup on destruction)
             local_stream.write(
-                'dace_perf::PAPI::init();\n' + 'dace_perf::%s __perf_store;\n'
-                % PAPIInstrumentation.perf_counter_store_string(
+                'dace::perf::PAPI::init();\n' +
+                'dace::perf::%s __perf_store;\n' %
+                PAPIInstrumentation.perf_counter_store_string(
                     PAPISettings.perf_default_papi_counters()), sdfg)
 
             if PAPISettings.perf_enable_overhead_collection():
@@ -254,7 +255,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
             if PAPISettings.perf_max_scope_depth() == -1:
                 local_stream.write(
-                    ("dace_perf::%s __perf_global;\n" +
+                    ("dace::perf::%s __perf_global;\n" +
                      "__perf_store.markSuperSectionStart(-1);\n" +
                      "__perf_store.markSectionStart(-1, 0, 0, 0);\n" +
                      "auto& __perf_global_vs = __perf_store.getNewValueSet(__perf_global, -1, 0, 0);\n"
@@ -343,8 +344,8 @@ class PAPIInstrumentation(InstrumentationProvider):
             [src_node, dst_node],
         )
         local_stream.write(
-            ("dace_perf::{pcs} __perf_cpy_{nodeid}_{unique_id};\n" +
-             "auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(__perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, dace_perf::ValueSetType::Copy);\n"
+            ("dace::perf::{pcs} __perf_cpy_{nodeid}_{unique_id};\n" +
+             "auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(__perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, dace::perf::ValueSetType::Copy);\n"
              + "__perf_cpy_{nodeid}_{unique_id}.enterCritical();\n").format(
                  pcs=PAPIInstrumentation.perf_counter_string(dst_node),
                  nodeid=node_id,
@@ -386,7 +387,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         if isinstance(node, nodes.Tasklet):
             inner_stream.write(
-                "dace_perf::%s __perf_%s;\n" %
+                "dace::perf::%s __perf_%s;\n" %
                 (PAPIInstrumentation.perf_counter_string(node), node.label),
                 sdfg,
                 state_id,
@@ -686,7 +687,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
             # Generate a thread locker (could be used for dependency injection)
             result.write(
-                "dace_perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id,
+                "dace::perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id,
                 sdfg,
                 state_id,
                 node,
@@ -706,7 +707,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                     unified_id,
                     "__perf_tlp_{id}.getAndIncreaseCounter()".format(
                         id=unified_id),
-                    core_str="dace_perf::getThreadID()",
+                    core_str="dace::perf::getThreadID()",
                 ),
                 sdfg,
                 state_id,
@@ -1314,7 +1315,7 @@ class PAPIInstrumentation(InstrumentationProvider):
                                               core_str="PAPI_thread_id()"):
         pcs = PAPIInstrumentation.perf_counter_string(node)
         return (
-            'dace_perf::{counter_str} __perf_{id};\n' +
+            'dace::perf::{counter_str} __perf_{id};\n' +
             'auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});\n'
             + '__perf_{id}.enterCritical();\n').format(
                 counter_str=pcs, id=unified_id, it=iteration, core=core_str)

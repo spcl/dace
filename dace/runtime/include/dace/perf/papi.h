@@ -1,9 +1,10 @@
-#pragma once
+#ifndef __DACE_PERF_PAPI_H
+#define __DACE_PERF_PAPI_H
 
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <papi.h>
+
 #include <string>
 #include <future>
 #include <mutex>
@@ -15,22 +16,25 @@
 #include <chrono>
 #include <array>
 
+// PAPI-specific instrumentation
+#include <papi.h>
 #ifdef __WIN32__
 #include <processthreadsapi.h>
 #endif
 
-
 #ifdef __x86_64__ // We don't support i386 (macro: __i386__)
-#ifdef __GNUC__
-#include <x86intrin.h>
-#define DACE_PERF_mfence _mm_mfence()
+  #ifdef __GNUC__
+    #include <x86intrin.h>
+    #define DACE_PERF_mfence _mm_mfence()
+  #else
+    // Left #TODO for other compilers
+    #define DACE_PERF_mfence /* Default: NO FENCE AVAILABLE*/
+  #endif
+#elif defined(_WIN64)
+  #include <windows.h>
+  #define DACE_PERF_mfence MemoryBarrier()
 #else
-// Left #TODO for other compilers
-#define DACE_PERF_mfence /* Default: NO FENCE AVAILABLE*/
-
-#endif
-#else
-#define DACE_PERF_mfence /* Default: NO FENCE AVAILABLE*/
+  #define DACE_PERF_mfence /* Default: NO FENCE AVAILABLE*/
 #endif
 
 #ifndef DACE_INSTRUMENTATION_FAST_AND_DANGEROUS
@@ -58,10 +62,8 @@
 #define DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD 0.5f
 #endif
 
-//#define ASSIGN_COMPONENT // Assigns the component explicitly. This should not be enabled for 2 reasons: 1) PAPI_start() already does this, and 2) there might be a tiny to medium overhead when enabling twice
-namespace dace_perf
-{
-
+namespace dace {
+namespace perf {
     constexpr uint32_t invalid_node_id = std::numeric_limits<uint32_t>::max();
 
 void logError(const std::string& str) 
@@ -257,7 +259,7 @@ public:
     {
         // Notify the blocking threads
 
-        std::cout << "Releasing thread " << dace_perf::getThreadID() << std::endl;
+        std::cout << "Releasing thread " << dace::perf::getThreadID() << std::endl;
         m_ctx.notified = true;
         m_ctx.cond_var.notify_one();
     }
@@ -316,10 +318,10 @@ public:
     {
         // Parameter is implicit through std::this_thread (or equivalent)
 
-        const auto thread_id = dace_perf::getThreadID();
+        const auto thread_id = dace::perf::getThreadID();
 
         // Lock it
-        dace_perf::lockThreadID(thread_id);
+        dace::perf::lockThreadID(thread_id);
 
         std::cout << "Running on thread " << thread_id << std::endl;
         
@@ -889,17 +891,10 @@ public:
         }
         #endif
 
-        #ifdef ASSIGN_COMPONENT
-        // We need this because multiplexing will otherwise act up.
-        // Issue is that if we don't do it in the general case as well, the starting will take longer. It's not really a good solution to put it here, though.
-        PAPI_assign_eventset_component(m_event_set, 0);
-        #endif
         if(multiplexing)
         {
-            #ifndef ASSIGN_COMPONENT
             // We need this because multiplexing will otherwise act up.
             PAPI_assign_eventset_component(m_event_set, 0);
-            #endif
             this->enable_multiplexing();
         }
         int evarr[] = {events...};
@@ -1112,4 +1107,7 @@ private:
     bool m_finished;
 };
 
-};
+}  // namespace perf
+}  // namespace dace
+
+#endif  // __DACE_PERF_PAPI_H
