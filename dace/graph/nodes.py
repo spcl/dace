@@ -172,7 +172,7 @@ class AccessNode(Node):
         desc="Type of access to this array",
         default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo2 = DebugInfoProperty()
+    debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
     def __init__(self,
@@ -182,7 +182,7 @@ class AccessNode(Node):
         super(AccessNode, self).__init__()
 
         # Properties
-        self.debuginfo2 = debuginfo
+        self.debuginfo = debuginfo
         self.access = access
         if not isinstance(data, str):
             raise TypeError('Data for AccessNode must be a string')
@@ -201,7 +201,7 @@ class AccessNode(Node):
         node._setzero = self._setzero
         node._in_connectors = self._in_connectors
         node._out_connectors = self._out_connectors
-        node.debuginfo2 = dcpy(self.debuginfo2)
+        node.debuginfo = dcpy(self.debuginfo)
         return node
 
     @property
