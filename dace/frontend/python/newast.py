@@ -1746,6 +1746,10 @@ class ProgramVisitor(ExtNodeVisitor):
             k: self.sdfg.arrays[v]
             for k, v in self.variables.items() if v in self.sdfg.arrays
         })
+        result.update({
+            v: self.sdfg.arrays[v]
+            for _, v in self.variables.items() if v in self.sdfg.arrays
+        })
         # TODO: Is there a case of a variable-symbol?
         result.update({
             k: self.sdfg.symbols[v]
