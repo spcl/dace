@@ -2940,13 +2940,16 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data = None
             if not true_name:
-                if result in self.sdfg.arrays:
+                if (result in self.sdfg.arrays and
+                    not self.sdfg.arrays[result].transient):
                     result_data = self.sdfg.arrays[result]
                     true_name, new_data = _add_transient_data(self.sdfg,
                                                               result_data)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
                 else:
+                    self.variables[name] = result
+                    defined_vars[name] = result
                     continue
 
             if new_data:
@@ -3202,16 +3205,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
                     (type(func).__name__, funcname))
 
-            # Make sure that any scope vars in the arguments are substituted
-            # by an access.
-            for i, (aname, arg) in enumerate(args):
-                if arg not in self.sdfg.arrays:
-                    newarg = self._add_read_access(
-                        arg,
-                        dace.subsets.Range.from_array(self.scope_arrays[arg]),
-                        node)
-                    args[i] = (aname, newarg)
-
             # Change transient names
             for arrname, array in sdfg.arrays.items():
                 if array.transient and arrname[:5] == '__tmp':
@@ -3227,6 +3220,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(arg, ast.Subscript):
                     slice_state = self.last_state
                     break
+            
+            # Make sure that any scope vars in the arguments are substituted
+            # by an access.
+            for i, (aname, arg) in enumerate(args):
+                if arg not in self.sdfg.arrays:
+                    newarg = self._add_read_access(
+                        arg,
+                        dace.subsets.Range.from_array(self.scope_arrays[arg]),
+                        node)
+                    args[i] = (aname, newarg)
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
             argdict = {
@@ -3259,20 +3262,20 @@ class ProgramVisitor(ExtNodeVisitor):
                         access_value = self._add_write_access(
                             name, rng, node, new_name=vname)
                         memlet.data = vname
+                    # Delete the old read descriptor
+                    conn_used = False
+                    for s in self.sdfg.nodes():
+                        for n in s.data_nodes():
+                            if n.data == aname:
+                                conn_used = True
+                                break
+                        if conn_used:
+                            break
+                    if not conn_used:
+                        del self.sdfg.arrays[aname]
                 if aname in self.inputs.keys():
                     # Delete input
                     del self.inputs[aname]
-                # Delete the old read descriptor
-                conn_used = False
-                for state in self.sdfg.nodes():
-                    for n in state.data_nodes():
-                        if n.data == aname:
-                            conn_used = True
-                            break
-                    if conn_used:
-                        break
-                if not conn_used:
-                    del self.sdfg.arrays[aname]
                 # Delete potential input slicing
                 if slice_state:
                     for n in slice_state.nodes():
