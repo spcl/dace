@@ -149,7 +149,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                                                          code=code)
                     for (name, code) in self._host_codes
                 ])))
-            host_code.write("""void __dace_init_intel_fpga() {{
+            host_code.write("""DACE_EXPORTED void __dace_exit_intel_fpga() {{
     CHECK_MPI(MPI_Barrier(MPI_COMM_WORLD));
     CHECK_MPI(MPI_Finalize());
 }}""")
@@ -213,7 +213,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if remote:
             # remote streams (SMI transient channels) are not top-level entities
             if not self.enable_smi:
-                kernel_stream.write("#include <smi.h>\n\n")
+                #function_stream.write("#include <smi.h>\n\n")
                 self.enable_smi = True
 
         else:
@@ -446,10 +446,13 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                                  callsite_stream):
 
         state_id = sdfg.node_id(state)
+        kernel_stream_header = CodeIOStream()
+        kernel_stream_body = CodeIOStream()
 
-        kernel_stream.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
-        self.generate_constants(sdfg, kernel_stream)
-        kernel_stream.write("\n", sdfg)
+        kernel_stream_header.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
+        self.generate_constants(sdfg, kernel_stream_header)
+
+        kernel_stream_header.write("\n", sdfg)
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
@@ -464,14 +467,15 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         host_code_body_stream = CodeIOStream()
 
         # Emit allocations of inter-kernel memories
+        # TODO: handle remote stream here
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream, kernel_stream)
+                                               callsite_stream, kernel_stream_body)
             self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
                                                  callsite_stream,
-                                                 kernel_stream)
+                                                 kernel_stream_body)
 
-        kernel_stream.write("\n")
+        kernel_stream_body.write("\n")
 
         # Generate host code
         self.generate_host_function_boilerplate(
@@ -489,10 +493,15 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
-                              symbol_parameters, kernel_stream,
+                              symbol_parameters, kernel_stream_body,
                               host_code_header_stream, host_code_body_stream)
 
-        kernel_stream.write("\n")
+        kernel_stream_body.write("\n")
+
+        if self.enable_smi:
+            kernel_stream_header.write("#include <smi.h>\n")
+
+        kernel_stream.write(kernel_stream_header.getvalue() + kernel_stream_body.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state,
                                              host_code_body_stream)
@@ -653,6 +662,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         data_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
+        #TODO: stream should be in both top level transient and parameters
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.graph.nodes.AccessNode):
@@ -940,22 +950,20 @@ __kernel void \\
                 if is_output and isinstance(
                         dst_node.desc(sdfg),
                         dace.data.Stream) and dst_node.desc(sdfg).remote:
-                    #TODO: implement correct opening. Handle communicator rank and ports
-                    result += "SMI_Comm comm;"  # TMP
+                    #TODO: implement correct opening. Handle  rank and ports
                     dest_rank = 1
                     port = 0
-                    result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, comm);".format(
+                    result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], dest_rank, port)
                 elif not is_output and isinstance(
                         src_node.desc(sdfg),
                         dace.data.Stream) and src_node.desc(sdfg).remote:
                     # remote input stream, open the corresponding transient channel
-                    #TODO handle communicator, rank and ports
-                    result += "SMI_Comm comm;"  # TMP
+                    #TODO handle rank and ports
                     rcv_rank = 0
                     port = 0
-                    result += "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, comm);".format(
+                    result += "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port)
                 else:

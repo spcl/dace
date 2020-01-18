@@ -233,6 +233,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
                                for e in state.out_edges(n)]
             # Find other data nodes that are used internally
+
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.graph.nodes.AccessNode):
                     # Add nodes if they are outer-level, or an inner-level
@@ -252,6 +253,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                 ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
+
             subgraph_parameters[subgraph] = []
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
@@ -282,6 +284,15 @@ class FPGACodeGen(TargetCodeGenerator):
                             # Resolve the data to some corresponding node to be
                             # passed to the allocator
                             top_level_local_data.append(dataname)
+                        else:
+                            # TODO: not sure about this. To detect SMI usage, we need to generate the code
+                            # And we need to do this before host functions are generated.
+                            # Currently we generate separe SDFG for each program and therefore remote stream
+                            # will be not shared entities
+                            if isinstance(data, dace.data.Stream) and data.remote:
+                               top_level_local_data.append(dataname)
+                               subgraph_parameters[subgraph].append(
+                                   (is_output, dataname, data))
                     else:
                         raise ValueError("Unsupported storage type: {}".format(
                             data.storage))
@@ -1197,7 +1208,6 @@ class FPGACodeGen(TargetCodeGenerator):
                          symbol_parameters, module_stream, entry_stream,
                          host_stream):
         """Main entry function for generating a Xilinx kernel."""
-
         # Module generation
         for subgraph in subgraphs:
             # Traverse to find first tasklets reachable in topological order

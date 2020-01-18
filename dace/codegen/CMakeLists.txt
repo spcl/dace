@@ -409,12 +409,12 @@ if(DACE_ENABLE_INTELFPGA)
     set(KERNEL_TARGETS)             # list of targets (one per program)
     set(FPGA_SOURCES)               # list of transformed user device files (one per program)
     set(FPGA_GENERATED_SOURCES)     # list of generated device files (one per program)
+    set(SMI_HOST_CODEGEN_TARGETS)   # list of host based targets
 
     #TODO define NUM_RANKS
-    set(NUM_RANKS 8)
+    set(NUM_RANKS 2)
 
-    set(WORKDIR ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME})
-
+    set(WORKDIR ${CMAKE_CURRENT_BINARY_DIR}/)
     file(MAKE_DIRECTORY ${WORKDIR})
 
 
@@ -439,15 +439,15 @@ if(DACE_ENABLE_INTELFPGA)
       get_filename_component(DACE_KERNEL_NAME_WE ${DACE_KERNEL_FILE} NAME_WE)
       get_filename_component(DACE_KERNEL_SRC_DIR ${DACE_KERNEL_FILE} DIRECTORY)
 
-	  	string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
-	  	set(DACE_KERNEL_BIN_DIR ${WORKDIR}/${KERNEL_NAME})
+	  string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
+	  set(DACE_KERNEL_BIN_DIR ${WORKDIR}/${KERNEL_NAME})
       set(DACE_KERNEL_GENERATED_PATH ${DACE_KERNEL_BIN_DIR}/${DACE_KERNEL_NAME})
       set(SMI_GENERATED_PATH ${DACE_KERNEL_SRC_DIR}/smi_generated_device.cl)
 
 
       file(RELATIVE_PATH KERNEL_GENERATED_RELATIVE ${DACE_KERNEL_SRC_DIR} ${DACE_KERNEL_FILE})
 
-      set(KERNEL_TARGET ${TARGET_NAME}_${DACE_KERNEL_NAME}_codegen_device)
+      set(KERNEL_TARGET ${DACE_KERNEL_NAME_WE}_codegen_device)
       set(KERNEL_METADATA ${DACE_KERNEL_NAME_WE}.json)
       list(APPEND PROGRAM_METADATA ${WORKDIR}/${KERNEL_METADATA})
       list(APPEND KERNEL_TARGETS ${KERNEL_TARGET})
@@ -521,6 +521,7 @@ if(DACE_ENABLE_INTELFPGA)
             WORKING_DIRECTORY ${WORKDIR}
     )
     add_dependencies(${HOST_GENERATED_TARGET} ${ROUTING_TARGET})
+    set(${SMI_HOST_CODEGEN_TARGETS} ${SMI_HOST_CODEGEN_TARGETS} ${HOST_GENERATED_TARGET})
 
     # TODO:
     # - includere directory smi_routes
@@ -618,6 +619,7 @@ endif()
 # Create DaCe library file 
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} ${DACE_LIBS})
+
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
