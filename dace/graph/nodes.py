@@ -590,7 +590,6 @@ class Map(object):
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
-    is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
     debuginfo = DebugInfoProperty()
@@ -610,7 +609,6 @@ class Map(object):
                  ndrange,
                  schedule=dtypes.ScheduleType.Default,
                  unroll=False,
-                 is_async=False,
                  flatten=False,
                  fence_instrumentation=False,
                  debuginfo=None):
@@ -620,7 +618,6 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.is_async = is_async
         self.flatten = flatten
         self.params = params
         self.range = ndrange

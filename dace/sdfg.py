@@ -1192,7 +1192,7 @@ subgraph cluster_state_{state} {{
 
     # Dynamic SDFG creation API
     ##############################
-    def add_state(self, label=None, is_start_state=False):
+    def add_state(self, label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state to this graph and returns it.
             :param label: State label.
             :param is_start_state: If True, resets SDFG starting state to this

@@ -352,8 +352,8 @@ class MapReduceFusion(pm.Transformation):
             omap = nodes.Map(
                 tmap.label + '_nonreduce',
                 [p for i, p in enumerate(tmap.params) if i in perm_outer],
-                [r for i, r in enumerate(tmap.range) if i in perm_outer],
-                tmap.schedule, tmap.unroll, tmap.is_async)
+                [r for i, r in enumerate(tmap.range)
+                 if i in perm_outer], tmap.schedule, tmap.unroll)
             tmap.params = [
                 p for i, p in enumerate(tmap.params) if i in perm_inner
             ]
