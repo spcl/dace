@@ -35,6 +35,59 @@ class ProgramVisitor:
     pass
 
 
+class AddTransientMethods(object):
+    """ A management singleton for methods that add transient data to SDFGs. """
+
+    _methods = {}
+
+    @staticmethod
+    def get(datatype):
+        """ Returns a method. """
+        if datatype not in AddTransientMethods._methods:
+            return None
+        return AddTransientMethods._methods[datatype]
+
+
+@dtypes.paramdec
+def specifies_datatype(func: Callable[[Any, data.Data], Tuple[str, data.Data]],
+                       datatype=None):
+    AddTransientMethods._methods[datatype] = func
+    return func
+
+
+@specifies_datatype(datatype=data.Scalar)
+def _method(sdfg:SDFG, sample_data: data.Scalar):
+    name = sdfg.temp_data_name()
+    new_data = sdfg.add_scalar(name, sample_data.dtype, transient=True)
+    return name, new_data
+
+
+@specifies_datatype(datatype=data.Array)
+def _method(sdfg:SDFG, sample_data: data.Array):
+    name, new_data = sdfg.add_temp_transient(sample_data.shape,
+                                             sample_data.dtype)
+    return name, new_data
+
+
+@specifies_datatype(datatype=data.Stream)
+def _method(sdfg:SDFG, sample_data: data.Stream):
+    name = sdfg.temp_data_name()
+    new_data = sdfg.add_stream(name, sample_data.dtype,
+                               buffer_size=sample_data.buffer_size,
+                               shape=sample_data.shape, transient=True)
+    return name, new_data
+
+
+def _add_transient_data(sdfg: SDFG, sample_data: data.Data):
+    """ Adds to the sdfg transient data of the same dtype, shape and other
+        parameters as sample_data. """
+    try:
+        func = AddTransientMethods._methods[type(sample_data)]
+        return func(sdfg, sample_data)
+    except KeyError:
+        raise NotImplementedError
+
+
 ##############################################################################
 # Python function replacements ###############################################
 ##############################################################################
@@ -2885,20 +2938,29 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target,
                     'Variable "{}" used before definition'.format(name))
 
+            new_data = None
             if not true_name:
-                self.variables[name] = result
-                defined_vars[name] = result
-                continue
+                if result in self.sdfg.arrays:
+                    result_data = self.sdfg.arrays[result]
+                    true_name, new_data = _add_transient_data(self.sdfg,
+                                                              result_data)
+                    self.variables[name] = true_name
+                    defined_vars[name] = true_name
+                else:
+                    continue
 
-            true_target = copy.deepcopy(target)
-            if isinstance(target, ast.Name):
-                true_target.id = true_name
-            elif isinstance(target, ast.Subscript):
-                true_target.value.id = true_name
-            rng = dace.subsets.Range(
-                astutils.subscript_to_slice(true_target, defined_arrays)[1])
+            if new_data:
+                rng = dace.subsets.Range.from_array(new_data)
+            else:
+                true_target = copy.deepcopy(target)
+                if isinstance(target, ast.Name):
+                    true_target.id = true_name
+                elif isinstance(target, ast.Subscript):
+                    true_target.value.id = true_name
+                rng = dace.subsets.Range(
+                    astutils.subscript_to_slice(true_target, defined_arrays)[1])
 
-            if self.nested:  # Nested SDFG
+            if self.nested and not new_data:  # Nested SDFG
                 if op:
                     rtarget = self._add_read_access(name, rng, target)
                     wtarget = self._add_write_access(name, rng, target)
