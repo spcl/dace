@@ -13,7 +13,7 @@ def my_assign(X_in : dace.float32[N], X_out : dace.float32[N]):
 
 @dace.program
 def my_func(a: dace.float32[K], b: dace.float32[M, K]):
-    for j in dace.map[0:K]:
+    for j in dace.map[0:M]:
         my_assign(a, b[j, :])
 
 
