@@ -3185,6 +3185,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     [], {k: self.sdfg.data(v)
                          for k, v in args},
                     types_only=True)
+                # Add keyword arguments to variables
+                for (k, v) in args:
+                    self.variables[k] = v
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
