@@ -3220,8 +3220,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
             argdict = {
-                conn: Memlet.from_array(arg, self.defined[arg])
-                for conn, arg in args if arg in self.defined
+                conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
+                for conn, arg in args if arg in self.sdfg.arrays
             }
             inputs = {
                 k: v
