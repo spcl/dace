@@ -14,9 +14,20 @@ before_install:
   - sudo apt-get install libpapi-dev papi-tools
 
 install:
-  - pip install .
+  - pip install ".[test]" .
+  - pip install coverage codecov
+  - pip install tensorflow==1.15.0
 
 before_script:
   - papi_avail
 
-script: NOSTATUSBAR=1 ./test_all.sh
+script:
+  - export NOSTATUSBAR=1
+  - export PYTHONPATH=`pwd`:$PYTHONPATH
+  - export COVERAGE_RCFILE=`pwd`/.coveragerc
+  - export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+  - ./test_all.sh
+  - cd tests; coverage combine . */; coverage report; coverage xml
+
+after_success:
+  - codecov
