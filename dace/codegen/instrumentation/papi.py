@@ -239,7 +239,7 @@ class PAPIInstrumentation(InstrumentationProvider):
         if sdfg.parent is None and self._papi_used:
             global_stream.write(
                 '/* DaCe instrumentation include */\n' +
-                '#include <dace/perf/instrumentation.h>\n', sdfg)
+                '#include <dace/perf/papi.h>\n', sdfg)
 
             # Define the performance store (autocleanup on destruction)
             local_stream.write(

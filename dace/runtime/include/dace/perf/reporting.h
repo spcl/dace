@@ -79,6 +79,20 @@ namespace perf {
         }
     };
 
+    extern Report report;
+
+    // Convenience functions that can be called from anywhere in the generated code
+    void ClearReport() {
+        report.reset();
+    }
+
+    void ReportValue(const char *name, double value) {
+        report.add(name, value);
+    }
+
+    void SaveReport(const char *path) {
+        report.save(path);
+    }
 
 }  // namespace perf
 }  // namespace dace
