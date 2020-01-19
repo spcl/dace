@@ -4,6 +4,7 @@
 #include <chrono>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <vector>
 
@@ -15,10 +16,19 @@ namespace perf {
      */
     class Report {
     protected:
+        std::mutex _mutex;
         std::map<std::string, std::vector<double> > _fields;
     public:
         Report() : _fields() {}
         ~Report() {}
+
+        /**
+         * Clears the report.
+         */
+        void reset() {
+            std::lock_guard<std::mutex> guard (this->_mutex);
+            _fields.clear();
+        }
 
         /**
          * Appends a single result to the report.
@@ -26,6 +36,7 @@ namespace perf {
          * @param value: Value to save.
          */
         void add(const char *name, double value) {
+            std::lock_guard<std::mutex> guard (this->_mutex);
             this->_fields[name].push_back(value);
         }
 
@@ -34,6 +45,8 @@ namespace perf {
          * @param path: Path to folder where the output JSON file will be stored.
          */
         void save(const char *path) {
+            std::lock_guard<std::mutex> guard (this->_mutex);
+
             // Create report filename
             std::stringstream ss;
             std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(
