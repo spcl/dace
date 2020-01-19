@@ -570,6 +570,9 @@ class SDFG(OrderedDiGraph):
     def parent_sdfg(self, value):
         self._parent_sdfg = value
 
+    def nodes(self) -> List['SDFGState']:
+        return super().nodes()
+
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
             thereof.
@@ -613,21 +616,19 @@ class SDFG(OrderedDiGraph):
             states, and recursive states and nodes within nested SDFGs,
             returning tuples on the form (node, parent), where the parent is
             either the SDFG (for states) or a DFG (nodes). """
-        all_nodes = []
         for node in self.nodes():
-            all_nodes.append((node, self))
-            all_nodes += node.all_nodes_recursive()
-        return all_nodes
+            yield node, self
+            yield from node.all_nodes_recursive()
 
     def all_edges_recursive(self):
         """ Iterate over all edges in this SDFG, including state edges,
             inter-state edges, and recursively edges within nested SDFGs,
             returning tuples on the form (edge, parent), where the parent is
             either the SDFG (for states) or a DFG (nodes). """
-        all_edges = [(e, self) for e in self.edges()]
+        for e in self.edges():
+            yield e, self
         for node in self.nodes():
-            all_edges += node.all_edges_recursive()
-        return all_edges
+            yield from node.all_edges_recursive()
 
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within
@@ -807,7 +808,7 @@ class SDFG(OrderedDiGraph):
             nodes in the SDFG. """
         if isinstance(node, dace.graph.nodes.Node):
             return [node]
-        all_nodes = [(self, None)] + self.all_nodes_recursive()
+        all_nodes = itertools.chain([(self, None)], self.all_nodes_recursive())
         if isinstance(node, dace.data.Data):
             resolved = [
                 n for n, _ in all_nodes
@@ -1597,7 +1598,8 @@ subgraph cluster_state_{state} {{
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def compile(self, specialize=None, optimizer=None, output_file=None):
+    def compile(self, specialize=None, optimizer=None, output_file=None) -> \
+            'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param specialize: If True, specializes all symbols to their
@@ -2225,19 +2227,17 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         return undefined_symbols(sdfg, self, include_scalar_data)
 
     def all_nodes_recursive(self):
-        all_nodes = []
         for node in self.nodes():
-            all_nodes.append((node, self))
+            yield node, self
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                all_nodes += node.sdfg.all_nodes_recursive()
-        return all_nodes
+                yield from node.sdfg.all_nodes_recursive()
 
     def all_edges_recursive(self):
-        all_edges = [(e, self) for e in self.edges()]
+        for e in self.edges():
+            yield e, self
         for node in self.nodes():
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                all_edges += node.sdfg.all_edges_recursive()
-        return all_edges
+                yield from node.sdfg.all_edges_recursive()
 
 
 # TODO: Use mixin for SDFGState and ScopeSubgraphView for scope dict
@@ -2334,6 +2334,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """
         replace(self, name, new_name)
 
+    def nodes(self) -> List[nd.Node]:
+        return super().nodes()
+
     def add_node(self, node):
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + str(type(node)) + " (" +
@@ -2379,19 +2382,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             edge.dst._in_connectors.remove(edge.dst_conn)
 
     def all_nodes_recursive(self):
-        all_nodes = []
         for node in self.nodes():
-            all_nodes.append((node, self))
+            yield node, self
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                all_nodes += node.sdfg.all_nodes_recursive()
-        return all_nodes
+                yield from node.sdfg.all_nodes_recursive()
 
     def all_edges_recursive(self):
-        all_edges = [(e, self) for e in self.edges()]
+        for e in self.edges():
+            yield e, self
         for node in self.nodes():
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                all_edges += node.sdfg.all_edges_recursive()
-        return all_edges
+                yield from node.sdfg.all_edges_recursive()
 
     def data_symbols(self):
         """ Returns all symbols used in data nodes. """
