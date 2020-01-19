@@ -106,7 +106,7 @@ class DaCeCodeGenerator(object):
         if len(self._dispatcher.instrumentation) > 0:
             global_stream.write(
                 'namespace dace { namespace perf { Report report; } }', sdfg)
-            callsite_stream.write('dace::perf::ClearReport();', sdfg)
+            callsite_stream.write('dace::perf::report.reset();', sdfg)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -133,7 +133,7 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 0:
             callsite_stream.write(
-                'dace::perf::SaveReport(".dacecache/%s/perf");' % sdfg.name)
+                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name)
 
         # Write frame code - footer
         callsite_stream.write('}\n', sdfg)
