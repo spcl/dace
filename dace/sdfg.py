@@ -429,6 +429,8 @@ class SDFG(OrderedDiGraph):
             'language': dace.dtypes.Language.CPP
         }
 
+    ##########################################
+    # Instrumentation-related methods
     def has_instrumented_parent(self):
         return self._instrumented_parent
 
@@ -436,6 +438,55 @@ class SDFG(OrderedDiGraph):
         self._instrumented_parent = (
             True
         )  # When this is set: Under no circumstances try instrumenting this (or any transitive children)
+
+    def is_instrumented(self) -> bool:
+        """ Returns True if the SDFG has performance instrumentation enabled on
+            it or any of its elements. """
+        try:
+            next(n for n, _ in self.all_nodes_recursive()
+                 if hasattr(n, 'instrument') and
+                 n.instrument != dtypes.InstrumentationType.No_Instrumentation)
+            return True
+        except StopIteration:
+            return False
+
+    def get_instrumentation_reports(self) -> \
+            List['dace.codegen.instrumentation.InstrumentationReport']:
+        """
+        Returns a list of instrumentation reports from previous runs of
+        this SDFG.
+        :return: A List of timestamped InstrumentationReport objects.
+        """
+        # Avoid import loops
+        from dace.codegen.instrumentation import InstrumentationReport
+
+        path = os.path.join('.dacecache', self.name, 'perf')
+        return [
+            InstrumentationReport(os.path.join(path, fname))
+            for fname in os.listdir(path)
+        ]
+
+    def get_latest_report(self) -> \
+            Optional['dace.codegen.instrumentation.InstrumentationReport']:
+        """
+        Returns an instrumentation report from the latest run of this SDFG, or
+        None if the file does not exist.
+        :return: A timestamped InstrumentationReport object, or None if does
+                 not exist.
+        """
+        path = os.path.join('.dacecache', self.name, 'perf')
+        files = os.listdir(path)
+        if len(files) == 0:
+            return None
+
+        # Avoid import loops
+        from dace.codegen.instrumentation import InstrumentationReport
+
+        return InstrumentationReport(
+            os.path.join(path,
+                         sorted(files, reverse=True)[0]))
+
+    ##########################################
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
