@@ -1,12 +1,10 @@
 from dace import dtypes
 from dace.graph import nodes
 from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.codegen.prettycode import CodeIOStream
 
 
 class CUDAEventProvider(InstrumentationProvider):
-    """ Timing instrumentation that prints wall-clock time directly after
-        timed execution is complete. """
+    """ Timing instrumentation that reports GPU/copy time using CUDA events. """
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
         global_stream.write('#include <cuda_runtime.h>')
@@ -53,7 +51,7 @@ cudaEventCreate(&__dace_ev_{id});'''.format(id=id)
         return '''float __dace_ms_{id} = -1.0f;
 cudaEventSynchronize(__dace_ev_e{id});
 cudaEventElapsedTime(&__dace_ms_{id}, __dace_ev_b{id}, __dace_ev_e{id});
-printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
+dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
             id=idstr, timer_name=timer_name)
 
     # Code generation hooks
@@ -75,6 +73,8 @@ printf("(CUDA) {timer_name}: %f ms\\n", __dace_ms_{id});'''.format(
             idstr = 'b' + self._idstr(sdfg, state, None)
             local_stream.write(self._create_event(idstr), sdfg, state_id)
             local_stream.write(self._record_event(idstr, 0), sdfg, state_id)
+            idstr = 'e' + self._idstr(sdfg, state, None)
+            local_stream.write(self._create_event(idstr), sdfg, state_id)
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
         state_id = sdfg.node_id(state)

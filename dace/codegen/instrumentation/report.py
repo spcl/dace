@@ -16,4 +16,5 @@ class InstrumentationReport(object):
         return 'InstrumentationReport(name=%s)' % self.name
 
     def __str__(self):
-        return 'Report %s:\n%s' % (self.name, self.entries)
+        ent = '\n'.join(['  %s: %s' % (k, v) for k, v in self.entries.items()])
+        return 'Report %s:\n%s' % (self.name, ent)
