@@ -54,7 +54,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'
     language = 'hls'
-    enable_smi = False  #indicates whether or not smi is used
+    enable_smi = False  # indicates whether or not smi is used
 
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga_vendor")
@@ -93,8 +93,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "intel_fpga", "mode")
+        # TODO: SMI names the produced binary according to the kernel name
+        # This could be useful when different programs will be generated from the same SDFG
+
         kernel_file_name = "DACE_BINARY_DIR \"/{}".format(self._program_name)
         emulation_flag = ""
+
         if execution_mode == "emulator":
             kernel_file_name += "_emulator.aocx\""
             emulation_flag = (
@@ -119,7 +123,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             # TODO: handle different contexts. Possibile solution: define it as global variable and allow
             # move operator (if it works in OpenCL)
             # TODO: handle routing dir
-
             host_code.write("""
             #include "dace/intel_fpga/smi.h"
             #include "smi_generated_host.c"
@@ -213,7 +216,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if remote:
             # remote streams (SMI transient channels) are not top-level entities
             if not self.enable_smi:
-                #function_stream.write("#include <smi.h>\n\n")
+                # function_stream.write("#include <smi.h>\n\n")
                 self.enable_smi = True
 
         else:
@@ -307,8 +310,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                    index,
                    read_expr,
                    wcr,
-                   dst_node=None,
-                   sdfg=None):
+                   data_desc=None):
         """
         Creates write expression, taking into account wcr if present.
         Optional parameters are useful if remote streams are used.
@@ -317,9 +319,10 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             redtype = operations.detect_reduction_type(wcr)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            if dst_node is not None and dst_node.desc(sdfg).remote:
-                #remote stream push
-                # TODO: this works only if read_expr is a variable. Is this ok?
+            import pdb
+            pdb.set_trace()
+            if data_desc is not None and data_desc.remote:
+                # remote stream push
                 return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
             else:
                 return "write_channel_intel({}, {});".format(
@@ -343,7 +346,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                     # use max/min opencl builtins
                     return "{}[{}] = {}{}({}[{}],{});".format(
                         write_expr, index, ("f" if type_str == "float"
-                                            or type_str == "double" else ""),
+                                                   or type_str == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
@@ -358,7 +361,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                     # use max/min opencl builtins
                     return "{} = {}{}({},{});".format(
                         write_expr, ("f" if type_str == "float"
-                                     or type_str == "double" else ""),
+                                            or type_str == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
@@ -408,7 +411,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 callsite_stream.write(
                     "{} = {}{}({}, {});".format(
                         out_var, ("f" if output_type == "float"
-                                  or output_type == "double" else ""),
+                                         or output_type == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var,
                         in_var), sdfg, state_id, node)
 
@@ -426,7 +429,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                     "{} = ({}) ? ({}) : {}{}({}, {});".format(
                         out_var, is_first_iteration, in_var,
                         ("f" if output_type == "float"
-                         or output_type == "double" else ""),
+                                or output_type == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[reduction_type], out_var,
                         in_var), sdfg, state_id, node)
 
@@ -457,7 +460,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
          nested_global_transients) = self.make_parameters(
-             sdfg, state, subgraphs)
+            sdfg, state, subgraphs)
 
         # Scalar parameters are never output
         sc_parameters = [(False, pname, param)
@@ -485,8 +488,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         # Generate SMI init if needed
         if self.enable_smi:
-            host_code_body_stream.write("SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
-                                        "hlslib::ocl::GlobalContext(), program);".format(kernel_name))
+            host_code_body_stream.write(
+                "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
+                "hlslib::ocl::GlobalContext(), program);".format(kernel_name))
 
         self.generate_host_function_prologue(sdfg, state,
                                              host_code_body_stream)
@@ -513,8 +517,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def generate_host_function_prologue(sdfg, state, host_stream):
-
-
 
         host_stream.write("std::vector<hlslib::ocl::Kernel> kernels;", sdfg,
                           sdfg.node_id(state))
@@ -571,11 +573,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 kernel_args_opencl.append("const SMI_Comm smi_comm")
                 kernel_args_call.append("smi_comm")
                 kernel_args_host.append("smi_comm")
-                #include generated host header file
-                # if not self.smi_host_included:
-                #     host_header_stream.write("#include \"smi_generated_host.c\"")
-                #     self.smi_host_included = True
-                #TODO to be finished
                 continue
 
             else:
@@ -590,7 +587,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         kernel_args_call += symbol_names
 
         module_function_name = "module_" + name
-
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_dict = subgraph.scope_dict(node_to_children=True)
@@ -628,13 +624,13 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 if start_idx != 0 or skip_idx != 1:
                     raise dace.codegen.codegen.CodegenError(
                         "Unrolled Map in {} should start from 0 and have skip equal to 1"
-                        .format(sdfg.name))
+                            .format(sdfg.name))
                 for p in range(start_idx, stop_idx + 1, skip_idx):
                     # last element in list kernel_args_call is the PE ID, but this is
                     # already written in stone in the OpenCL generated code
                     host_body_stream.write(
                         "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
-                        .format(
+                            .format(
                             module_function_name, p,
                             ", ".join([""] + kernel_args_call[:-1]) if
                             len(kernel_args_call) > 1 else ""), sdfg, state_id)
@@ -662,7 +658,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         data_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
-        #TODO: stream should be in both top level transient and parameters
+        # TODO: stream should be in both top level transient and parameters
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.graph.nodes.AccessNode):
@@ -803,8 +799,8 @@ __kernel void \\
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
+                    (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
+                     or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and not cpu.is_write_conflicted(dfg, edge)):
                 self.generate_no_dependence_post(edge.src_conn,
                                                  callsite_stream, sdfg,
@@ -950,22 +946,37 @@ __kernel void \\
                 if is_output and isinstance(
                         dst_node.desc(sdfg),
                         dace.data.Stream) and dst_node.desc(sdfg).remote:
-                    #TODO: implement correct opening. Handle  rank and ports
-                    dest_rank = 1
-                    port = 0
+                    rcv_rank = dst_node.desc(sdfg).location["rcv_rank"]
+                    port = dst_node.desc(sdfg).location["port"]
+                    if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdigit():
+                        raise dace.codegen.codegen.CodegenError(
+                            "Receiver rank for remote stream {} must be a constant, a symbol or a number".
+                                format(dst_node.label))
+                    if port not in sdfg.constants and not port.isdigit():
+                        raise dace.codegen.codegen.CodegenError(
+                            "Port for remote stream {} must be a constant or a number".
+                                format(dst_node.label))
                     result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
-                        TYPE_TO_SMI_TYPE[memlet_type], dest_rank, port)
+                        TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port)
                 elif not is_output and isinstance(
                         src_node.desc(sdfg),
                         dace.data.Stream) and src_node.desc(sdfg).remote:
                     # remote input stream, open the corresponding transient channel
-                    #TODO handle rank and ports
-                    rcv_rank = 0
-                    port = 0
+                    snd_rank = src_node.desc(sdfg).location["snd_rank"]
+                    port = src_node.desc(sdfg).location["port"]
+                    if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdigit():
+                        raise dace.codegen.codegen.CodegenError(
+                            "Sender rank for remote stream {} must be a constant, a symbol or a number".
+                                format(src_node.label))
+                    if port not in sdfg.constants and not port.isdigit():
+                        raise dace.codegen.codegen.CodegenError(
+                            "Port for remote stream {} must be a constant or a number".
+                                format(src_node.label))
+
                     result += "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
-                        TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port)
+                        TYPE_TO_SMI_TYPE[memlet_type], snd_rank, port)
                 else:
                     # Desperate times call for desperate measures
                     result += "#define {} {} // God save us".format(
@@ -1028,11 +1039,12 @@ __kernel void \\
                                        self._memory_widths[data_name],
                                        connector, None)
 
+            # TODO: it could be a problem if this comes out from a map connected to a stream
             # create write expression
             write_expr = self.make_write(dst_def_type, memlet_type, data_name,
                                          self._memory_widths[data_name],
                                          data_name, offset, read_expr,
-                                         memlet.wcr, edge.dst, sdfg)
+                                         memlet.wcr, data_desc)
 
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
@@ -1045,7 +1057,7 @@ __kernel void \\
                 else:
                     raise dace.codegen.codegen.CodegenError(
                         "Unsupported number of accesses {} for scalar {}".
-                        format(memlet.num_accesses, connector))
+                            format(memlet.num_accesses, connector))
             elif isinstance(data_desc, dace.data.Array):
                 if memlet.num_accesses == 1:
                     result += write_expr
@@ -1102,7 +1114,7 @@ __kernel void \\
             if node.language is not dtypes.Language.CPP:
                 raise ValueError(
                     "Global code only supported for C++ tasklets: got {}".
-                    format(node.language))
+                        format(node.language))
             function_stream.write(
                 type(node).__properties__["code_global"].to_string(
                     node.code_global), sdfg, state_id, node)
@@ -1113,7 +1125,7 @@ __kernel void \\
             if node.language != dtypes.Language.CPP:
                 raise ValueError(
                     "Only Python or C++ code supported in CPU codegen, got: {}"
-                    .format(node.language))
+                        .format(node.language))
             callsite_stream.write(
                 type(node).__properties__["code"].to_string(node.code), sdfg,
                 state_id, node)
@@ -1138,7 +1150,7 @@ __kernel void \\
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
         defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()
-                                                 [node]].defined_vars
+        [node]].defined_vars
 
         # Dtypes is a dictionary containing associations name -> type (ctypes)
         # Add defined variables
