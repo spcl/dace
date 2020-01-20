@@ -319,8 +319,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             redtype = operations.detect_reduction_type(wcr)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            import pdb
-            pdb.set_trace()
             if data_desc is not None and data_desc.remote:
                 # remote stream push
                 return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
