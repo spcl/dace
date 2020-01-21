@@ -113,8 +113,6 @@ class ExecutorServer:
         self._slot_available = True  # True if the target machine has a slot for running a program
 
         self._perfdata_available = {}  # Dict mapping client_id => .can-path
-        # (NOTE: We do not handle the raw data in DIODE, i.e. no perfdata.db)
-        # (this may change later)
 
         self._ticket_counter = 0
         self._command_results = {}  # Dict mapping ticket => command result
@@ -211,50 +209,11 @@ class ExecutorServer:
                     self._task_dict[cmd['index']]['state'] = 'running'
 
                 if cmd['operation'] == 'startgroup':
-                    from diode.db_scripts.db_setup import db_setup
-                    perf_tmp_dir = ExecutorServer.getPerfdataDir(cmd['cid'])
-                    perfdata_path = os.path.join(perf_tmp_dir, "perfdata.db")
-
-                    # Clean database and create tables
-                    db_setup(perf_tmp_dir)
-
+                    pass
                 elif cmd['operation'] == 'remove_group':
-                    perfdir = ExecutorServer.getPerfdataDir(cmd['cid'])
-                    perfdata_path = os.path.join(perfdir, "perfdata.db")
-                    os.remove(perfdata_path)
-                    os.rmdir(perfdir)
-
+                    pass
                 elif cmd['operation'] == 'endgroup':
-                    print("Ending group")
-                    from diode.db_scripts.sql_to_json import MergeRuns, Conserver
-                    from dace.config import Config
-
-                    config_path = cmd['config_path']
-
-                    with config_lock:
-                        Config.load(config_path)
-                        repetitions = Config.get("execution", "general",
-                                                 "repetitions")
-
-                    perf_tmp_dir = ExecutorServer.getPerfdataDir(cmd['cid'])
-                    perfdata_path = os.path.join(perf_tmp_dir, "perfdata.db")
-                    can_path = os.path.join(perf_tmp_dir, 'current.can')
-
-                    mr = MergeRuns()
-                    mr.mergev2(perfdata_path)
-                    print("Merged into " + perfdata_path)
-
-                    cons = Conserver()
-                    # TODO: Add sdfgs
-                    cons.conserveAll(
-                        perfdata_path,
-                        can_path,
-                        "",
-                        repetitions,
-                        clear_existing=False)
-
-                    print("Merged and Conserved!")
-                    self._perfdata_available[cmd['cid']] = can_path
+                    pass
 
                 with self._oplock:
                     del self._task_dict[cmd['index']]
@@ -272,61 +231,6 @@ class ExecutorServer:
             else:
                 command = cmd['cmd']
                 print("Got command " + command)
-                if command == "get_perfdata":
-                    import sqlite3
-
-                    try:
-                        conn = sqlite3.connect(
-                            self._perfdata_available[cmd['cid']])
-                    except:
-                        self._command_results[cmd[
-                            'ticket']] = "Error: Perfdata not available"
-                        print("Errored-out!")
-                        return
-
-                    querystring = "SELECT * FROM AnalysisResults "
-
-                    for_node = cmd['for_node']
-                    for_program = cmd['for_program']
-                    for_supersection = cmd['for_supersection']
-                    for_section = cmd['for_section']
-
-                    query_list = [('forUnifiedID', for_node), ('forProgram',
-                                                               for_program),
-                                  ('forSuperSection', for_supersection),
-                                  ('forSection', for_section)]
-
-                    query_values = []
-                    first = True
-                    for x in query_list:
-                        name, val = x
-                        if val is None:
-                            continue
-                        if first:
-                            querystring += " WHERE "
-                        else:
-                            querystring += " AND "
-                        first = False
-                        querystring += name + " = ?"
-                        query_values.append(val)
-
-                    querystring += ";"
-
-                    print("querystring: " + str(querystring))
-                    print("tuple: " + str(tuple(query_values)))
-
-                    c = conn.cursor()
-                    c.execute(querystring, tuple(query_values))
-
-                    result = c.fetchall()
-
-                    print("setting result for ticket " + str(cmd['ticket']))
-                    self._command_results[cmd['ticket']] = json.dumps(result)
-
-                    conn.close()
-
-                    print("Success reading database")
-
         except queue.Empty:
             return
 
@@ -461,19 +365,7 @@ class ExecutorServer:
                 with config_lock:
                     from dace.config import Config
                     Config.load(config_path)
-                    if perfmode == "noperf":
-                        Config.set(
-                            "instrumentation", "enable_papi", value=False)
-                    else:
-                        Config.set(
-                            "instrumentation", "enable_papi", value=True)
-                        Config.set(
-                            "instrumentation", "papi_mode", value=perfmode)
-                        Config.set(
-                            "instrumentation",
-                            "sql_database_file",
-                            value=ExecutorServer.getPerfdataDir(client_id) +
-                            "/perfdata.db")
+                    if perfmode != "noperf":
                         Config.set(
                             "instrumentation",
                             "thread_nums",
@@ -803,27 +695,6 @@ def compileProgram(request, language, perfopts=None):
         else:
             Config.load()
 
-        if perf_mode is not None:
-            tmp = perf_mode['mode']
-            if tmp != 'noperf':
-                Config.set(
-                    "instrumentation",
-                    "enable_papi",
-                    value=True,
-                    autosave=False)
-                Config.set(
-                    "instrumentation",
-                    "papi_mode",
-                    value=perf_mode['mode'],
-                    autosave=False)
-                print("Set perfmode to " + perf_mode['mode'])
-            else:
-                Config.set(
-                    "instrumentation",
-                    "enable_papi",
-                    value=False,
-                    autosave=False)
-
         dace_state = None
         in_sdfg = None
         if "sdfg" in request.json:
@@ -976,50 +847,6 @@ def get_transformations(sdfgs):
     return opt_per_sdfg
 
 
-@app.route(
-    "/dace/api/v1.0/<string:filegroup>/download/<string:client_id>/",
-    methods=['GET'])
-def perfdata_download(filegroup, client_id):
-    """
-        This function returns the perfdata as a download
-    """
-
-    filepath = ExecutorServer.getPerfdataDir(client_id) + (
-        "/perfdata.db" if filegroup == "perfdata" else "/current.can")
-    if not os.path.isfile(filepath):
-        print("File not existent, cannot download")
-        abort(400)
-
-    return send_file(
-        filepath,
-        "application/x-sqlite3",
-        as_attachment=True,
-        attachment_filename="perfdata.sqlite3"
-        if filegroup == "perfdata" else "current.can.sqlite3",
-        conditional=True)
-
-
-@app.route("/dace/api/v1.0/<string:filegroup>/reset/", methods=['POST'])
-def perfdata_delete(filegroup):
-    """
-        Resets (deletes) the currently accumulated perfdata.
-        POST-Parameters:
-            client_id: string. The client id
-    """
-    try:
-        client_id = request.json['client_id']
-    except:
-        print("Client id not specified, cannot continue")
-        abort(400)
-
-    filepath = ExecutorServer.getPerfdataDir(client_id) + (
-        "/perfdata.db" if filegroup == "perfdata" else "/current.can")
-    if os.path.isfile(filepath):
-        os.remove(filepath)
-
-    return Response("ok")
-
-
 @app.route("/dace/api/v1.0/perfdata/roofline/", methods=['POST'])
 def perfdata_roofline():
     """
@@ -1039,75 +866,6 @@ def perfdata_roofline():
     filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
     retdict = PAPIInstrumentation.get_roofline_data(filepath)
     return jsonify(retdict)
-
-
-@app.route("/dace/api/v1.0/perfdata/get/", methods=['POST'])
-def perfdata_query():
-    """
-        This function returns the matching Analysis results from the latest CAN.
-        NOTE: It does _not_ return the full raw result list. This differs from DIODE1 behavior
-
-        POST-Parameters:
-            client_id: string. The client id
-            analysis_name: string. The name of the queried analysis
-            for_program: string or int. The number of the queried program
-            for_node: string or int. The id of the node
-            for_supersection: string or int. The number of the queried supersection
-            for_section: string or int. The number of the queried section.
-
-            The server returns a JSON-dict of all matching values.
-            Omitting a `for_`-Parameter is allowed and excludes this parameter from the filter (matches anything).
-            The client id is required.
-
-    """
-
-    try:
-        client_id = request.json['client_id']
-    except:
-        print("Client id not specified, cannot continue")
-        abort(400)
-
-    try:
-        analysis_name = request.json['analysis_name']
-    except:
-        analysis_name = None
-    try:
-        for_program = request.json['for_program']
-    except:
-        for_program = None
-    try:
-        for_node = request.json['for_node']
-    except:
-        for_node = None
-    try:
-        for_supersection = request.json['for_supersection']
-    except:
-        for_supersection = None
-    try:
-        for_section = request.json['for_section']
-    except:
-        for_section = None
-
-    es = es_ref[0]
-
-    ticket = es.addCommand({
-        'cmd': 'get_perfdata',
-        'cid': client_id,
-        'analysis_name': analysis_name,
-        'for_program': for_program,
-        'for_node': for_node,
-        'for_supersection': for_supersection,
-        'for_section': for_section
-    })
-
-    # This should not take too long, so for now, we wait here for the executor the serve the request instead of letting the client poll another address
-
-    print("Now waiting for ticket")
-    ret = es.waitForCommand(ticket)
-    print("Got the ticket, we're done!")
-
-    # jsonify creates a response directly, so we load string => obj first
-    return jsonify(json.loads(ret))
 
 
 @app.route("/dace/api/v1.0/dispatcher/<string:op>/", methods=['POST'])

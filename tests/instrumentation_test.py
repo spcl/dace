@@ -68,6 +68,6 @@ def test_cuda_events():
 
 if __name__ == '__main__':
     test_timer()
-    #test_papi()
+    test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_cuda_events()

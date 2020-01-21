@@ -1,21 +1,6 @@
 class InstrumentationProvider(object):
     """ Instrumentation provider for SDFGs, states, scopes, and memlets. Emits
-        code on event, as well as a function that prints the report. """
-
-    @staticmethod
-    def unified_id(node_id, state_id):
-        if node_id > 0x0FFFF:
-            raise ValueError("Nodeid is too large to fit in 16 bits!")
-        if state_id > 0x0FFFF:
-            raise ValueError("Stateid is too large to fit in 16 bits!")
-        return (int(state_id) << 16) | int(node_id)
-
-    def report(self, local_stream, global_stream):
-        """ Emits an instrumentation report code.
-            :param local_stream: Code generator for the in-function code.
-            :param global_stream: Code generator for global (external) code.
-        """
-        pass
+        code on event. """
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
         """ Event called at the beginning of SDFG code generation.

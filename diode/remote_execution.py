@@ -177,32 +177,12 @@ class Executor(object):
                                             os.path.basename(dace_file))
             self.copy_file_to_remote(dace_file, remote_dace_file)
 
-            papi = PAPIUtils.is_papi_used(sdfg)
-
-            # We got the file there, now we can run with different
-            # configurations.
-            if papi:
-                multirun_num = PAPISettings.perf_multirun_num(
-                    config=self._config)
-                for iteration in range(multirun_num):
-                    optdict, omp_thread_num = PAPIUtils.get_run_options(
-                        self, iteration)
-
-                    self.remote_exec_dace(
-                        remote_workdir,
-                        remote_dace_file,
-                        use_mpi,
-                        fail_on_nonzero,
-                        omp_num_threads=omp_thread_num,
-                        repetitions=dace_state.repetitions,
-                        additional_options_dict=optdict)
-            else:
-                self.remote_exec_dace(
-                    remote_workdir,
-                    remote_dace_file,
-                    use_mpi,
-                    fail_on_nonzero,
-                    repetitions=dace_state.repetitions)
+            self.remote_exec_dace(
+                remote_workdir,
+                remote_dace_file,
+                use_mpi,
+                fail_on_nonzero,
+                repetitions=dace_state.repetitions)
 
             self.show_output("Execution Terminated\n")
 
@@ -212,14 +192,12 @@ class Executor(object):
             except RuntimeError:
                 pass
 
-            if papi:
-                # Copy back the vectorization results
-                PAPIUtils.retrieve_vectorization_report(
-                    self, code_objects, remote_dace_dir)
-
-                # Copy back the instrumentation results
-                PAPIUtils.retrieve_instrumentation_results(
-                    self, remote_workdir)
+            # Copy back the instrumentation and vectorization results
+            try:
+                self.copy_folder_from_remote(
+                    os.path.join(remote_dace_dir, 'perf'), ".")
+            except RuntimeError:
+                pass
 
             try:
                 self.remote_delete_file(remote_workdir + "/results.log")
