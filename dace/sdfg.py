@@ -233,9 +233,6 @@ class SDFG(OrderedDiGraph):
         self._symbols = {}  # type: Dict[str, dtypes.typeclass]
         self._parent_sdfg = None
         self._sdfg_list = [self]
-        self._instrumented_parent = (
-            False
-        )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = ''
@@ -431,13 +428,6 @@ class SDFG(OrderedDiGraph):
 
     ##########################################
     # Instrumentation-related methods
-    def has_instrumented_parent(self):
-        return self._instrumented_parent
-
-    def set_instrumented_parent(self):
-        self._instrumented_parent = (
-            True
-        )  # When this is set: Under no circumstances try instrumenting this (or any transitive children)
 
     def is_instrumented(self) -> bool:
         """ Returns True if the SDFG has performance instrumentation enabled on
@@ -463,7 +453,7 @@ class SDFG(OrderedDiGraph):
         path = os.path.join('.dacecache', self.name, 'perf')
         return [
             InstrumentationReport(os.path.join(path, fname))
-            for fname in os.listdir(path)
+            for fname in os.listdir(path) if fname.startswith('report-')
         ]
 
     def get_latest_report(self) -> \
@@ -475,7 +465,7 @@ class SDFG(OrderedDiGraph):
                  not exist.
         """
         path = os.path.join('.dacecache', self.name, 'perf')
-        files = os.listdir(path)
+        files = [f for f in os.listdir(path) if f.startswith('report-')]
         if len(files) == 0:
             return None
 

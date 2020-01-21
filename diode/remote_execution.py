@@ -163,17 +163,18 @@ class Executor(object):
             # to remote_dace_dir
             so_name = "lib" + dace_progname + "." + self.config_get(
                 'compiler', 'library_extension')
-            self.copy_file_from_remote(remote_dace_dir + "/build/" + so_name,
-                                       tmpfolder + "/" + so_name)
-            self.copy_file_to_remote(tmpfolder + "/" + so_name,
-                                     remote_dace_dir)
+            self.copy_file_from_remote(
+                os.path.join(remote_dace_dir, 'build', so_name),
+                os.path.join(tmpfolder, so_name))
+            self.copy_file_to_remote(
+                os.path.join(tmpfolder, so_name), remote_dace_dir)
 
             dace_file = dace_state.get_dace_tmpfile()
             if dace_file is None:
                 raise ValueError("Dace file is None!")
 
-            remote_dace_file = remote_workdir + "/" + os.path.basename(
-                dace_file)
+            remote_dace_file = os.path.join(remote_workdir,
+                                            os.path.basename(dace_file))
             self.copy_file_to_remote(dace_file, remote_dace_file)
 
             papi = PAPIUtils.is_papi_used(sdfg)
@@ -382,6 +383,14 @@ class Executor(object):
                 self.copy_folder_to_remote(src + "/" + str(subdir),
                                            dst + "/" + str(subdir))
             return
+
+    def copy_folder_from_remote(self, src: str, dst: str):
+        s = Template(self.config_get("execution", "general", "copycmd_r2l"))
+        cmd = s.substitute(
+            host=self.config_get("execution", "general", "host"),
+            srcfile="-r " + src,
+            dstfile=dst)
+        self.exec_cmd_and_show_output(cmd)
 
     def copy_file_from_remote(self, src, dst):
         s = Template(self.config_get("execution", "general", "copycmd_r2l"))

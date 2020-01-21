@@ -660,7 +660,6 @@ class ConsumeEntry(EntryNode):
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
         self._consume = consume
-        self._map_depth = 0
         self.add_in_connector('IN_stream')
         self.add_out_connector('OUT_stream')
 
