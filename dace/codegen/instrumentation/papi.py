@@ -676,7 +676,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
         if isinstance(counterlist, str):
             print("Wrong format")
             counterlist = eval(counterlist)
-        return "PAPIPerfLowLevel<" + ", ".join(counterlist) + ">"
+        return "PAPIPerf<" + ", ".join(counterlist) + ">"
 
     def perf_counter_string(self):
         """
