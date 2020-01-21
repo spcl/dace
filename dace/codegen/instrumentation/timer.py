@@ -11,7 +11,10 @@ class TimerProvider(InstrumentationProvider):
         global_stream.write('#include <chrono>')
 
         # For other file headers
-        sdfg.set_global_code(sdfg.global_code + '\n#include <chrono>')
+        if len(sdfg.global_code) == 0:
+            sdfg.set_global_code('#include <chrono>')
+        else:
+            sdfg.set_global_code(sdfg.global_code + '\n#include <chrono>')
 
     def _idstr(self, sdfg, state, node):
         if state is not None:
