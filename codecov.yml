@@ -4,3 +4,5 @@ ignore:
 coverage:
   range: 50..90
   round: nearest
+  status:
+    patch: off
