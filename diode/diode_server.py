@@ -365,24 +365,8 @@ class ExecutorServer:
                 with config_lock:
                     from dace.config import Config
                     Config.load(config_path)
-                    if perfmode != "noperf":
-                        Config.set(
-                            "instrumentation",
-                            "thread_nums",
-                            value=str(perfcores))
-
-                        # Check if perfcounters are available
-                        from dace.codegen.instrumentation.papi import PAPISettings, PerfPAPIInfo
-                        ppi = PerfPAPIInfo()
-                        ppi.load_info()
-                        if not ppi.check_counters(
-                            [PAPISettings.perf_default_papi_counters()]):
-                            yield '{"error": "PAPI Counter check failed. Either your machine does not provide the required counters or /proc/sys/kernel/perf_event_paranoid is not set correctly"}'
-                            del self._task_dict[runindex]
-                            self._slot_available = True
-                            return
-
-                    # Copy the config - this allows releasing the config lock without suffering from potential side effects
+                    # Copy the config - this allows releasing the config lock
+                    # without suffering from potential side effects
                     copied_config = ConfigCopy(Config._config)
 
                 self._slot_available = False
@@ -845,27 +829,6 @@ def get_transformations(sdfgs):
 
         opt_per_sdfg[sdfg_name] = {'matching_opts': optimizations}
     return opt_per_sdfg
-
-
-@app.route("/dace/api/v1.0/perfdata/roofline/", methods=['POST'])
-def perfdata_roofline():
-    """
-        Returns data for roofline from the accumulated data.
-        POST-Parameters:
-            client_id: string. The client id
-
-    """
-    from dace.codegen.instrumentation.papi import PAPIInstrumentation
-
-    try:
-        client_id = request.json['client_id']
-    except:
-        print("Client id not specified, cannot continue")
-        abort(400)
-
-    filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
-    retdict = PAPIInstrumentation.get_roofline_data(filepath)
-    return jsonify(retdict)
 
 
 @app.route("/dace/api/v1.0/dispatcher/<string:op>/", methods=['POST'])

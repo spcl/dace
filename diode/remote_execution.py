@@ -12,7 +12,6 @@ from dace.sdfg import SDFG
 from dace.codegen.compiler import generate_program_folder, configure_and_compile
 from dace.codegen.codegen import CodeObject
 from dace.config import Config
-from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
 
 
 def _task(obj):
@@ -83,9 +82,6 @@ class Executor(object):
 
     def run(self, dace_state, fail_on_nonzero=False):
         sdfg = dace_state.get_sdfg()
-
-        # Check counter validity
-        PAPIUtils.check_performance_counters(self)
 
         if self.remote:
             self.show_output("Executing DaCe program " + sdfg.name + " on " +
