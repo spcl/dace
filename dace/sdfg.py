@@ -2316,34 +2316,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self._debuginfo = debuginfo
         self.is_collapsed = False
         self.nosync = False
-        self._parallel_parent = (
-            None
-        )  # This (and is_parallel and set_parallel_parent) are duplicated...
-        self._instrumented_parent = (
-            False
-        )  # Same as above. This flag is needed to know if the parent is instrumented (it's possible for a parent to be serial and instrumented.)
 
     @property
     def parent(self):
         """ Returns the parent SDFG of this state. """
         return self._parent
-
-    def has_instrumented_parent(self):
-        return self._instrumented_parent
-
-    def set_instrumented_parent(self):
-        self._instrumented_parent = (
-            True
-        )  # When this is set: Under no circumstances try instrumenting this (or any transitive children)
-
-    def is_parallel(self):
-        return self._parallel_parent is not None
-
-    def set_parallel_parent(self, parallel_parent):
-        self._parallel_parent = parallel_parent
-
-    def get_parallel_parent(self):
-        return self._parallel_parent
 
     def __str__(self):
         return self._label
@@ -4368,6 +4345,13 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
 def dynamic_map_inputs(state: SDFGState,
                        map_entry: nd.MapEntry) -> List[MultiConnectorEdge]:
+    """
+    For a given map entry node, returns a list of dynamic-range input edges.
+    :param state: The state in which the map entry node resides.
+    :param map_entry: The given node.
+    :return: A list of edges in state whose destination is map entry and denote
+             dynamic-range input memlets.
+    """
     return [
         e for e in state.in_edges(map_entry)
         if e.dst_conn and not e.dst_conn.startswith('IN_')
@@ -4375,7 +4359,40 @@ def dynamic_map_inputs(state: SDFGState,
 
 
 def has_dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> bool:
+    """
+    Returns True if a map entry node has dynamic-range inputs.
+    :param state: The state in which the map entry node resides.
+    :param map_entry: The given node.
+    :return: True if there are dynamic-range input memlets, False otherwise.
+    """
     return len(dynamic_map_inputs(state, map_entry)) > 0
+
+
+def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
+    """
+    Returns True if a node or state are contained within a parallel
+    section.
+    :param state: The state to test.
+    :param node: An optional node in the state to test. If None, only checks
+                 state.
+    :return: True if the state or node are located within a map scope that
+             is scheduled to run in parallel, False otherwise.
+    """
+    if node is not None:
+        sdict = state.scope_dict()
+        curnode = node
+        while curnode is not None:
+            curnode = sdict[curnode]
+            if curnode.schedule != dtypes.ScheduleType.Sequential:
+                return True
+    if state.parent.parent is not None:
+        # Find nested SDFG node and continue recursion
+        nsdfg_node = next(
+            n for n in state.parent.parent
+            if isinstance(n, nd.NestedSDFG) and n.sdfg == state.parent)
+        return is_parallel(state.parent.parent, nsdfg_node)
+
+    return False
 
 
 def _get_optimizer_class(class_override):
