@@ -126,7 +126,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             host_code.write("""
             #include "dace/intel_fpga/smi.h"
             #include "smi_generated_host.c"
-            #define ROUTING_DIR "smi-routes/"
+            #define ROUTING_DIR DACE_BINARY_DIR "/smi-routes/"
             int __dace_comm_size = 1;
             int __dace_comm_rank = 0;
             """)
@@ -287,9 +287,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def make_read(defined_type, type_str, var_name, vector_length, expr,
-                  index):
+                  index, src_node_desc=None):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "read_channel_intel({})".format(expr)
+            if isinstance(src_node_desc, dace.data.Stream) is False or src_node_desc.remote is False:
+                return "read_channel_intel({})".format(expr)
+            else:  # Read from remote stream is done in make_write
+                return "{}".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
             expr = expr.replace("[0]", "")
@@ -310,10 +313,14 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                    index,
                    read_expr,
                    wcr,
-                   data_desc=None):
+                   data_desc=None,
+                   src_node_desc=None):
+
         """
         Creates write expression, taking into account wcr if present.
-        Optional parameters are useful if remote streams are used.
+        Optional parameters are useful if remote streams are used:
+        :param data_desc: desc of target data
+        :param src_node_desc: desc of source node
         """
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
@@ -348,7 +355,16 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
-                return "{}[{}] = {};".format(write_expr, index, read_expr)
+                result = ""
+                if isinstance(src_node_desc, dace.data.Stream) is True and src_node_desc.remote is True:
+                    # If the data to write comes from a remote stream, we have to do a Pop
+                    # A temporary variable is created to avoid problems with different address spaces (__global, ...)
+                    result += "{} __dace_smi_{};\nSMI_Pop(&{},(void *)&__dace_smi_{});\n".format(type_str, var_name,
+                                                                                           read_expr, var_name)
+                    read_expr = " __dace_smi_{}".format(var_name);
+                return result + "{}[{}] = {};".format(write_expr, index, read_expr)
+
+
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -363,7 +379,10 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
-                return "{} = {};".format(var_name, read_expr)
+                if isinstance(src_node_desc, dace.data.Stream) is False or src_node_desc.remote is False:
+                    return "{} = {};".format(var_name, read_expr)
+                else:
+                    return "SMI_Pop(&{},(void *)&{})".format(read_expr, var_name)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
 
@@ -940,7 +959,6 @@ __kernel void \\
             else:
 
                 # remote output stream, open the corresponding transient channel
-
                 if is_output and isinstance(
                         dst_node.desc(sdfg),
                         dace.data.Stream) and dst_node.desc(sdfg).remote:
@@ -1043,7 +1061,6 @@ __kernel void \\
                                          self._memory_widths[data_name],
                                          data_name, offset, read_expr,
                                          memlet.wcr, data_desc)
-
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
                     # The value will be written during the tasklet, and will be

@@ -239,7 +239,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
     @staticmethod
     def make_read(defined_type, type_str, var_name, vector_length, expr,
-                  index):
+                  index, src_node_desc=None):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "{}.pop()".format(expr)
         if defined_type == DefinedType.StreamArray:
@@ -255,7 +255,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr):
+                   index, read_expr, wcr, src_node_desc=None):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "{}.push({});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:

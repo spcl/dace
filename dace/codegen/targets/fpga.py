@@ -730,13 +730,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Language specific
             read_expr = self.make_read(src_def_type, ctype, src_node.label,
-                                       memlet.veclen, src_expr, src_index)
-
+                                       memlet.veclen, src_expr, src_index, src_node_desc=src_node.desc(sdfg))
             # Language specific
             write_expr = self.make_write(dst_def_type, ctype, dst_node.label,
                                          memlet.veclen, dst_expr, dst_index,
-                                         read_expr, memlet.wcr)
-
+                                         read_expr, memlet.wcr, src_node_desc=src_node.desc(sdfg))
             callsite_stream.write(write_expr)
 
             # Inject dependence pragmas (DACE semantics implies no conflict)

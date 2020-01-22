@@ -125,11 +125,12 @@ class Scalar(Data):
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
-                 location={},
+                 location=None,
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
+        location = location or {}
         super(Scalar, self).__init__(dtype, shape, transient, storage,
                                      location, toplevel, debuginfo)
 
@@ -260,7 +261,7 @@ class Array(Data):
                  transient=False,
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location={},
+                 location=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -268,6 +269,7 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
+        location = location or {}
         super(Array, self).__init__(dtype, shape, transient, storage, location,
                                     toplevel, debuginfo)
 
@@ -459,7 +461,7 @@ class Stream(Data):
                  shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location={},
+                 location=None,
                  offset=None,
                  toplevel=False,
                  debuginfo=None,
@@ -471,6 +473,7 @@ class Stream(Data):
         self.veclen = veclen
         self.buffer_size = buffer_size
         self.remote = remote
+        location = location or {}
 
         if offset is not None:
             if len(offset) != len(shape):
