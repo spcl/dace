@@ -349,8 +349,6 @@ class ExecutorServer:
         compilation_output_tuple = cot
         runindex = options['index']
         config_path = options['config_path']
-        client_id = options['client_id']
-        perfopts = options['perfopts']
         sdfgs, code_tuples, dace_state = compilation_output_tuple
 
         # Passes output through HTTP1.1 streaming (using yield)
@@ -358,9 +356,6 @@ class ExecutorServer:
             print("Trying to get lock")
             with self._run_cv:
                 yield "Run starting\n"
-
-                perfmode = perfopts['mode']
-                perfcores = perfopts['core_counts']
 
                 with config_lock:
                     from dace.config import Config
@@ -396,6 +391,12 @@ class ExecutorServer:
                 with self._oplock:
                     # Delete from the tasklist
                     del self._task_dict[runindex]
+
+                    # Output instrumentation report, if exists
+                    if (async_executor.running_proc.exitcode == 0
+                            and dace_state.sdfg.is_instrumented()):
+                        report = dace_state.sdfg.get_latest_report()
+                        yield '\nInstrumentation report:\n%s\n\n' % report
 
                     yield ('Run finished with exit code %d' %
                            async_executor.running_proc.exitcode)
