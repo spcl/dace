@@ -2,7 +2,7 @@
 
 import networkx as nx
 
-from dace import sdfg, symbolic
+from dace import dtypes, sdfg
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.config import Config
@@ -213,6 +213,7 @@ class StateFusion(pattern_matching.Transformation):
             nxutil.change_edge_src(first_state, old_node, node)
             first_state.remove_node(old_node)
             second_input.remove(old_node)
+            node.access = dtypes.AccessType.ReadWrite
         for node in first_output:
             try:
                 new_node = next(
@@ -222,6 +223,7 @@ class StateFusion(pattern_matching.Transformation):
             nxutil.change_edge_dest(first_state, node, new_node)
             first_state.remove_node(node)
             second_input.remove(new_node)
+            new_node.access = dtypes.AccessType.ReadWrite
         # Check if any input nodes of the second state have to be merged with
         # non-input/output nodes of the first state.
         for node in second_input:
@@ -230,6 +232,7 @@ class StateFusion(pattern_matching.Transformation):
                 if n:
                     nxutil.change_edge_src(first_state, node, n)
                     first_state.remove_node(node)
+                    n.access = dtypes.AccessType.ReadWrite
 
         # Redirect edges and remove second state
         nxutil.change_edge_src(sdfg, second_state, first_state)
