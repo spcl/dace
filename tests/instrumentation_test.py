@@ -60,7 +60,7 @@ def test_timer():
 
 def test_papi():
     # Run a lighter load for the sake of performance
-    onetest(dace.InstrumentationType.PAPI_Counters, 16)
+    onetest(dace.InstrumentationType.PAPI_Counters, 4)
 
 
 def test_cuda_events():
