@@ -169,6 +169,8 @@ runall() {
     runtestopt wcr_cudatest.py $1
     
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
+    
+    runtestopt "instrumentation_test.py gpu"
 }
 
 
