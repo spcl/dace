@@ -39,8 +39,7 @@
 #include "reporting.h"
 
 
-
-
+#define LOG_ERRORS
 #define TEST_ALIGNMENT
 #define CHECK_BOUNDS
 // Disable runtime byte movement recording. Defining this can reduce cache line ping pong.
@@ -126,7 +125,7 @@ public:
 
     void resize(size_t n)
     {
-        LogError("Buffer resized");
+        LogError("Buffer resized\n");
         clear();
         if(n == m_size)
         {
@@ -137,7 +136,7 @@ public:
         m_rawdat.reset(new uint8_t[m_alloc_size]);
         if(m_rawdat == nullptr)
         {
-            LogError("Failed to allocate buffer");
+            LogError("Failed to allocate buffer\n");
         }
 
         align_offset = Alignment - (reinterpret_cast<uintptr_t>(m_rawdat.get()) & (Alignment - 1));
@@ -412,13 +411,13 @@ public:
 
         if(m_flags == ValueSetType::Default || m_flags == ValueSetType::Copy)
             entry_name += " (" + std::to_string(m_nodeid) + ", " + std::to_string(m_coreid) + ", " +
-                          std::to_string(m_iteration) + ", " + std::to_string((int)m_flags) + ")";
+                          std::to_string(m_iteration) + ", " + std::to_string((int)m_flags) + ") ";
         else if(m_flags == ValueSetType::OverheadComp)
             entry_name = "papi_overhead";
         else if(m_flags == ValueSetType::marker_section_start)
         {
-            entry_name = "papi_section_start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ")";
-            rep.add((entry_name + " bytes").c_str(), static_cast<double>(m_values[0]));
+            entry_name = "papi_section_start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ") ";
+            rep.add((entry_name + "bytes").c_str(), static_cast<double>(m_values[0]));
             if(m_values[1] != 0)
                 rep.add((entry_name + "input_bytes").c_str(), static_cast<double>(m_values[1]));
             return;
@@ -501,12 +500,13 @@ public:
         m_moved_bytes = 0;
         m_contention_value = 0;
 
-        LogError("Value store created");
+        LogError("Value store created\n");
     }
 
     ~PAPIValueStore()
     {
-        flush();
+        if (this->m_insertion_position > 0)
+            flush();
     }
 
     // Does a couple of empty runs (starting and immediately stopping counters) to get a rough estimate of overheads
@@ -645,7 +645,7 @@ public:
 
             if(pos >= m_values.size())
             {
-                LogError("Flushing in measurement section");
+                LogError("Flushing in measurement section\n");
 
                 // To keep it running, we just have to flush. For this, we should lock
 
@@ -659,7 +659,7 @@ public:
                 else {
                     // We didn't get the lock, which means that somebody else is already flushing.
                     // Since we lost a lot of time already, we can just use the lock to wait instead of spinlocking.
-                    LogError("Waiting for values to be written");
+                    LogError("Waiting for values to be written\n");
                     m_vec_mutex.lock();
                     m_vec_mutex.unlock();
                 }

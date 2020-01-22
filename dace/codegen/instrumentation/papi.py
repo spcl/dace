@@ -107,6 +107,12 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
                                'overhead_compensation'):
                 local_stream.write("__perf_store.getMeasuredOverhead();", sdfg)
 
+    def on_sdfg_end(self, sdfg, local_stream, global_stream):
+        if not self._papi_used:
+            return
+
+        local_stream.write('__perf_store.flush();', sdfg)
+
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
         if not self._papi_used:
             return

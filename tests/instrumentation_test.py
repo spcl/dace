@@ -24,11 +24,11 @@ def slowmm(A: dace.float64[N, N], B: dace.float64[N, N],
             c = a * b
 
 
-def onetest(instrumentation: dace.InstrumentationType):
-    N.set(128)
-    A = np.random.rand(128, 128)
-    B = np.random.rand(128, 128)
-    C = np.zeros([128, 128], dtype=np.float64)
+def onetest(instrumentation: dace.InstrumentationType, size=128):
+    N.set(size)
+    A = np.random.rand(size, size)
+    B = np.random.rand(size, size)
+    C = np.zeros([size, size], dtype=np.float64)
 
     sdfg: dace.SDFG = slowmm.to_sdfg()
     sdfg.apply_strict_transformations()
@@ -59,7 +59,8 @@ def test_timer():
 
 
 def test_papi():
-    onetest(dace.InstrumentationType.PAPI_Counters)
+    # Run a lighter load for the sake of performance
+    onetest(dace.InstrumentationType.PAPI_Counters, 16)
 
 
 def test_cuda_events():
