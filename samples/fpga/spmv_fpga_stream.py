@@ -453,7 +453,7 @@ def make_read_row():
     to_val_pipe = body.add_stream(
         "to_val_pipe", itype, storage=StorageType.FPGA_Local)
     to_col_pipe = body.add_stream(
-        "row_to_col", itype, storage=StorageType.FPGA_Local)
+        "to_col_pipe", itype, storage=StorageType.FPGA_Local)
     to_compute_pipe = body.add_stream(
         "to_compute_pipe", itype, storage=StorageType.FPGA_Local)
     to_x_pipe = body.add_stream(
