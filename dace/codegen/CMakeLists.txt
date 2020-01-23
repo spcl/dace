@@ -556,6 +556,8 @@ if(DACE_ENABLE_INTELFPGA)
         list(GET FPGA_GENERATED_SOURCES ${KERNEL_INDEX} SMI_DEVICE_SRC)
         set(FPGA_SRC_FILES "${SMI_DEVICE_SRC};${USER_DEVICE_SRC}")
 
+        #NOTE: in this first phase we have one SDFG per program so we rename the emulation files (that take the name
+        # name of the kernel) according to the program name. This will simplify host code generation
         set(EMULATION_WORKDIR ${WORKDIR}/emulator_${SMI_EMULATION_RANK})
         file(MAKE_DIRECTORY ${EMULATION_WORKDIR})
         set(EMULATOR_TARGET_RANK ${EMULATOR_TARGET}_${SMI_EMULATION_RANK})
@@ -563,6 +565,7 @@ if(DACE_ENABLE_INTELFPGA)
             COMMAND ${IntelFPGAOpenCL_AOC} ${DACE_AOC_BUILD_FLAGS} ${FPGA_SRC_FILES} -march=emulator
             -DSMI_EMULATION_RANK=${SMI_EMULATION_RANK}
             -emulator-channel-depth-model=strict
+            COMMAND mv ${DACE_KERNEL_NAME_WE}.aocx ${DACE_PROGRAM_NAME}.aocx
             WORKING_DIRECTORY ${EMULATION_WORKDIR}
         )
         add_dependencies(${EMULATOR_TARGET} ${EMULATOR_TARGET_RANK})
