@@ -1299,7 +1299,13 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
 # ------------------------------------------------------------------------------
 
 
+@dace.serialize.serializable
 class PipelineEntry(dace.graph.nodes.MapEntry):
+
+    @staticmethod
+    def map_type():
+        return Pipeline
+
     @property
     def pipeline(self):
         return self._map
@@ -1309,7 +1315,13 @@ class PipelineEntry(dace.graph.nodes.MapEntry):
         self._map = val
 
 
+@dace.serialize.serializable
 class PipelineExit(dace.graph.nodes.MapExit):
+
+    @staticmethod
+    def map_type():
+        return Pipeline
+
     @property
     def pipeline(self):
         return self._map
