@@ -2115,22 +2115,25 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         credtype = "dace::ReductionType::" + str(
             redtype)[str(redtype).find(".") + 1:]
 
+        atomic_suffix = ('_atomic' if output_memlet.wcr_conflict else '')
+
         invar = cpp_array_expr(
             sdfg, input_memlet, offset=axis_vars, relative_offset=False)
 
         if redtype != dtypes.ReductionType.Custom:
             callsite_stream.write(
-                "dace::wcr_fixed<%s, %s>::reduce_atomic(&%s, %s);" %
-                (credtype, output_type, outvar, invar),
+                "dace::wcr_fixed<%s, %s>::reduce%s(&%s, %s);" %
+                (credtype, output_type, atomic_suffix, outvar, invar),
                 sdfg,
                 state_id,
                 node,
             )  # cpp_array_expr(), cpp_array_expr()
         else:
             callsite_stream.write(
-                'dace::wcr_custom<%s>::template reduce_atomic(%s, &%s, %s);' %
-                (output_type, unparse_cr(sdfg, node.wcr), outvar, invar), sdfg,
-                state_id, node)  #cpp_array_expr(), cpp_array_expr()
+                'dace::wcr_custom<%s>::template reduce%s(%s, &%s, %s);' %
+                (output_type, atomic_suffix, unparse_cr(sdfg, node.wcr),
+                 outvar, invar), sdfg, state_id,
+                node)  #cpp_array_expr(), cpp_array_expr()
 
         #############################################################
         # Generate closing braces
