@@ -18,6 +18,7 @@ exclude_lines =
     if 0:
     if False:
     if __name__ == .__main__.:
+    pass
     
 # Omit files that cannot be tested
 omit =

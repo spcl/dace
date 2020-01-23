@@ -618,81 +618,31 @@ required:
         title: Instrumentation
         description: Instrumentation preferences
         required:
-            thread_nums:
-                type: str
-                title: PAPI thread test set
-                default: "[1,2,3,4]"
-                description: >
-                    Measures performance of all provided values for OMP_NUM_THREADS.
-            enable_overhead_compensation:
-                type: bool
-                title: Compensate Overhead
-                default: true
-                description: >
-                    Subtracts the minimum measured overhead from every measurement.
-            enable_vectorization_analysis:
-                type: bool
-                title: Enable vectorization check
-                default: false
-                description: >
-                    Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
-            enable_papi_counter_sanity_check:
-                type: bool
-                title: Counter sanity check
-                default: false
-                description: >
-                    Enables a pre-run sanity check to minimize runtime failures
-            default_papi_counters:
-                type: str
-                title: Default PAPI counters
-                default: "['PAPI_TOT_INS', 'PAPI_TOT_CYC', 'PAPI_L2_TCM', 'PAPI_L3_TCM']"
-                description: >
-                    Sets the default PAPI counter list, formatted as 
-                    a Python list of strings.
-            vec_papi_counters:
-                type: str
-                title: "Vector PAPI counters"
-                default: "['0x40000025', '0x40000026', '0x40000027', '0x40000028', '0x40000021', '0x40000022', '0x40000023', '0x40000024']"
-                description: "Sets the vector PAPI counter list. Provide in python list format."
-            mem_papi_counters:
-                type: str
-                title: "Memory PAPI counters"
-                default: "['PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS']"
-                description: "Sets the memory PAPI counter list. Provide in python list format."
-            cache_papi_counters:
-                type: str
-                title: "Cache PAPI counters"
-                default: "['PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV']"
-                description: "Sets the cache PAPI counter list. Provide in python list format."
-            max_scope_depth:
-                type: int
-                title: "Max scope depth"
-                default: 0
-                description: >
-                    Sets the maximum depth of instrumentations in
-                    map/consume scopes. Scopes that are deeper will not 
-                    be instrumented.
-            papi_mode:
-                type: str
-                title: "PAPI counter mode"
-                default: "default"
-                description: "[Internal] Allows switching between different counter modes. Users should ignore this"
-            multimode_run:
-                type: bool
-                title: "Multimode runs"
-                default: false
-                description: "Runs more runs with different counters for more information. See the '* PAPI counters' options"
-            sql_backend_enable:
-                type: bool
-                title: "Use SQL"
-                default: true
-                description: "Use the SQL backend to analyze values. Set to false to pass all performance data directly to the HTML5 renderer (deprecated)"
-            sql_database_file:
-                type: str
-                title: "Perfdata output database"
-                default: "perfdata.db"
-                description: "Output target sqlite3 file path"
-            
+            papi:
+                type: dict
+                title: PAPI
+                description: PAPI configuration
+                required:
+                    default_counters:
+                        type: str
+                        title: Default PAPI counters
+                        default: "['PAPI_TOT_INS', 'PAPI_TOT_CYC', 'PAPI_L2_TCM', 'PAPI_L3_TCM']"
+                        description: >
+                            Sets the default PAPI counter list, formatted as
+                            a Python list of strings.
+                    overhead_compensation:
+                        type: bool
+                        title: Compensate Overhead
+                        default: true
+                        description: >
+                            Subtracts the minimum measured overhead from every measurement.
+                    vectorization_analysis:
+                        type: bool
+                        title: Enable vectorization check
+                        default: false
+                        description: >
+                            Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
+
     #############################################
     # Frontend settings
 

@@ -372,16 +372,6 @@ class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
         self._graph = graph
         self._subgraph_nodes = subgraph_nodes
-        self._parallel_parent = None
-
-    def is_parallel(self):
-        return self._parallel_parent is not None
-
-    def set_parallel_parent(self, parallel_parent):
-        self._parallel_parent = parallel_parent
-
-    def get_parallel_parent(self):
-        return self._parallel_parent
 
     def nodes(self):
         return self._subgraph_nodes

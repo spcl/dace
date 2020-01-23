@@ -10,11 +10,16 @@ env:
 # Dependencies
 before_install:
   - sudo apt-get install libyaml-dev cmake
+  # Instrumentation dependencies
+  - sudo apt-get install libpapi-dev papi-tools
 
 install:
   - pip install ".[test]" .
   - pip install coverage codecov
   - pip install tensorflow==1.15.0
+
+before_script:
+  - papi_avail
 
 script:
   - export NOSTATUSBAR=1

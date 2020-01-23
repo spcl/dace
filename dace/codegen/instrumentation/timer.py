@@ -4,7 +4,7 @@ from dace.codegen.prettycode import CodeIOStream
 
 
 class TimerProvider(InstrumentationProvider):
-    """ Timing instrumentation that prints wall-clock time directly after
+    """ Timing instrumentation that reports wall-clock time directly after
         timed execution is complete. """
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
@@ -46,8 +46,8 @@ class TimerProvider(InstrumentationProvider):
         stream.write(
             '''auto __dace_tend_{id} = std::chrono::high_resolution_clock::now();
 std::chrono::duration<double, std::milli> __dace_tdiff_{id} = __dace_tend_{id} - __dace_tbegin_{id};
-printf("{timer_name}: %lf ms\\n", __dace_tdiff_{id}.count());'''.format(
-                timer_name=timer_name, id=idstr))
+dace::perf::report.add("timer_{timer_name}", __dace_tdiff_{id}.count());'''
+            .format(timer_name=timer_name, id=idstr))
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
