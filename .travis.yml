@@ -16,7 +16,7 @@ before_install:
 install:
   - pip install ".[test]" .
   - pip install coverage codecov
-  - pip install tensorflow==1.15.0
+  - if [ $DACE_optimizer_automatic_strict_transformations -eq 1 ]; then pip install tensorflow==1.15.0; fi
 
 before_script:
   - papi_avail

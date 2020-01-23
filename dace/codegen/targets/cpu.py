@@ -482,8 +482,10 @@ class CPUCodeGen(TargetCodeGenerator):
             # Corner cases
 
             # Writing one index
-            if isinstance(memlet.subset,
-                          subsets.Indices) and memlet.wcr is None:
+            if (isinstance(memlet.subset, subsets.Indices)
+                    and memlet.wcr is None
+                    and self._dispatcher.defined_vars.get(
+                        vconn) == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet,
                                                           False)),
