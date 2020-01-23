@@ -944,12 +944,12 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
 
-        dfg = sdfg.nodes()[state_id]
+        state = sdfg.nodes()[state_id]
 
         # If in device-level code, call appropriate function
         if (self._toplevel_schedule == dtypes.ScheduleType.GPU_Device or
-            (dfg.scope_dict()[scope_entry] is not None and dfg.scope_dict()
-             [scope_entry].map.schedule in dtypes.GPU_SCHEDULES)):
+            (state.scope_dict()[scope_entry] is not None and state.scope_dict(
+            )[scope_entry].map.schedule in dtypes.GPU_SCHEDULES)):
             self.generate_devicelevel_scope(sdfg, dfg_scope, state_id,
                                             function_stream, callsite_stream)
             return
@@ -978,15 +978,20 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                     and node.map.schedule == dtypes.ScheduleType.GPU_Device):
                 create_grid_barrier = True
 
-        kernel_name = '%s_%d_%d' % (
-            scope_entry.map.label, dfg.node_id(scope_entry), sdfg.node_id(dfg))
+        kernel_name = '%s_%d_%d' % (scope_entry.map.label,
+                                    state.node_id(scope_entry),
+                                    sdfg.node_id(state))
 
         # Get parameters from input/output memlets to this map
-        params = set(d.data for node in dfg_scope.source_nodes() for _,_,_,_,d in dfg.in_edges(node)) | \
-                 set(d.data for node in dfg_scope.sink_nodes() for _,_,_,_,d in dfg.out_edges(node))
+        # TODO: Refactor into its own function
+        params = set(e.data.data for node in dfg_scope.source_nodes() for e in state.in_edges(node)) | \
+                 set(e.data.data for node in dfg_scope.sink_nodes() for e in state.out_edges(node)) | \
+                 set(node.data for node in dfg_scope.nodes()
+                     if isinstance(node, nodes.AccessNode) and
+                     sdfg.arrays[node.data].toplevel)
         params -= set(
             e.data.data
-            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry))
+            for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
@@ -1035,10 +1040,10 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         # Instrumentation for kernel scope
         instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
         if instr is not None:
-            instr.on_scope_entry(sdfg, dfg, scope_entry, callsite_stream,
+            instr.on_scope_entry(sdfg, state, scope_entry, callsite_stream,
                                  self.scope_entry_stream, self._globalcode)
             outer_stream = CodeIOStream()
-            instr.on_scope_exit(sdfg, dfg, scope_exit, outer_stream,
+            instr.on_scope_exit(sdfg, state, scope_exit, outer_stream,
                                 self.scope_exit_stream, self._globalcode)
 
         kernel_stream = CodeIOStream()
@@ -1137,7 +1142,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             scope_entry)
 
         # Synchronize all events leading to dynamic map range connectors
-        for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+        for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             if hasattr(e, '_cuda_event'):
                 ev = e._cuda_event
                 callsite_stream.write(
@@ -1154,7 +1159,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             '__dace_runkernel_%s(%s);\n' %
             (kernel_name, ', '.join(kernel_args)), sdfg, state_id, scope_entry)
 
-        synchronize_streams(sdfg, dfg, state_id, scope_entry, scope_exit,
+        synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit,
                             callsite_stream)
 
         # Instrumentation (post-kernel)
