@@ -113,6 +113,19 @@ runtestopt() {
     return 0
 }
 
+runtestargs() {
+    TESTS=`expr $TESTS + 1`
+    yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/tests/$*
+    if [ $? -ne 0 ]; then
+        bail "$PYTHON_BINARY $*"
+        return 1
+    fi
+    
+    checkoutput # Check for spills in the assembly
+    if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $* (assembly)"; return 1; fi
+    return 0
+}
+
 runopt() {
     TESTS=`expr $TESTS + 1`
     opts=$(join_by_newline ${@:3})
@@ -169,6 +182,8 @@ runall() {
     runtestopt wcr_cudatest.py $1
     
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
+    
+    runtestargs instrumentation_test.py gpu
 }
 
 
