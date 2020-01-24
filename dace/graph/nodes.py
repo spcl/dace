@@ -270,7 +270,6 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    # label = Property(dtype=str, desc="Name of the tasklet")
     code = CodeProperty(desc="Tasklet code", default="")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -300,12 +299,10 @@ class Tasklet(CodeNode):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        # self.label = label
         # Set the language directly
         #self.language = language
         self.code = {'code_or_block': code, 'language': language}
 
-        # self.location = location
         self.code_global = {'code_or_block': code_global, 'language': language}
         self.code_init = {'code_or_block': code_init, 'language': language}
         self.code_exit = {'code_or_block': code_exit, 'language': language}
@@ -380,7 +377,6 @@ class NestedSDFG(CodeNode):
         @note: A nested SDFG cannot create recursion (one of its parent SDFGs).
     """
 
-    # label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
     schedule = Property(
@@ -411,10 +407,8 @@ class NestedSDFG(CodeNode):
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        # self.label = label
         self.sdfg = sdfg
         self.schedule = schedule
-        # self.location = location
         self.debuginfo = debuginfo
 
     @staticmethod
