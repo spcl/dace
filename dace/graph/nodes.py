@@ -369,6 +369,7 @@ class NestedSDFG(CodeNode):
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
+        allow_none=True,
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
