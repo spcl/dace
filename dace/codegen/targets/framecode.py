@@ -965,6 +965,10 @@ def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
 
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
+                elif isinstance(node, nodes.NestedSDFG):
+                    # Nested SDFGs retain same schedule as their parent scope
+                    if node.schedule == dtypes.ScheduleType.Default:
+                        node.schedule = parent_schedule
                 elif getattr(node, 'schedule', False):
                     if node.schedule == dtypes.ScheduleType.Default:
                         node.schedule = child_schedule
