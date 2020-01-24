@@ -960,6 +960,33 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
+    # Based on https://stackoverflow.com/a/2020083/6489142
+    def _fullclassname(self):
+        module = self.__class__.__module__
+        if module is None or module == str.__class__.__module__:
+            return self.__class__.__name__  # Avoid reporting __builtin__
+        else:
+            return module + '.' + self.__class__.__name__
+
+    def to_json(self, parent):
+        jsonobj = super().to_json(parent)
+        jsonobj['classpath'] = self._fullclassname()
+        return jsonobj
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        if cls == LibraryNode:
+            clazz = pydoc.locate(json_obj['classpath'])
+            if clazz is None:
+                raise TypeError('Unrecognized library node type "%s"' %
+                                json_obj['classpath'])
+            return clazz.from_json(json_obj, context)
+        else:  # Subclasses are actual library nodes
+            ret = cls(json_obj['attributes']['name'])
+            dace.serialize.set_properties_from_json(
+                ret, json_obj, context=context)
+            return ret
+
     def expand(self, sdfg, *args, **kwargs):
         """Create and perform the expansion transformation for this library
            node."""
