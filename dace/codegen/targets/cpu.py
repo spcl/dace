@@ -19,7 +19,8 @@ from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, Defi
 from dace.graph import nodes, nxutil
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        find_input_arraynode, find_output_arraynode,
-                       is_devicelevel, is_array_stream_view)
+                       is_devicelevel, is_array_stream_view,
+                       NodeNotExpandedError)
 
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.properties import LambdaProperty
@@ -150,7 +151,12 @@ class CPUCodeGen(TargetCodeGenerator):
     def generate_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
         # Dynamically obtain node generator according to class name
-        gen = getattr(self, "_generate_" + type(node).__name__)
+        try:
+            gen = getattr(self, "_generate_" + type(node).__name__)
+        except AttributeError:
+            if isinstance(node, nodes.LibraryNode):
+                raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
+            raise
 
         gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 

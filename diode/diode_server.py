@@ -766,15 +766,21 @@ def compileProgram(request, language, perfopts=None):
         codegen_sdfgs = copy.deepcopy(sdfg_dict)
         codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
-            from dace.codegen import codegen
-            if sdfg_eval_order != []:
-                sdfg_eval_order.reverse()
-                for x in sdfg_eval_order:
-                    s = codegen_sdfgs[x]
-                    code_tuple_dict[x] = codegen.generate_code(s)
+            if sdfg_eval_order:
+                sdfg_eval = [(n, codegen_sdfgs[n])
+                             for n in reversed(sdfg_eval_order)]
             else:
-                for n, s in codegen_sdfgs.items():
+                sdfg_eval = codegen_sdfgs.items()
+
+            for n, s in sdfg_eval:
+                try:
                     code_tuple_dict[n] = codegen.generate_code(s)
+                except dace.sdfg.NodeNotExpandedError as ex:
+                    code_tuple_dict[n] = [str(ex)]
+                except Exception:  # Forward exception to output code
+                    code_tuple_dict[n] = [
+                        'Code generation failed:\n' + traceback.format_exc()
+                    ]
 
         if dace_state is None:
             if "code" in request.json:
@@ -1022,9 +1028,12 @@ def compile(language):
         compounds = {}
         for n, s in sdfgs.items():
             compounds[n] = {
-                "sdfg": s.to_json(),
-                "matching_opts": opts[n]['matching_opts'],
-                "generated_code": [*map(lambda x: x.code, code_tuples[n])]
+                "sdfg":
+                s.to_json(),
+                "matching_opts":
+                opts[n]['matching_opts'],
+                "generated_code":
+                [*map(lambda x: getattr(x, 'code', str(x)), code_tuples[n])]
             }
         return jsonify({"compounds": compounds})
 

@@ -953,6 +953,7 @@ class LibraryNode(CodeNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
+        self.label = name
 
     # Overrides subclasses to return LibraryNode as their JSON type
     @property

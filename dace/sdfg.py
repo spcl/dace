@@ -126,6 +126,16 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return "%s (at state %s%s)" % (self.message, str(state.label), nodestr)
 
 
+class NodeNotExpandedError(InvalidSDFGNodeError):
+    """
+    Exception that is raised whenever a library node was not expanded
+    before code generation.
+    """
+
+    def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
+        super().__init__('Library node not expanded', sdfg, state_id, node_id)
+
+
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
 
