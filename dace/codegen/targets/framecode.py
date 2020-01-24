@@ -152,7 +152,11 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 0:
             callsite_stream.write(
-                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name)
+                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name,
+                sdfg)
+
+        # Write closing brace of program
+        callsite_stream.write('}', sdfg)
 
         # Write awkward footer to avoid 'extern "C"' issues
         callsite_stream.write(
@@ -651,13 +655,6 @@ DACE_EXPORTED void __dace_exit(%s)
         else:
             symbols_available = sdfg.constants
 
-        # Open program function
-        if is_top_level:
-            callsite_stream.write(
-                'void __program_%s_internal(%s)\n{\n' % (sdfg.name,
-                                                         sdfg.signature()),
-                sdfg)
-
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
         allocated = set()
@@ -955,22 +952,30 @@ DACE_EXPORTED void __dace_exit(%s)
                         callsite_stream)
                     deallocated.add(node.data)
 
-        # Close program function
-        if is_top_level:
-            callsite_stream.write("}", sdfg)
-
         # Now that we have all the information about dependencies, generate
         # header and footer
-        header_stream = CodeIOStream()
         if is_top_level:
+            header_stream = CodeIOStream()
+            footer_stream = CodeIOStream()
             self.generate_header(sdfg, self._dispatcher.used_environments,
-                                 header_stream, callsite_stream)
+                                 global_stream, header_stream)
+
+            # Open program function
+            function_signature = 'void __program_%s_internal(%s)\n{\n' % (
+                sdfg.name, sdfg.signature())
+
             self.generate_footer(sdfg, self._dispatcher.used_environments,
-                                 global_stream, callsite_stream)
+                                 global_stream, footer_stream)
+
+            generated_code = (
+                function_signature + header_stream.getvalue() +
+                callsite_stream.getvalue() + footer_stream.getvalue())
+        else:
+            generated_code = callsite_stream.getvalue()
 
         # Return the generated global and local code strings
-        return (header_stream.getvalue() + global_stream.getvalue(),
-                callsite_stream.getvalue(), self._dispatcher.used_targets,
+        return (global_stream.getvalue(), generated_code,
+                self._dispatcher.used_targets,
                 self._dispatcher.used_environments)
 
 
