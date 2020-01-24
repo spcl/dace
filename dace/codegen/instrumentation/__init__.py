@@ -1,5 +1,6 @@
 from dace.dtypes import InstrumentationType
 from .provider import InstrumentationProvider
+from .report import InstrumentationReport
 
 from .papi import PAPIInstrumentation
 from .timer import TimerProvider

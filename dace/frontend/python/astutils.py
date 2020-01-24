@@ -70,104 +70,6 @@ def rname(node):
     raise TypeError('Invalid AST node type: ' + str(type(node)))
 
 
-def getkwarg(node, argname, default=None):
-    """ Helper function to get AST node of a keyword argument (of form 
-        "argname=<value>"). """
-
-    for kw in node.keywords:
-        if rname(kw) == argname:
-            return kw.value
-    return default
-
-
-def _datadesc(obj: Any):
-    from dace import data
-    if isinstance(obj, data.Data):
-        return obj
-    elif symbolic.issymbolic(obj):
-        return data.Scalar(symbolic.symtype(obj))
-    elif isinstance(obj, dtypes.typeclass):
-        return data.Scalar(obj)
-    return data.Scalar(dtypes.typeclass(type(obj)))
-
-
-def get_argtypes(
-        func: ast.FunctionDef,
-        global_vars: Dict[str, Any],
-) -> List[Tuple[str, Any]]:  # Any is actually data.Data
-    arg_names = [arg.arg for arg in func.args.args]
-    param_anns = [unparse(arg.annotation) for arg in func.args.args]
-    if isinstance(func.decorator_list[0], ast.Call):
-        decorator_anns = [unparse(arg) for arg in func.decorator_list[0].args]
-    else:
-        decorator_anns = [None]
-
-    dtypes = None
-    if all((a is not None for a in param_anns)):
-        dtypes = param_anns
-    if all((a is not None for a in decorator_anns)):
-        if dtypes is not None:
-            raise SyntaxError(
-                'DAPP programs can only have decorator arguments ' +
-                '(\'@dapp.program(...)\') or type annotations ' +
-                '(\'def program(arr: type, ...)\'), but not both')
-        dtypes = decorator_anns
-    if dtypes is None:
-        raise SyntaxError('Data-centric programs must be annotated with types')
-
-    return OrderedDict([(name, _datadesc(eval(t, global_vars)))
-                        for name, t in zip(arg_names, dtypes)])
-
-
-def DaCeSyntaxError(visitor, node, err):
-    """ Reports errors with their corresponding file/line information. """
-    try:
-        line = node.lineno
-        col = node.col_offset
-    except AttributeError:
-        line = 0
-        col = 0
-
-    return SyntaxError(
-        err + "\n  in File " + str(visitor.filename) + ", line " + str(line) +
-        ":" + str(col) + ", in function " +
-        str(visitor.curnode.name
-            if visitor.curnode is not None else visitor.program_name))
-
-
-def get_tuple(visitor, node):
-    """ Parses and returns a tuple from an AST node, including explicit None
-        values. """
-    if isinstance(node, ast.Num):  # A number (single axis)
-        return (node.n, )
-    if isinstance(
-            node,
-            ast.Tuple):  # Tuple. Assumes all axes are values. Form: (2,3,5)
-        for v in node.elts:
-            if not isinstance(v, ast.Num):
-                raise DaCeSyntaxError(visitor, node,
-                                      'Axis tuple can only contain integers')
-        return tuple(value.n for value in node.elts)
-    if isinstance(node, ast.Name):  # Python 2.x variant of explicit "None"
-        if node.id == 'None':
-            return None
-    if node is None:  # Argument not given
-        return None
-
-    # Python 3 only
-    try:
-        if isinstance(node, ast.NameConstant
-                      ):  # Explicit None (or True). Example: "axis=None"
-            if node.value is None:
-                return node.value
-    except AttributeError:
-        pass
-
-    raise DaCeSyntaxError(
-        visitor, node,
-        'Invalid expression, expected tuple of constant numbers or None')
-
-
 def subscript_to_ast_slice(node, without_array=False):
     """ Converts an AST subscript to slice on the form
         (<name>, [<3-tuples of AST nodes>]). If an ast.Name is passed, returns
@@ -176,9 +78,6 @@ def subscript_to_ast_slice(node, without_array=False):
         :param without_array: If True, returns only the slice. Otherwise,
                               returns a 2-tuple of (array, range).
     """
-
-    result_arr = None
-    result_slice = None
 
     if isinstance(node, ast.Name):
         # None implies the full array. We can't create artificial
@@ -274,7 +173,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
-            raise Exception(
+            raise ValueError(
                 'Mismatching shape {} - range {} dimensions'.format(
                     arrdesc.shape, astrange))
         for i in range(missing_slices):

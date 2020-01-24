@@ -1,7 +1,7 @@
 """ This module initializes the dataflow transformations package. """
 
 # Map-related
-from .mapreduce import MapReduceFusion
+from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion
 from .map_collapse import MapCollapse
 from .map_for_loop import MapToForLoop

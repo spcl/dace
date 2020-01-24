@@ -108,12 +108,19 @@ class DaCeCodeGenerator(object):
         # Write header required by environments
         for env in environments:
             if len(env.headers) > 0:
-                global_stream.write("\n".join(
-                    "#include \"" + h + "\"" for h in env.headers), sdfg)
+                global_stream.write(
+                    "\n".join("#include \"" + h + "\"" for h in env.headers),
+                    sdfg)
 
         global_stream.write("\n", sdfg)
 
         self.generate_fileheader(sdfg, global_stream)
+
+        # Instrumentation preamble
+        if len(self._dispatcher.instrumentation) > 0:
+            global_stream.write(
+                'namespace dace { namespace perf { Report report; } }', sdfg)
+            callsite_stream.write('dace::perf::report.reset();', sdfg)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -141,6 +148,11 @@ class DaCeCodeGenerator(object):
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
+
+        # Instrumentation saving
+        if len(self._dispatcher.instrumentation) > 0:
+            callsite_stream.write(
+                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name)
 
         # Write awkward footer to avoid 'extern "C"' issues
         callsite_stream.write(

@@ -336,10 +336,7 @@ def generate_program_folder(sdfg,
 
     src_path = os.path.join(out_path, "src")
 
-    try:
-        os.makedirs(src_path)
-    except FileExistsError:
-        pass
+    os.makedirs(src_path, exist_ok=True)
 
     filelist = []
     # Write each code object to a file
@@ -354,10 +351,7 @@ def generate_program_folder(sdfg,
         target_folder = os.path.join(src_path, target_name)
         if target_type:
             target_folder = os.path.join(target_folder, target_type)
-        try:
-            os.makedirs(target_folder)
-        except FileExistsError:
-            pass
+        os.makedirs(target_folder, exist_ok=True)
 
         # Write code to file
         basename = "{}.{}".format(name, extension)
@@ -384,7 +378,8 @@ def generate_program_folder(sdfg,
         environments |= obj.environments
 
     # Write list of environments
-    with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
+    with open(os.path.join(out_path, "dace_environments.csv"),
+              "w") as env_file:
         env_file.write("\n".join(environments))
 
     # Copy snapshot of configuration script
@@ -420,10 +415,10 @@ def configure_and_compile(program_folder,
 
     # Prepare build folder
     build_folder = os.path.join(program_folder, "build")
-    try:
-        os.makedirs(build_folder)
-    except FileExistsError:
-        pass
+    os.makedirs(build_folder, exist_ok=True)
+
+    # Prepare performance report folder
+    os.makedirs(os.path.join(program_folder, "perf"), exist_ok=True)
 
     # Read list of DaCe files to compile.
     # We do this instead of iterating over source files in the directory to
