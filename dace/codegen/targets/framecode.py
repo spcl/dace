@@ -952,22 +952,22 @@ def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
                 parent_schedule = parent_node.map.schedule
 
             for node in reverse_scope_dict[parent_node]:
+                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
                 # Set default schedule type
                 if isinstance(node, nodes.MapEntry):
                     if node.map.schedule == dtypes.ScheduleType.Default:
-                        node.map._schedule = \
-                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                        node.map.schedule = child_schedule
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
                 elif isinstance(node, nodes.ConsumeEntry):
                     if node.consume.schedule == dtypes.ScheduleType.Default:
-                        node.consume._schedule = \
-                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                        node.consume.schedule = child_schedule
+
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
                 elif getattr(node, 'schedule', False):
                     if node.schedule == dtypes.ScheduleType.Default:
-                        node._schedule = parent_schedule
+                        node.schedule = child_schedule
 
         ## End of recursive function
 
