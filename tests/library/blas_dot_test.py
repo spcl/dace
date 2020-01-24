@@ -1,5 +1,6 @@
 import dace
 from dace.memlet import Memlet
+from dace.codegen.compiler import CompilerConfigurationError, CompilationError
 import dacelets.blas as blas
 import numpy as np
 import sys
@@ -87,8 +88,12 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 
 def test_dot(implementation, dtype, sdfg):
-
-    dot = sdfg.compile()
+    try:
+        dot = sdfg.compile()
+    except (CompilerConfigurationError, CompilationError):
+        print('Configuration/compilation failed, library missing or '
+              'misconfigured, skipping test for {}.'.format(implementation))
+        return
 
     size = 32
 
