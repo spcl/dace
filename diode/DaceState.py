@@ -140,6 +140,9 @@ class DaceState:
 
     def compile(self):
         try:
+            if dace.Config.get_bool('diode', 'general', 'library_autoexpand'):
+                self.sdfg.expand_library_nodes()
+
             self.sdfg.validate()
             code = self.sdfg.generate_code()
             self.generated_code = code
@@ -153,7 +156,6 @@ class DaceState:
             traceback.print_exc(file=exstr)
             self.generated_code = exstr.getvalue()
             print("Codegen failed!\n" + str(self.generated_code))
-            sys.exit(-1)
 
     def get_dace_generated_files(self):
         """ Writes the generated code to a temporary file and returns the file
