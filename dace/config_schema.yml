@@ -565,30 +565,13 @@ required:
                 title: General
                 description: General DIODE Preferences
                 required:
- 
-                    show_transfed:
+                    library_autoexpand:
                         type: bool
-                        default: False
-                        title: (EXPERIMENTAL) Show Transformation Editor
+                        default: True
+                        title: Auto-Expand Library Nodes
                         description: >
-                            Show (or hide) the experimental transformation
-                            editor.
-    
-                    show_sdfged:
-                        type: bool
-                        default: False
-                        title: (EXPERIMENTAL) Show SDFG Editor
-                        description: >
-                            Show (or hide) the experimental SDFG Editor.
-
-                    show_optgraph:
-                        type: bool
-                        default: False
-                        title: Show Optimization Graph
-                        description: >
-                            Show available transformations as a graph. This is
-                            discouraged as the optimization graph may be too
-                            large to be useful.
+                            Automatically expand library nodes upon compilation, rather than
+                            expecting the nodes be expanded manually to the chosen implementation.
 
             fonts:
                 type: dict
@@ -612,7 +595,7 @@ required:
                         title: Transformation Editor
                         type: font
                         description: Font used to render pattern match code.
-        
+
     instrumentation:
         type: dict
         title: Instrumentation

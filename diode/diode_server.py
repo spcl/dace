@@ -3,6 +3,7 @@
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
+from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 import inspect
@@ -774,6 +775,10 @@ def compileProgram(request, language, perfopts=None):
 
             for n, s in sdfg_eval:
                 try:
+                    if Config.get_bool('diode', 'general',
+                                       'library_autoexpand'):
+                        s.expand_library_nodes()
+
                     code_tuple_dict[n] = codegen.generate_code(s)
                 except dace.sdfg.NodeNotExpandedError as ex:
                     code_tuple_dict[n] = [str(ex)]
