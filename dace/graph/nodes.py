@@ -12,9 +12,11 @@ from dace.frontend.python.astutils import unparse
 from dace.properties import (
     Property, CodeProperty, LambdaProperty, ParamsProperty, RangeProperty,
     DebugInfoProperty, SetProperty, make_properties, indirect_properties,
-    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
+    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty,
+    LibraryImplementationProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
+import pydoc
 
 # -----------------------------------------------------------------------------
 
@@ -944,7 +946,7 @@ class Reduce(Node):
 class LibraryNode(CodeNode):
 
     name = Property(dtype=str, desc="Name of node")
-    implementation = Property(
+    implementation = LibraryImplementationProperty(
         dtype=str,
         allow_none=True,
         desc=("Which implementation this library node will expand into."

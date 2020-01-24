@@ -4954,6 +4954,30 @@ class DIODE {
             });
             
         }
+        else if(x.metatype == "LibraryImplementationProperty") {
+            // The list of implementations has to be fetched from
+            // the server directly.
+            elem = document.createElement("span");
+            elem.innerText = x.value;
+
+            elem = $(elem);
+            $.getJSON("/dace/api/v1.0/getLibImpl/" + node.element.classpath, available_implementations => {
+               let cb = d => {
+                    let new_elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
+                        transthis.propertyChanged(node, x.name, elem.value);
+                    }, available_implementations, x.value);
+
+                    // TODO: Add "Expand" button to transform the node
+
+                    // Replace the placeholder
+                    elem[0].parentNode.replaceChild(new_elem[0], elem[0]);
+                };
+                this.project().request(['sdfg_object'], cb, {
+                    on_timeout: cb,
+                    timeout: 300
+                });
+            });
+        }
         else if(x.metatype == "CodeProperty") {
             let codeelem = null;
             let langelem = null;

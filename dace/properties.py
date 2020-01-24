@@ -1239,3 +1239,14 @@ class TypeClassProperty(Property):
             return dace.serialize.from_json(obj)
         else:
             raise TypeError("Cannot parse type from: {}".format(obj))
+
+
+class LibraryImplementationProperty(Property):
+    """
+    Property for choosing an implementation type for a library node. On the
+    Python side it is a standard property, but can expand into a combo-box in
+    DIODE.
+    """
+
+    def typestring(self):
+        return "LibraryImplementationProperty"

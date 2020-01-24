@@ -16,6 +16,7 @@ from diode.remote_execution import AsyncExecutor
 
 import traceback
 import os
+import pydoc
 import threading
 import queue
 import time
@@ -456,6 +457,23 @@ def getEnum(name):
     return jsonify({
         'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]
     })
+
+
+@app.route('/dace/api/v1.0/getLibImpl/<string:name>', methods=['GET'])
+def get_library_implementations(name):
+    """
+        Helper function to enumerate available implementations for a given
+        library node.
+
+        Returns:
+            enum: List of string-representations of implementations
+    """
+
+    cls = pydoc.locate(name)
+    if cls is None:
+        return jsonify([])
+
+    return jsonify(list(cls.implementations.keys()))
 
 
 def collect_all_SDFG_nodes(sdfg):
