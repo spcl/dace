@@ -1996,10 +1996,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         for d in range(input_num_dims):
             if d in axes:
                 # Dimension is being reduced.
-                axis_vars.append("__i%d" % d)
+                axis_vars.append(symbolic.pystr_to_symbolic("__i%d" % d))
             else:
                 # Dimension is NOT being reduced.
-                axis_vars.append("__o%d" % octr)
+                axis_vars.append(symbolic.pystr_to_symbolic("__o%d" % octr))
                 ri = input_size[d]
                 # Iterate over the dimensions of the output memlet and find
                 # the one that is matching with the input memlet dimension.
@@ -2034,12 +2034,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         for axis in output_dims:
             octr = output_axis_vars[axis]
             callsite_stream.write(
-                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
-                format(
+                "for (int {var} = {begin}; {var} < {end}; ++{var}) {{".format(
                     var="__o%d" % octr,
-                    begin=output_subset[axis][0],
-                    end=output_subset[axis][1] + 1,
-                    skip=output_subset[axis][2],
+                    begin=0,
+                    end=output_size[axis],
                 ),
                 sdfg,
                 state_id,
@@ -2074,10 +2072,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
             sdfg,
             output_memlet,
-            offset=[("__o%d" % output_axis_vars[i])
-                    if i in output_axis_vars.keys() else r[0]
-                    for i, r in enumerate(output_subset)],
-            relative_offset=False,
+            indices=[
+                symbolic.pystr_to_symbolic("__o%d" % output_axis_vars[i])
+                if i in output_axis_vars.keys() else 0
+                for i, r in enumerate(output_subset)
+            ],
         ))
         # Example (pseudocode):
         # out[i, __o0, __o1]
@@ -2096,12 +2095,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         input_subset = input_memlet.subset
         for axis in axes:
             callsite_stream.write(
-                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
-                format(
+                "for (int {var} = {begin}; {var} < {end}; ++{var}) {{".format(
                     var="__i%d" % axis,
-                    begin=input_subset[axis][0],
-                    end=input_subset[axis][1] + 1,
-                    skip=input_subset[axis][2],
+                    begin=0,
+                    end=input_size[axis],
                 ),
                 sdfg,
                 state_id,
@@ -2117,8 +2114,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         atomic_suffix = ('_atomic' if output_memlet.wcr_conflict else '')
 
-        invar = cpp_array_expr(
-            sdfg, input_memlet, offset=axis_vars, relative_offset=False)
+        invar = cpp_array_expr(sdfg, input_memlet, indices=axis_vars)
 
         if redtype != dtypes.ReductionType.Custom:
             callsite_stream.write(
@@ -2364,15 +2360,17 @@ def ndslice_cpp(slice, dims, rowmajor=True):
 def cpp_offset_expr(d: data.Data,
                     subset_in: subsets.Subset,
                     offset=None,
-                    packed_veclen=1):
+                    packed_veclen=1,
+                    indices=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
         :param d: The data structure to use for sizes/strides.
-        :param subset: The subset to offset by.
+        :param subset_in: The subset to offset by.
         :param offset: An additional list of offsets or a Subset object
         :param packed_veclen: If packed types are targeted, specifies the
                               vector length that the final offset should be
                               divided by.
+        :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
     subset = copy.deepcopy(subset_in)
@@ -2388,9 +2386,9 @@ def cpp_offset_expr(d: data.Data,
     subset.offset(subsets.Indices(d.offset), False)
 
     # Obtain start range from offsetted subset
-    slice = [0] * len(d.strides)  # subset.min_element()
+    indices = indices or ([0] * len(d.strides))
 
-    index = subset.at(slice, d.strides)
+    index = subset.at(indices, d.strides)
     if packed_veclen > 1:
         index /= packed_veclen
 
@@ -2403,13 +2401,14 @@ def cpp_array_expr(sdfg,
                    offset=None,
                    relative_offset=True,
                    packed_veclen=1,
-                   use_other_subset=False):
+                   use_other_subset=False,
+                   indices=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o,
-                                    packed_veclen)
+    offset_cppstr = cpp_offset_expr(
+        sdfg.arrays[memlet.data], s, o, packed_veclen, indices=indices)
 
     if with_brackets:
         return "%s[%s]" % (memlet.data, offset_cppstr)
