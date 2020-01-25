@@ -976,6 +976,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 render_props([foreground_elem.data]);
             else if (foreground_elem instanceof Node) {
                 let n = foreground_elem.data.node;
+                // Set state ID, if exists
+                n.parent_id = foreground_elem.parent_id;
                 let state = foreground_elem.sdfg.nodes[foreground_elem.parent_id];
                 // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
                 if (n.type.endsWith("Entry")) {
@@ -1213,7 +1215,9 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             let x = JSON.parse(msg);
             this.applyTransformation(...x);
         });
-
+        this.on(this.project().eventString('-req-append-history'), msg => {
+            this.appendHistoryItem(msg.new_sdfg, msg.item_name);
+        });
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
             this.propertyChanged(msg.element, msg.name, msg.value);
@@ -1397,6 +1401,41 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             }, {
                 sdfg_over_code: true
             });
+        };
+
+        this.project().request(['sdfg_object'], x => {
+            console.log("Got snapshot", x);
+            if (typeof (x.sdfg_object) == 'string')
+                x.sdfg_object = JSON.parse(x.sdfg_object);
+
+            this.project().saveSnapshot(x['sdfg_object'], named);
+
+            this.project().request(['update-tfh'], x => {
+                this.operation_running = false;
+            }, {
+                on_timeout: () => {
+                    this.operation_running = false;
+                }
+            });
+
+            setTimeout(tmp, 10);
+        }, {});
+    }
+
+    appendHistoryItem(new_sdfg, item_name) {
+        if (this.operation_running) return;
+        this.operation_running = true;
+        let named = {};
+        named[this.getState()['for_sdfg']] = [{
+            name: item_name,
+            params: {}
+        }];
+
+        let tmp = () => {
+            // Update SDFG
+            this.diode.gatherProjectElementsAndCompile(this, {
+                code: stringify_sdfg(new_sdfg)
+            }, {});
         };
 
         this.project().request(['sdfg_object'], x => {
@@ -4959,8 +4998,30 @@ class DIODE {
                     // Add Expand button to transform the node
                     let button = FormBuilder.createButton("prop_" + x.name + "_expand",
                         (elem) => {
-                            // TODO: Call expand, add to history
+
+                            // Expand library node
+                            REST_request("/dace/api/v1.0/expand/", {
+                                    sdfg: node.sdfg,
+                                    nodeid: [0, node.element.parent_id, node.element.id]
+                                }, (xhr) => {
+                                    if (xhr.readyState === 4 && xhr.status === 200) {
+                                        let resp = parse_sdfg(xhr.response);
+                                        if (resp.error !== undefined) {
+                                            // Propagate error
+                                            this.handleErrors(this, resp);
+                                        }
+
+                                        // Add to history
+                                        this.project().request(["append-history"], x => {
+                                        }, { params: {
+                                                new_sdfg: resp.sdfg,
+                                                item_name: "Expand " + node.element.label
+                                            }
+                                        });
+                                    }
+                                });
                         }, "Expand");
+
 
                     // Replace the placeholder
                     elem[0].parentNode.replaceChild(new_elem[0], elem[0]);
