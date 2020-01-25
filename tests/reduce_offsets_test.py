@@ -45,6 +45,28 @@ def test_offset_reduce_sequential():
     assert np.allclose(B[4:11], np.sum(A[25:50, 13:20], axis=0))
 
 
+def test_offset_reduce_indices():
+    A = np.random.rand(10, 10, 10, 10)
+    B = np.ndarray([1], dtype=np.float64)
+    B[0] = -np.inf
+
+    reduce_with_indices = dace.SDFG('reduce_with_indices')
+    reduce_with_indices.add_array('A', [10, 10, 10, 10], dace.float64)
+    reduce_with_indices.add_array('B', [1], dace.float64)
+
+    state = reduce_with_indices.add_state()
+    node_a = state.add_read('A')
+    node_b = state.add_write('B')
+    red = state.add_reduce('lambda a,b: max(a,b)', [3])
+    state.add_nedge(node_a, red, dace.Memlet.simple('A', '0, 1, 2, 0:10'))
+    state.add_nedge(red, node_b, dace.Memlet.simple('B', '0'))
+
+    reduce_with_indices(A=A, B=B)
+
+    assert np.allclose(B, np.max(A[0, 1, 2, :], axis=0))
+
+
 if __name__ == '__main__':
     test_offset_reduce()
     test_offset_reduce_sequential()
+    test_offset_reduce_indices()

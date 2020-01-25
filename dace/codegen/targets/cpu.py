@@ -1997,7 +1997,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             if d in axes:
                 # Dimension is being reduced.
                 axis_vars.append(symbolic.pystr_to_symbolic("__i%d" % d))
-            else:
+            elif input_size[d] != 1:
                 # Dimension is NOT being reduced.
                 axis_vars.append(symbolic.pystr_to_symbolic("__o%d" % octr))
                 ri = input_size[d]
@@ -2013,6 +2013,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                         output_axis_vars[i] = octr
                         break
                 octr += 1
+            else:  # input_size == 1, no additional offset necessary
+                axis_vars.append(0)
         # Example:
         # __i0 -> first dimension of inp (size K)
         # __o0 -> second dimension of inp and out (size M)
