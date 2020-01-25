@@ -3250,6 +3250,34 @@ class DIODE_Context_PropWindow extends DIODE_Context {
                 x.colSpan = 2;
                 x.style = "text-align:center;";
             });
+
+            let libnode_container = document.createElement("div");
+            let expand_all = document.createElement("button");
+            expand_all.addEventListener("click", () => {
+                // Expand all library nodes
+                REST_request("/dace/api/v1.0/expand/", {
+                        sdfg: data,
+                    }, (xhr) => {
+                        if (xhr.readyState === 4 && xhr.status === 200) {
+                            let resp = parse_sdfg(xhr.response);
+                            if (resp.error !== undefined) {
+                                // Propagate error
+                                this.diode.handleErrors(this, resp);
+                            }
+
+                            // Add to history
+                            this.project().request(["append-history"], x => {
+                            }, { params: {
+                                    new_sdfg: resp.sdfg,
+                                    item_name: "Expand library nodes"
+                                }
+                            });
+                        }
+                    });
+            });
+            expand_all.innerText = "Expand all library nodes";
+            libnode_container.appendChild(expand_all);
+            free_symbol_table.addRow(libnode_container);
         }
 
         this.getHTMLContainer().innerHTML = "";
