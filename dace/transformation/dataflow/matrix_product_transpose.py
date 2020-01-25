@@ -5,7 +5,7 @@ import dace
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
-from dacelets.blas import nodes as blas_nodes
+from dacelibs.blas import nodes as blas_nodes
 
 
 @make_properties

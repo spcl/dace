@@ -21,7 +21,7 @@ from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
-import dacelets.blas as blas
+import dacelibs.blas as blas
 
 import numpy as np
 import sympy

@@ -187,9 +187,6 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
         gpu_transform_tasklet(nested_sdfg, nested_state, tasklet)
         return nested_node
 
-    # @staticmethod
-    # def postprocessing(sdfg, state, expansion):
-    #     gpu_transform_tasklet(sdfg, state, expansion)
 
 
 @dace.library.node
