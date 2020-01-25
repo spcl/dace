@@ -6,6 +6,7 @@ import dace.frontend.octave.parse as octave_frontend
 from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
+from dace.graph.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -474,6 +475,38 @@ def get_library_implementations(name):
         return jsonify([])
 
     return jsonify(list(cls.implementations.keys()))
+
+
+@app.route('/dace/api/v1.0/expand/', methods=['POST'])
+def expand_node_or_sdfg():
+    """
+        Performs expansion of a single library node or an entire SDFG.
+        Fields:
+        sdfg (required): SDFG as JSON
+        nodeid (not required): A list of: [SDFG ID, state ID, node ID]
+    """
+
+    try:
+        sdfg = dace.SDFG.from_json(request.json['sdfg'])
+    except KeyError:
+        return jsonify({'error': 'SDFG not given'})
+
+    try:
+        sdfg_id, state_id, node_id = request.json['nodeid']
+    except KeyError:
+        sdfg_id, state_id, node_id = None, None, None
+
+    if sdfg_id is None:
+        sdfg.expand_library_nodes()
+    else:
+        context_sdfg = sdfg.sdfg_list[sdfg_id]
+        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        if isinstance(node, LibraryNode):
+            node.expand(context_sdfg)
+        else:
+            return jsonify({'error': 'The given node is not a library node'})
+
+    return jsonify({'sdfg': sdfg.to_json()})
 
 
 def collect_all_SDFG_nodes(sdfg):
