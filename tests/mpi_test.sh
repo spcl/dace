@@ -10,6 +10,7 @@ DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_stric
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 TEST_TIMEOUT=60
 
@@ -48,28 +49,40 @@ bail() {
 
 runtestopt() {
     TESTS=`expr $TESTS + 1`
-    opts=$(join_by_newline ${@:4})
-    echo "$opts\ny" | timeout $TEST_TIMEOUT $1 $PYTHONPATH/tests/$2
+    opts=$(join_by_newline ${@:3})
+    echo "$opts\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/tests/$1
     if [ $? -ne 0 ]; then
-        bail "$1 $2 ($3, MPI)"
+        bail "$1 ($2, Single Node)"
         return 1
     fi
     
     return 0
 }
 
+runmpitestopt() {
+    TESTS=`expr $TESTS + 1`
+    opts=$(join_by_newline ${@:3})
+    echo "$opts\ny" | timeout $TEST_TIMEOUT mpirun -np 4 $PYTHON_BINARY $PYTHONPATH/tests/$1
+    if [ $? -ne 0 ]; then
+        bail "$1 ($2, Multi-Node)"
+        return 1
+    fi
+
+    return 0
+}
+
 runone() {
-    echo "Running $1"
+    echo "Running $PYTHON_BINARY"
     
     # Use cache (do not recompile every rank) in distributed test
-    runtestopt $1 immaterial_test.py $2 'MPITransformMap$0'
+    runtestopt immaterial_test.py $1 'MPITransformMap$0'
     DACE_compiler_use_cache=1
-    runtestopt "mpirun -np 4 $1" immaterial_test.py
+    runmpitestopt immaterial_test.py $1
     DACE_compiler_use_cache=0
     
-    runtestopt $1 immaterial_range_test.py $2 'MPITransformMap$0'
+    runtestopt immaterial_range_test.py $1 'MPITransformMap$0'
     DACE_compiler_use_cache=1
-    runtestopt "mpirun -np 4 $1" immaterial_range_test.py
+    runmpitestopt immaterial_range_test.py $1
     DACE_compiler_use_cache=0
 }
 
@@ -81,7 +94,7 @@ fi
 
 DACE_compiler_use_cache=0
 
-runone python3 "MPI"
+runone "MPI"
 
 PASSED=`expr $TESTS - $ERRORS`
 echo "$PASSED / $TESTS tests passed"
