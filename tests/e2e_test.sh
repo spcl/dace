@@ -4,7 +4,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
-PYTHON_BINARY="${PYTHON_BINARY:python3}"
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 ERRORS=0
 FAILED_TESTS=""

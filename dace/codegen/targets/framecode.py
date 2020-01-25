@@ -103,7 +103,7 @@ class DaCeCodeGenerator(object):
             'void __program_%s_internal(%s)\n{\n' % (fname, params), sdfg)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 0:
+        if len(self._dispatcher.instrumentation) > 1:
             global_stream.write(
                 'namespace dace { namespace perf { Report report; } }', sdfg)
             callsite_stream.write('dace::perf::report.reset();', sdfg)
@@ -131,7 +131,7 @@ class DaCeCodeGenerator(object):
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
         # Instrumentation saving
-        if len(self._dispatcher.instrumentation) > 0:
+        if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
                 'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name)
 
@@ -952,22 +952,26 @@ def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
                 parent_schedule = parent_node.map.schedule
 
             for node in reverse_scope_dict[parent_node]:
+                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
                 # Set default schedule type
                 if isinstance(node, nodes.MapEntry):
                     if node.map.schedule == dtypes.ScheduleType.Default:
-                        node.map._schedule = \
-                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                        node.map.schedule = child_schedule
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
                 elif isinstance(node, nodes.ConsumeEntry):
                     if node.consume.schedule == dtypes.ScheduleType.Default:
-                        node.consume._schedule = \
-                            dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+                        node.consume.schedule = child_schedule
+
                     # Also traverse children (recursively)
                     set_default_in_scope(node)
+                elif isinstance(node, nodes.NestedSDFG):
+                    # Nested SDFGs retain same schedule as their parent scope
+                    if node.schedule == dtypes.ScheduleType.Default:
+                        node.schedule = parent_schedule
                 elif getattr(node, 'schedule', False):
                     if node.schedule == dtypes.ScheduleType.Default:
-                        node._schedule = parent_schedule
+                        node.schedule = child_schedule
 
         ## End of recursive function
 
