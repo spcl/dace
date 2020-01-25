@@ -1036,29 +1036,3 @@ class LibraryNode(CodeNode):
     def validate(self, sdfg, state):
         raise ValueError("Unexpanded library node of type " + str(type(self)) +
                          ".")
-
-
-def static_connectors(clc):
-    """Decorator that removes methods to add/remove connectors from node.
-       This is useful for library nodes that enforce specific semantics for
-       input and output.
-    """
-
-    def add_in_connector(self, connector_name):
-        raise TypeError("Additional connectors not allowed for library node")
-
-    def add_out_connector(self, connector_name):
-        raise TypeError("Additional connectors not allowed for library node")
-
-    def remove_in_connector(self, connector_name):
-        raise TypeError("Cannot remove connector from library node")
-
-    def remove_out_connector(self, connector_name):
-        raise TypeError("Cannot remove connector from library node")
-
-    clc.add_in_connector = add_in_connector
-    clc.add_out_connector = add_out_connector
-    clc.remove_in_connector = remove_in_connector
-    clc.remove_out_connector = remove_out_connector
-
-    return clc
