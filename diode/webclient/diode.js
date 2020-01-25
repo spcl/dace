@@ -4963,14 +4963,19 @@ class DIODE {
             elem = $(elem);
             $.getJSON("/dace/api/v1.0/getLibImpl/" + node.element.classpath, available_implementations => {
                let cb = d => {
-                    let new_elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
-                        transthis.propertyChanged(node, x.name, elem.value);
-                    }, available_implementations, x.value);
+                   let new_elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
+                       transthis.propertyChanged(node, x.name, elem.value);
+                   }, available_implementations, x.value);
 
-                    // TODO: Add "Expand" button to transform the node
+                    // Add Expand button to transform the node
+                   let button = FormBuilder.createButton("prop_" + x.name + "_expand",
+                       (elem) => {
+                            // TODO: Call expand, add to history
+                       }, "Expand");
 
-                    // Replace the placeholder
-                    elem[0].parentNode.replaceChild(new_elem[0], elem[0]);
+                   // Replace the placeholder
+                   elem[0].parentNode.replaceChild(new_elem[0], elem[0]);
+                   new_elem[0].parentNode.appendChild(button[0]);
                 };
                 this.project().request(['sdfg_object'], cb, {
                     on_timeout: cb,
