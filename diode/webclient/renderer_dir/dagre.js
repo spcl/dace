@@ -28,7 +28,8 @@ module.exports = {
   debug: require("./lib/debug"),
   util: {
     time: require("./lib/util").time,
-    notime: require("./lib/util").notime
+    notime: require("./lib/util").notime,
+    intersectRect: require("./lib/util").intersectRect
   },
   version: require("./lib/version")
 };
