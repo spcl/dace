@@ -457,7 +457,15 @@ def indirect_properties(indirect_class, indirect_function, override=False):
     def indirection(cls):
         # For every property in the class we are indirecting to, create an
         # indirection property in this class
-        for prop in indirect_class.__properties__.values():
+        inherited_props = {}
+        for base_cls in cls.__bases__:
+            if hasattr(base_cls, "__properties__"):
+                inherited_props.update(base_cls.__properties__)
+        for name, prop in indirect_class.__properties__.items():
+            if (name in inherited_props
+                    and type(inherited_props[name]) == type(prop)):
+                # Base class could already have indirected properties
+                continue
             indirect_property(cls, indirect_function, prop, override)
         return make_properties(cls)
 

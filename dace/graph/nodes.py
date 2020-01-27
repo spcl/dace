@@ -490,9 +490,13 @@ class MapEntry(EntryNode):
         self._map = map
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        m = Map("", [], [])
-        ret = MapEntry(map=m)
+    def map_type():
+        return Map
+
+    @classmethod
+    def from_json(clc, json_obj, context=None):
+        m = clc.map_type()("", [], [])
+        ret = clc(map=m)
 
         try:
             # Set map reference to map exit
@@ -536,16 +540,20 @@ class MapExit(ExitNode):
         self._map = map
 
     @staticmethod
-    def from_json(json_obj, context=None):
+    def map_type():
+        return Map
+
+    @classmethod
+    def from_json(clc, json_obj, context=None):
         try:
             # Set map reference to map entry
             entry_node = context['sdfg_state'].node(
                 int(json_obj['scope_entry']))
 
-            ret = MapExit(map=entry_node.map)
+            ret = clc(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
-            ret = MapExit(Map('_', [], []))
+            ret = clc(clc.map_type()('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
