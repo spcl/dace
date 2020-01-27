@@ -41,7 +41,9 @@ class Vectorization(pattern_matching.Transformation):
         for _src, _, _dest, _, memlet in graph.all_edges(tasklet):
 
             # Cases that do not matter for vectorization
-            if isinstance(sdfg.arrays[memlet.data], data.Stream):
+            if memlet.data is None:  # Empty memlets
+                continue
+            if isinstance(sdfg.arrays[memlet.data], data.Stream):  # Streams
                 continue
 
             # Vectorization can not be applied in WCR
@@ -111,6 +113,10 @@ class Vectorization(pattern_matching.Transformation):
         # Vectorize memlets adjacent to the tasklet.
         for edge in graph.all_edges(tasklet):
             _src, _, _dest, _, memlet = edge
+
+            if memlet.data is None:  # Empty memlets
+                continue
+
             lastindex = memlet.subset[-1]
             if isinstance(lastindex, tuple):
                 symbols = set()
@@ -133,14 +139,15 @@ class Vectorization(pattern_matching.Transformation):
                     # propagate to the parent (TODO: handle multiple level of nestings)
                     if sdfg.parent is not None:
                         # Find parent Nested SDFG node
-                        parent_node = next(
-                            n for n in sdfg.parent.nodes()
-                            if isinstance(n, nodes.NestedSDFG) and n.sdfg.name == sdfg.name)
+                        parent_node = next(n for n in sdfg.parent.nodes()
+                                           if isinstance(n, nodes.NestedSDFG)
+                                           and n.sdfg.name == sdfg.name)
 
                         # continue in propagating the vector length following the path that arrives to source_edge or
                         # starts from sink_edge
                         for pe in sdfg.parent.all_edges(parent_node):
-                            if str(pe.dst_conn) == str(source_edge.src) or str(pe.src_conn) == str(sink_edge.dst):
+                            if str(pe.dst_conn) == str(source_edge.src) or str(
+                                    pe.src_conn) == str(sink_edge.dst):
                                 for ppe in graph.memlet_path(pe):
                                     ppe.data.veclen = vector_size
 

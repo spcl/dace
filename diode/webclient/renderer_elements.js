@@ -184,14 +184,19 @@ class Edge extends SDFGElement {
         ctx.beginPath();
         ctx.moveTo(edge.points[0].x, edge.points[0].y);
 
-        let i;
-        for (i = 1; i < edge.points.length - 2; i++) {
-            let xm = (edge.points[i].x + edge.points[i + 1].x) / 2.0;
-            let ym = (edge.points[i].y + edge.points[i + 1].y) / 2.0;
-            ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, xm, ym);
+        if (edge.points.length == 2) {
+            // Straight line can be drawn
+            ctx.lineTo(edge.points[1].x, edge.points[1].y);
+        } else {
+            let i;
+            for (i = 1; i < edge.points.length - 2; i++) {
+                let xm = (edge.points[i].x + edge.points[i + 1].x) / 2.0;
+                let ym = (edge.points[i].y + edge.points[i + 1].y) / 2.0;
+                ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, xm, ym);
+            }
+            ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y,
+                                 edge.points[i+1].x, edge.points[i+1].y);
         }
-        ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y,
-                             edge.points[i+1].x, edge.points[i+1].y);
 
         let style = this.strokeStyle();
         if (style !== 'black')
@@ -397,12 +402,14 @@ class Tasklet extends Node {
             let hr = height / (this.height * TASKLET_HRATIO);
             let wr = width / (this.width * TASKLET_WRATIO);
             let FONTSIZE = Math.min(10 / hr, 10 / wr);
+            let text_yoffset = FONTSIZE/4;
 
             ctx.font = FONTSIZE + "px courier new";
-            let y = this.y - height / 8;
+            // Set the start offset such that the middle row of the text is in this.y
+            let y = this.y + text_yoffset - ((lines.length-1)/2) * FONTSIZE*1.05;
             for (let i = 0; i < lines.length; i++)
                 ctx.fillText(lines[i], this.x - (this.width*TASKLET_WRATIO) / 2.0,
-                          y + i*FONTSIZE*1.05);
+                             y + i*FONTSIZE*1.05);
 
             ctx.font = oldfont;
             return;

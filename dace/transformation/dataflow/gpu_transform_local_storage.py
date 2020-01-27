@@ -88,6 +88,10 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     candidate_map.schedule == dtypes.ScheduleType.Sequential):
                 return False
 
+            # Dynamic map ranges cannot become kernels
+            if sd.has_dynamic_map_inputs(graph, map_entry):
+                return False
+
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = map_entry
@@ -106,6 +110,14 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         node.desc(sdfg).storage != dtypes.StorageType.Default
                         and node.desc(sdfg).storage !=
                         dtypes.StorageType.Register):
+                    return False
+
+            # If one of the outputs is a stream, do not match
+            map_exit = graph.exit_nodes(map_entry)[0]
+            for edge in graph.out_edges(map_exit):
+                dst = graph.memlet_path(edge)[-1].dst
+                if (isinstance(dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[dst.data], data.Stream)):
                     return False
 
             return True
@@ -243,14 +255,24 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                 if len(actual_dims) == 0:  # abort
                     actual_dims = [len(full_shape) - 1]
                 if isinstance(array, data.Scalar):
-                    cloned_array = sdfg.add_array(
+                    sdfg.add_array(
                         name=cloned_name,
                         shape=[1],
                         dtype=array.dtype,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global)
+                elif isinstance(array, data.Stream):
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        offset=[array.offset[d] for d in actual_dims])
                 else:
-                    cloned_array = sdfg.add_array(
+                    sdfg.add_array(
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
@@ -258,8 +280,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
-                        access_order=tuple(
-                            [array.access_order[d] for d in actual_dims]),
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
@@ -308,14 +328,24 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                 if len(actual_dims) == 0:  # abort
                     actual_dims = [len(full_shape) - 1]
                 if isinstance(array, data.Scalar):
-                    cloned_array = sdfg.add_array(
+                    sdfg.add_array(
                         name=cloned_name,
                         shape=[1],
                         dtype=array.dtype,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global)
+                elif isinstance(array, data.Stream):
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        offset=[array.offset[d] for d in actual_dims])
                 else:
-                    cloned_array = sdfg.add_array(
+                    sdfg.add_array(
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
@@ -323,8 +353,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
-                        access_order=tuple(
-                            [array.access_order[d] for d in actual_dims]),
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
@@ -404,7 +432,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 else:
                                     newsubset[ind] = (
                                         r - offset[ind],
-                                        r - offset[ind] + 1,
+                                        r - offset[ind],
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(
@@ -489,7 +517,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                                 else:
                                     newsubset[ind] = (
                                         r - offset[ind],
-                                        r - offset[ind] + 1,
+                                        r - offset[ind],
                                         1,
                                     )
                             memlet.subset = type(edge.data.subset)(

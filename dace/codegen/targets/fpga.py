@@ -385,13 +385,9 @@ class FPGACodeGen(TargetCodeGenerator):
                        callsite_stream):
         result = StringIO()
         nodedesc = node.desc(sdfg)
-        arrsize = " * ".join([
-            cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
-            for s in nodedesc.strides
-        ])
-        is_dynamically_sized = any(
-            dace.symbolic.issymbolic(s, sdfg.constants)
-            for s in nodedesc.strides)
+        arrsize = nodedesc.total_size
+        is_dynamically_sized = dace.symbolic.issymbolic(
+            arrsize, sdfg.constants)
 
         dataname = node.data
 
@@ -416,7 +412,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise dace.codegen.codegen.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
-            if arrsize != "1":
+            if cpu.sym2cpp(arrsize) != "1":
                 # Is a stream array
                 self._dispatcher.defined_vars.add(dataname,
                                                   DefinedType.StreamArray)
@@ -451,7 +447,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             "auto {} = hlslib::ocl::GlobalContext()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({});".format(dataname, nodedesc.dtype.ctype,
-                                           arrsize))
+                                           cpu.sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
@@ -471,8 +467,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 veclen = self._memory_widths[node.data]
                 generate_scalar = False
                 if veclen > 1:
-                    arrsize_symbolic = functools.reduce(
-                        sp.mul.Mul, nodedesc.strides)
+                    arrsize_symbolic = nodedesc.total_size
                     arrsize_eval = dace.symbolic.eval(
                         arrsize_symbolic / veclen)
                     if cpu.sym2cpp(arrsize_eval) == "1":
@@ -502,8 +497,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                       DefinedType.Pointer)
 
             else:
-                raise NotImplementedError(
-                    "Unimplemented storage type " + str(nodedesc.storage))
+                raise NotImplementedError("Unimplemented storage type " +
+                                          str(nodedesc.storage))
 
         elif isinstance(nodedesc, dace.data.Scalar):
 
@@ -583,20 +578,23 @@ class FPGACodeGen(TargetCodeGenerator):
 
             if host_to_device:
 
-                callsite_stream.write("{}.CopyFromHost({}, {}, {});".format(
-                    dst_node.data, (offset if not outgoing_memlet else 0),
-                    copysize, src_node.data + (" + {}".format(offset)
-                                               if outgoing_memlet else "")),
-                                      sdfg, state_id, [src_node, dst_node])
+                callsite_stream.write(
+                    "{}.CopyFromHost({}, {}, {});".format(
+                        dst_node.data, (offset if not outgoing_memlet else 0),
+                        copysize,
+                        src_node.data + (" + {}".format(offset)
+                                         if outgoing_memlet else "")), sdfg,
+                    state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                callsite_stream.write("{}.CopyToHost({}, {}, {});".format(
-                    src_node.data, (offset
-                                    if outgoing_memlet else 0), copysize,
-                    dst_node.data + (" + {}".format(offset)
-                                     if not outgoing_memlet else "")), sdfg,
-                                      state_id, [src_node, dst_node])
+                callsite_stream.write(
+                    "{}.CopyToHost({}, {}, {});".format(
+                        src_node.data, (offset
+                                        if outgoing_memlet else 0), copysize,
+                        dst_node.data + (" + {}".format(offset)
+                                         if not outgoing_memlet else "")),
+                    sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
@@ -912,8 +910,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
                             loop_var_type, var, cpu.sym2cpp(begin), var,
-                            cpu.sym2cpp(end + 1), var,
-                            cpu.sym2cpp(skip)), sdfg, state_id, node)
+                            cpu.sym2cpp(end + 1), var, cpu.sym2cpp(skip)),
+                        sdfg, state_id, node)
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -1061,8 +1059,9 @@ class FPGACodeGen(TargetCodeGenerator):
             elif reduction_type == dace.dtypes.ReductionType.Sum:
                 # Set initial value to zero. Helpful for single cycle clock accumulator in Intel.
                 init_value = " = 0"
-            callsite_stream.write("{} {}{};".format(
-                output_type, accumulator, init_value), sdfg, state_id, node)
+            callsite_stream.write(
+                "{} {}{};".format(output_type, accumulator, init_value), sdfg,
+                state_id, node)
 
         # Generate inner loops (for each collapsed dimension)
         input_subset = input_memlet.subset

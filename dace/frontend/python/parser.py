@@ -168,7 +168,7 @@ class DaceProgram:
     def name(self):
         return self._name
 
-    def to_sdfg(self, *args, strict=None):
+    def to_sdfg(self, *args, strict=None) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
         return parse_from_function(self, *args, strict=strict)
 

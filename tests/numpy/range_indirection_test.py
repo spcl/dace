@@ -10,7 +10,7 @@ def range_indirection(A: dace.float64[M, N], x: dace.int32[M]):
 
     A[:] = 1.0
     for j in range(1, M):
-        A[x[j]] += A[x[j-1]]
+        A[x[j]] += A[x[j - 1]]
 
 
 if __name__ == '__main__':
@@ -27,8 +27,8 @@ if __name__ == '__main__':
     npA = np.ndarray((M.get(), N.get()), dtype=np.float64)
     npA[:] = 1.0
     for j in range(1, M.get()):
-        npA[x[j]] += npA[x[j-1]]
-    
+        npA[x[j]] += npA[x[j - 1]]
+
     rel_norm = np.linalg.norm(npA - A) / np.linalg.norm(npA)
 
     print(rel_norm)

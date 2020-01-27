@@ -53,6 +53,12 @@ class Node(object):
             scope_entry_node = None
             scope_exit_nodes = []
 
+        # The scope exit of an entry node is the matching exit node
+        if isinstance(self, EntryNode):
+            scope_exit_nodes = [
+                str(parent.node_id(x)) for x in parent.exit_nodes(self)
+            ]
+
         retdict = {
             "type": typestr,
             "label": labelstr,
@@ -363,6 +369,7 @@ class NestedSDFG(CodeNode):
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
+        allow_none=True,
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
@@ -431,6 +438,15 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not data.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        connectors = self.in_connectors | self.out_connectors
+        for dname, desc in self.sdfg.arrays.items():
+            # TODO(later): Disallow scalars without access nodes (so that this
+            #              check passes for them too).
+            if isinstance(desc, data.Scalar):
+                continue
+            if not desc.transient and dname not in connectors:
+                raise NameError('Data descriptor "%s" not found in nested '
+                                'SDFG connectors' % dname)
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -477,6 +493,16 @@ class MapEntry(EntryNode):
     def from_json(json_obj, context=None):
         m = Map("", [], [])
         ret = MapEntry(map=m)
+
+        try:
+            # Set map reference to map exit
+            nid = int(json_obj['scope_exits'][0])
+            exit_node = context['sdfg_state'].node(nid)
+            exit_node.map = m
+        except IndexError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in MapExit
+            pass
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -511,10 +537,16 @@ class MapExit(ExitNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        # Set map reference to map entry
-        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+        try:
+            # Set map reference to map entry
+            entry_node = context['sdfg_state'].node(
+                int(json_obj['scope_entry']))
 
-        ret = MapExit(map=entry_node.map)
+            ret = MapExit(map=entry_node.map)
+        except IndexError:  # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in MapEntry
+            ret = MapExit(Map('_', [], []))
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
@@ -638,7 +670,6 @@ class ConsumeEntry(EntryNode):
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
         self._consume = consume
-        self._map_depth = 0
         self.add_in_connector('IN_stream')
         self.add_out_connector('OUT_stream')
 
@@ -646,6 +677,16 @@ class ConsumeEntry(EntryNode):
     def from_json(json_obj, context=None):
         c = Consume("", ['i', 1], None)
         ret = ConsumeEntry(consume=c)
+
+        try:
+            # Set map reference to map exit
+            nid = int(json_obj['scope_exits'][0])
+            exit_node = context['sdfg_state'].node(nid)
+            exit_node.consume = c
+        except IndexError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in ConsumeExit
+            pass
+
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -686,10 +727,15 @@ class ConsumeExit(ExitNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        # Set map reference to entry node
-        entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+        try:
+            # Set consume reference to entry node
+            entry_node = context['sdfg_state'].node(
+                int(json_obj['scope_entry']))
+            ret = ConsumeExit(consume=entry_node.consume)
+        except IndexError:  # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in ConsumeEntry
+            ret = ConsumeExit(Consume("", ['i', 1], None))
 
-        ret = ConsumeExit(consume=entry_node.consume)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 

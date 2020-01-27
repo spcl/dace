@@ -3,12 +3,13 @@
 
 from __future__ import print_function
 import inspect
-from types import GeneratorType
 import dace
+from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property, SubgraphProperty
-from dace.graph import labeling, graph as gr
+from dace.graph import labeling, graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
+from typing import Dict, List, Tuple, Type, Union
 
 
 @make_properties
@@ -128,6 +129,7 @@ class Transformation(object):
                                that was matched.
             :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
                          should be equal to `graph`.
+            :param strict: Whether transformation should run in strict mode.
             :return: True if the transformation can be applied.
         """
         raise NotImplementedError
@@ -236,7 +238,8 @@ class Transformation(object):
 # Module functions ############################################################
 
 
-def collapse_multigraph_to_nx(graph: gr.MultiDiGraph) -> nx.DiGraph:
+def collapse_multigraph_to_nx(
+        graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGraph]) -> nx.DiGraph:
     """ Collapses a directed multigraph into a networkx directed graph.
 
         In the output directed graph, each node is a number, which contains
@@ -248,7 +251,8 @@ def collapse_multigraph_to_nx(graph: gr.MultiDiGraph) -> nx.DiGraph:
   """
 
     # Create the digraph nodes.
-    digraph_nodes = [None] * graph.number_of_nodes()
+    digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = (
+        [None] * graph.number_of_nodes())
     node_id = {}
     for i, node in enumerate(graph.nodes()):
         digraph_nodes[i] = (i, {'node': node})
@@ -287,75 +291,16 @@ def type_match(node_a, node_b):
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def match_expression(graph,
-                     expressions,
-                     node_match=type_match,
-                     edge_match=None,
-                     pattern_match=None,
-                     strict=False):
-    """ Returns a generator which yields a subgraph mapping from
-        `expression_node` to `graph_node`.
-        :param graph: Directed multigraph object to be searched for subgraphs.
-        :param expressions: List of directed graphs, isomorphic to any
-                            (sub)graph that potentially matches a
-                            transformation.
-        :param node_match: Function for checking whether two nodes match.
-        :param edge_match: Function for checking whether two edges match.
-        :param pattern_match: Function for checking whether a subgraph matches
-                              a transformation.
-        :return: Generator of 2-tuples: (subgraph, expression index in
-                 `expressions`).
-    """
-
-    # Collapse multigraph into directed graph
-    digraph = collapse_multigraph_to_nx(graph)
-
-    # If expression is a list, try to match each one of them
-    if not isinstance(expressions, list) and not isinstance(
-            expressions, GeneratorType):
-        expressions = [expressions]
-
-    for expr_index, expr in enumerate(expressions):
-        # Also collapse expression multigraph
-        cexpr = collapse_multigraph_to_nx(expr)
-
-        # Find candidate subgraphs (per-node / per-edge matching)
-        graph_matcher = iso.DiGraphMatcher(
-            digraph, cexpr, node_match=node_match, edge_match=edge_match)
-        for subgraph in graph_matcher.subgraph_isomorphisms_iter():
-            # Convert candidate to original graph node representation
-            # The type of subgraph is {graph_node_id: subgraph_node_id}
-            # We return the inverse mapping: {subgraph_node: graph_node} for
-            # ease of access
-            subgraph = {
-                cexpr.nodes[j]['node']: digraph.nodes[i]['node']
-                for (i, j) in subgraph.items()
-            }
-
-            # Match original (regular) expression on found candidate
-            if pattern_match is None:
-                # Yield mapping and index of expression found
-                yield subgraph, expr_index
-            else:
-                match_found = pattern_match(graph, subgraph)
-                if match_found:
-                    # Yield mapping and index of expression found
-                    # expr_index_list = list(range(match_num))
-                    yield subgraph, expr_index  # expr_index_list
-
-
-def match_pattern(state_id,
-                  state,
-                  pattern,
-                  sdfg,
+def match_pattern(state: SDFGState,
+                  pattern: Type[Transformation],
+                  sdfg: SDFG,
                   node_match=type_match,
                   edge_match=None,
                   strict=False):
     """ Returns a list of single-state Transformations of a certain class that
         match the input SDFG.
-        :param state_id: The node ID of the state in the given SDFG.
         :param state: An SDFGState object to match.
-        :param pattern: Transformation object to match.
+        :param pattern: Transformation type to match.
         :param sdfg: The SDFG to match in.
         :param node_match: Function for checking whether two nodes match.
         :param edge_match: Function for checking whether two edges match.
@@ -387,15 +332,16 @@ def match_pattern(state_id,
                 match_found = False
             if match_found:
                 yield pattern(
-                    sdfg.sdfg_list.index(sdfg), state_id, subgraph, idx)
+                    sdfg.sdfg_list.index(sdfg), sdfg.node_id(state), subgraph,
+                    idx)
 
     # Recursive call for nested SDFGs
     for node in state.nodes():
-        if isinstance(node, dace.graph.nodes.NestedSDFG):
+        if isinstance(node, nd.NestedSDFG):
             sub_sdfg = node.sdfg
-            for i, sub_state in enumerate(sub_sdfg.nodes()):
+            for sub_state in sub_sdfg.nodes():
                 yield from match_pattern(
-                    i, sub_state, pattern, sub_sdfg, strict=strict)
+                    sub_state, pattern, sub_sdfg, strict=strict)
 
 
 def match_stateflow_pattern(sdfg,
@@ -441,6 +387,6 @@ def match_stateflow_pattern(sdfg,
     # Recursive call for nested SDFGs
     for state in sdfg.nodes():
         for node in state.nodes():
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
+            if isinstance(node, nd.NestedSDFG):
                 yield from match_stateflow_pattern(
                     node.sdfg, pattern, strict=strict)

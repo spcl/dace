@@ -20,6 +20,7 @@
 #include "view.h"
 #include "stream.h"
 #include "os.h"
+#include "perf/reporting.h"
 
 #ifdef __CUDACC__
 #include "cuda/copy.cuh"

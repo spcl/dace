@@ -33,7 +33,6 @@ if __name__ == "__main__":
     B = dace.ndarray([N], dtype=dace.float32)
     out_AB = dace.scalar(dace.float32)
 
-
     print('Dot product %d' % (N.get()))
 
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)

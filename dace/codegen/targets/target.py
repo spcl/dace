@@ -452,11 +452,6 @@ class TargetDispatcher(object):
             if isinstance(v, nodes.MapEntry):
                 scope_subgraph = sdfg.find_state(state_id).scope_subgraph(v)
 
-                # Propagate parallelism
-                if dfg.is_parallel():
-                    scope_subgraph.set_parallel_parent(dfg.get_parallel_parent)
-
-                assert not dfg.is_parallel() or scope_subgraph.is_parallel()
                 self.dispatch_scope(v.map.schedule, sdfg, scope_subgraph,
                                     state_id, function_stream, callsite_stream)
 

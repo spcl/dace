@@ -3,9 +3,12 @@ import numpy as np
 
 sdfg = dace.SDFG('multistream')
 
-A = sdfg.add_array('A', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
-B = sdfg.add_array('B', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
-C = sdfg.add_array('C', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
+_, A = sdfg.add_array(
+    'A', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
+_, B = sdfg.add_array(
+    'B', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
+_, C = sdfg.add_array(
+    'C', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
 
 gA = sdfg.add_transient(
     'gA', [2], dace.float32, storage=dace.StorageType.GPU_Global)

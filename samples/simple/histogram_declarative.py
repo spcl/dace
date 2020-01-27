@@ -14,20 +14,20 @@ BINS = 256  # dace.symbol('BINS')
 @dace.program(dace.uint8[H, W], dace.uint32[BINS])
 def histogram(A, hist):
     # Declarative version
-    tmp = dace.define_local([H, W, BINS], dace.uint32)
+    tmp = dace.define_local([BINS, H, W], dace.uint32)
 
-    @dace.map(_[0:H, 0:W, 0:BINS])
-    def zero_tmp(i, j, b):
-        t >> tmp[i, j, b]
+    @dace.map(_[0:BINS, 0:H, 0:W])
+    def zero_tmp(b, i, j):
+        t >> tmp[b, i, j]
         t = 0
 
     @dace.map(_[0:H, 0:W])
     def compute_declarative(i, j):
         a << A[i, j]
-        out >> tmp(1)[i, j, :]
+        out >> tmp(1)[:, i, j]
         out[a] = 1
 
-    dace.reduce(lambda a, b: a + b, tmp, hist, axis=(0, 1))
+    dace.reduce(lambda a, b: a + b, tmp, hist, axis=(1, 2), identity=0)
 
 
 if __name__ == "__main__":

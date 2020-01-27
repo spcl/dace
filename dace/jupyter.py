@@ -4,7 +4,7 @@ import os
 
 
 # From https://stackoverflow.com/a/39662359/6489142
-def _isnotebook():
+def isnotebook():
     try:
         shell = get_ipython().__class__.__name__
         if shell == 'ZMQInteractiveShell':
@@ -17,10 +17,7 @@ def _isnotebook():
         return False  # Probably standard Python interpreter
 
 
-# Code that runs on "import dace"
-if _isnotebook():
-    from IPython.display import display, HTML
-
+def preamble():
     # Emit javascript headers for SDFG renderer
     sdfv_deps = [
         'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
@@ -40,4 +37,10 @@ if _isnotebook():
     result += '<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">'
 
     # Run this code once
-    display(HTML(result))
+    return result
+
+
+# Code that runs on "import dace"
+if isnotebook():
+    from IPython.display import display, HTML
+    display(HTML(preamble()))

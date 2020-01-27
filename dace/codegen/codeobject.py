@@ -9,7 +9,8 @@ class CodeObject(object):
         dtype=str,
         desc="Language used for this code (same " +
         "as its file extension)")  # dtype=dtypes.Language?
-    target = Property(dtype=type, desc="Target to use for compilation", allow_none=True)
+    target = Property(
+        dtype=type, desc="Target to use for compilation", allow_none=True)
     target_type = Property(
         dtype=str,
         desc="Sub-target within target (e.g., host or device code)",

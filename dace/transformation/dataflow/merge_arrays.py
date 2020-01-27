@@ -51,8 +51,9 @@ class MergeArrays(pattern_matching.Transformation):
         map = graph.node(candidate[MergeArrays._map_entry])
 
         # If arr1's connector leads directly to map, skip it
-        if all(not e.dst_conn.startswith('IN_')
-               for e in graph.edges_between(arr1, map)):
+        if all(
+                e.dst_conn and not e.dst_conn.startswith('IN_')
+                for e in graph.edges_between(arr1, map)):
             return False
 
         if (any(e.dst != map for e in graph.out_edges(arr1))
@@ -63,8 +64,8 @@ class MergeArrays(pattern_matching.Transformation):
         # duplicates)
         all_source_nodes = set(
             graph.node_id(e.src) for e in graph.in_edges(map)
-            if e.src != arr1 and e.src != arr2 and e.dst_conn.startswith('IN_')
-            and graph.in_degree(e.src) == 0)
+            if e.src != arr1 and e.src != arr2 and e.dst_conn
+            and e.dst_conn.startswith('IN_') and graph.in_degree(e.src) == 0)
         if any(nid < arr1_id or nid < arr2_id for nid in all_source_nodes):
             return False
 
@@ -89,7 +90,7 @@ class MergeArrays(pattern_matching.Transformation):
         source_edges = [
             e for e in graph.in_edges(map)
             if isinstance(e.src, nodes.AccessNode) and e.src.data == array.data
-            and e.src != array and e.dst_conn.startswith('IN_')
+            and e.src != array and e.dst_conn and e.dst_conn.startswith('IN_')
             and graph.in_degree(e.src) == 0
         ]
 

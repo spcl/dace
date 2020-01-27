@@ -1,5 +1,11 @@
 import dace
 import numpy as np
+import sys
+import os
+
+# Ensure files from the same directory can be imported (for pytest)
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
 import external_module
 
 W = external_module.W

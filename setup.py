@@ -32,7 +32,7 @@ with open("README.md", "r") as fp:
 
 setup(
     name='dace',
-    version='0.9.0',
+    version='0.9.5',
     url='https://github.com/spcl/dace',
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',
@@ -60,4 +60,5 @@ setup(
         'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
         'scikit-build', 'cmake'
     ],
+    tests_require=['coverage'],
     scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])

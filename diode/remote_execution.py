@@ -12,7 +12,10 @@ from dace.sdfg import SDFG
 from dace.codegen.compiler import generate_program_folder, configure_and_compile
 from dace.codegen.codegen import CodeObject
 from dace.config import Config
-from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
+
+
+def _task(obj):
+    obj.run()
 
 
 class FunctionStreamWrapper(object):
@@ -79,9 +82,6 @@ class Executor(object):
 
     def run(self, dace_state, fail_on_nonzero=False):
         sdfg = dace_state.get_sdfg()
-
-        # Check counter validity
-        PAPIUtils.check_performance_counters(self)
 
         if self.remote:
             self.show_output("Executing DaCe program " + sdfg.name + " on " +
@@ -159,45 +159,26 @@ class Executor(object):
             # to remote_dace_dir
             so_name = "lib" + dace_progname + "." + self.config_get(
                 'compiler', 'library_extension')
-            self.copy_file_from_remote(remote_dace_dir + "/build/" + so_name,
-                                       tmpfolder + "/" + so_name)
-            self.copy_file_to_remote(tmpfolder + "/" + so_name,
-                                     remote_dace_dir)
+            self.copy_file_from_remote(
+                os.path.join(remote_dace_dir, 'build', so_name),
+                os.path.join(tmpfolder, so_name))
+            self.copy_file_to_remote(
+                os.path.join(tmpfolder, so_name), remote_dace_dir)
 
             dace_file = dace_state.get_dace_tmpfile()
             if dace_file is None:
                 raise ValueError("Dace file is None!")
 
-            remote_dace_file = remote_workdir + "/" + os.path.basename(
-                dace_file)
+            remote_dace_file = os.path.join(remote_workdir,
+                                            os.path.basename(dace_file))
             self.copy_file_to_remote(dace_file, remote_dace_file)
 
-            papi = PAPIUtils.is_papi_used(sdfg)
-
-            # We got the file there, now we can run with different
-            # configurations.
-            if papi:
-                multirun_num = PAPISettings.perf_multirun_num(
-                    config=self._config)
-                for iteration in range(multirun_num):
-                    optdict, omp_thread_num = PAPIUtils.get_run_options(
-                        self, iteration)
-
-                    self.remote_exec_dace(
-                        remote_workdir,
-                        remote_dace_file,
-                        use_mpi,
-                        fail_on_nonzero,
-                        omp_num_threads=omp_thread_num,
-                        repetitions=dace_state.repetitions,
-                        additional_options_dict=optdict)
-            else:
-                self.remote_exec_dace(
-                    remote_workdir,
-                    remote_dace_file,
-                    use_mpi,
-                    fail_on_nonzero,
-                    repetitions=dace_state.repetitions)
+            self.remote_exec_dace(
+                remote_workdir,
+                remote_dace_file,
+                use_mpi,
+                fail_on_nonzero,
+                repetitions=dace_state.repetitions)
 
             self.show_output("Execution Terminated\n")
 
@@ -207,14 +188,12 @@ class Executor(object):
             except RuntimeError:
                 pass
 
-            if papi:
-                # Copy back the vectorization results
-                PAPIUtils.retrieve_vectorization_report(
-                    self, code_objects, remote_dace_dir)
-
-                # Copy back the instrumentation results
-                PAPIUtils.retrieve_instrumentation_results(
-                    self, remote_workdir)
+            # Copy back the instrumentation and vectorization results
+            try:
+                self.copy_folder_from_remote(
+                    os.path.join(remote_dace_dir, 'perf'), ".")
+            except RuntimeError:
+                pass
 
             try:
                 self.remote_delete_file(remote_workdir + "/results.log")
@@ -379,6 +358,14 @@ class Executor(object):
                                            dst + "/" + str(subdir))
             return
 
+    def copy_folder_from_remote(self, src: str, dst: str):
+        s = Template(self.config_get("execution", "general", "copycmd_r2l"))
+        cmd = s.substitute(
+            host=self.config_get("execution", "general", "host"),
+            srcfile="-r " + src,
+            dstfile=dst)
+        self.exec_cmd_and_show_output(cmd)
+
     def copy_file_from_remote(self, src, dst):
         s = Template(self.config_get("execution", "general", "copycmd_r2l"))
         cmd = s.substitute(
@@ -417,7 +404,6 @@ class AsyncExecutor:
         self.executor = Executor(remote)
         self.executor.set_exit_on_error(False)
         self.to_proc_message_queue = multiprocessing.Queue(128)
-        self.from_proc_message_queue = multiprocessing.Queue(128)
         self.running_proc = None
 
         # This determines if a "quit"-message stops the subprocess
@@ -440,17 +426,19 @@ class AsyncExecutor:
             print("Cannot start another sub-process!")
             return
 
-        def task(obj):
-            obj.run()
-
         # Use multiple processes to handle crashing processes
-        self.running_proc = multiprocessing.Process(target=task, args=(self, ))
+        self.running_proc = multiprocessing.Process(
+            target=_task, args=(self, ))
         self.running_proc.start()
 
         self.append_run_async(dace_state, fail_on_nonzero=False)
 
     def append_run_async(self, dace_state, fail_on_nonzero=False):
-        self.to_proc_message_queue.put(("run", dace_state, fail_on_nonzero))
+        self.to_proc_message_queue.put(
+            ("run", (dace_state.dace_code,
+                     dace_state.dace_filename, dace_state.source_code,
+                     dace_state.sdfg.to_json(), dace_state.remote),
+             fail_on_nonzero))
 
     def add_async_task(self, task):
         self.to_proc_message_queue.put(("execute_task", self, task))
@@ -464,6 +452,13 @@ class AsyncExecutor:
             _, subargs = args
 
             return self.execute_task(subargs)
+        elif name == "run":
+            # Convert arguments back to dace_state, deserializing the SDFG
+            from diode.DaceState import DaceState
+            dace_state = DaceState(args[0][0], args[0][1], args[0][2],
+                                   SDFG.from_json(args[0][3]), args[0][4])
+            args = (dace_state, *args[1:])
+
         return getattr(obj, name)(*args)
 
     def run(self):
@@ -481,10 +476,7 @@ class AsyncExecutor:
                 break
 
             # Unwrap and call
-            ret = self.callMethod(self.executor, *msg)
-
-            # Put the return value (including the complete command)
-            self.from_proc_message_queue.put(("retval", ret, *msg))
+            self.callMethod(self.executor, *msg)
 
     def join(self, timeout=None):
         pass

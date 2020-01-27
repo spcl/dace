@@ -7,17 +7,17 @@ import argparse
 
 N = dace.symbol("N")
 
+
 @dace.program
-def vec_sum(x : dace.float32[N], y : dace.float32[N], z : dace.float32[N]):
+def vec_sum(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
     @dace.map
-    def sum(i:_[0:N]):
+    def sum(i: _[0:N]):
         in_x << x[i]
         in_y << y[i]
         in_z << z[i]
         out >> z[i]
 
-        out = in_x+in_y+in_z
-
+        out = in_x + in_y + in_z
 
 
 if __name__ == "__main__":
@@ -42,13 +42,11 @@ if __name__ == "__main__":
     Y = np.random.rand(N.get()).astype(dace.float32.type)
     Z = np.random.rand(N.get()).astype(dace.float32.type)
 
-
     Z_exp = X + Y + Z
 
     #compute expected result
-    vec_sum(X,Y,Z)
-    diff = np.linalg.norm(Z_exp-Z) / float(dace.eval(N.get()))
+    vec_sum(X, Y, Z)
+    diff = np.linalg.norm(Z_exp - Z) / float(dace.eval(N.get()))
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
-

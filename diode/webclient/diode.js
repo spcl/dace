@@ -4256,16 +4256,11 @@ class DIODE {
                 let __r_s = __main(__var_rng.val.start);
                 let __r_e = __main(__var_rng.val.end);
                 let __r_step = __main(__var_rng.val.step);
-                
-                let __access_order = data.attributes.access_order;
-                // Access order reverse lookup
-                let __rev_access_order = __access_order.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
 
                 // Remember: Inclusive ranges
                 for(let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
                     // Add this to the full evaluation
-                    // Use the access order from the data property; this means remap if necessary.
-                    let __a_i = __access_indices.map((x, i) => [x, i]).sort((a, b) => __rev_access_order[a[1]] - __rev_access_order[b[1]]).map(x => x[0]);
+                    let __a_i = __access_indices.map((x, i) => [x, i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
                     
 
                     __a_i = __a_i.map(__y => feval("let " + __it + " = " + __x + ";" + __y.var));

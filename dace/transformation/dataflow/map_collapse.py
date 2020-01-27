@@ -1,9 +1,11 @@
 """ Contains classes that implement the map-collapse transformation. """
 
 from copy import deepcopy as dcpy
+from dace.symbolic import symlist
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
+from typing import Tuple
 
 
 @make_properties
@@ -34,6 +36,13 @@ class MapCollapse(pattern_matching.Transformation):
         inner_map_entry = graph.nodes()[candidate[
             MapCollapse._inner_map_entry]]
 
+        # Check that inner map range is independent of outer range
+        map_deps = set()
+        for s in inner_map_entry.map.range:
+            map_deps |= set(map(str, symlist(s)))
+        if any(dep in outer_map_entry.map.params for dep in map_deps):
+            return False
+
         # Check that the destination of all the outgoing edges
         # from the outer map's entry is the inner map's entry.
         for _src, _, dest, _, _ in graph.out_edges(outer_map_entry):
@@ -42,18 +51,23 @@ class MapCollapse(pattern_matching.Transformation):
 
         # Check that the source of all the incoming edges
         # to the inner map's entry is the outer map's entry.
-        for src, _, _dest, _, _ in graph.in_edges(inner_map_entry):
+        for src, _, _, dst_conn, memlet in graph.in_edges(inner_map_entry):
             if src != outer_map_entry:
                 return False
 
-        # Check the edges between the exits of the two maps.
-        inner_map_exits = graph.exit_nodes(inner_map_entry)
-        outer_map_exits = graph.exit_nodes(outer_map_entry)
-        if len(inner_map_exits) > 1 or len(outer_map_exits) > 1:
-            return False
+            # Check that dynamic input range memlets are independent of
+            # first map range
+            if dst_conn is not None and not dst_conn.startswith('IN_'):
+                memlet_deps = set()
+                for s in memlet.subset:
+                    memlet_deps |= set(map(str, symlist(s)))
+                if any(dep in outer_map_entry.map.params
+                       for dep in memlet_deps):
+                    return False
 
-        inner_map_exit = inner_map_exits[0]
-        outer_map_exit = outer_map_exits[0]
+        # Check the edges between the exits of the two maps.
+        inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
+        outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
 
         # Check that the destination of all the outgoing edges
         # from the inner map's exit is the outer map's exit.
@@ -79,7 +93,12 @@ class MapCollapse(pattern_matching.Transformation):
         return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
                            for entry in [outer_map_entry, inner_map_entry])
 
-    def apply(self, sdfg):
+    def apply(self, sdfg) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+        """
+        Collapses two maps into one.
+        :param sdfg: The SDFG to apply the transformation to.
+        :return: A 2-tuple of the new map entry and exit nodes.
+        """
         # Extract the parameters and ranges of the inner/outer maps.
         graph = sdfg.nodes()[self.state_id]
         outer_map_entry = graph.nodes()[self.subgraph[
@@ -89,10 +108,8 @@ class MapCollapse(pattern_matching.Transformation):
         inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
         outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
 
-        nxutil.merge_maps(graph, outer_map_entry, outer_map_exit,
-                          inner_map_entry, inner_map_exit)
-
-        return
+        return nxutil.merge_maps(graph, outer_map_entry, outer_map_exit,
+                                 inner_map_entry, inner_map_exit)
 
 
 pattern_matching.Transformation.register_pattern(MapCollapse)
