@@ -620,6 +620,9 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         if (dst_conn !== null)
             gedge.points[n] = dagre.util.intersectRect(dst_conn, gedge.points[0]);
 
+        if  (gedge.points.length == 3 && gedge.points[0].x == gedge.points[n].x)
+            gedge.points = [gedge.points[0], gedge.points[n]];
+
         let bb = calculateEdgeBoundingBox(gedge);
         // Convert from top-left to center
         bb.x += bb.width / 2.0;
