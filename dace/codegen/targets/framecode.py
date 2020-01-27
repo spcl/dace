@@ -956,25 +956,31 @@ DACE_EXPORTED void __dace_exit(%s)
         # header and footer
         if is_top_level:
             header_stream = CodeIOStream()
+            header_global_stream = CodeIOStream()
             footer_stream = CodeIOStream()
+            footer_global_stream = CodeIOStream()
             self.generate_header(sdfg, self._dispatcher.used_environments,
-                                 global_stream, header_stream)
+                                 header_global_stream, header_stream)
 
             # Open program function
             function_signature = 'void __program_%s_internal(%s)\n{\n' % (
                 sdfg.name, sdfg.signature())
 
             self.generate_footer(sdfg, self._dispatcher.used_environments,
-                                 global_stream, footer_stream)
+                                 footer_global_stream, footer_stream)
 
+            generated_header = (header_global_stream.getvalue() +
+                                global_stream.getvalue() +
+                                footer_global_stream.getvalue())
             generated_code = (
                 function_signature + header_stream.getvalue() +
                 callsite_stream.getvalue() + footer_stream.getvalue())
         else:
+            generated_header = global_stream.getvalue()
             generated_code = callsite_stream.getvalue()
 
         # Return the generated global and local code strings
-        return (global_stream.getvalue(), generated_code,
+        return (generated_header, generated_code,
                 self._dispatcher.used_targets,
                 self._dispatcher.used_environments)
 
