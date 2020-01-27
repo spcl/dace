@@ -1389,3 +1389,7 @@ class Pipeline(dace.graph.nodes.Map):
         if self.drain_size <= 0:
             raise ValueError("No drain condition exists for " + self.label)
         return self.iterator_str() + "_drain"
+
+
+PipelineEntry = indirect_properties(Pipeline,
+                                    lambda obj: obj.map)(PipelineEntry)
