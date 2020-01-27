@@ -534,12 +534,14 @@ def configure_and_compile(program_folder,
     # Generate CMake options for each compiler
     libraries = set()
     for target_name, target in targets.items():
-        cmake_command += target.cmake_options()
         try:
+            cmake_command += target.cmake_options()
             libraries |= unique_flags(
                 Config.get("compiler", target_name, "libs"))
         except KeyError:
             pass
+        except ValueError as ex:  # Cannot find compiler executable
+            raise CompilerConfigurationError(str(ex))
 
     # TODO: it should be possible to use the default arguments/compilers
     #       found by CMake
