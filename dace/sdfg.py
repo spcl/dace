@@ -1702,11 +1702,6 @@ subgraph cluster_state_{state} {{
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
 
-        # Apply strict transformations automatically
-        # Second time, after expansion of library nodes
-        if Config.get_bool('optimizer', 'automatic_strict_transformations'):
-            sdfg.apply_strict_transformations()
-
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
