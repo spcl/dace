@@ -62,6 +62,13 @@ class RedundantArray(pm.Transformation):
                     out_array.desc(sdfg).shape)):
             return False
 
+        if strict:
+            # In strict mode, make sure the memlet covers the removed array
+            edge = graph.edges_between(in_array, out_array)[0]
+            if any(m != a for m, a in zip(edge.data.subset.size(),
+                                          in_array.desc(sdfg).shape)):
+                return False
+
         return True
 
     @staticmethod
