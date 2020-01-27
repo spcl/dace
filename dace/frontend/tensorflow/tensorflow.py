@@ -2032,7 +2032,6 @@ class TFSession:
 
             # change filter format from RSCK to KCRS for cuDNN
             mapOutput = self.map_input_filter(node, [3,2,0,1], filter, filter_params, filter_dims)
-
             image_dims_list = image.desc(self.graph).shape
             filter_dims_list = filter.desc(self.graph).shape
 
@@ -2094,7 +2093,7 @@ class TFSession:
                 cudnnCreate(&cudnn_handle_{i});
                 checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
                 checkCUDNN(cudnnSetTensor4dDescriptor(xDesc_{i},
-                                           /*format=*/CUDNN_TENSOR_NHWC,
+                                           /*format=*/CUDNN_TENSOR_{format},
                                            /*dataType=*/CUDNN_DATA_FLOAT,
                                            /*batch_size=*/{N},
                                            /*channels=*/{C},
@@ -2126,7 +2125,7 @@ class TFSession:
 
                 cudnnCreateTensorDescriptor(&yDesc_{i});
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
-                                            /*format=*/CUDNN_TENSOR_NHWC,
+                                            /*format=*/CUDNN_TENSOR_{format},
                                             /*dataType=*/CUDNN_DATA_FLOAT,
                                             /*batch_size=*/out_k ,
                                             /*channels=*/out_c,
@@ -2151,9 +2150,12 @@ class TFSession:
                                                          &workSpaceSizeInBytes_{i}));
                 
                 cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
-            '''.format( N=image_dims_list[0], C=image_dims_list[3], H=image_dims_list[1], W=image_dims_list[2],
-                        K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                        vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count)
+            '''.format(N=image_dims_list[data_format.find('N')],
+                       C=image_dims_list[data_format.find('C')],
+                       H=image_dims_list[data_format.find('H')],
+                       W=image_dims_list[data_format.find('W')],
+                       K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
+                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
@@ -3013,7 +3015,7 @@ class TFSession:
                 cudnnCreateFilterDescriptor(&fDesc_{i});
                 checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
                                            /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*format=*/CUDNN_TENSOR_NHWC,
+                                           /*format=*/CUDNN_TENSOR_NCHW,
                                            /*out_channels=*/{K},
                                            /*in_channels=*/{C},
                                            /*kernel_height=*/{R},
@@ -3021,7 +3023,7 @@ class TFSession:
 
                 checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
                 checkCUDNN(cudnnSetTensor4dDescriptor(xDesc_{i},
-                                           /*format=*/CUDNN_TENSOR_NHWC,
+                                           /*format=*/CUDNN_TENSOR_{format},
                                            /*dataType=*/CUDNN_DATA_FLOAT,
                                            /*batch_size=*/{N},
                                            /*channels=*/{C},
@@ -3044,7 +3046,7 @@ class TFSession:
 
                 checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
-                                           /*format=*/CUDNN_TENSOR_NHWC,
+                                           /*format=*/CUDNN_TENSOR_{format},
                                            /*dataType=*/CUDNN_DATA_FLOAT,
                                            /*batch_size=*/out_k ,
                                            /*channels=*/out_c,
@@ -3059,9 +3061,12 @@ class TFSession:
                     cudnn_handle_{i}, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i}, algo_{i}, &workSpaceSizeInBytes_{i}));
 
                 cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});   
-            '''.format(N=output_dims_list[0], C=filter_dims_list[2], H=output_dims_list[1], W=output_dims_list[2],
+            '''.format(N=output_dims_list[data_format.find('N')],
+                       C=output_dims_list[data_format.find('C')],
+                       H=output_dims_list[data_format.find('H')],
+                       W=output_dims_list[data_format.find('W')],
                        K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count)
+                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
@@ -3423,7 +3428,7 @@ class TFSession:
                     cudnnCreate(&cudnn_handle_{i});
                     checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
                     checkCUDNN(cudnnSetTensor4dDescriptor(xDesc_{i},
-                                               /*format=*/CUDNN_TENSOR_NHWC,
+                                               /*format=*/CUDNN_TENSOR_{format},
                                                /*dataType=*/CUDNN_DATA_FLOAT,
                                                /*batch_size=*/{N},
                                                /*channels=*/{C},
@@ -3455,7 +3460,7 @@ class TFSession:
     
                     checkCUDNN(cudnnCreateTensorDescriptor(&yDesc_{i}));
                     checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
-                                               /*format=*/CUDNN_TENSOR_NHWC,
+                                               /*format=*/CUDNN_TENSOR_{format},
                                                /*dataType=*/CUDNN_DATA_FLOAT,
                                                /*batch_size=*/out_k ,
                                                /*channels=*/out_c,
@@ -3470,10 +3475,13 @@ class TFSession:
                         cudnn_handle_{i}, xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i}, algo_{i}, &workSpaceSizeInBytes_{i}));
     
                     cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
-                '''.format(format=data_format, N=image_dims_list[0], C=image_dims_list[3], H=image_dims_list[1],
-                           W=image_dims_list[2], K=output_dims_list[3], R=output_dims_list[0], S=output_dims_list[1],
-                           padh=padh, padw=padw, vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2],
-                           i=local_count)
+            '''.format(N=image_dims_list[data_format.find('N')],
+                       C=image_dims_list[data_format.find('C')],
+                       H=image_dims_list[data_format.find('H')],
+                       W=image_dims_list[data_format.find('W')],
+                       K=output_dims_list[3], R=output_dims_list[0], S=output_dims_list[1],
+                       padh=padh, padw=padw, vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2],
+                       i=local_count, format=data_format)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
