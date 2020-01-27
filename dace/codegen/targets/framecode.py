@@ -122,11 +122,6 @@ class DaCeCodeGenerator(object):
                 'namespace dace { namespace perf { Report report; } }', sdfg)
             callsite_stream.write('dace::perf::report.reset();', sdfg)
 
-        # Invoke all instrumentation providers
-        for instr in self._dispatcher.instrumentation.values():
-            if instr is not None:
-                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
-
     def generate_footer(self, sdfg: SDFG, used_environments: Set[str],
                         global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
@@ -649,6 +644,11 @@ DACE_EXPORTED void __dace_exit(%s)
         # Generate code
         ###########################
 
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
+
         if sdfg.parent is not None:
             # Nested SDFG
             symbols_available = sdfg.parent_sdfg.symbols_defined_at(sdfg)
@@ -969,12 +969,16 @@ DACE_EXPORTED void __dace_exit(%s)
             self.generate_footer(sdfg, self._dispatcher.used_environments,
                                  footer_global_stream, footer_stream)
 
-            generated_header = (header_global_stream.getvalue() +
-                                global_stream.getvalue() +
-                                footer_global_stream.getvalue())
-            generated_code = (
-                function_signature + header_stream.getvalue() +
-                callsite_stream.getvalue() + footer_stream.getvalue())
+            header_global_stream.write(global_stream.getvalue())
+            header_global_stream.write(footer_global_stream.getvalue())
+            generated_header = header_global_stream.getvalue()
+
+            all_code = CodeIOStream()
+            all_code.write(function_signature)
+            all_code.write(header_stream.getvalue())
+            all_code.write(callsite_stream.getvalue())
+            all_code.write(footer_stream.getvalue())
+            generated_code = all_code.getvalue()
         else:
             generated_header = global_stream.getvalue()
             generated_code = callsite_stream.getvalue()
