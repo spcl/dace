@@ -1,4 +1,4 @@
-from typing import Set
+from typing import Set, Tuple
 
 import collections
 import dace
@@ -619,7 +619,7 @@ DACE_EXPORTED void __dace_exit(%s)
                       sdfg: SDFG,
                       schedule: dtypes.ScheduleType,
                       sdfg_id: str = ""
-                      ) -> (str, str, Set[TargetCodeGenerator]):
+                      ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.
