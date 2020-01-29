@@ -180,6 +180,12 @@ class RedundantArrayInverse(pm.Transformation):
                         pe.data.subset.offset(subset, False)
                     else:
                         pe.data.subset = subset.compose(pe.data.subset)
+                elif pe.data.other_subset:
+                    if isinstance(subset, subsets.Indices):
+                        pe.data.other_subset.offset(subset, False)
+                    else:
+                        pe.data.other_subset = subset.compose(
+                            pe.data.other_subset)
 
             # Redirect edge to out_array
             graph.remove_edge(e)
