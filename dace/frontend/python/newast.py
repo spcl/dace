@@ -2763,10 +2763,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     outputs={'__out'},
                     code='__out = __inp')
                 inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
-                out_memlet.wcr = LambdaProperty.from_string(
-                    'lambda x, y: x {} y'.format(op))
                 out_memlet = Memlet.simple(wtarget_name,
                                            '%s' % wtarget_subset[0][0])
+                out_memlet.wcr = LambdaProperty.from_string(
+                    'lambda x, y: x {} y'.format(op))
                 state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
                 state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
