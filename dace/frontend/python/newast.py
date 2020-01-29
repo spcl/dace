@@ -2702,33 +2702,25 @@ class ProgramVisitor(ExtNodeVisitor):
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
                 if wtarget_subset.size() == op_subset.size():
-                    in1_subset = copy.deepcopy(rtarget_subset)
-                    in1_subset.offset(wtarget_subset, True)
-                    in1_memlet = Memlet.simple(
-                        rtarget_name, ','.join([
-                            '__i%d + %d' % (i, s)
-                            for i, (s, _, _) in enumerate(in1_subset)
-                        ]))
-                    in2_subset = copy.deepcopy(op_subset)
-                    in2_subset.offset(wtarget_subset, True)
-                    in2_memlet = Memlet.simple(
+                    inp_subset = copy.deepcopy(op_subset)
+                    inp_subset.offset(wtarget_subset, True)
+                    inp_memlet = Memlet.simple(
                         op_name, ','.join([
                             '__i%d + %d' % (i, s)
-                            for i, (s, _, _) in enumerate(in2_subset)
+                            for i, (s, _, _) in enumerate(inp_subset)
                         ]))
                     out_memlet = Memlet.simple(
                         wtarget_name, ','.join(
                             ['__i%d' % i for i in range(len(wtarget_subset))]))
+                    out_memlet.wcr = LambdaProperty.from_string(
+                        'lambda x, y: x {} y'.format(op))
                     state.add_mapped_tasklet(
                         state.label, {
                             '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                             for i, (start, end,
                                     step) in enumerate(wtarget_subset)
-                        }, {
-                            '__in1': in1_memlet,
-                            '__in2': in2_memlet
-                        },
-                        '__out = __in1 {op} __in2'.format(op=op),
+                        }, {'__inp': inp_memlet},
+                        '__out = __inp',
                         {'__out': out_memlet},
                         external_edges=True)
                 else:
@@ -2743,26 +2735,18 @@ class ProgramVisitor(ExtNodeVisitor):
                             'lambda x, y: x {} y'.format(op))
                     state.add_nedge(op1, op2, memlet)
             else:
-                in1_subset = copy.deepcopy(rtarget_subset)
-                in1_subset.offset(wtarget_subset, True)
-                in1_memlet = Memlet.simple(
-                    rtarget_name, ','.join([
-                        '__i%d + %d' % (i, s)
-                        for i, (s, _, _) in enumerate(in1_subset)
-                    ]))
-                in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
                 out_memlet = Memlet.simple(
                     wtarget_name, ','.join(
                         ['__i%d' % i for i in range(len(wtarget_subset))]))
+                out_memlet.wcr = LambdaProperty.from_string(
+                    'lambda x, y: x {} y'.format(op))
                 state.add_mapped_tasklet(
                     state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(wtarget_subset)
-                    }, {
-                        '__in1': in1_memlet,
-                        '__in2': in2_memlet
-                    },
-                    '__out = __in1 {op} __in2'.format(op=op),
+                    }, {'__inp': inp_memlet},
+                    '__out = __inp',
                     {'__out': out_memlet},
                     external_edges=True)
         else:
@@ -2771,22 +2755,20 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, "Incompatible subsets %s, %s and %s" %
                     (rtarget_subset, op_subset, wtarget_subset))
             else:
-                op1 = state.add_read(rtarget_name)
-                op2 = state.add_read(op_name)
-                op3 = state.add_write(wtarget_name)
+                op1 = state.add_read(op_name)
+                op2 = state.add_write(wtarget_name)
                 tasklet = state.add_tasklet(
                     name=state.label,
-                    inputs={'__in1', '__in2'},
+                    inputs={'__inp'},
                     outputs={'__out'},
-                    code='__out = __in1 {op} __in2'.format(op=op))
-                in1_memlet = Memlet.simple(rtarget_name,
-                                           '%s' % rtarget_subset[0][0])
-                in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                    code='__out = __inp')
+                inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                out_memlet.wcr = LambdaProperty.from_string(
+                    'lambda x, y: x {} y'.format(op))
                 out_memlet = Memlet.simple(wtarget_name,
                                            '%s' % wtarget_subset[0][0])
-                state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
-                state.add_edge(op2, None, tasklet, '__in2', in2_memlet)
-                state.add_edge(tasklet, '__out', op3, None, out_memlet)
+                state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
+                state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _get_variable_name(self, node, name):
         if name in self.variables:
