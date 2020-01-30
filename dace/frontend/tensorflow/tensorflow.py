@@ -2007,33 +2007,45 @@ class TFSession:
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
             
+
+
+            # change filter format from RSCK to target format for cuDNN
+            idx = [3,0,1,2]    #KRSC
+            if data_format=='NCHW':
+                idx = [3,2,0,1]    #KCRS
+            mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
+            filter_dims_list = mapOutput.desc(self.graph).shape
+            image_dims_list = image.desc(self.graph).shape
+
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-
             if padding == "SAME":
                 paddedInput, paddedDims = self.inputPadding(
                     node,
                     image,
                     image.desc(self.graph),
                     output.desc(self.graph).shape[1],
-                    filter.desc(self.graph).shape[0],
+                    mapOutput.desc(self.graph).shape[0],
                     strides[1],
                     image_dims,
                 )
                 image_dims = paddedDims
                 image = paddedInput
-            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]]
+
+            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
-                padh = explicit_paddings[2]
-                padw = explicit_paddings[4]
+                if data_format == "NHWC":
+                    padh = explicit_paddings[2]
+                    padw = explicit_paddings[4]
+                else:
+                    padh = explicit_paddings[4]
+                    padw = explicit_paddings[6]
 
-            # change filter format from RSCK to KCRS for cuDNN
-            mapOutput = self.map_input_filter(node, [3,2,0,1], filter, filter_params, filter_dims)
-            image_dims_list = image.desc(self.graph).shape
-            filter_dims_list = filter.desc(self.graph).shape
+
+
 
             tasklet = state.add_tasklet(
                 name= string_builder(node.type),
@@ -2103,7 +2115,7 @@ class TFSession:
                 cudnnCreateFilterDescriptor(&fDesc_{i});
                 checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
                                             /*dataType=*/CUDNN_DATA_FLOAT,
-                                            /*format=*/CUDNN_TENSOR_NCHW,
+                                            /*format=*/CUDNN_TENSOR_{format},
                                             /*out_channels=*/{K},
                                             /*in_channels=*/{C},
                                             /*kernel_height=*/{R},
@@ -2154,13 +2166,15 @@ class TFSession:
                        C=image_dims_list[data_format.find('C')],
                        H=image_dims_list[data_format.find('H')],
                        W=image_dims_list[data_format.find('W')],
-                       K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
+                       K=filter_dims_list[data_format.find('N')],
+                       R=filter_dims_list[data_format.find('H')],
+                       S=filter_dims_list[data_format.find('W')],
+                       padh=padh, padw=padw, vstr=strides[1], hstr=strides[2],
+                       dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
                 self.graph.set_init_code(self.graph.init_code + init_code)
-
             exit_code = '''
                 cudnnDestroy(cudnn_handle_{i});
                 cudnnDestroyTensorDescriptor(xDesc_{i});
@@ -2908,13 +2922,25 @@ class TFSession:
             output = self.create_and_add_output_node(node)[0]
             output_dims = self.get_default_dims(node.outputs[0])
 
+            # change filter format from RSCK to target format for cuDNN
+            idx = [3,0,1,2]    #KRSC
+            if data_format=='NCHW':
+                idx = [3,2,0,1]    #KCRS
+            mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
+
+            filter_dims_list = filter.desc(self.graph).shape
+
+            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
+            # assuming pad_top = pad_bottom, pad_left = pad_right
             padh = 0
             padw = 0
-            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]]
-            # assuming pad_top = pad_bottom, pad_left = pad_right
             if padding == "EXPLICIT":
-                padh = explicit_paddings[2]
-                padw = explicit_paddings[4]
+                if data_format == "NHWC":
+                    padh = explicit_paddings[2]
+                    padw = explicit_paddings[4]
+                else:
+                    padh = explicit_paddings[4]
+                    padw = explicit_paddings[6]
 
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
@@ -2951,11 +2977,7 @@ class TFSession:
                     _tensortype(node.outputs[0]),
                 )
 
-            # change filter format from RSCK to KRSC for cuDNN
-            mapOutput = self.map_input_filter(node, [3, 0, 1, 2], filter, filter_params, filter_dims)
-
             output_dims_list = paddedOutput.desc(self.graph).shape
-            filter_dims_list = filter.desc(self.graph).shape
 
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
@@ -3015,7 +3037,7 @@ class TFSession:
                 cudnnCreateFilterDescriptor(&fDesc_{i});
                 checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
                                            /*dataType=*/CUDNN_DATA_FLOAT,
-                                           /*format=*/CUDNN_TENSOR_NCHW,
+                                           /*format=*/CUDNN_TENSOR_{format},
                                            /*out_channels=*/{K},
                                            /*in_channels=*/{C},
                                            /*kernel_height=*/{R},
@@ -3344,8 +3366,6 @@ class TFSession:
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
             output = self.create_and_add_output_node(node)[0]
-            output_dims = self.get_default_dims(node.outputs[0])
-            
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
             if padding == "SAME":
@@ -3361,13 +3381,17 @@ class TFSession:
                 image_dims = paddedDims
                 image = paddedInput
 
-            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]]
+            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
-                padh = explicit_paddings[2]
-                padw = explicit_paddings[4]
+                if data_format == "NHWC":
+                    padh = explicit_paddings[2]
+                    padw = explicit_paddings[4]
+                else:
+                    padh = explicit_paddings[4]
+                    padw = explicit_paddings[6]
 
             image_dims_list = image.desc(self.graph).shape
             output_dims_list = output.desc(self.graph).shape
@@ -3438,7 +3462,7 @@ class TFSession:
                     cudnnCreateFilterDescriptor(&fDesc_{i});
                     checkCUDNN(cudnnSetFilter4dDescriptor(fDesc_{i},
                                                /*dataType=*/CUDNN_DATA_FLOAT,
-                                               /*format=*/CUDNN_TENSOR_NHWC,
+                                               /*format=*/CUDNN_TENSOR_{format},
                                                /*out_channels=*/{K},
                                                /*in_channels=*/{C},
                                                /*kernel_height=*/{R},
@@ -3499,8 +3523,11 @@ class TFSession:
             else:
                 self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
-            # change filter format from KRSC to RSCK for tensorflow
-            mapInput = self.map_output_filter(node, [1, 2, 3, 0], output, output_dims)
+            # change filter format from KRSC/KCRS to RSCK for tensorflow
+            idx = [3,0,1,2]    #KRSC
+            if data_format=='NCHW':
+                idx = [3,2,0,1]    #KCRS
+            mapInput = self.map_output_filter(node, idx, output)
             
             state.add_edge(gradient, None, tasklet, 'dy', 
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
@@ -4619,48 +4646,56 @@ class TFSession:
         return dims
 
     def map_input_filter(self, node, idx, filter, filter_params, filter_dims):
+        """ Maps the filter dimensions according to idx,
+            :param node: tf.Operation
+            :param idx: the desired output index
+            :param filter: filter descriptor
+            :param filter_params: List of parameters as strings ["i0","i1",...]
+            :param filter_dims: List of dimensions as strings ["0:N","0:M",...]
+            :return: A dace access node
+        """
         state = self.state
-        filter_dims_list = filter.desc(self.graph).shape
         mapParams = [filter_params[i] for i in idx]
         mapRange = [filter_dims[i] for i in idx]
+        mapDims = [filter.desc(self.graph).shape[i] for i in idx]
         mapLabel = string_builder(node.type) + "_filter_map"
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
-        maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        mapTasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
 
         mapOutputLabel = mapLabel + "_output"
-        mapOutputParams = mapParams
-        tempDims = [filter_dims_list[i] for i in idx]
-        mapOutputDims = ['0:' + str(x) for x in tempDims]
-        mapOutput = state.add_transient(mapOutputLabel, tempDims, dace.float32,
-                                        dace.StorageType.GPU_Global)
+        mapOutput = state.add_transient(mapOutputLabel, mapDims, dace.float32)
 
-        self.add_out_memlets([mapOutput], mapExit, maptasklet, [mapOutputDims],
-                             [mapOutputParams])
-        self.add_in_memlets([filter], mapEntry, maptasklet, [filter_dims],
+        self.add_out_memlets([mapOutput], mapExit, mapTasklet, [mapRange],
+                             [mapParams])
+        self.add_in_memlets([filter], mapEntry, mapTasklet, [filter_dims],
                             [filter_params])
-
+        print(filter_params, filter_dims)
         return mapOutput
 
-    def map_output_filter(self, node, idx, output, output_dims):
+    def map_output_filter(self, node, idx, output):
+        """ Maps the filter dimensions according to idx.
+            :param node: tf.Operation
+            :param idx: index given by mapping output on input
+            :param output: output filter descriptor
+            :return: A dace access node
+        """
         state = self.state
         output_dims_list = output.desc(self.graph).shape
-
+        output_dims = self.get_default_dims(node.outputs[0])
+        output_params = self.get_default_params(node.outputs[0])
+        mapDims = [output_dims_list[i] for i in idx]
+        mapParams = [output_params[i] for i in idx]
+        mapRange = [output_dims[i] for i in idx]
         mapLabel = string_builder(node.type) + "_filter_map"
-        mapInputLabel = mapLabel + "_input"
-        tempDims = [output_dims_list[i] for i in [3,0,1,2]]
-        mapInputDims = ['0:' + str(x) for x in tempDims]
-        mapInputParams = ['i0', 'i1', 'i2', 'i3']
-        mapInput = state.add_transient(mapInputLabel, tempDims, dace.float32,
-                                       dace.StorageType.GPU_Global)
-
-        mapParams = [mapInputParams[i] for i in idx]
-        mapRange = [mapInputDims[i] for i in idx]
         mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
-        maptasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        mapTasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
 
-        self.add_in_memlets([mapInput], mapEntry, maptasklet, [mapInputDims],
-                            [mapInputParams])
-        self.add_out_memlets([output], mapExit, maptasklet, [output_dims],
-                             [mapParams])
+        mapInputLabel = mapLabel + "_input"
+        mapInput = state.add_transient(mapInputLabel, mapDims, dace.float32)
+
+        self.add_in_memlets([mapInput], mapEntry, mapTasklet, [mapRange],
+                            [mapParams])
+        self.add_out_memlets([output], mapExit, mapTasklet, [output_dims],
+                             [output_params])
 
         return mapInput
