@@ -1,9 +1,9 @@
 import ast
 import sympy
 import pickle
+from typing import Optional, Union
+import warnings
 
-from sympy import Sum, Product, log, floor, ceiling
-import sympy as functions
 from sympy.abc import _clash
 from sympy.printing.str import StrPrinter
 
@@ -17,28 +17,6 @@ class symbol(sympy.Symbol):
         information. """
 
     s_currentsymbol = 0
-    s_values = {}
-    s_types = {}
-    s_constraints = {}
-
-    @staticmethod
-    def erase_symbols(symlist):
-        for sym in symlist:
-            symbol.erase(sym)
-
-    @staticmethod
-    def erase(sym):
-        del symbol.s_values[sym]
-        del symbol.s_types[sym]
-        del symbol.s_constraints[sym]
-
-    @staticmethod
-    def erase_all():
-        """ Reset symbol state. """
-        symbol.s_currentsymbol = 0
-        symbol.s_values = {}
-        symbol.s_types = {}
-        symbol.s_constraints = {}
 
     def __new__(cls,
                 name=None,
@@ -60,57 +38,37 @@ class symbol(sympy.Symbol):
         else:
             self = sympy.Symbol.__new__(cls, name, integer=True, **assumptions)
 
-        if name not in symbol.s_types:
-            symbol.s_values[name] = None
-            symbol.s_constraints[name] = []
-            symbol.s_types[name] = dtype
-        else:
-            if override_dtype:
-                symbol.s_types[name] = dtype
-            elif dtype != DEFAULT_SYMBOL_TYPE and dtype != symbol.s_types[name]:
-                raise TypeError('Type mismatch for existing symbol "%s" (%s) '
-                                'and new type %s' %
-                                (name, str(symbol.s_types[name]), str(dtype)))
-
-        # Arrays to update when value is set
-        self._arrays_to_update = []
-
+        self.dtype = dtype
+        self._constraints = []
+        self.value = None
         return self
 
-    @staticmethod
-    def from_name(name, **kwargs):
-        if name in symbol.s_types:
-            return symbol(name, symbol.s_types[name], **kwargs)
-        return symbol(name, **kwargs)
-
     def set(self, value):
+        warnings.warn('symbol.set is deprecated, use keyword arguments',
+                      DeprecationWarning)
         if value is not None:
             # First, check constraints
             self.check_constraints(value)
 
-        symbol.s_values[self.name] = symbol.s_types[self.name](value)
-
-        for arr in self._arrays_to_update:
-            arr.update_resolved_symbol(self)
-
-    def reset(self):
-        self.set(None)
+        self.value = self.dtype(value)
 
     def is_initialized(self):
-        return symbol.s_values[self.name] is not None
+        return self.value is not None
 
     def get(self):
-        if symbol.s_values[self.name] is None:
+        warnings.warn('symbol.get is deprecated, use keyword arguments',
+                      DeprecationWarning)
+        if self.value is None:
             raise UnboundLocalError('Uninitialized symbol value for \'' +
                                     self.name + '\'')
-        return symbol.s_values[self.name]
+        return self.value
 
     def set_constraints(self, constraint_list):
         try:
             iter(constraint_list)
-            symbol.s_constraints[self.name] = constraint_list
+            self._constraints = constraint_list
         except TypeError:  # constraint_list is not iterable
-            symbol.s_constraints[self.name] = [constraint_list]
+            self._constraints = [constraint_list]
 
         # Check for the new constraints and reset symbol value if necessary
         if symbol.s_values[self.name] is not None:
@@ -137,15 +95,11 @@ class symbol(sympy.Symbol):
 
     @property
     def constraints(self):
-        return symbol.s_constraints[self.name]
-
-    @property
-    def dtype(self):
-        return symbol.s_types[self.name]
+        return self._constraints
 
     def check_constraints(self, value):
         fail = None
-        for constraint in symbol.s_constraints[self.name]:
+        for constraint in self.constraints:
             try:
                 eval_cons = constraint.subs({self: value})
                 if not eval_cons:
@@ -161,16 +115,15 @@ class symbol(sympy.Symbol):
                 (str(value), str(fail), self.name))
 
     def get_or_return(self, uninitialized_ret):
-        if symbol.s_values[self.name] is None:
-            return uninitialized_ret
-        return symbol.s_values[self.name]
+        return self.value or uninitialized_ret
 
 
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
 
-    def __init__(self, main_expr: str, approx_expr: str = None):
+    def __init__(self, main_expr: Union[str, 'SymExpr'],
+                 approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
             self._approx_expr = self._main_expr
@@ -303,8 +256,8 @@ def eval(expr,
                     try:
                         result = result.replace(atom, atom.get())
                     except (AttributeError, TypeError, ValueError):
-                        if keep_uninitialized: pass
-                        else: raise
+                        if not keep_uninitialized:
+                            raise
     else:
         for atom in expr.atoms():
             if isinstance(atom, symbol):
@@ -314,14 +267,12 @@ def eval(expr,
                     result = result.replace(
                         atom, atom.get_or_return(uninitialized_value))
 
-    # TODO: Use symbol dtype here
-
     if isinstance(result, sympy.Integer):
         return int(sympy.N(result))
     elif isinstance(result, sympy.Float):
         return float(sympy.N(result))
 
-    return sympy.N(result)
+    return symtype(result)(sympy.N(result))
 
 
 def symlist(values):
@@ -343,16 +294,6 @@ def symlist(values):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
-
-
-# TODO: Merge with symlist
-def symbols_in_sympy_expr(expr):
-    """ Returns a list of free symbols in a SymPy Expression. """
-    if not isinstance(expr, sympy.Expr):
-        raise TypeError("Expected sympy.Expr, got: {}".format(
-            type(expr).__name__))
-    symbols = expr.free_symbols
-    return map(str, symbols)
 
 
 def issymbolic(value, constants=None):
@@ -426,32 +367,6 @@ def symbols_in_ast(tree):
     return dtypes.deduplicate(symbols)
 
 
-def getsymbols(compilation_args):
-    """ Helper function to get symbols from a list of decorator arguments
-        ('@dace.program(...)/sdfg.compile'). """
-    from dace import data
-
-    result = {}
-    for arg in compilation_args:
-        if issymbolic(arg):
-            # If argument is a symbol, we will resolve it on call.
-            # No need for it to be a dependency
-            pass
-        elif isinstance(arg, data.Array):
-            for d in arg.shape:
-                if issymbolic(d):
-                    result.update(symlist(d))
-        else:
-            try:
-                result.update(getattr(
-                    arg,
-                    '_symlist'))  # Add all (not yet added) symbols to result
-            except AttributeError:
-                pass
-
-    return result
-
-
 def symbol_name_or_value(val):
     """ Returns the symbol name if symbol, otherwise the value as a string. """
     if isinstance(val, symbol):
@@ -467,7 +382,7 @@ def sympy_to_dace(exprs, symbol_map=None):
 
     oneelem = False
     try:
-        exprs_iter = iter(exprs)
+        iter(exprs)
     except TypeError:
         oneelem = True
         exprs = [exprs]
@@ -482,8 +397,7 @@ def sympy_to_dace(exprs, symbol_map=None):
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
                         # Symbol is not in map, create a DaCe symbol with same assumptions
-                        repl[atom] = symbol.from_name(atom.name,
-                                                      **atom.assumptions0)
+                        repl[atom] = symbol(atom.name, **atom.assumptions0)
             exprs[i] = expr.subs(repl)
     if oneelem:
         return exprs[0]

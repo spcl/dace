@@ -696,8 +696,8 @@ class SDFG(OrderedDiGraph):
                 if isinstance(expr, str):
                     expr = symbolic.pystr_to_symbolic(expr, simplify=False)
                 if isinstance(expr, sp.Expr):
-                    for s in dace.symbolic.symbols_in_sympy_expr(expr):
-                        used[s] = dt.Scalar(symbolic.symbol(s).dtype)
+                    for sname, s in dace.symbolic.symlist(expr).items():
+                        used[sname] = dt.Scalar(s.dtype)
                 elif expr is None or isinstance(expr, int):
                     pass  # Nothing to extract, or a constant
                 else:
