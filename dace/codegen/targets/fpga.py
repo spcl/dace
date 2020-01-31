@@ -892,8 +892,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         if (begin >= 0) == True and (skip > 0) == True:
                             # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
                             # if we are able to determine it
-                            end_type = dace.symbolic.symbol.s_types.get(
-                                cpu.sym2cpp(end + 1))
+                            # TODO: Use sdfg.symbols
+                            sym = list(dace.symbolic.symlist(end).values())[0]
+                            end_type = sym.dtype
                             if end_type is not None:
                                 if np.dtype(end_type.dtype.type) > np.dtype(
                                         'uint32'):
