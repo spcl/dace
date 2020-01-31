@@ -246,47 +246,6 @@ def symtype(expr):
                 [str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
 
 
-def eval(expr,
-         uninitialized_value=None,
-         keep_uninitialized=False,
-         constants=None):
-    """ Evaluates a complex expression with symbols, replacing all
-        symbols with their values. """
-    constants = constants or {}
-    if isinstance(expr, SymExpr):
-        return eval(expr.expr, uninitialized_value, keep_uninitialized)
-    if not isinstance(expr, sympy.Expr):
-        return expr
-
-    result = expr
-    if uninitialized_value is None:
-        for atom in expr.atoms():
-            if isinstance(atom, symbol):
-                if atom.name in constants:
-                    result = result.replace(atom, constants[atom.name])
-                else:
-                    try:
-                        result = result.replace(atom, atom.get())
-                    except (AttributeError, TypeError, ValueError):
-                        if not keep_uninitialized:
-                            raise
-    else:
-        for atom in expr.atoms():
-            if isinstance(atom, symbol):
-                if atom.name in constants:
-                    result = result.replace(atom, constants[atom.name])
-                else:
-                    result = result.replace(
-                        atom, atom.get_or_return(uninitialized_value))
-
-    if isinstance(result, sympy.Integer):
-        return int(sympy.N(result))
-    elif isinstance(result, sympy.Float):
-        return float(sympy.N(result))
-
-    return symtype(result)(sympy.N(result))
-
-
 def symlist(values):
     """ Finds symbol dependencies of expressions. """
     result = {}

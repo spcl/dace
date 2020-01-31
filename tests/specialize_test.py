@@ -56,8 +56,7 @@ if __name__ == '__main__':
     func(A=input, B=output, N=N, M=M)
 
     diff = np.linalg.norm(
-        np.exp(input[1:dp.eval(N - 1), 0:dp.eval(M)]) -
-        output[1:-1, :]) / dp.eval(N)
+        np.exp(input[1:(N.get() - 1), 0:M.get()]) - output[1:-1, :]) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 3)

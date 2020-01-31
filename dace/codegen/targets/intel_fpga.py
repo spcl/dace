@@ -506,12 +506,12 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             # We will generate a separate kernel for each PE. Adds host call
             for ul in self._unrolled_pes:
                 start, stop, skip = ul.range.ranges[0]
-                start_idx = dace.symbolic.eval(start)
-                stop_idx = dace.symbolic.eval(stop)
-                skip_idx = dace.symbolic.eval(skip)
+                start_idx = start
+                stop_idx = stop
+                skip_idx = skip
                 # Due to restrictions on channel indexing, PE IDs must start from zero
                 # and skip index must be 1
-                if start_idx != 0 or skip_idx != 1:
+                if (start_idx != 0) == True or (skip_idx != 1) == True:
                     raise dace.codegen.codegen.CodegenError(
                         "Unrolled Map in {} should start from 0 and have skip equal to 1"
                         .format(sdfg.name))
@@ -591,9 +591,9 @@ __kernel void \\
         for ul in self._unrolled_pes:
             # create PE kernels by using the previously defined macro
             start, stop, skip = ul.range.ranges[0]
-            start_idx = dace.symbolic.eval(start)
-            stop_idx = dace.symbolic.eval(stop)
-            skip_idx = dace.symbolic.eval(skip)
+            start_idx = start
+            stop_idx = stop
+            skip_idx = skip
             # First macro argument is the processing element id
             for p in range(start_idx, stop_idx + 1, skip_idx):
                 module_stream.write("_DACE_FPGA_KERNEL_{}({}{}{})\n".format(

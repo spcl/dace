@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
     #compute expected result
     vec_sum(X, Y, Z)
-    diff = np.linalg.norm(Z_exp - Z) / float(dace.eval(N.get()))
+    diff = np.linalg.norm(Z_exp - Z) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

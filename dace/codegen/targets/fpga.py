@@ -468,8 +468,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 generate_scalar = False
                 if veclen > 1:
                     arrsize_symbolic = nodedesc.total_size
-                    arrsize_eval = dace.symbolic.eval(
-                        arrsize_symbolic / veclen)
+                    arrsize_eval = sp.simplify(arrsize_symbolic / veclen)
                     if cpu.sym2cpp(arrsize_eval) == "1":
                         generate_scalar = True
                     arrsize_vec = "({}) / {}".format(arrsize, veclen)
@@ -890,8 +889,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     loop_var_type = "int"
                     # try to decide type of loop variable
                     try:
-                        if dace.symbolic.eval(
-                                begin) >= 0 and dace.symbolic.eval(skip) > 0:
+                        if (begin >= 0) == True and (skip > 0) == True:
                             # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
                             # if we are able to determine it
                             end_type = dace.symbolic.symbol.s_types.get(
@@ -1301,7 +1299,6 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
 
 @dace.serialize.serializable
 class PipelineEntry(dace.graph.nodes.MapEntry):
-
     @staticmethod
     def map_type():
         return Pipeline
@@ -1317,7 +1314,6 @@ class PipelineEntry(dace.graph.nodes.MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(dace.graph.nodes.MapExit):
-
     @staticmethod
     def map_type():
         return Pipeline

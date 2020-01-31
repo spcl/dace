@@ -6,6 +6,13 @@ import dace
 import numpy as np
 from scipy import ndimage
 
+
+def symeval(expr, syms):
+    return (int(expr.subs({s: s.get()
+                           for s in syms}))
+            if dace.symbolic.issymbolic(expr) else expr)
+
+
 if __name__ == "__main__":
     print("==== Program start ====")
     print('Copy ND tests')
@@ -100,8 +107,9 @@ if __name__ == "__main__":
     sdfg.draw_to_file()
 
     array_data = [
-        np.random.rand(*[dace.eval(s) for s in a.desc(sdfg).shape]).astype(
-            a.desc(sdfg).dtype.type) for a in arrays
+        np.random.rand(*[symeval(s, {N: N.get()})
+                         for s in a.desc(sdfg).shape]).astype(
+                             a.desc(sdfg).dtype.type) for a in arrays
     ]
 
     args = {anode.label: adata for anode, adata in zip(arrays, array_data)}

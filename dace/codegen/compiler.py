@@ -223,8 +223,8 @@ class CompiledSDFG(object):
 
         # Replace symbols with their values
         callparams = tuple(
-            (atype(symbolic.eval(arg)),
-             atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
+            (atype(arg.get()),
+             atype) if isinstance(arg, symbolic.symbol) else (arg, atype)
             for arg, atype in callparams)
 
         # Replace arrays with their pointers

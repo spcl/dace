@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
     mapreduce_test_3(A, B, res)
 
-    diff = np.linalg.norm(5 * A - B) / float(dace.eval(H * W))
+    diff = np.linalg.norm(5 * A - B) / (H.get() * W.get())
     diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
     print("Difference:", diff, diff_res)
     print("==== Program end ====")
