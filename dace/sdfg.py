@@ -1616,9 +1616,7 @@ subgraph cluster_state_{state} {{
         additional_symbols = additional_symbols or {}
         undefined_symbols = self.undefined_symbols(False)
         # scalar_arguments = self.scalar_parameters(False)
-        for (
-                symname
-        ) in undefined_symbols:  # itertools.chain(undefined_symbols, scalar_arguments):
+        for symname in undefined_symbols:
             try:
                 syms[symname] = symbolic.symbol(symname).get()
             except UnboundLocalError:
