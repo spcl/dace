@@ -16,6 +16,7 @@ TESTS=0
 CURTEST=""
 TESTPREFIX=""
 TOTAL_TESTS=0
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 TEST_TIMEOUT=10
 
@@ -93,13 +94,13 @@ runtest_cu() {
 
 runtest_octave() {
     test_start $1
-    testcmd $SCRIPTPATH/scripts/dacelab $1
+    testcmd $PYTHON_BINARY $SCRIPTPATH/scripts/dacelab $1
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
 runtest_py() {
     test_start $1
-    yes | testcmd python3 $1
+    yes | testcmd $PYTHON_BINARY $1
     if [ $? -ne 0 ]; then bail $1; fi
 }
 

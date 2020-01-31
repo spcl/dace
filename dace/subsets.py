@@ -25,6 +25,35 @@ class Subset(object):
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
+    def offset(self, other, negative, indices=None):
+        raise NotImplementedError
+
+    def at(self, i, strides):
+        """ Returns the absolute index (1D memory layout) of this subset at
+            the given index tuple.
+
+            For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
+
+            :param i: A tuple of the same dimensionality as subset.dims() or
+                      subset.data_dims().
+            :param strides: The strides of the array we are subsetting.
+            :return: Absolute 1D index at coordinate i.
+        """
+        raise NotImplementedError
+
+    def coord_at(self, i):
+        """ Returns the offseted coordinates of this subset at
+            the given index tuple.
+
+            For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
+
+            :param i: A tuple of the same dimensionality as subset.dims() or
+                      subset.data_dims().
+            :return: Absolute coordinates for index i (length equal to
+                     `data_dims()`, may be larger than `dims()`).
+        """
+        raise NotImplementedError
+
 
 def _simplified_str(val):
     try:

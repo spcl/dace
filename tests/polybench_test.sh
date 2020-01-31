@@ -13,6 +13,7 @@ TESTS=0
 CURTEST=""
 TESTPREFIX=""
 TOTAL_TESTS=0
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 TIMEOUTCMD="timeout -s9 30"
 
@@ -64,7 +65,7 @@ testcmd() {
 
 runtest_py() {
     test_start $1
-    yes | testcmd python3 $1 --size=mini
+    yes | testcmd $PYTHON_BINARY $1 --size=mini
     if [ $? -ne 0 ]; then bail $1; fi
 }
 

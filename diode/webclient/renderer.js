@@ -545,11 +545,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     sdfg_state.edges.forEach((edge, id) => {
         edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
         if (!edge) return;
-
-        let label = edge.attributes.data.label;
-        console.assert(label != undefined);
-        let textmetrics = ctx.measureText(label);
-
         g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
     });
 
@@ -599,12 +594,14 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         let gedge = g.edge(edge.src, edge.dst, id);
 
         // Reposition first and last points according to connectors
+        let src_conn = null, dst_conn = null;
         if (edge.src_connector) {
             let src_node = g.node(edge.src);
             let cindex = src_node.data.node.attributes.layout.out_connectors.indexOf(edge.src_connector);
             if (cindex >= 0) {
                 gedge.points[0].x = src_node.out_connectors[cindex].x;
-                gedge.points[0].y += LINEHEIGHT / 2.0;
+                gedge.points[0].y = src_node.out_connectors[cindex].y;
+                src_conn = src_node.out_connectors[cindex];
             }
         }
         if (edge.dst_connector) {
@@ -612,9 +609,19 @@ function relayout_state(ctx, sdfg_state, sdfg) {
             let cindex = dst_node.data.node.attributes.layout.in_connectors.indexOf(edge.dst_connector);
             if (cindex >= 0) {
                 gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
-                gedge.points[gedge.points.length - 1].y -= LINEHEIGHT / 2.0;
+                gedge.points[gedge.points.length - 1].y = dst_node.in_connectors[cindex].y;
+                dst_conn = dst_node.in_connectors[cindex];
             }
         }
+
+        let n = gedge.points.length - 1;
+        if (src_conn !== null)
+            gedge.points[0] = dagre.util.intersectRect(src_conn, gedge.points[n]);
+        if (dst_conn !== null)
+            gedge.points[n] = dagre.util.intersectRect(dst_conn, gedge.points[0]);
+
+        if  (gedge.points.length == 3 && gedge.points[0].x == gedge.points[n].x)
+            gedge.points = [gedge.points[0], gedge.points[n]];
 
         let bb = calculateEdgeBoundingBox(gedge);
         // Convert from top-left to center

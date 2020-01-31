@@ -369,6 +369,7 @@ class NestedSDFG(CodeNode):
     schedule = Property(
         dtype=dtypes.ScheduleType,
         desc="SDFG schedule",
+        allow_none=True,
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
@@ -437,6 +438,15 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not data.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        connectors = self.in_connectors | self.out_connectors
+        for dname, desc in self.sdfg.arrays.items():
+            # TODO(later): Disallow scalars without access nodes (so that this
+            #              check passes for them too).
+            if isinstance(desc, data.Scalar):
+                continue
+            if not desc.transient and dname not in connectors:
+                raise NameError('Data descriptor "%s" not found in nested '
+                                'SDFG connectors' % dname)
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -480,9 +490,13 @@ class MapEntry(EntryNode):
         self._map = map
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        m = Map("", [], [])
-        ret = MapEntry(map=m)
+    def map_type():
+        return Map
+
+    @classmethod
+    def from_json(clc, json_obj, context=None):
+        m = clc.map_type()("", [], [])
+        ret = clc(map=m)
 
         try:
             # Set map reference to map exit
@@ -526,16 +540,20 @@ class MapExit(ExitNode):
         self._map = map
 
     @staticmethod
-    def from_json(json_obj, context=None):
+    def map_type():
+        return Map
+
+    @classmethod
+    def from_json(clc, json_obj, context=None):
         try:
             # Set map reference to map entry
             entry_node = context['sdfg_state'].node(
                 int(json_obj['scope_entry']))
 
-            ret = MapExit(map=entry_node.map)
+            ret = clc(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
-            ret = MapExit(Map('_', [], []))
+            ret = clc(clc.map_type()('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
@@ -660,7 +678,6 @@ class ConsumeEntry(EntryNode):
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
         self._consume = consume
-        self._map_depth = 0
         self.add_in_connector('IN_stream')
         self.add_out_connector('OUT_stream')
 

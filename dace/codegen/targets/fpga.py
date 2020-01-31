@@ -1299,7 +1299,13 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
 # ------------------------------------------------------------------------------
 
 
+@dace.serialize.serializable
 class PipelineEntry(dace.graph.nodes.MapEntry):
+
+    @staticmethod
+    def map_type():
+        return Pipeline
+
     @property
     def pipeline(self):
         return self._map
@@ -1309,7 +1315,13 @@ class PipelineEntry(dace.graph.nodes.MapEntry):
         self._map = val
 
 
+@dace.serialize.serializable
 class PipelineExit(dace.graph.nodes.MapExit):
+
+    @staticmethod
+    def map_type():
+        return Pipeline
+
     @property
     def pipeline(self):
         return self._map
@@ -1377,3 +1389,7 @@ class Pipeline(dace.graph.nodes.Map):
         if self.drain_size <= 0:
             raise ValueError("No drain condition exists for " + self.label)
         return self.iterator_str() + "_drain"
+
+
+PipelineEntry = indirect_properties(Pipeline,
+                                    lambda obj: obj.map)(PipelineEntry)
