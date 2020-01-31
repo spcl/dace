@@ -86,7 +86,7 @@ def parse_from_file(filename, *compilation_args):
         if isinstance(program, DaceProgram)
     ]
 
-    return [parse_function(p, *compilation_args) for p in programs]
+    return [parse_from_function(p, *compilation_args) for p in programs]
 
 
 def parse_from_function(function, *compilation_args, strict=None):
@@ -97,14 +97,15 @@ def parse_from_function(function, *compilation_args, strict=None):
         :param compilation_args: Various compilation arguments e.g. dtypes.
         :param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
-        :return: The generated SDFG object.
+        :return: A 2-tuple of the generated SDFG object and a dictionary of
+                 external callable functions.
     """
     if not isinstance(function, DaceProgram):
         raise TypeError(
             'Function must be of type dace.frontend.python.DaceProgram')
 
     # Obtain DaCe program as SDFG
-    sdfg = function.generate_pdp(*compilation_args)
+    sdfg, callbacks = function.generate_pdp(*compilation_args)
 
     # No need at this point
     # Fill in scope entry/exit connectors
@@ -126,7 +127,7 @@ def parse_from_function(function, *compilation_args, strict=None):
     # Validate SDFG
     sdfg.validate()
 
-    return sdfg
+    return sdfg, callbacks
 
 
 def _get_locals_and_globals():
@@ -163,6 +164,7 @@ class DaceProgram:
         }
         if self.argnames is None:
             self.argnames = []
+        self.callbacks = {}
 
     @property
     def name(self):
@@ -170,11 +172,12 @@ class DaceProgram:
 
     def to_sdfg(self, *args, strict=None) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return parse_from_function(self, *args, strict=strict)
+        sdfg, _ = parse_from_function(self, *args, strict=strict)
+        return sdfg
 
     def compile(self, *args, strict=None, specialize=None):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = parse_from_function(self, *args, strict=strict)
+        sdfg, self.callbacks = parse_from_function(self, *args, strict=strict)
         return sdfg.compile(specialize=specialize)
 
     def __call__(self, *args, **kwargs):
@@ -200,17 +203,18 @@ class DaceProgram:
                             kwargs[str(sym)] = sym.get()
                         except:
                             pass
+        # Update callbacks
+        kwargs.update(self.callbacks)
 
         return binaryobj(**kwargs)
 
     def generate_pdp(self, *compilation_args):
         """ Generates the parsed AST representation of a DaCe program.
             :param compilation_args: Various compilation arguments e.g., dtypes.
-            :return: A 2-tuple of (program, modules), where `program` is a
-                     `dace.astnodes._ProgramNode` representing the parsed DaCe 
-                     program, and `modules` is a dictionary mapping imported 
-                     module names to their actual module names (for maintaining
-                     import aliases).
+            :return: A 2-tuple of (SDFG, callbacks), where the first element
+                     represents the parsed DaCe program, and the second
+                     maps names to callback functions from the current Python
+                     environment.
         """
         dace_func = self.f
         args = self.args
@@ -266,6 +270,13 @@ class DaceProgram:
             if isinstance(v, (SDFG, DaceProgram))
         }
 
+        # Allow callbacks to other functions
+        callables = {
+            k: v for k, v in dace_func.__globals__.items()
+            if callable(v)
+        }
+
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules, other_sdfgs, self.kwargs)
+                                         modules, other_sdfgs, self.kwargs,
+                                         callables)

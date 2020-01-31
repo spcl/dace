@@ -4216,7 +4216,7 @@ def local_transients(sdfg, dfg, entry_node):
 def compile(function_or_sdfg, *args, **kwargs):
     """ Obtain a runnable binary from a Python (@dace.program) function. """
     if isinstance(function_or_sdfg, dace.frontend.python.parser.DaceProgram):
-        sdfg = dace.frontend.python.parser.parse_from_function(
+        sdfg, _ = dace.frontend.python.parser.parse_from_function(
             function_or_sdfg, *args, **kwargs)
     elif isinstance(function_or_sdfg, SDFG):
         sdfg = function_or_sdfg

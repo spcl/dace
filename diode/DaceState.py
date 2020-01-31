@@ -2,16 +2,12 @@
 import os
 import re
 import sys
-import copy
 import dace
 import tempfile
 import traceback
 from six import StringIO
 
-from dace import dtypes
-from dace.transformation import optimizer
 from dace.sdfg import SDFG
-from dace.frontend.python import parser
 from dace.frontend.python.parser import DaceProgram
 
 
@@ -80,7 +76,7 @@ class DaceState:
                 self.errors.append(ex)
 
             # Find dace programs
-            self.sdfgs = [(name, parser.parse_from_function(obj))
+            self.sdfgs = [(name, obj.to_sdfg())
                           for name, obj in gen_module.items()
                           if isinstance(obj, DaceProgram)]
             self.sdfgs += [(name, obj) for name, obj in gen_module.items()

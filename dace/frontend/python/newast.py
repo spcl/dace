@@ -30,11 +30,6 @@ ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
-
-class ProgramVisitor:
-    pass
-
-
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
 
@@ -437,7 +432,7 @@ def _scalarbinop(sdfg: SDFG,
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor,
+    def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
@@ -447,7 +442,7 @@ def _makeassignop(op, opcode):
 
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor,
+    def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
@@ -477,7 +472,7 @@ def _is_op_boolean(op: str):
     return False
 
 
-def _array_x_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                    op1: str, op2: str, op: str, opcode: str):
 
     arr1 = sdfg.arrays[op1]
@@ -526,22 +521,22 @@ def _array_x_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
 
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op, otherclass='Array')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
@@ -644,8 +639,13 @@ def until(val, substr):
 ############################################
 
 
-def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
-                       constants):
+def parse_dace_program(f: Callable, argtypes: Dict[str, data.Data],
+                       global_vars: Dict[str, Any],
+                       modules: Dict[str, Any],
+                       other_sdfgs: Dict[str, SDFG],
+                       constants: Dict[str, Any],
+                       callables: Dict[str, Callable]) -> \
+        Tuple[SDFG, Dict[str, Callable]]:
     """ Parses a `@dace.program` function into a _ProgramNode object.
         :param f: A Python function to parse.
         :param argtypes: An dictionary of (name, type) for the given
@@ -658,9 +658,12 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
         :param other_sdfgs: Other SDFG and DaceProgram objects in the context
                             of this function.
         :param constants: A dictionary from a name to a constant value.
-        :return: Hierarchical tree of `astnodes._Node` objects, where the top
-                 level node is an `astnodes._ProgramNode`.
-        @rtype: SDFG
+        :param callables: Global callable functions from the calling module.
+                          If called in program, these will be baked as
+                          callbacks in the generated DaceProgram
+        :return: A 2-tuple of the SDFG and "baked" variables, i.e., values
+                 from the Python environment that will only be used when
+                 the DaCe program is called. These values are not serialized.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
@@ -699,12 +702,14 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
         constants=constants,
         scope_arrays=argtypes,
         scope_vars={},
-        other_sdfgs=other_sdfgs)
+        other_sdfgs=other_sdfgs,
+        callables=callables
+    )
 
-    sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    sdfg, _, _, callbacks = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
 
-    return sdfg
+    return sdfg, {k: callables[k] for k in callbacks}
 
 
 class DaceSyntaxError(Exception):
@@ -1683,7 +1688,8 @@ class ProgramVisitor(ExtNodeVisitor):
             other_sdfgs: Dict[str,
                               SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
             nested: bool = False,
-            tmp_idx: int = 0):
+            tmp_idx: int = 0,
+            callables: Dict[str, Callable] = None):
         """ ProgramVisitor init method
         
         Arguments:
@@ -1712,6 +1718,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.globals = global_vars
         self.other_sdfgs = other_sdfgs
         self.nested = nested
+        self.callables = callables or {}
 
         # Keeps track of scope arrays, numbers, variables and accesses
         self.scope_arrays = OrderedDict()
@@ -1723,7 +1730,6 @@ class ProgramVisitor(ExtNodeVisitor):
         self.accesses = dict()
 
         # Entry point to the program
-        # self.program = None
         self.sdfg = SDFG(self.name)
         if not self.nested:
             self.sdfg.arrays.update(scope_arrays)
@@ -1731,6 +1737,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
         self.inputs = {}
         self.outputs = {}
+        self.callbacks = set()
 
         # Add symbols
         for k, v in scope_arrays.items():
@@ -1765,7 +1772,8 @@ class ProgramVisitor(ExtNodeVisitor):
             is_tasklet {bool} -- True, if program is tasklet (default: {False})
         
         Returns:
-            Tuple[SDFG, Dict, Dict] -- Parsed SDFG, its inputs and outputs
+            Tuple[SDFG, Dict, Dict, Set] -- Parsed SDFG, its inputs, outputs,
+             and callbacks that should be baked.
         """
 
         if is_tasklet:
@@ -1777,7 +1785,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
-        return self.sdfg, self.inputs, self.outputs
+        return self.sdfg, self.inputs, self.outputs, self.callbacks
 
     @property
     def defined(self):
@@ -1937,11 +1945,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     node.name, PE_tuple, condition, chunksize=chunksize)
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
-                sdfg, inputs, outputs = self._parse_subprogram(node.name, node)
+                sdfg, inputs, outputs, callbacks = self._parse_subprogram(node.name, node)
             else:  # Scope + tasklet (e.g., @dace.map)
                 name = "{}_body".format(entry.label)
-                sdfg, inputs, outputs = self._parse_subprogram(
+                sdfg, inputs, outputs, callbacks = self._parse_subprogram(
                     name, node, True)
+            # TODO: Use/propagate callbacks
 
             internal_node = state.add_nested_sdfg(sdfg, self.sdfg,
                                                   set(inputs.keys()),
@@ -2514,7 +2523,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 'map_%d' % node.lineno, params, node)
             me, mx = state.add_map(name='Map', ndrange=params)
             # body = SDFG('MapBody')
-            body, inputs, outputs = self._parse_subprogram('MapBody', node)
+            body, inputs, outputs, callbacks = self._parse_subprogram('MapBody', node)
+            # TODO: Use/propagate callbacks
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs,
