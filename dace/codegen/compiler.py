@@ -212,25 +212,6 @@ class CompiledSDFG(object):
 
         sdfg = self._sdfg
 
-        # As in compilation, add symbols used in array sizes to parameters
-        symparams = {}
-        symtypes = {}
-        for symname in sdfg.undefined_symbols(False):
-            try:
-                symval = symbolic.symbol(symname)
-                symparams[symname] = symval.get()
-                symtypes[symname] = symval.dtype.as_ctypes()
-            except UnboundLocalError:
-                try:
-                    symparams[symname] = kwargs[symname]
-                except KeyError:
-                    raise UnboundLocalError('Unassigned symbol %s' % symname)
-
-        arglist.extend(
-            [symparams[k] for k in sorted(symparams.keys()) if k not in sig])
-        argtypes.extend(
-            [symtypes[k] for k in sorted(symtypes.keys()) if k not in sig])
-
         # Obtain SDFG constants
         constants = sdfg.constants
 
