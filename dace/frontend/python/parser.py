@@ -3,6 +3,8 @@ from __future__ import print_function
 import inspect
 import copy
 import os
+import sympy
+from typing import Any, Dict, Optional, Set
 
 from dace import symbolic, dtypes
 from dace.config import Config
@@ -143,6 +145,61 @@ def _get_locals_and_globals():
     return result
 
 
+def _infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
+                               exclude: Optional[Set[str]] = None) -> \
+        Dict[str, Any]:
+    """
+    Infers the values of SDFG symbols (not given as arguments) from the shapes
+    of input arguments (e.g., arrays).
+    :param sdfg: The SDFG that is being called.
+    :param args: A dictionary mapping from current argument names to their
+                 values. This may also include symbols.
+    :param exclude: An optional set of symbols to ignore on inference.
+    :return: A dictionary mapping from symbol names that are not in ``args``
+             to their inferred values.
+    :raise ValueError: If symbol values are ambiguous.
+    """
+    exclude = exclude or set()
+    equations = []
+    symbols = set()
+    # Collect equations and symbols from arguments and shapes
+    for arg_name, arg_val in args.items():
+        if arg_name in sdfg.arrays:
+            desc = sdfg.arrays[arg_name]
+            symbolic_shape = desc.shape
+            given_shape = arg_val.shape
+
+            for sym_dim, real_dim in zip(symbolic_shape, given_shape):
+                equations.append(sym_dim - real_dim)
+                for sym in symbolic.symlist(sym_dim).values():
+                    if str(sym) in args:
+                        exclude.add(sym)
+                    else:
+                        symbols.add(sym)
+
+    # Solve for all at once
+    results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
+    if len(results) > 1:
+        raise ValueError('Ambiguous values for symbols in inference. '
+                         'Options: %s' % str(results))
+    if len(results) == 0:
+        raise ValueError('Cannot infer values for symbols in inference.')
+
+    result = results[0]
+    if not result:
+        raise ValueError('Cannot infer values for symbols in inference.')
+
+    # Fast path (unnecessary)
+    # # For each symbol in each dimension, try to solve an equation
+    # for sym_dim, real_dim in zip(symbolic_shape, given_shape):
+    #     for sym in symbolic.symlist(sym_dim):
+    #         if sym in inferred_syms and symval != inferred_syms[sym]:
+    #             raise ValueError('Ambiguous value for symbol %s in argument '
+    #                              '%s: can be either %d or %d' % (
+    #                 sym, arg_name, inferred_syms[sym], symval))
+    return {str(k): v for k, v in result.items()}
+
+
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
@@ -183,23 +240,9 @@ class DaceProgram:
         binaryobj = self.compile(*args)
         # Add named arguments to the call
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+
         # Update arguments with symbols in data shapes
-        kwargs.update({
-            sym: symbolic.symbol(sym).get()
-            for arg in args
-            for sym in (symbolic.symlist(arg.descriptor.shape) if hasattr(
-                arg, 'descriptor') else [])
-        })
-        # Update arguments with symbol values
-        for aname in self.argnames:
-            if aname in binaryobj.sdfg.arrays:
-                sym_shape = binaryobj.sdfg.arrays[aname].shape
-                for sym in (sym_shape):
-                    if symbolic.issymbolic(sym):
-                        try:
-                            kwargs[str(sym)] = sym.get()
-                        except:
-                            pass
+        kwargs.update(_infer_symbols_from_shapes(binaryobj.sdfg, kwargs))
 
         return binaryobj(**kwargs)
 
