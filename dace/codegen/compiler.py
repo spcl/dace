@@ -205,7 +205,7 @@ class CompiledSDFG(object):
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             if isinstance(argtype.dtype, dace.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg)
+                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
 
         # Retain only the element datatype for upcoming checks and casts
         argtypes = [t.dtype.as_ctypes() for t in argtypes]

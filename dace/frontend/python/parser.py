@@ -166,6 +166,8 @@ def _infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:
             desc = sdfg.arrays[arg_name]
+            if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
+                continue
             symbolic_shape = desc.shape
             given_shape = arg_val.shape
 
@@ -176,6 +178,9 @@ def _infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
                         exclude.add(sym)
                     else:
                         symbols.add(sym)
+
+    if len(symbols) == 0:
+        return {}
 
     # Solve for all at once
     results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
