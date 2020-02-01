@@ -1605,45 +1605,25 @@ subgraph cluster_state_{state} {{
         state = self.find_state(state_id_or_label)
         return state.find_node(node_id_or_label)
 
-    def specialize(self, additional_symbols=None, specialize_all_symbols=True):
+    def specialize(self, symbols: Dict[str, Any]):
         """ Sets symbolic values in this SDFG to constants.
-            :param additional_symbols: Additional values to specialize.
-            :param specialize_all_symbols: If True, raises an
-                   UnboundLocalError if at least one of the symbols in the
-                   SDFG is unset.
+            :param symbols: Values to specialize.
         """
-        syms = {}
-        additional_symbols = additional_symbols or {}
-        undefined_symbols = self.undefined_symbols(False)
-        # scalar_arguments = self.scalar_parameters(False)
-        for symname in undefined_symbols:
-            try:
-                syms[symname] = symbolic.symbol(symname).get()
-            except UnboundLocalError:
-                # Allow scalar arguments to remain undefined, but fail on
-                # symbols
-                if specialize_all_symbols and symname not in additional_symbols:
-                    pass
-
-        # Augment symbol values from additional symbols
-        syms.update({
+        # Set symbol values to add
+        syms = {
             # If symbols are passed, extract the value. If constants are
             # passed, use them directly.
             name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in additional_symbols.items()
-        })
+            for name, val in symbols.items()
+        }
 
         # Update constants
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def compile(self, specialize=None, optimizer=None, output_file=None) -> \
+    def compile(self, optimizer=None, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
-
-            :param specialize: If True, specializes all symbols to their
-                               defined values as constants. If None, uses
-                               configuration setting.
             :param optimizer: If defines a valid class name, it will be called
                               during compilation to transform the SDFG as
                               necessary. If None, uses configuration setting.
@@ -1671,11 +1651,6 @@ subgraph cluster_state_{state} {{
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
-
-        # Specialize SDFG to its symbol values
-        if (specialize is None and Config.get_bool(
-                "optimizer", "autospecialize")) or specialize == True:
-            sdfg.specialize()
 
         # Optimize SDFG using the CLI or external hooks
         optclass = _get_optimizer_class(optimizer)
@@ -1960,11 +1935,8 @@ subgraph cluster_state_{state} {{
         self.apply_transformations(
             patterns, validate=validate, strict=strict, states=states)
 
-    def generate_code(self, specialize=None):
+    def generate_code(self):
         """ Generates code from this SDFG and returns it.
-            :param specialize: If True, specializes all set symbols to their
-                               values in the generated code. If None,
-                               uses default configuration value.
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
@@ -1982,11 +1954,6 @@ subgraph cluster_state_{state} {{
         # Propagate memlets in the graph
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
-
-        # Specialize SDFG to its symbol values
-        if (specialize is None and Config.get_bool(
-                "optimizer", "autospecialize")) or specialize == True:
-            sdfg.specialize()
 
         sdfg.draw_to_file()
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))

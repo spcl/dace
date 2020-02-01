@@ -244,11 +244,13 @@ if __name__ == "__main__":
         M.set(args["M"])
 
     gemv = make_sdfg(args["specialize"])
-    gemv.draw_to_file()
-    gemv.specialize()
+    gemv.specialize(dict(N=N))
 
     if not args["specialize"]:
         M.set(args["M"])
+    else:
+        gemv.specialize(dict(M=M))
+
 
     print("Running GEMV {}x{} ({}specialized)".format(
         N.get(), M.get(), ("" if args["specialize"] else "not ")))

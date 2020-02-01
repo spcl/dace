@@ -1038,7 +1038,7 @@ if __name__ == "__main__":
         M.set(args["M"])
         # M must always be specialized, as it's used for the static buffer size
         sdfg = make_sdfg(False)
-        sdfg.specialize()
+        sdfg.specialize(dict(P=P, M=M))
         N.set(args["N"])
         K.set(args["K"])
     else:
@@ -1047,7 +1047,7 @@ if __name__ == "__main__":
         N.set(args["N"])
         K.set(args["K"])
         sdfg = make_sdfg(True)
-        sdfg.specialize()
+        sdfg.specialize(dict(P=P, M=M, N=N, K=K))
 
     print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(
         M.get(), N.get(), K.get(), P.get(), ""

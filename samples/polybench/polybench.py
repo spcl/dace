@@ -68,9 +68,8 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
                     if isinstance(node, dace.graph.nodes.MapEntry):
                         node.map.schedule = dace.ScheduleType.Sequential
         if FLAGS.specialize:
-            compiled_sdfg = sdfg.compile(specialize=True)
-        else:
-            compiled_sdfg = sdfg.compile()
+            sdfg.specialize(**psize)
+        compiled_sdfg = sdfg.compile()
 
     print('Initializing arrays...')
     init_array(*args)

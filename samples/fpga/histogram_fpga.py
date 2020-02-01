@@ -206,10 +206,9 @@ if __name__ == "__main__":
         H.set(args["H"])
         W.set(args["W"])
         histogram = make_sdfg(True)
-        histogram.specialize()
+        histogram.specialize(dict(H=H, W=W))
     else:
         histogram = make_sdfg(False)
-        histogram.specialize()
         H.set(args["H"])
         W.set(args["W"])
 

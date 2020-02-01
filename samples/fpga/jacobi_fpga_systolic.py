@@ -616,11 +616,13 @@ if __name__ == "__main__":
         T.set(args["T"])
 
     jacobi = make_sdfg(args["specialize_all"])
-    jacobi.specialize()
+    jacobi.specialize(dict(W=W, P=P))
 
     if not args["specialize_all"]:
         H.set(args["H"])
         T.set(args["T"])
+    else:
+        jacobi.specialize(dict(H=H, T=T))
 
     if T.get() % P.get() != 0:
         raise ValueError(

@@ -411,7 +411,7 @@ if __name__ == "__main__":
 
     spmv = make_sdfg(args["specialize"])
     if args["specialize"]:
-        spmv.specialize()
+        spmv.specialize(dict(H=H, W=W, nnz=nnz))
     spmv.draw_to_file()
     spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 

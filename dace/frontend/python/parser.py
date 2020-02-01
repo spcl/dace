@@ -234,10 +234,10 @@ class DaceProgram:
         """ Parses the DaCe function into an SDFG. """
         return parse_from_function(self, *args, strict=strict)
 
-    def compile(self, *args, strict=None, specialize=None):
+    def compile(self, *args, strict=None):
         """ Convenience function that parses and compiles a DaCe program. """
         sdfg = parse_from_function(self, *args, strict=strict)
-        return sdfg.compile(specialize=specialize)
+        return sdfg.compile()
 
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 

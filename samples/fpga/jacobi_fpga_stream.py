@@ -603,11 +603,13 @@ if __name__ == "__main__":
         T.set(args["T"])
 
     jacobi = make_sdfg(args["specialize"])
-    jacobi.specialize()
+    jacobi.specialize(dict(W=W))
 
     if not args["specialize"]:
         H.set(args["H"])
         T.set(args["T"])
+    else:
+        jacobi.specialize(dict(H=H, T=T))
 
     print("Jacobi Stencil {}x{} ({} steps, {}specialized)".format(
         H.get(), W.get(), T.get(), ("" if args["specialize"] else "not ")))

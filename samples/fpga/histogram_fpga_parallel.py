@@ -312,11 +312,11 @@ if __name__ == "__main__":
         W.set(args["W"])
         P.set(args["P"])
         histogram = make_sdfg(True)
-        histogram.specialize()
+        histogram.specialize(dict(H=H, W=W, P=P))
     else:
         P.set(args["P"])
         histogram = make_sdfg(False)
-        histogram.specialize()
+        histogram.specialize(dict(P=P))
         H.set(args["H"])
         W.set(args["W"])
 
