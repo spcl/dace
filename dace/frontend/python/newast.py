@@ -3225,10 +3225,13 @@ class ProgramVisitor(ExtNodeVisitor):
             # by an access.
             for i, (aname, arg) in enumerate(args):
                 if arg not in self.sdfg.arrays:
-                    newarg = self._add_read_access(
-                        arg,
-                        dace.subsets.Range.from_array(self.scope_arrays[arg]),
-                        node)
+                    if isinstance(arg, str):
+                        newarg = self._add_read_access(
+                            arg,
+                            subsets.Range.from_array(self.scope_arrays[arg]),
+                            node)
+                    else:
+                        newarg = arg
                     args[i] = (aname, newarg)
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
@@ -3296,18 +3299,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             slice_state.remove_node(n)
                             break
 
-            # Map internal SDFG symbols to external symbols (find_and_replace?)
-            for aname, arg in args:
-                if arg in self.defined:
-                    continue
-                if arg in self.sdfg.symbols or not isinstance(arg, str):
-                    sdfg.replace(aname, arg)
-                # Disallow memlets/nodes to symbol parameters
-                elif aname in sdfg.symbols:
-                    raise DaceSyntaxError(
-                        self, node, 'Array nodes cannot be '
-                        'passed as scalars to nested SDFG '
-                        '(passing "%s" as "%s")' % (aname, arg))
+            # Map internal SDFG symbols by adding keyword arguments
+            # TODO
+
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys())
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
