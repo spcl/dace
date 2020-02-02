@@ -21,6 +21,7 @@ from dace.codegen.targets.cpu import cpp_offset_expr, cpp_array_expr
 from dace.codegen.targets import cpu
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
+from dace.symbolic import evaluate
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -468,7 +469,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 generate_scalar = False
                 if veclen > 1:
                     arrsize_symbolic = nodedesc.total_size
-                    arrsize_eval = sp.simplify(arrsize_symbolic / veclen)
+                    arrsize_eval = evaluate(arrsize_symbolic / veclen,
+                                            sdfg.constants)
                     if cpu.sym2cpp(arrsize_eval) == "1":
                         generate_scalar = True
                     arrsize_vec = "({}) / {}".format(arrsize, veclen)
@@ -889,14 +891,20 @@ class FPGACodeGen(TargetCodeGenerator):
                     loop_var_type = "int"
                     # try to decide type of loop variable
                     try:
-                        if (begin >= 0) == True and (skip > 0) == True:
-                            # it could be an unsigned (uint32) variable: we need to check to the type of 'end',
+                        if (evaluate(begin, sdfg.constants) >= 0
+                                and evaluate(skip, sdfg.constants) > 0):
+                            # it could be an unsigned (uint32) variable: we need
+                            # to check to the type of 'end',
                             # if we are able to determine it
-                            # TODO: Use sdfg.symbols
                             symbols = list(dace.symbolic.symlist(end).values())
                             if len(symbols) > 0:
                                 sym = symbols[0]
-                                end_type = sym.dtype
+                                if str(sym) in sdfg.symbols:
+                                    end_type = sdfg.symbols[str(sym)].dtype
+                                else:
+                                    # Symbol not found, try to use symbol object
+                                    # or use the default symbol type (int32)
+                                    end_type = sym.dtype
                             else:
                                 end_type = None
                             if end_type is not None:
@@ -907,8 +915,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                         np.dtype(end_type.dtype.type),
                                         np.unsignedinteger):
                                     loop_var_type = "size_t"
-                    except UnboundLocalError:
-                        pass
+                    except (UnboundLocalError, TypeError):
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
 
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
