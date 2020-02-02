@@ -56,25 +56,28 @@ def specifies_datatype(func: Callable[[Any, data.Data], Tuple[str, data.Data]],
 
 
 @specifies_datatype(datatype=data.Scalar)
-def _method(sdfg:SDFG, sample_data: data.Scalar):
+def _method(sdfg: SDFG, sample_data: data.Scalar):
     name = sdfg.temp_data_name()
     new_data = sdfg.add_scalar(name, sample_data.dtype, transient=True)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Array)
-def _method(sdfg:SDFG, sample_data: data.Array):
+def _method(sdfg: SDFG, sample_data: data.Array):
     name, new_data = sdfg.add_temp_transient(sample_data.shape,
                                              sample_data.dtype)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Stream)
-def _method(sdfg:SDFG, sample_data: data.Stream):
+def _method(sdfg: SDFG, sample_data: data.Stream):
     name = sdfg.temp_data_name()
-    new_data = sdfg.add_stream(name, sample_data.dtype,
-                               buffer_size=sample_data.buffer_size,
-                               shape=sample_data.shape, transient=True)
+    new_data = sdfg.add_stream(
+        name,
+        sample_data.dtype,
+        buffer_size=sample_data.buffer_size,
+        shape=sample_data.shape,
+        transient=True)
     return name, new_data
 
 
@@ -2940,11 +2943,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data = None
             if not true_name:
-                if (result in self.sdfg.arrays and
-                    not self.sdfg.arrays[result].transient):
+                if (result in self.sdfg.arrays
+                        and not self.sdfg.arrays[result].transient):
                     result_data = self.sdfg.arrays[result]
-                    true_name, new_data = _add_transient_data(self.sdfg,
-                                                              result_data)
+                    true_name, new_data = _add_transient_data(
+                        self.sdfg, result_data)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
                 else:
@@ -2961,7 +2964,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 elif isinstance(target, ast.Subscript):
                     true_target.value.id = true_name
                 rng = dace.subsets.Range(
-                    astutils.subscript_to_slice(true_target, defined_arrays)[1])
+                    astutils.subscript_to_slice(true_target,
+                                                defined_arrays)[1])
 
             if self.nested and not new_data:  # Nested SDFG
                 if op:
@@ -3194,6 +3198,8 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
+                args += [(arg.arg, self._parse_function_arg(arg.value))
+                         for arg in node.keywords]
 
                 sdfg = func.to_sdfg(*({
                     **self.defined,
@@ -3204,6 +3210,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
                     (type(func).__name__, funcname))
+
+            # Argument checks
+            for arg in node.keywords:
+                if arg.arg not in func.argnames:
+                    raise DaceSyntaxError(
+                        self, node, 'Invalid keyword argument "%s" in call to '
+                        '"%s"' % (arg.arg, funcname))
+            if len(args) != len(func.argnames):
+                raise DaceSyntaxError(
+                    self, node, 'Argument number mismatch in'
+                    ' call to "%s" (expected %d,'
+                    ' got %d)' % (funcname, len(func.argnames), len(args)))
 
             # Change transient names
             arrays_before = list(sdfg.arrays.items())
@@ -3221,7 +3239,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(arg, ast.Subscript):
                     slice_state = self.last_state
                     break
-            
+
             # Make sure that any scope vars in the arguments are substituted
             # by an access.
             for i, (aname, arg) in enumerate(args):
