@@ -2276,6 +2276,23 @@ class ProgramVisitor(ExtNodeVisitor):
             for conn, v in inputs.items():
                 if v is None:  # Input already handled outside
                     continue
+                if isinstance(v, nodes.Tasklet):
+                    # Create a code->code node
+                    new_scalar = self.sdfg.temp_data_name()
+                    if isinstance(internal_node, nodes.NestedSDFG):
+                        dtype = internal_node.sdfg.arrays[conn].dtype
+                    else:
+                        raise SyntaxError(
+                            'Cannot determine connector type for '
+                            'tasklet input dependency')
+                    self.sdfg.add_scalar(new_scalar, dtype, transient=True)
+                    state.add_edge(v, conn, internal_node, conn,
+                                   dace.Memlet.simple(new_scalar, '0'))
+                    if entry_node is not None:
+                        state.add_edge(entry_node, None, v, None,
+                                       dace.EmptyMemlet())
+                    continue
+
                 if isinstance(v, tuple):
                     memlet, inner_indices = v
                 else:
@@ -3258,6 +3275,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
                 for conn, arg in args if arg in self.sdfg.arrays
             }
+            # Handle scalar inputs to nested SDFG calls
+            for conn, arg in args:
+                if arg not in self.sdfg.arrays:
+                    argdict[conn] = state.add_tasklet('scalar', {}, {conn},
+                                                      '%s = %s' % (conn, arg))
+
             inputs = {
                 k: v
                 for k, v in argdict.items() if self._is_inputnode(sdfg, k)
