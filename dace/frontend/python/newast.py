@@ -3206,10 +3206,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     (type(func).__name__, funcname))
 
             # Change transient names
-            for arrname, array in sdfg.arrays.items():
+            arrays_before = list(sdfg.arrays.items())
+            for arrname, array in arrays_before:
                 if array.transient and arrname[:5] == '__tmp':
                     if int(arrname[5:]) < self.sdfg._temp_transients:
-                        new_name = sdfg.temp_data_name()
+                        new_name = self.sdfg.temp_data_name()
                         sdfg.replace(arrname, new_name)
             self.sdfg._temp_transients = max(self.sdfg._temp_transients,
                                              sdfg._temp_transients)
