@@ -1,8 +1,9 @@
 import ast
 import sympy
 import pickle
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 import warnings
+import numpy
 
 from sympy.abc import _clash
 from sympy.printing.str import StrPrinter
@@ -265,6 +266,29 @@ def symlist(values):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
+
+
+def evaluate(expr: Union[sympy.Basic, int, float],
+             symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
+        Union[int, float, numpy.number]:
+    """
+    Evaluates an expression to a constant based on a mapping from symbols
+    to values.
+    :param expr: The expression to evaluate.
+    :param symbols: A mapping of symbols to their values.
+    :return: A constant value based on ``expr`` and ``symbols``.
+    """
+    if issymbolic(expr, set(map(str, symbols.keys()))):
+        raise TypeError('Expression cannot be evaluated to a constant')
+    if isinstance(expr, (int, float, numpy.number)):
+        return expr
+
+    # Evaluate all symbols
+    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
+            sval.get() if isinstance(sval, symbol) else sval
+            for sname, sval in symbols.items()}
+
+    return expr.subs(syms)
 
 
 def issymbolic(value, constants=None):
