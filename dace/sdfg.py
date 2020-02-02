@@ -2828,8 +2828,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
-            propagate=True
-    ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
+            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
             :param name:       Tasklet (and wrapping map) name
@@ -2900,8 +2899,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             for inp, inpnode in inpdict.items():
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry,
-                                                    True)
+                    outer_memlet = propagate_memlet(self, tomemlet[inp],
+                                                    map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
                 self.add_edge(inpnode, None, map_entry, "IN_" + inp,
@@ -2933,8 +2932,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             for out, outnode in outdict.items():
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[out], map_exit,
-                                                    True)
+                    outer_memlet = propagate_memlet(self, tomemlet[out],
+                                                    map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
                 self.add_edge(map_exit, "OUT_" + out, outnode, None,
@@ -3741,14 +3740,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # If scope(src) contains scope(dst), then src must be a data node
             elif scope_contains_scope(scope, src_node, dst_node):
                 if not isinstance(src_node, nd.AccessNode):
-                    raise InvalidSDFGEdgeError(
-                        "Memlet creates an "
-                        "invalid path (source node %s should "
-                        "be a data node)" % str(src_node),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                    pass
+                    # raise InvalidSDFGEdgeError(
+                    #     "Memlet creates an "
+                    #     "invalid path (source node %s should "
+                    #     "be a data node)" % str(src_node),
+                    #     sdfg,
+                    #     state_id,
+                    #     eid,
+                    # )
             # If scope(dst) contains scope(src), then dst must be a data node
             elif scope_contains_scope(scope, dst_node, src_node):
                 if not isinstance(dst_node, nd.AccessNode):
