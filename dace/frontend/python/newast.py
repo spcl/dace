@@ -3204,6 +3204,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
+                required_args = sdfg.arglist()
                 # Validate argument types and sizes
                 sdfg.argument_typecheck(
                     [], {k: self.sdfg.data(v)
@@ -3217,6 +3218,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         for aname, arg in zip(func.argnames, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
                          for arg in node.keywords]
+                required_args = func.argnames
 
                 sdfg = func.to_sdfg(*({
                     **self.defined,
@@ -3230,22 +3232,22 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Argument checks
             for arg in node.keywords:
-                if arg.arg not in func.argnames:
+                if arg.arg not in required_args:
                     raise DaceSyntaxError(
                         self, node, 'Invalid keyword argument "%s" in call to '
                         '"%s"' % (arg.arg, funcname))
-            if len(args) != len(func.argnames):
+            if len(args) != len(required_args):
                 raise DaceSyntaxError(
                     self, node, 'Argument number mismatch in'
                     ' call to "%s" (expected %d,'
-                    ' got %d)' % (funcname, len(func.argnames), len(args)))
+                    ' got %d)' % (funcname, len(required_args), len(args)))
 
             # Change transient names
             arrays_before = list(sdfg.arrays.items())
             for arrname, array in arrays_before:
                 if array.transient and arrname[:5] == '__tmp':
                     if int(arrname[5:]) < self.sdfg._temp_transients:
-                        new_name = self.sdfg.temp_data_name()
+                        new_name = sdfg.temp_data_name()
                         sdfg.replace(arrname, new_name)
             self.sdfg._temp_transients = max(self.sdfg._temp_transients,
                                              sdfg._temp_transients)

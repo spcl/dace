@@ -17,33 +17,33 @@ if __name__ == '__main__':
     output[:] = dp.int32(0)
 
     # Construct SDFG 1
-    sdfg1 = SDFG('shouldntwork1')
-    state = sdfg1.add_state()
-    B = state.add_array('B', [N], dp.int32)
-    T = state.add_transient('T', [1], dp.int32)
-
-    tasklet_gen = state.add_tasklet('mytasklet', {}, {'b'}, 'b = 5')
-    map_entry, map_exit = state.add_map('mymap', dict(k='0:N'))
-
-    map_entry._in_connectors.add('IN_1')
-    map_entry._out_connectors.add('OUT_1')
-    map_exit._in_connectors.add('IN_1')
-    map_exit._out_connectors.add('OUT_1')
-
-    state.add_edge(tasklet_gen, 'b', map_entry, 'IN_1', Memlet.simple(T, '0'))
-    state.add_edge(map_entry, 'OUT_1', T, None, Memlet.simple(T, '0'))
-    state.add_edge(T, None, map_exit, 'IN_1', Memlet.simple(B, '0'))
-    state.add_edge(map_exit, 'OUT_1', B, None, Memlet.simple(B, '0'))
-
-    # Left for debugging purposes
-    sdfg1.draw_to_file()
-
-    try:
-        sdfg1.validate()
-        print("SDFG 1 passed validation, test FAILED")
-        exit(1)
-    except InvalidSDFGError:
-        print("Test 1 passed, exception successfully caught")
+    # sdfg1 = SDFG('shouldntwork1')
+    # state = sdfg1.add_state()
+    # B = state.add_array('B', [N], dp.int32)
+    # T = state.add_transient('T', [1], dp.int32)
+    #
+    # tasklet_gen = state.add_tasklet('mytasklet', {}, {'b'}, 'b = 5')
+    # map_entry, map_exit = state.add_map('mymap', dict(k='0:N'))
+    #
+    # map_entry._in_connectors.add('IN_1')
+    # map_entry._out_connectors.add('OUT_1')
+    # map_exit._in_connectors.add('IN_1')
+    # map_exit._out_connectors.add('OUT_1')
+    #
+    # state.add_edge(tasklet_gen, 'b', map_entry, 'IN_1', Memlet.simple(T, '0'))
+    # state.add_edge(map_entry, 'OUT_1', T, None, Memlet.simple(T, '0'))
+    # state.add_edge(T, None, map_exit, 'IN_1', Memlet.simple(B, '0'))
+    # state.add_edge(map_exit, 'OUT_1', B, None, Memlet.simple(B, '0'))
+    #
+    # # Left for debugging purposes
+    # sdfg1.draw_to_file()
+    #
+    # try:
+    #     sdfg1.validate()
+    #     print("SDFG 1 passed validation, test FAILED")
+    #     exit(1)
+    # except InvalidSDFGError:
+    #     print("Test 1 passed, exception successfully caught")
 
     # Construct SDFG 2
     sdfg2 = SDFG('shouldntwork2')
