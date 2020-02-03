@@ -2709,7 +2709,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if name is None:
             name = sdfg.label
         debuginfo = getdebuginfo(debuginfo)
-        symbol_mapping = symbol_mapping or {}
 
         sdfg.parent = self
         sdfg._parent_sdfg = self.parent
