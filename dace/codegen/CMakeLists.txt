@@ -565,7 +565,7 @@ if(DACE_ENABLE_INTELFPGA)
             COMMAND ${IntelFPGAOpenCL_AOC} ${DACE_AOC_BUILD_FLAGS} ${FPGA_SRC_FILES} -march=emulator
             -DSMI_EMULATION_RANK=${SMI_EMULATION_RANK}
             -emulator-channel-depth-model=strict
-            COMMAND mv ${DACE_KERNEL_NAME_WE}.aocx ${DACE_PROGRAM_NAME}.aocx
+            COMMAND mv ${DACE_KERNEL_NAME_WE}.aocx ${DACE_PROGRAM_NAME}_emulator.aocx
             WORKING_DIRECTORY ${EMULATION_WORKDIR}
         )
         add_dependencies(${EMULATOR_TARGET} ${EMULATOR_TARGET_RANK})
