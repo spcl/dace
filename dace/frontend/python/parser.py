@@ -145,8 +145,8 @@ def _get_locals_and_globals():
     return result
 
 
-def _infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
-                               exclude: Optional[Set[str]] = None) -> \
+def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
+                              exclude: Optional[Set[str]] = None) -> \
         Dict[str, Any]:
     """
     Infers the values of SDFG symbols (not given as arguments) from the shapes
@@ -247,7 +247,7 @@ class DaceProgram:
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
 
         # Update arguments with symbols in data shapes
-        kwargs.update(_infer_symbols_from_shapes(binaryobj.sdfg, kwargs))
+        kwargs.update(infer_symbols_from_shapes(binaryobj.sdfg, kwargs))
 
         return binaryobj(**kwargs)
 
