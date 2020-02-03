@@ -1467,7 +1467,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg,
             dfg: ScopeSubgraphView,
             state_id,
-            node,
+            node: nodes.NestedSDFG,
             function_stream: CodeIOStream,
             callsite_stream: CodeIOStream,
     ):
@@ -1503,8 +1503,27 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 callsite_stream.write(out_code, sdfg, state_id, node)
 
-        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
+        callsite_stream.write("\n{    ///////////////////\n", sdfg, state_id,
                               node)
+
+        # Emit symbol mappings
+        # HACK: We first emit variables of the form __dacesym_X = Y to avoid
+        #       overriding symbolic expressions when the symbol names match
+        # TODO: When emitting nested SDFGs as separate functions,
+        #       remove the workaround
+        for symname, symval in sorted(node.symbol_mapping.items()):
+            callsite_stream.write(
+                '{dtype} __dacesym_{symname} = {symval};\n'.format(
+                    dtype=symbolic.symtype(symval),
+                    symname=symname,
+                    symval=sym2cpp(symval)), sdfg, state_id, node)
+        for sym in sorted(node.symbol_mapping.keys()):
+            callsite_stream.write(
+                'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
+                sdfg,
+                state_id,
+                node)
+        ## End of symbol mappings
 
         old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
@@ -1521,7 +1540,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._toplevel_schedule = old_schedule
 
-        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
+        callsite_stream.write("}    ///////////////////\n\n", sdfg, state_id,
                               node)
 
         # Process outgoing memlets with the internal SDFG

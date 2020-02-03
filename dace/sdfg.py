@@ -2699,6 +2699,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent,
             inputs: Set[str],
             outputs: Set[str],
+            symbol_mapping: Dict[str, Any] = None,
             name=None,
             schedule=dtypes.ScheduleType.Default,
             location="-1",
@@ -2708,6 +2709,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if name is None:
             name = sdfg.label
         debuginfo = getdebuginfo(debuginfo)
+        symbol_mapping = symbol_mapping or {}
 
         sdfg.parent = self
         sdfg._parent_sdfg = self.parent
@@ -2719,11 +2721,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             sdfg,
             inputs,
             outputs,
+            symbol_mapping=symbol_mapping,
             schedule=schedule,
             location=location,
             debuginfo=debuginfo,
         )
         self.add_node(s)
+
+        # Add "default" undefined symbols if None are given
+        symbols = sdfg.undefined_symbols(False)
+        if symbol_mapping is None:
+            symbol_mapping = {s: s for s in symbols.keys()}
+            s.symbol_mapping = symbol_mapping
+
+        # Validate missing symbols
+        missing_symbols = [
+            s for s in symbols.keys() if s not in symbol_mapping
+        ]
+        if missing_symbols:
+            raise ValueError('Missing symbols on nested SDFG "%s": %s' %
+                             (name, missing_symbols))
+
         return s
 
     def _map_from_ndrange(self,
@@ -3978,11 +3996,6 @@ def scope_symbols(dfg):
     sdict = dfg.scope_dict()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
-        if isinstance(n, dace.graph.nodes.NestedSDFG):
-            iv, ss = n.sdfg.scope_symbols()
-            iteration_variables.update(iv)
-            subset_symbols.update(ss)
-            continue
         if not isinstance(n, dace.graph.nodes.EntryNode):
             continue
         if isinstance(n, dace.graph.nodes.MapEntry):
@@ -4041,9 +4054,12 @@ def data_symbols(dfg):
     result = collections.OrderedDict()
     # Scalars determining the size of arrays
     for d in dfg.nodes():
-        # Update symbols with symbols in nested SDFGs
+        # Update symbols with symbols used in nested SDFG invocations
         if isinstance(d, nd.NestedSDFG):
-            result.update(d.sdfg.data_symbols(True))
+            result.update((k.name, dt.Scalar(k.dtype))
+                          for m in d.symbol_mapping.values()
+                          if symbolic.issymbolic(m) for k in m.free_symbols
+                          if not k.name.startswith('__dace'))
             continue
         if not isinstance(d, nd.AccessNode):
             continue

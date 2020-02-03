@@ -3225,10 +3225,21 @@ class ProgramVisitor(ExtNodeVisitor):
                     **self.sdfg.arrays
                 }[arg] if isinstance(arg, str) else arg
                                       for aname, arg in args))
+
             else:
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
                     (type(func).__name__, funcname))
+
+            # Avoid import loops
+            from dace.frontend.python.parser import infer_symbols_from_shapes
+
+            # Map internal SDFG symbols by adding keyword arguments
+            symbols = sdfg.undefined_symbols(False)
+            mapping = infer_symbols_from_shapes(sdfg, {
+                k: self.sdfg.arrays[v]
+                for k, v in args if v in self.sdfg.arrays
+            })
 
             # Argument checks
             for arg in node.keywords:
@@ -3343,11 +3354,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             slice_state.remove_node(n)
                             break
 
-            # Map internal SDFG symbols by adding keyword arguments
-            # TODO
-
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
-                                          outputs.keys())
+                                          outputs.keys(), mapping)
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
             if output_slices:
