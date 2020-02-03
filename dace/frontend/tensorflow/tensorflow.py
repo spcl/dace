@@ -2017,20 +2017,7 @@ class TFSession:
             filter_dims_list = mapOutput.desc(self.graph).shape
             image_dims_list = image.desc(self.graph).shape
 
-            # add a padding map for same padding(zero padding so that input and
-            # output of convolution have the same size)
-            if padding == "SAME":
-                paddedInput, paddedDims = self.inputPadding(
-                    node,
-                    image,
-                    image.desc(self.graph),
-                    output.desc(self.graph).shape[1],
-                    mapOutput.desc(self.graph).shape[0],
-                    strides[1],
-                    image_dims,
-                )
-                image_dims = paddedDims
-                image = paddedInput
+
 
             # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
@@ -2044,7 +2031,34 @@ class TFSession:
                     padh = explicit_paddings[4]
                     padw = explicit_paddings[6]
 
-
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            if padding == "SAME":
+                paddingUp = 0
+                paddingDown = 0
+                if data_format == "NHWC":
+                    inputSize = image_dims_list[1]
+                    outputSize = output.desc(self.graph).shape[1]
+                    kernelSize = mapOutput.desc(self.graph).shape[1]
+                    strideSize = strides[1]
+                else:
+                    inputSize = image_dims_list[2]
+                    outputSize = output.desc(self.graph).shape[2]
+                    kernelSize = mapOutput.desc(self.graph).shape[2]
+                    strideSize = strides[2]
+                # Calculate padding according to paper
+                padding =  strideSize * (outputSize - 1) + kernelSize - inputSize
+                # If padding is even (padding is on each side the same)
+                if padding % 2 == 0:
+                    paddingUp = padding // 2
+                    paddingDown = padding // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = padding // 2
+                    paddingDown = paddingUp + 1
+                padh = paddingUp
+                padw = paddingDown
 
 
             tasklet = state.add_tasklet(
@@ -2942,10 +2956,41 @@ class TFSession:
                     padh = explicit_paddings[4]
                     padw = explicit_paddings[6]
 
+            '''# add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            if padding == "SAME":
+                paddingUp = 0
+                paddingDown = 0
+                if data_format == "NHWC":
+                    inputSize = gradient.desc(self.graph).shape[1]
+                    outputSize = output.desc(self.graph).shape[1]
+                    kernelSize = filter.desc(self.graph).shape[0]
+                    strideSize = strides[1]
+                else:
+                    inputSize = gradient.desc(self.graph).shape[2]
+                    outputSize = output.desc(self.graph).shape[2]
+                    kernelSize = filter.desc(self.graph).shape[0]
+                    strideSize = strides[2]
+                # Calculate padding according to paper
+                print(strideSize, " * (", outputSize, " - 1) + ", kernelSize, " - ", inputSize)
+                padding = strideSize * (outputSize - 1) + kernelSize - inputSize
+                # If padding is even (padding is on each side the same)
+                if padding % 2 == 0:
+                    paddingUp = padding // 2
+                    paddingDown = padding // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = padding // 2
+                    paddingDown = paddingUp + 1
+                padh = paddingUp
+                padw = paddingDown
+            print(padh, padw)
+            output_dims_list = output.desc(self.graph).shape'''
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
             if padding == "SAME":
-                pad = int(strides[1] * (int(node.inputs[2].shape[1]) - 1) +
+                pad = int(strides[1] * (int(gradient.desc(self.graph).shape[1]) - 1) +
                           filter_dims_list[0] - int(output.desc(self.graph).shape[1]))
             else:
                 pad = 0
@@ -2961,7 +3006,6 @@ class TFSession:
                 else:
                     paddingUp = pad // 2
                     paddingDown = paddingUp + 1
-                
                 paddedOutputDims = self.get_default_dims(node.outputs[0])
                 paddedOutputDims[1] += "+" + str(pad)
                 paddedOutputDims[2] += "+" + str(pad)
@@ -3136,7 +3180,8 @@ class TFSession:
             else:        
                 state.add_edge(tasklet, 'dx', output, None,
                                Memlet.from_array(output.label, output.desc(self.graph)))
-        
+            #state.add_edge(tasklet, 'dx', output, None,
+            #           Memlet.from_array(output.label, output.desc(self.graph)))
         else:
             inputNodes = []
             mapParams = []
@@ -3368,19 +3413,52 @@ class TFSession:
             output = self.create_and_add_output_node(node)[0]
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-            if padding == "SAME":
+            '''if padding == "SAME":
                 paddedInput, paddedDims = self.inputPadding(
                     node,
                     image,
                     image.desc(self.graph),
-                    gradient.desc(self.graph).shape[1],
+                    gradient.desc(self.graph).shape[2],
                     output.desc(self.graph).shape[0],
                     strides[1],
                     image_dims,
                 )
                 image_dims = paddedDims
-                image = paddedInput
+                paddedImage = paddedInput'''
 
+            if padding == "SAME":
+                pad = int(strides[1] * (int(gradient.desc(self.graph).shape[1]) - 1) +
+                          output.desc(self.graph).shape[0] - int(image.desc(self.graph).shape[1]))
+            else:
+                pad = 0
+            print(pad)
+            paddedImage = image
+            paddedImageDims = image_dims
+            if pad > 0:
+                # If padding is even (padding is on each side the same)
+                if pad % 2 == 0:
+                    paddingUp = pad // 2
+                    paddingDown = pad // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = pad // 2
+                    paddingDown = paddingUp + 1
+                paddedImageDims = self.get_default_dims(node.inputs[0])
+                paddedImageDims[1] += "+" + str(pad)
+                paddedImageDims[2] += "+" + str(pad)
+
+                paddedImage = state.add_transient(
+                    string_builder(node.inputs[0].name) + "_padded",
+                    [
+                        paddedImageDims[0][2:],
+                        paddedImageDims[1][2:],
+                        paddedImageDims[2][2:],
+                        paddedImageDims[3][2:],
+                    ],
+                    _tensortype(node.inputs[0]),
+                )
+            print(node.inputs[0])
             # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
             padh = 0
@@ -3393,9 +3471,37 @@ class TFSession:
                     padh = explicit_paddings[4]
                     padw = explicit_paddings[6]
 
-            image_dims_list = image.desc(self.graph).shape
-            output_dims_list = output.desc(self.graph).shape
+            '''if padding == "SAME":
+                paddingUp = 0
+                paddingDown = 0
+                if data_format == "NHWC":
+                    inputSize = image.desc(self.graph).shape[1]
+                    outputSize = gradient.desc(self.graph).shape[1]
+                    kernelSize = output.desc(self.graph).shape[1]
+                    strideSize = strides[1]
+                else:
+                    inputSize = image.desc(self.graph).shape[2]
+                    outputSize = gradient.desc(self.graph).shape[2]
+                    kernelSize = output.desc(self.graph).shape[2]
+                    strideSize = strides[2]
+                # Calculate padding according to paper
+                padding = strideSize * (outputSize - 1) + kernelSize - inputSize
+                print(padding)
+                # If padding is even (padding is on each side the same)
+                if padding % 2 == 0:
+                    paddingUp = padding // 2
+                    paddingDown = padding // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = padding // 2
+                    paddingDown = paddingUp + 1
+                padh = paddingUp
+                padw = paddingDown'''
 
+            image_dims_list = paddedImage.desc(self.graph).shape
+            output_dims_list = output.desc(self.graph).shape
+            print(image_dims_list)
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'x', 'dy'},
@@ -3506,6 +3612,7 @@ class TFSession:
                        K=output_dims_list[3], R=output_dims_list[0], S=output_dims_list[1],
                        padh=padh, padw=padw, vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2],
                        i=local_count, format=data_format)
+            print(output_dims_list)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
@@ -3528,11 +3635,16 @@ class TFSession:
             if data_format=='NCHW':
                 idx = [3,2,0,1]    #KCRS
             mapInput = self.map_output_filter(node, idx, output)
-            
+            if pad > 0:
+                state.add_edge(image, None, paddedImage, None,
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
+                state.add_edge(paddedImage, None, tasklet, 'x',
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
+            else:
+                state.add_edge(image, None, tasklet, 'x',
+                               Memlet.from_array(image.label, image.desc(self.graph)))
             state.add_edge(gradient, None, tasklet, 'dy', 
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(image, None, tasklet, 'x', 
-                           Memlet.from_array(image.label, image.desc(self.graph)))
             state.add_edge(tasklet, 'dw', mapInput, None, 
                            Memlet.from_array(mapInput.label, mapInput.desc(self.graph)))
         
