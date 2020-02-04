@@ -10,8 +10,10 @@ from dace import dtypes, symbolic
 def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
     """ Returns a numpy ndarray where all symbols have been evaluated to
         numbers and types are converted to numpy types. """
-
-    new_shape = [symbolic.eval(s) for s in shape]
+    repldict = {sym: sym.get() for sym in symbolic.symlist(shape).values()}
+    new_shape = [
+        int(s.subs(repldict) if symbolic.issymbolic(s) else s) for s in shape
+    ]
     new_dtype = dtype.type if isinstance(dtype, dtypes.typeclass) else dtype
     return numpy.ndarray(shape=new_shape, dtype=new_dtype, *args, **kwargs)
 

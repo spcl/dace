@@ -69,7 +69,7 @@ def onetest(program):
     sdfg.apply_transformations([MapFusion, MapWCRFusion], apply_once=True)
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * N))
+    diff = np.linalg.norm(C_regression - C) / (M.get() * N.get())
     print("Difference:", diff)
     assert diff <= 1e-5
 

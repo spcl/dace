@@ -655,17 +655,17 @@ class PAPIUtils(object):
         if isinstance(begin, int):
             start_syms = []
         else:
-            start_syms = symbolic.symbols_in_sympy_expr(begin)
+            start_syms = symbolic.symlist(begin).keys()
 
         if isinstance(end, int):
             end_syms = []
         else:
-            end_syms = symbolic.symbols_in_sympy_expr(end)
+            end_syms = symbolic.symlist(end).keys()
 
         if isinstance(step, int):
             step_syms = []
         else:
-            step_syms = symbolic.symbols_in_sympy_expr(step)
+            step_syms = symbolic.symlist(step).keys()
 
         def intersection(lista, listb):
             return [x for x in lista if x in listb]
@@ -690,8 +690,8 @@ class PAPIUtils(object):
                 for k, v in retparams.items():
                     newv = symbolic.pystr_to_symbolic(str(v))
 
-                    tarsyms = symbolic.symbols_in_sympy_expr(target)
-                    if x in map(str, tarsyms):
+                    tarsyms = symbolic.symbols_in_sympy_expr(target).keys()
+                    if x in tarsyms:
                         continue
 
                     tmp = newv.subs(x, target)
