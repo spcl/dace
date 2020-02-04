@@ -4176,7 +4176,7 @@ def local_transients(sdfg, dfg, entry_node):
     transients = _transients_in_scope(sdfg, current_scope, scope_dict)
 
     # Add transients defined in parent scopes
-    while current_scope is not None:
+    while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
             _transients_in_scope(sdfg, current_scope, scope_dict))
