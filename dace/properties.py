@@ -580,6 +580,11 @@ class DictProperty(Property):
             val = ast.literal_eval(val)
         elif isinstance(val, (tuple, list)):
             val = {k[0]: k[1] for k in val}
+        elif isinstance(val, dict):
+            val = {
+                self.key_type(k): self.value_type(v)
+                for k, v in val.items()
+            }
         super(DictProperty, self).__set__(obj, val)
 
     @staticmethod
