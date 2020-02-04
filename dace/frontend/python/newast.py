@@ -3226,7 +3226,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 sdfg = func.to_sdfg(*({
                     **self.defined,
-                    **self.sdfg.arrays
+                    **self.sdfg.arrays,
+                    **self.sdfg.symbols
                 }[arg] if isinstance(arg, str) else arg
                                       for aname, arg in args))
 
@@ -3285,7 +3286,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # by an access.
             for i, (aname, arg) in enumerate(args):
                 if arg not in self.sdfg.arrays:
-                    if isinstance(arg, str):
+                    if isinstance(arg, str) and arg in self.scope_arrays:
                         newarg = self._add_read_access(
                             arg,
                             subsets.Range.from_array(self.scope_arrays[arg]),
@@ -3514,6 +3515,9 @@ class ProgramVisitor(ExtNodeVisitor):
             return _inner_eval_ast(self.globals, node)
 
         if name in self.sdfg.arrays:
+            return name
+
+        if name in self.sdfg.symbols:
             return name
 
         if name not in self.scope_vars:
