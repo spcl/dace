@@ -284,7 +284,7 @@ class SDFG(OrderedDiGraph):
             parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name'})
 
         for n in nodes:
             nci = copy.deepcopy(context_info)
@@ -309,9 +309,6 @@ class SDFG(OrderedDiGraph):
         ret.validate()
 
         return ret
-
-        # Counter to make it easy to create temp transients
-        self._temp_transients = 0
 
     @property
     def arrays(self):
