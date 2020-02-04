@@ -662,31 +662,6 @@ class DebugInfoProperty(Property):
         return di
 
 
-class ParamsProperty(Property):
-    """ Property for list of parameters, such as parameters for a Map. """
-
-    @property
-    def dtype(self):
-        return list
-
-    @staticmethod
-    def to_string(l):
-        return "[{}]".format(", ".join(map(str, l)))
-
-    @staticmethod
-    def from_string(s):
-        return [
-            sp.Symbol(m.group(0))
-            for m in re.finditer("[a-zA-Z_][a-zA-Z0-9_]*", s)
-        ]
-
-    def to_json(self, l):
-        return l
-
-    def from_json(self, l, sdfg=None):
-        return l
-
-
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
 
