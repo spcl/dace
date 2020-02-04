@@ -3238,11 +3238,12 @@ class ProgramVisitor(ExtNodeVisitor):
             from dace.frontend.python.parser import infer_symbols_from_shapes
 
             # Map internal SDFG symbols by adding keyword arguments
-            symbols = sdfg.undefined_symbols(False)
             mapping = infer_symbols_from_shapes(sdfg, {
                 k: self.sdfg.arrays[v]
                 for k, v in args if v in self.sdfg.arrays
             })
+            if len(mapping) == 0:  # Default to same-symbol mapping
+                mapping = None
 
             # Argument checks
             for arg in node.keywords:
