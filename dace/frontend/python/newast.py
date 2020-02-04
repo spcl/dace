@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict, namedtuple
 import copy
+import itertools
 from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
@@ -3267,9 +3268,11 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg._temp_transients = max(self.sdfg._temp_transients,
                                              sdfg._temp_transients)
 
+            # TODO: This workaround needs to be formalized (pass-by-assignment)
             slice_state = None
             output_slices = set()
-            for arg in node.args:
+            for arg in itertools.chain(node.args,
+                                       [kw.value for kw in node.keywords]):
                 if isinstance(arg, ast.Subscript):
                     slice_state = self.last_state
                     break
@@ -3344,7 +3347,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         if isinstance(n, nodes.AccessNode) and n.data == aname:
                             for e in slice_state.in_edges(n):
                                 sub = None
-                                for s in node.args:
+                                for s in itertools.chain(
+                                        node.args,
+                                    [kw.value for kw in node.keywords]):
                                     if isinstance(s, ast.Subscript):
                                         if s.value.id == e.src.data:
                                             sub = s
