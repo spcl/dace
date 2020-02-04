@@ -9,9 +9,9 @@ from typing import Any, Dict, Set
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
-    Property, CodeProperty, LambdaProperty, RangeProperty,
-    DebugInfoProperty, SetProperty, make_properties, indirect_properties,
-    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
+    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
+    SetProperty, make_properties, indirect_properties, DataProperty,
+    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 
@@ -374,12 +374,11 @@ class NestedSDFG(CodeNode):
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
     location = Property(dtype=str, desc="SDFG execution location descriptor")
-    symbol_mapping = Property(
-        dtype=dict,
-        desc="Mapping between internal "
-        "symbols and their values, "
-        "expressed as symbolic "
-        "expressions")
+    symbol_mapping = DictProperty(
+        key_type=str,
+        value_type=dace.symbolic.pystr_to_symbolic,
+        desc="Mapping between internal symbols and their values, expressed as "
+        "symbolic expressions")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
@@ -616,8 +615,7 @@ class Map(object):
 
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
-    params = ListProperty(element_type=str,
-                          desc="Mapped parameters")
+    params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(
         desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = Property(

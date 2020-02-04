@@ -553,6 +553,85 @@ class ListProperty(Property):
         return list(map(self.element_type, data))
 
 
+class DictProperty(Property):
+    """ Property type for dictionaries. """
+
+    def __init__(self, key_type, value_type, *args, **kwargs):
+        """
+        Create a dictionary property with uniform key/value types.
+
+        The type of each element in the dictionary can be given as a type class,
+        or as a function that converts an element to the wanted type (e.g.,
+        `dace.symbolic.pystr_to_symbolic` for symbolic expressions).
+        :param key_type: The type of the keys in the dictionary.
+        :param value_type: The type of the values in the dictionary.
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
+        """
+        kwargs['dtype'] = dict
+        super().__init__(*args, **kwargs)
+        self.key_type = key_type
+        self.value_type = value_type
+
+    def __set__(self, obj, val):
+        if isinstance(val, str):
+            val = ast.literal_eval(val)
+        elif isinstance(val, (tuple, list)):
+            val = {k[0]: k[1] for k in val}
+        super(DictProperty, self).__set__(obj, val)
+
+    @staticmethod
+    def to_string(d):
+        return str(d)
+
+    def to_json(self, d):
+        if d is None:
+            return None
+        saved_dictionary = d
+
+        # If key knows how to convert itself, let it
+        if hasattr(self.key_type, "to_json"):
+            saved_dictionary = {
+                k.to_json(): v
+                for k, v in saved_dictionary.items()
+            }
+        # Otherwise, if the keys are not a native JSON type, convert to strings
+        elif self.key_type not in (int, float, list, tuple, dict, str):
+            saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}
+
+        # Same as above, but for values
+        if hasattr(self.value_type, "to_json"):
+            saved_dictionary = {
+                k: v.to_json()
+                for k, v in saved_dictionary.items()
+            }
+        elif self.value_type not in (int, float, list, tuple, dict, str):
+            saved_dictionary = {k: str(v) for k, v in saved_dictionary.items()}
+
+        return saved_dictionary
+
+    @staticmethod
+    def from_string(s):
+        return dict(s)
+
+    def from_json(self, data, sdfg=None):
+        if data is None:
+            return data
+        if not isinstance(data, dict):
+            raise TypeError('DictProperty expects a dictionary input, got '
+                            '%s' % data)
+        # If element knows how to convert itself, let it
+        key_json = hasattr(self.key_type, "from_json")
+        value_json = hasattr(self.value_type, "from_json")
+
+        return {
+            self.key_type.from_json(k, sdfg)
+            if key_json else self.key_type(k): self.value_type.from_json(
+                v, sdfg) if value_json else self.value_type(v)
+            for k, v in data.items()
+        }
+
+
 ###############################################################################
 # Custom properties
 ###############################################################################
