@@ -205,31 +205,12 @@ class CompiledSDFG(object):
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             if isinstance(argtype.dtype, dace.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg)
+                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
 
         # Retain only the element datatype for upcoming checks and casts
         argtypes = [t.dtype.as_ctypes() for t in argtypes]
 
         sdfg = self._sdfg
-
-        # As in compilation, add symbols used in array sizes to parameters
-        symparams = {}
-        symtypes = {}
-        for symname in sdfg.undefined_symbols(False):
-            try:
-                symval = symbolic.symbol(symname)
-                symparams[symname] = symval.get()
-                symtypes[symname] = symval.dtype.as_ctypes()
-            except UnboundLocalError:
-                try:
-                    symparams[symname] = kwargs[symname]
-                except KeyError:
-                    raise UnboundLocalError('Unassigned symbol %s' % symname)
-
-        arglist.extend(
-            [symparams[k] for k in sorted(symparams.keys()) if k not in sig])
-        argtypes.extend(
-            [symtypes[k] for k in sorted(symtypes.keys()) if k not in sig])
 
         # Obtain SDFG constants
         constants = sdfg.constants
@@ -242,8 +223,8 @@ class CompiledSDFG(object):
 
         # Replace symbols with their values
         callparams = tuple(
-            (atype(symbolic.eval(arg)),
-             atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
+            (atype(arg.get()),
+             atype) if isinstance(arg, symbolic.symbol) else (arg, atype)
             for arg, atype in callparams)
 
         # Replace arrays with their pointers

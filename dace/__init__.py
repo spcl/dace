@@ -10,7 +10,7 @@ from .frontend.operations import *
 from .sdfg import compile, SDFG, SDFGState
 from .memlet import Memlet, EmptyMemlet
 from .graph.edges import InterstateEdge
-from .symbolic import symbol, eval
+from .symbolic import symbol
 
 # Run Jupyter notebook code
 from .jupyter import *

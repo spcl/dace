@@ -37,9 +37,6 @@ class DaceState:
                  sdfg=None,
                  remote=False):
 
-        # TODO: Due to symbols, only one state per process is supported
-        dace.symbolic.symbol.erase_all()
-
         self.compiled = False
         self.dace_tmpfile = None
         self.dace_filename = os.path.basename(fake_fname)

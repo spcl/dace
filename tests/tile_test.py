@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     transpose_tiled(A, B, TW, TH)
 
-    diff = np.linalg.norm(np.transpose(A) - B) / float(dace.eval(H * W))
+    diff = np.linalg.norm(np.transpose(A) - B) / (H.get() * W.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

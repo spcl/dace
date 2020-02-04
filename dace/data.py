@@ -392,23 +392,9 @@ class Array(Data):
 
         # Test shape
         for dim, otherdim in zip(self.shape, other.shape):
-            # If both are symbols, ensure equality
-            if symbolic.issymbolic(dim) and symbolic.issymbolic(otherdim):
-                if dim != otherdim:
-                    return False
-
-            # If one is a symbol and the other is a constant
-            # make sure they are equivalent
-            elif symbolic.issymbolic(otherdim):
-                if symbolic.eval(otherdim) != dim:
-                    return False
-            elif symbolic.issymbolic(dim):
-                if symbolic.eval(dim) != otherdim:
-                    return False
-            else:
-                # Any other case (constant vs. constant), check for equality
-                if otherdim != dim:
-                    return False
+            # Any other case (constant vs. constant), check for equality
+            if otherdim != dim:
+                return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):
@@ -526,23 +512,8 @@ class Stream(Data):
 
         # Test shape
         for dim, otherdim in zip(self.shape, other.shape):
-            # If both are symbols, ensure equality
-            if symbolic.issymbolic(dim) and symbolic.issymbolic(otherdim):
-                if dim != otherdim:
-                    return False
-
-            # If one is a symbol and the other is a constant
-            # make sure they are equivalent
-            elif symbolic.issymbolic(otherdim):
-                if symbolic.eval(otherdim) != dim:
-                    return False
-            elif symbolic.issymbolic(dim):
-                if symbolic.eval(dim) != otherdim:
-                    return False
-            else:
-                # Any other case (constant vs. constant), check for equality
-                if otherdim != dim:
-                    return False
+            if dim != otherdim:
+                return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):

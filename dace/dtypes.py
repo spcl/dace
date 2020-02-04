@@ -640,7 +640,7 @@ class callback(typeclass):
         cstring = cstring + ")"
         return cstring
 
-    def get_trampoline(self, pyfunc):
+    def get_trampoline(self, pyfunc, other_arguments):
         from functools import partial
         from dace import data, symbolic
 
@@ -661,7 +661,7 @@ class callback(typeclass):
                 non_symbolic_sizes = []
                 for s in size:
                     if isinstance(s, symbolic.symbol):
-                        non_symbolic_sizes.append(s.get())
+                        non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
                 list_of_other_inputs[i] = ptrtonumpy(

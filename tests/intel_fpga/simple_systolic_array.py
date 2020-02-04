@@ -358,9 +358,8 @@ if __name__ == "__main__":
 
     P.set(args["P"])
     N.set(args["N"])
-    # M must always be specialized, as it's used for the static buffer size
     sdfg = make_sdfg(False)
-    sdfg.specialize()
+    sdfg.specialize(dict(P=P, N=N))
 
     print("Simple Systolic array")
 

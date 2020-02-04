@@ -56,6 +56,6 @@ if __name__ == "__main__":
     mapreduce_test_4(A, B, C, D)
     np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * K))
+    diff = np.linalg.norm(C_regression - C) / (M.get() * K.get())
     print("Difference:", diff)
     exit(0 if diff <= 1e-5 else 1)
