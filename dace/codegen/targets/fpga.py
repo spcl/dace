@@ -152,7 +152,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if data.storage == dace.dtypes.StorageType.FPGA_Global:
                     raise dace.codegen.codegen.CodegenError(
                         "Cannot allocate global memory from device code.")
-                allocated.add(data)
+                allocated.add(node.data)
                 # Allocate transients
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
