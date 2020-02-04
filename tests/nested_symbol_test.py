@@ -1,5 +1,6 @@
 import dace
 import numpy as np
+import warnings
 
 N = dace.symbol('N')
 N.set(12345)
@@ -31,6 +32,11 @@ def test_nested_symbol():
 
 
 def test_nested_symbol_dynamic():
+    if not dace.Config.get_bool('optimizer',
+                                'automatic_strict_transformations'):
+        warnings.warn("Test disabled (missing allocation lifetime support)")
+        return
+
     A = np.random.rand(5)
     expected = A.copy()
     for i in range(5):
