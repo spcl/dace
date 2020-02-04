@@ -4071,8 +4071,8 @@ def data_symbols(dfg):
 def undefined_symbols(sdfg, obj, include_scalar_data):
     """ Returns all symbols used in this object that are undefined, and thus
         must be given as input parameters. """
-    scalar_arguments = sdfg.scalar_parameters(False)
     if include_scalar_data:
+        scalar_arguments = sdfg.scalar_parameters(False)
         symbols = collections.OrderedDict(
             (name, data) for name, data in scalar_arguments)
     else:
@@ -4086,15 +4086,9 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None:
-        # Find parent Nested SDFG node
-        parent_node = next(
-            n for n in sdfg.parent.nodes()
-            if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
-        defined |= sdfg._parent_sdfg.symbols_defined_at(
-            parent_node, sdfg.parent).keys()
+
     # Don't include iteration variables
-    # (TODO: this is too lenient; take scope into account)
+    # TODO: this is too lenient; take scope into account
     defined |= iteration_variables.keys()
     defined |= {
         n.data
