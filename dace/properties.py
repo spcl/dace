@@ -537,9 +537,11 @@ class ListProperty(Property):
         # Otherwise, convert to strings
         return list(map(str, l))
 
-    @staticmethod
-    def from_string(s):
-        return list(s)
+    def from_string(self, s):
+        if s.startswith('[') and s.endswith(']'):
+            return [self.element_type(d.strip()) for d in s[1:-1].split(',')]
+        else:
+            return list(s)
 
     def from_json(self, data, sdfg=None):
         if data is None:
