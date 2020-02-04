@@ -2542,6 +2542,9 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
+            # TODO(later): Take range start/skip into account as well
+            self.sdfg.symbols[indices[0]] = self.sdfg.symbols.get(
+                ranges[0][1], dace.int32)
             laststate, first_loop_state, last_loop_state = \
                 self._recursive_visit(node.body, 'for', node.lineno)
             end_loop_state = self.last_state
