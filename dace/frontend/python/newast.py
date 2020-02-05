@@ -3208,7 +3208,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
-                required_args = sdfg.arglist()
+                required_args = list(sdfg.arglist().keys())
                 # Validate argument types and sizes
                 sdfg.argument_typecheck(
                     [], {k: self.sdfg.data(v)
@@ -3240,12 +3240,21 @@ class ProgramVisitor(ExtNodeVisitor):
             from dace.frontend.python.parser import infer_symbols_from_shapes
 
             # Map internal SDFG symbols by adding keyword arguments
-            mapping = infer_symbols_from_shapes(sdfg, {
-                k: self.sdfg.arrays[v]
-                for k, v in args if v in self.sdfg.arrays
-            })
+            symbols = set(sdfg.undefined_symbols(False).keys())
+            mapping = infer_symbols_from_shapes(
+                sdfg, {
+                    k: self.sdfg.arrays[v]
+                    for k, v in args if v in self.sdfg.arrays
+                }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
             if len(mapping) == 0:  # Default to same-symbol mapping
                 mapping = None
+
+            # Add undefined symbols to required arguments
+            if mapping:
+                required_args.extend(
+                    [sym for sym in symbols if sym not in mapping])
+            else:
+                required_args.extend(symbols)
 
             # Argument checks
             for arg in node.keywords:
@@ -3258,6 +3267,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, 'Argument number mismatch in'
                     ' call to "%s" (expected %d,'
                     ' got %d)' % (funcname, len(required_args), len(args)))
+
+            # Remove newly-defined symbols from arguments
+            if mapping is not None:
+                symbols -= set(mapping.keys())
+            if len(symbols) > 0:
+                mapping = mapping or {}
+            args_to_remove = []
+            for i, (aname, arg) in enumerate(args):
+                if aname in symbols:
+                    args_to_remove.append(args[i])
+                    mapping[aname] = arg
+            for arg in args_to_remove:
+                args.remove(arg)
 
             # Change transient names
             arrays_before = list(sdfg.arrays.items())
