@@ -12,7 +12,7 @@ import shutil
 import hashlib
 import subprocess
 import re
-from typing import List
+from typing import Any, List
 import numpy as np
 
 import dace
@@ -188,11 +188,11 @@ class CompiledSDFG(object):
 
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
-            if not isinstance(arg, np.ndarray) and isinstance(atype, dt.Array):
+            if not _is_array(arg) and isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an object (type %s) to an array in argument "%s"'
                     % (type(arg).__name__, a))
-            if isinstance(arg, np.ndarray) and not isinstance(atype, dt.Array):
+            if _is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
@@ -208,7 +208,7 @@ class CompiledSDFG(object):
                 arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
 
         # Retain only the element datatype for upcoming checks and casts
-        argtypes = [t.dtype.as_ctypes() for t in argtypes]
+        arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
 
         sdfg = self._sdfg
 
@@ -217,25 +217,26 @@ class CompiledSDFG(object):
 
         # Remove symbolic constants from arguments
         callparams = tuple(
-            (arg, atype) for arg, atype in zip(arglist, argtypes)
+            (arg, actype, atype)
+            for arg, actype, atype in zip(arglist, arg_ctypes, argtypes)
             if not symbolic.issymbolic(arg) or (
                 hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
         callparams = tuple(
-            (atype(arg.get()),
-             atype) if isinstance(arg, symbolic.symbol) else (arg, atype)
-            for arg, atype in callparams)
+            (actype(arg.get()), actype,
+             atype) if isinstance(arg, symbolic.symbol) else (arg, actype,
+                                                              atype)
+            for arg, actype, atype in callparams)
 
         # Replace arrays with their pointers
-        newargs = tuple((ctypes.c_void_p(arg.__array_interface__['data'][0]),
-                         atype) if isinstance(arg, np.ndarray) else (arg,
-                                                                     atype)
-                        for arg, atype in callparams)
+        newargs = tuple((ctypes.c_void_p(_array_interface(arg, atype)), actype,
+                         atype) if _is_array(arg) else (arg, actype, atype)
+                        for arg, actype, atype in callparams)
 
         newargs = tuple(
-            atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
-            for arg, atype in newargs)
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype in newargs)
 
         self._lastargs = newargs
         return self._lastargs
@@ -558,6 +559,19 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, command,
                                             output.getvalue())
+
+
+def _is_array(obj: Any):
+    if (hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
+        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False
+
+
+def _array_interface(array: Any, array_type: dt.Array):
+    if array_type.storage == dace.StorageType.GPU_Global:
+        return array.__cuda_array_interface__['data'][0]
+    return array.__array_interface__['data'][0]
 
 
 # Allow configuring and compiling a prepared build folder from the commandline.
