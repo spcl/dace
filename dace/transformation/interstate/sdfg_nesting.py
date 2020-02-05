@@ -266,6 +266,10 @@ class InlineSDFG(pattern_matching.Transformation):
         #######################################################
         # Replace data on inlined SDFG nodes/edges
 
+        # Replace symbols using invocation symbol mapping
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            nsdfg.replace(symname, symvalue)
+
         # Replace data names with their top-level counterparts
         repldict = {}
         repldict.update(transients)
