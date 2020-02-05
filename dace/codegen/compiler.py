@@ -229,9 +229,10 @@ class CompiledSDFG(object):
                                                               atype)
             for arg, actype, atype in callparams)
 
-        # Replace arrays with their pointers
-        newargs = tuple((ctypes.c_void_p(_array_interface(arg, atype)), actype,
-                         atype) if _is_array(arg) else (arg, actype, atype)
+        # Replace arrays with their base host/device pointers
+        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)),
+                         actype, atype) if _is_array(arg) else (arg, actype,
+                                                                atype)
                         for arg, actype, atype in callparams)
 
         newargs = tuple(
@@ -561,14 +562,31 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
                                             output.getvalue())
 
 
-def _is_array(obj: Any):
+def _is_array(obj: Any) -> bool:
+    """
+    Returns True if an object implements the ``__array_interface__`` or
+    ``__cuda_array_interface__`` standards (supported by NumPy, Numba, CuPy,
+    PyTorch, etc.). If the interface is supported, pointers can be directly
+    obtained using the ``_array_interface_ptr`` function.
+    :param obj: The given object.
+    :return: True iff the object implements the array interface.
+    """
     if (hasattr(obj, '__array_interface__')
             or hasattr(obj, '__cuda_array_interface__')):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False
 
 
-def _array_interface(array: Any, array_type: dt.Array):
+def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
+    """
+    If the given array implements ``__array_interface__`` (see ``_is_array``),
+    returns the base host or device pointer to the array's allocated memory.
+    :param array: Array object that implements NumPy's array interface.
+    :param array_type: Data descriptor of the array (used to get storage
+                       location to determine whether it's a host or GPU device
+                       pointer).
+    :return: A pointer to the base location of the allocated buffer.
+    """
     if array_type.storage == dace.StorageType.GPU_Global:
         return array.__cuda_array_interface__['data'][0]
     return array.__array_interface__['data'][0]
