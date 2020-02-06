@@ -510,14 +510,14 @@ class TFSession:
                 from dace.transformation.interstate import GPUTransformSDFG
                 self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
                 
-                for aname, array in self.graph.arrays.items():
+                '''for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
                     if array.storage in [
                             dace.StorageType.Default,
                             dace.StorageType.CPU_Heap,
                     ]:
-                        array.storage = dace.StorageType.CPU_Pinned
+                        array.storage = dace.StorageType.CPU_Pinned'''
 
                 # Modify sdfg_args
                 # import numba.cuda
@@ -2007,13 +2007,70 @@ class TFSession:
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
 
+            if padding == "SAME":
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    image,
+                    image.desc(self.graph),
+                    output.desc(self.graph).shape[2],
+                    filter.desc(self.graph).shape[0],
+                    strides[1],
+                    image_dims,
+                )
+                image_dims = paddedDims
+                paddedImage = paddedInput
+
             # change filter format from RSCK to target format for cuDNN
             idx = [3,0,1,2]    #KRSC
             if data_format=='NCHW':
                 idx = [3,2,0,1]    #KCRS
             mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
             filter_dims_list = mapOutput.desc(self.graph).shape
-            image_dims_list = image.desc(self.graph).shape
+
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            '''if padding == "SAME":
+                if data_format == "NHWC":
+                    inputSize = image.desc(self.graph).shape[1]
+                    outputSize = output.desc(self.graph).shape[1]
+                    kernelSize = mapOutput.desc(self.graph).shape[1]
+                    strideSize = strides[1]
+                else:
+                    inputSize = image.desc(self.graph).shape[2]
+                    outputSize = output.desc(self.graph).shape[2]
+                    kernelSize = mapOutput.desc(self.graph).shape[2]
+                    strideSize = strides[2]
+                pad = strideSize * (outputSize - 1) + kernelSize - inputSize
+            else:
+                pad = 0
+            if pad > 0:
+                # If padding is even (padding is on each side the same)
+                if pad % 2 == 0:
+                    paddingUp = pad // 2
+                    paddingDown = pad // 2
+                # If padding is uneven, we pad more on the bottom and on the right side
+                # of an image (matching TensorFlow behavior)
+                else:
+                    paddingUp = pad // 2
+                    paddingDown = paddingUp + 1
+                paddedImageDims = self.get_default_dims(node.inputs[0])
+                paddedImageDims[1] += "+" + str(pad)
+                paddedImageDims[2] += "+" + str(pad)
+
+                paddedImage = state.add_transient(
+                    string_builder(node.inputs[0].name) + "_padded",
+                    [
+                        paddedImageDims[0][2:],
+                        paddedImageDims[1][2:],
+                        paddedImageDims[2][2:],
+                        paddedImageDims[3][2:],
+                    ],
+                    _tensortype(node.inputs[0]), toplevel=True, storage=dace.StorageType.GPU_Stack
+                )
+                paddedImage.setzero = True
+            else:
+                paddedImage = image
+                paddedImageDims = image_dims'''
 
             # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
@@ -2027,34 +2084,8 @@ class TFSession:
                     padh = explicit_paddings[4]
                     padw = explicit_paddings[6]
 
-            # add a padding map for same padding(zero padding so that input and
-            # output of convolution have the same size)
-            if padding == "SAME":
-                paddingUp = 0
-                paddingDown = 0
-                if data_format == "NHWC":
-                    inputSize = image_dims_list[1]
-                    outputSize = output.desc(self.graph).shape[1]
-                    kernelSize = mapOutput.desc(self.graph).shape[1]
-                    strideSize = strides[1]
-                else:
-                    inputSize = image_dims_list[2]
-                    outputSize = output.desc(self.graph).shape[2]
-                    kernelSize = mapOutput.desc(self.graph).shape[2]
-                    strideSize = strides[2]
-                # Calculate padding according to paper
-                padding =  strideSize * (outputSize - 1) + kernelSize - inputSize
-                # If padding is even (padding is on each side the same)
-                if padding % 2 == 0:
-                    paddingUp = padding // 2
-                    paddingDown = padding // 2
-                # If padding is uneven, we pad more on the bottom and on the right side
-                # of an image (matching TensorFlow behavior)
-                else:
-                    paddingUp = padding // 2
-                    paddingDown = paddingUp + 1
-                padh = paddingUp
-                padw = paddingDown
+
+            image_dims_list = paddedImage.desc(self.graph).shape
 
             tasklet = state.add_tasklet(
                 name= string_builder(node.type),
@@ -2180,6 +2211,14 @@ class TFSession:
                        S=filter_dims_list[data_format.find('W')],
                        padh=padh, padw=padw, vstr=strides[1], hstr=strides[2],
                        dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
+            print("DEBUG: ", image_dims_list[data_format.find('N')],
+                       image_dims_list[data_format.find('C')],
+                       image_dims_list[data_format.find('H')],
+                       image_dims_list[data_format.find('W')],
+                       filter_dims_list[data_format.find('N')],
+                       filter_dims_list[data_format.find('H')],
+                       filter_dims_list[data_format.find('W')])
+
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
@@ -2197,10 +2236,27 @@ class TFSession:
             else:
                 self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
-            state.add_edge(image, None, tasklet, 'x', 
+            '''if pad > 0:
+                nonpaddedsubset = paddedImageDims.copy()
+                nonpaddedsubset[1] = (
+                        str(paddingUp) + ":" +
+                        str(image.desc(self.graph).shape[1] + paddingUp))
+                nonpaddedsubset[2] = (
+                        str(paddingUp) + ":" +
+                        str(image.desc(self.graph).shape[2] + paddingUp))
+                state.add_edge(image, None, paddedImage, None,
+                                    Memlet.simple(image, ",".join(image_dims), other_subset_str=",".join(nonpaddedsubset)))
+                state.add_edge(paddedImage, None, tasklet, 'x',
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))'''
+            if padding == "SAME":
+                state.add_edge(paddedImage, None, tasklet, 'x',
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
+            else:
+                state.add_edge(image, None, tasklet, 'x',
                            Memlet.from_array(image.label, image.desc(self.graph)))
+            print(Memlet.from_array(mapOutput.label, mapOutput.desc(self.graph)))
             state.add_edge(mapOutput, None, tasklet, 'f',
-                           Memlet.from_array(mapOutput.label,mapOutput.desc(self.graph)))
+                           Memlet.from_array(mapOutput.label, mapOutput.desc(self.graph)))
             state.add_edge(tasklet, 'y', output, None,
                            Memlet.from_array(output.label, output.desc(self.graph)))          
         else:
@@ -3379,6 +3435,19 @@ class TFSession:
             # output of convolution have the same size)
 
             if padding == "SAME":
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    image,
+                    image.desc(self.graph),
+                    gradient.desc(self.graph).shape[2],
+                    output.desc(self.graph).shape[0],
+                    strides[1],
+                    image_dims,
+                )
+                image_dims = paddedDims
+                paddedImage = paddedInput
+
+            '''if padding == "SAME":
                 pad = int(strides[1] * (int(gradient.desc(self.graph).shape[1]) - 1) +
                           output.desc(self.graph).shape[0] - int(image.desc(self.graph).shape[1]))
             else:
@@ -3411,7 +3480,7 @@ class TFSession:
                 paddedImage.setzero = True
             else:
                 paddedImage = image
-                paddedImageDims = image_dims
+                paddedImageDims = image_dims'''
             # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
             padh = 0
@@ -3558,7 +3627,7 @@ class TFSession:
             if data_format=='NCHW':
                 idx = [3,2,0,1]    #KCRS
             mapInput = self.map_output_filter(node, idx, output)
-            if pad > 0:
+            '''if pad > 0:
                 nonpaddedsubset = paddedImageDims.copy()
                 nonpaddedsubset[1] = (
                         str(paddingUp) + ":" +
@@ -3568,6 +3637,9 @@ class TFSession:
                         str(image.desc(self.graph).shape[2] + paddingUp))
                 self.state.add_edge(image, None, paddedImage, None,
                                     Memlet.simple(image, ",".join(image_dims), other_subset_str=",".join(nonpaddedsubset)))
+                state.add_edge(paddedImage, None, tasklet, 'x',
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))'''
+            if padding == "SAME":
                 state.add_edge(paddedImage, None, tasklet, 'x',
                                Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
             else:
@@ -4645,17 +4717,17 @@ class TFSession:
             label + "_padded", shape=shape, dtype=inp.dtype, toplevel=True)
         output.setzero = True
 
-        # mapParams = inputParams
-        # mapRange = inputDims
-        # mapLabel = string_builder(node.type)
-        # mapEntry, mapExit = state.add_map(mapLabel,
-        #                                 dict(zip(mapParams, mapRange)))
-        # tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
-        self.state.add_edge(inpnode, None, output, None, padMemlet)
-        # self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
-        #                   [inputParams])
-        # self.add_out_memlets([output], mapExit, tasklet, [outputDims],
-        #                    [outputParams])
+        mapParams = inputParams
+        mapRange = inputDims
+        mapLabel = string_builder(node.type)
+        mapEntry, mapExit = state.add_map(mapLabel,
+                                       dict(zip(mapParams, mapRange)))
+        tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+        #self.state.add_edge(inpnode, None, output, None, padMemlet)
+        self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
+                          [inputParams])
+        self.add_out_memlets([output], mapExit, tasklet, [outputDims],
+                           [outputParams])
         return output, outputDims
 
     def get_default_params(self, tensor, start=0, identifier="i"):
@@ -4733,7 +4805,7 @@ class TFSession:
 
         mapInputLabel = mapLabel + "_input"
         mapInput = state.add_transient(mapInputLabel, mapDims, dace.float32)
-
+        print(mapRange, mapParams, output_dims, output_params)
         self.add_in_memlets([mapInput], mapEntry, mapTasklet, [mapRange],
                             [mapParams])
         self.add_out_memlets([output], mapExit, mapTasklet, [output_dims],
