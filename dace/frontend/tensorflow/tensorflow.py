@@ -2006,7 +2006,7 @@ class TFSession:
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
-
+            image_dims_list = image.desc(self.graph).shape
             if padding == "SAME":
                 paddedInput, paddedDims = self.inputPadding(
                     node,
@@ -2017,8 +2017,9 @@ class TFSession:
                     strides[1],
                     image_dims,
                 )
-                image_dims = paddedDims
                 paddedImage = paddedInput
+                image_dims_list = paddedImage.desc(self.graph).shape
+
 
             # change filter format from RSCK to target format for cuDNN
             idx = [3,0,1,2]    #KRSC
@@ -2085,7 +2086,7 @@ class TFSession:
                     padw = explicit_paddings[6]
 
 
-            image_dims_list = paddedImage.desc(self.graph).shape
+           
 
             tasklet = state.add_tasklet(
                 name= string_builder(node.type),
@@ -3433,7 +3434,7 @@ class TFSession:
             output = self.create_and_add_output_node(node)[0]
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-
+            image_dims_list = image.desc(self.graph).shape
             if padding == "SAME":
                 paddedInput, paddedDims = self.inputPadding(
                     node,
@@ -3444,8 +3445,8 @@ class TFSession:
                     strides[1],
                     image_dims,
                 )
-                image_dims = paddedDims
                 paddedImage = paddedInput
+                image_dims_list = paddedImage.desc(self.graph).shape
 
             '''if padding == "SAME":
                 pad = int(strides[1] * (int(gradient.desc(self.graph).shape[1]) - 1) +
@@ -3493,7 +3494,6 @@ class TFSession:
                     padh = explicit_paddings[4]
                     padw = explicit_paddings[6]
 
-            image_dims_list = paddedImage.desc(self.graph).shape
             output_dims_list = output.desc(self.graph).shape
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
