@@ -2,7 +2,7 @@
 from __future__ import print_function
 
 import dace
-from dace.codegen.compiler import DuplicateDLLError, CompilationError
+from dace.codegen.compiler import CompilationError
 import numpy as np
 
 
@@ -31,19 +31,21 @@ if __name__ == "__main__":
     prog_one = program_generator(10, 2.0)
     prog_two = program_generator(20, 4.0)
 
-    # This should NOT work (the two SDFGs will compile over the same file)
+    # This should create two libraries for the two SDFGs, as they compile over
+    # the same folder
+    func1 = dace.compile(prog_one)
     try:
-        func1 = dace.compile(prog_one)
         func2 = dace.compile(prog_two)
-
-        func1(input=array_one, output=output_one)
-        func2(input=array_two, output=output_two)
-
-        diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
-        diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
-        print("Differences:", diff1, diff2)
-        print("This should definitely not work!")
-        exit(1)
-    except (DuplicateDLLError, CompilationError):
-        print("Exception successfully caught, test passed")
+    except CompilationError:
+        # On some systems (e.g., Windows), the file will be locked, so
+        # compilation will fail
+        print('Compilation failed due to locked file. Skipping test.')
         exit(0)
+
+    func1(input=array_one, output=output_one)
+    func2(input=array_two, output=output_two)
+
+    diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
+    diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
+    print("Differences:", diff1, diff2)
+    exit(0 if (diff1 < 1e-5 and diff2 < 1e-5) else 1)
