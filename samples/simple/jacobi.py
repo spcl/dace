@@ -69,7 +69,7 @@ if __name__ == "__main__":
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
     A[1:H.get() - 1, 1:W.get() - 1] = np.random.rand(
-        dace.eval(H - 2), dace.eval(W - 2)).astype(dace.float32.type)
+        (H.get() - 2), (W.get() - 2)).astype(dace.float32.type)
     regression = np.ndarray([H.get() - 2, W.get() - 2], dtype=np.float32)
     regression[:] = A[1:H.get() - 1, 1:W.get() - 1]
 
@@ -87,8 +87,8 @@ if __name__ == "__main__":
         regression = ndimage.convolve(
             regression, kernel, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] -
-                              regression) / dace.eval(H * W)
+    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] - regression) / (
+        H.get() * W.get())
     print("Residual:", residual)
 
     #print(A.view(type=np.ndarray))

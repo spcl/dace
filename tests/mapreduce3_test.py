@@ -37,16 +37,17 @@ if __name__ == "__main__":
 
     print('Map-Reduce Test %dx%d' % (W.get(), H.get()))
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
+    A = dace.ndarray([1, H, 1, W, 1], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
     res = dace.ndarray([1], dtype=dace.float32)
-    A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(1, H.get(), 1, W.get(), 1).astype(dace.float32.type)
     B[:] = dace.float32(0)
     res[:] = dace.float32(0)
 
     mapreduce_test_3(A, B, res)
 
-    diff = np.linalg.norm(5 * A - B) / float(dace.eval(H * W))
+    diff = np.linalg.norm(5 * A.reshape(
+        (H.get(), W.get())) - B) / (H.get() * W.get())
     diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
     print("Difference:", diff, diff_res)
     print("==== Program end ====")

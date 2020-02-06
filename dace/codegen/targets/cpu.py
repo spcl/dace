@@ -720,7 +720,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
 
             # code->code (e.g., tasklet to tasklet)
-            if isinstance(v, nodes.CodeNode):
+            if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
                 shared_data_name = edge.data.data
                 result.write(
                     "%s = %s;" % (shared_data_name, edge.src_conn),
@@ -1262,12 +1262,13 @@ class CPUCodeGen(TargetCodeGenerator):
         for edge in state_dfg.in_edges(node):
             u = edge.src
             memlet = edge.data
+            src_node = state_dfg.memlet_path(edge)[0].src
 
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
                 # Special case: code->code
-                if isinstance(edge.src, nodes.CodeNode):
+                if isinstance(src_node, nodes.CodeNode):
                     shared_data_name = edge.data.data
 
                     # Read variable from shared storage
@@ -1286,8 +1287,6 @@ class CPUCodeGen(TargetCodeGenerator):
                                                       DefinedType.Scalar)
 
                 else:
-                    src_node = find_input_arraynode(state_dfg, edge)
-
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -1311,7 +1310,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # followed by code<->code
         tasklet_out_connectors = set()
         for edge in state_dfg.out_edges(node):
-            if isinstance(edge.dst, nodes.CodeNode):
+            dst_node = state_dfg.memlet_path(edge)[-1].dst
+            if isinstance(dst_node, nodes.CodeNode):
                 # Handling this in a separate pass just below
                 continue
 
@@ -1319,8 +1319,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
                 else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
-
                     self._dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -1339,9 +1337,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for edge in state_dfg.out_edges(node):
             # Special case: code->code
+            dst_node = state_dfg.memlet_path(edge)[-1].dst
             if edge.src_conn is None:
                 continue
-            elif (isinstance(edge.dst, nodes.CodeNode)
+            elif (isinstance(dst_node, nodes.CodeNode)
                   and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
 
@@ -1354,7 +1353,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     local_name,
                 )
                 outer_stream_begin.write(code, sdfg, state_id,
-                                         [edge.src, edge.dst])
+                                         [edge.src, dst_node])
                 arg_type = sdfg.arrays[edge.data.data]
                 if (isinstance(arg_type, dace.data.Scalar)
                         or isinstance(arg_type, dace.dtypes.typeclass)):
@@ -1473,7 +1472,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg,
             dfg: ScopeSubgraphView,
             state_id,
-            node,
+            node: nodes.NestedSDFG,
             function_stream: CodeIOStream,
             callsite_stream: CodeIOStream,
     ):
@@ -1510,8 +1509,27 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 callsite_stream.write(out_code, sdfg, state_id, node)
 
-        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
+        callsite_stream.write("\n{    ///////////////////\n", sdfg, state_id,
                               node)
+
+        # Emit symbol mappings
+        # HACK: We first emit variables of the form __dacesym_X = Y to avoid
+        #       overriding symbolic expressions when the symbol names match
+        # TODO: When emitting nested SDFGs as separate functions,
+        #       remove the workaround
+        for symname, symval in sorted(node.symbol_mapping.items()):
+            callsite_stream.write(
+                '{dtype} __dacesym_{symname} = {symval};\n'.format(
+                    dtype=symbolic.symtype(symval),
+                    symname=symname,
+                    symval=sym2cpp(symval)), sdfg, state_id, node)
+        for sym in sorted(node.symbol_mapping.keys()):
+            callsite_stream.write(
+                'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
+                sdfg,
+                state_id,
+                node)
+        ## End of symbol mappings
 
         old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
@@ -1529,7 +1547,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._toplevel_schedule = old_schedule
 
-        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
+        callsite_stream.write("}    ///////////////////\n\n", sdfg, state_id,
                               node)
 
         # Process outgoing memlets with the internal SDFG

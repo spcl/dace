@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict, namedtuple
 import copy
+import itertools
 from functools import reduce
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable
@@ -2378,6 +2379,23 @@ class ProgramVisitor(ExtNodeVisitor):
             for conn, v in inputs.items():
                 if v is None:  # Input already handled outside
                     continue
+                if isinstance(v, nodes.Tasklet):
+                    # Create a code->code node
+                    new_scalar = self.sdfg.temp_data_name()
+                    if isinstance(internal_node, nodes.NestedSDFG):
+                        dtype = internal_node.sdfg.arrays[conn].dtype
+                    else:
+                        raise SyntaxError(
+                            'Cannot determine connector type for '
+                            'tasklet input dependency')
+                    self.sdfg.add_scalar(new_scalar, dtype, transient=True)
+                    state.add_edge(v, conn, internal_node, conn,
+                                   dace.Memlet.simple(new_scalar, '0'))
+                    if entry_node is not None:
+                        state.add_edge(entry_node, None, v, None,
+                                       dace.EmptyMemlet())
+                    continue
+
                 if isinstance(v, tuple):
                     memlet, inner_indices = v
                 else:
@@ -2627,6 +2645,9 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
+            # TODO(later): Take range start/skip into account as well
+            self.sdfg.symbols[indices[0]] = self.sdfg.symbols.get(
+                ranges[0][1], dace.int32)
             laststate, first_loop_state, last_loop_state = \
                 self._recursive_visit(node.body, 'for', node.lineno)
             end_loop_state = self.last_state
@@ -3289,6 +3310,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
+                required_args = list(sdfg.arglist().keys())
                 # Validate argument types and sizes
                 sdfg.argument_typecheck(
                     [], {k: self.sdfg.data(v)
@@ -3300,29 +3322,86 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
+                args += [(arg.arg, self._parse_function_arg(arg.value))
+                         for arg in node.keywords]
+                required_args = func.argnames
 
                 sdfg = func.to_sdfg(*({
                     **self.defined,
-                    **self.sdfg.arrays
+                    **self.sdfg.arrays,
+                    **self.sdfg.symbols
                 }[arg] if isinstance(arg, str) else arg
                                       for aname, arg in args))
+
             else:
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
                     (type(func).__name__, funcname))
 
+            # Avoid import loops
+            from dace.frontend.python.parser import infer_symbols_from_shapes
+
+            # Map internal SDFG symbols by adding keyword arguments
+            symbols = set(sdfg.undefined_symbols(False).keys())
+            mapping = infer_symbols_from_shapes(
+                sdfg, {
+                    k: self.sdfg.arrays[v]
+                    for k, v in args if v in self.sdfg.arrays
+                }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            if len(mapping) == 0:  # Default to same-symbol mapping
+                mapping = None
+
+            # Add undefined symbols to required arguments
+            if mapping:
+                required_args.extend(
+                    [sym for sym in symbols if sym not in mapping])
+            else:
+                required_args.extend(symbols)
+
+            # Argument checks
+            for arg in node.keywords:
+                if arg.arg not in required_args:
+                    raise DaceSyntaxError(
+                        self, node, 'Invalid keyword argument "%s" in call to '
+                        '"%s"' % (arg.arg, funcname))
+            if len(args) != len(required_args):
+                raise DaceSyntaxError(
+                    self, node, 'Argument number mismatch in'
+                    ' call to "%s" (expected %d,'
+                    ' got %d)' % (funcname, len(required_args), len(args)))
+
+            # Remove newly-defined symbols from arguments
+            if mapping is not None:
+                symbols -= set(mapping.keys())
+            if len(symbols) > 0:
+                mapping = mapping or {}
+            args_to_remove = []
+            for i, (aname, arg) in enumerate(args):
+                if aname in symbols:
+                    args_to_remove.append(args[i])
+                    mapping[aname] = arg
+            for arg in args_to_remove:
+                args.remove(arg)
+
             # Change transient names
-            for arrname, array in sdfg.arrays.items():
+            arrays_before = list(sdfg.arrays.items())
+            for arrname, array in arrays_before:
                 if array.transient and arrname[:5] == '__tmp':
                     if int(arrname[5:]) < self.sdfg._temp_transients:
-                        new_name = sdfg.temp_data_name()
+                        if self.sdfg._temp_transients > sdfg._temp_transients:
+                            new_name = self.sdfg.temp_data_name()
+                        else:
+                            new_name = sdfg.temp_data_name()
                         sdfg.replace(arrname, new_name)
             self.sdfg._temp_transients = max(self.sdfg._temp_transients,
                                              sdfg._temp_transients)
+            sdfg._temp_transients = self.sdfg._temp_transients
 
+            # TODO: This workaround needs to be formalized (pass-by-assignment)
             slice_state = None
             output_slices = set()
-            for arg in node.args:
+            for arg in itertools.chain(node.args,
+                                       [kw.value for kw in node.keywords]):
                 if isinstance(arg, ast.Subscript):
                     slice_state = self.last_state
                     break
@@ -3331,10 +3410,13 @@ class ProgramVisitor(ExtNodeVisitor):
             # by an access.
             for i, (aname, arg) in enumerate(args):
                 if arg not in self.sdfg.arrays:
-                    newarg = self._add_read_access(
-                        arg,
-                        dace.subsets.Range.from_array(self.scope_arrays[arg]),
-                        node)
+                    if isinstance(arg, str) and arg in self.scope_arrays:
+                        newarg = self._add_read_access(
+                            arg,
+                            subsets.Range.from_array(self.scope_arrays[arg]),
+                            node)
+                    else:
+                        newarg = arg
                     args[i] = (aname, newarg)
 
             state = self._add_state('call_%s_%d' % (funcname, node.lineno))
@@ -3342,6 +3424,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
                 for conn, arg in args if arg in self.sdfg.arrays
             }
+            # Handle scalar inputs to nested SDFG calls
+            for conn, arg in args:
+                if arg not in self.sdfg.arrays:
+                    argdict[conn] = state.add_tasklet('scalar', {}, {conn},
+                                                      '%s = %s' % (conn, arg))
+
             inputs = {
                 k: v
                 for k, v in argdict.items() if self._is_inputnode(sdfg, k)
@@ -3388,7 +3476,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         if isinstance(n, nodes.AccessNode) and n.data == aname:
                             for e in slice_state.in_edges(n):
                                 sub = None
-                                for s in node.args:
+                                for s in itertools.chain(
+                                        node.args,
+                                    [kw.value for kw in node.keywords]):
                                     if isinstance(s, ast.Subscript):
                                         if s.value.id == e.src.data:
                                             sub = s
@@ -3402,20 +3492,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             slice_state.remove_node(n)
                             break
 
-            # Map internal SDFG symbols to external symbols (find_and_replace?)
-            for aname, arg in args:
-                if arg in self.defined:
-                    continue
-                if arg in self.sdfg.symbols or not isinstance(arg, str):
-                    sdfg.replace(aname, arg)
-                # Disallow memlets/nodes to symbol parameters
-                elif aname in sdfg.symbols:
-                    raise DaceSyntaxError(
-                        self, node, 'Array nodes cannot be '
-                        'passed as scalars to nested SDFG '
-                        '(passing "%s" as "%s")' % (aname, arg))
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
-                                          outputs.keys())
+                                          outputs.keys(), mapping)
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
             if output_slices:
@@ -3561,6 +3639,9 @@ class ProgramVisitor(ExtNodeVisitor):
             return _inner_eval_ast(self.globals, node)
 
         if name in self.sdfg.arrays:
+            return name
+
+        if name in self.sdfg.symbols:
             return name
 
         if name not in self.scope_vars:

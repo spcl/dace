@@ -57,7 +57,7 @@ if __name__ == '__main__':
 
     mysdfg(A=input, B=output, N=N)
 
-    diff = np.linalg.norm(output - np.power(input, 5)) / dp.eval(N * N)
+    diff = np.linalg.norm(output - np.power(input, 5)) / (N.get() * N.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

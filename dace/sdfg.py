@@ -294,7 +294,7 @@ class SDFG(OrderedDiGraph):
             parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name'})
 
         for n in nodes:
             nci = copy.deepcopy(context_info)
@@ -319,9 +319,6 @@ class SDFG(OrderedDiGraph):
         ret.validate()
 
         return ret
-
-        # Counter to make it easy to create temp transients
-        self._temp_transients = 0
 
     @property
     def arrays(self):
@@ -706,8 +703,8 @@ class SDFG(OrderedDiGraph):
                 if isinstance(expr, str):
                     expr = symbolic.pystr_to_symbolic(expr, simplify=False)
                 if isinstance(expr, sp.Expr):
-                    for s in dace.symbolic.symbols_in_sympy_expr(expr):
-                        used[s] = dt.Scalar(symbolic.symbol(s).dtype)
+                    for sname, s in dace.symbolic.symlist(expr).items():
+                        used[sname] = dt.Scalar(s.dtype)
                 elif expr is None or isinstance(expr, int):
                     pass  # Nothing to extract, or a constant
                 else:
@@ -1615,47 +1612,25 @@ subgraph cluster_state_{state} {{
         state = self.find_state(state_id_or_label)
         return state.find_node(node_id_or_label)
 
-    def specialize(self, additional_symbols=None, specialize_all_symbols=True):
+    def specialize(self, symbols: Dict[str, Any]):
         """ Sets symbolic values in this SDFG to constants.
-            :param additional_symbols: Additional values to specialize.
-            :param specialize_all_symbols: If True, raises an
-                   UnboundLocalError if at least one of the symbols in the
-                   SDFG is unset.
+            :param symbols: Values to specialize.
         """
-        syms = {}
-        additional_symbols = additional_symbols or {}
-        undefined_symbols = self.undefined_symbols(False)
-        # scalar_arguments = self.scalar_parameters(False)
-        for (
-                symname
-        ) in undefined_symbols:  # itertools.chain(undefined_symbols, scalar_arguments):
-            try:
-                syms[symname] = symbolic.symbol(symname).get()
-            except UnboundLocalError:
-                # Allow scalar arguments to remain undefined, but fail on
-                # symbols
-                if specialize_all_symbols and symname not in additional_symbols:
-                    pass
-
-        # Augment symbol values from additional symbols
-        syms.update({
+        # Set symbol values to add
+        syms = {
             # If symbols are passed, extract the value. If constants are
             # passed, use them directly.
             name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in additional_symbols.items()
-        })
+            for name, val in symbols.items()
+        }
 
         # Update constants
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def compile(self, specialize=None, optimizer=None, output_file=None) -> \
+    def compile(self, optimizer=None, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
-
-            :param specialize: If True, specializes all symbols to their
-                               defined values as constants. If None, uses
-                               configuration setting.
             :param optimizer: If defines a valid class name, it will be called
                               during compilation to transform the SDFG as
                               necessary. If None, uses configuration setting.
@@ -1683,11 +1658,6 @@ subgraph cluster_state_{state} {{
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
-
-        # Specialize SDFG to its symbol values
-        if (specialize is None and Config.get_bool(
-                "optimizer", "autospecialize")) or specialize == True:
-            sdfg.specialize()
 
         # Optimize SDFG using the CLI or external hooks
         optclass = _get_optimizer_class(optimizer)
@@ -1997,11 +1967,8 @@ subgraph cluster_state_{state} {{
             if expanded_something:
                 states.append(state)  # Nodes have changed. Check state again
 
-    def generate_code(self, specialize=None):
+    def generate_code(self):
         """ Generates code from this SDFG and returns it.
-            :param specialize: If True, specializes all set symbols to their
-                               values in the generated code. If None,
-                               uses default configuration value.
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
@@ -2019,11 +1986,6 @@ subgraph cluster_state_{state} {{
         # Propagate memlets in the graph
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
-
-        # Specialize SDFG to its symbol values
-        if (specialize is None and Config.get_bool(
-                "optimizer", "autospecialize")) or specialize == True:
-            sdfg.specialize()
 
         sdfg.draw_to_file()
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
@@ -2770,6 +2732,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent,
             inputs: Set[str],
             outputs: Set[str],
+            symbol_mapping: Dict[str, Any] = None,
             name=None,
             schedule=dtypes.ScheduleType.Default,
             location="-1",
@@ -2790,11 +2753,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             sdfg,
             inputs,
             outputs,
+            symbol_mapping=symbol_mapping,
             schedule=schedule,
             location=location,
             debuginfo=debuginfo,
         )
         self.add_node(s)
+
+        # Add "default" undefined symbols if None are given
+        symbols = sdfg.undefined_symbols(False)
+        if symbol_mapping is None:
+            symbol_mapping = {s: s for s in symbols.keys()}
+            s.symbol_mapping = symbol_mapping
+
+        # Validate missing symbols
+        missing_symbols = [
+            s for s in symbols.keys() if s not in symbol_mapping
+        ]
+        if missing_symbols:
+            raise ValueError('Missing symbols on nested SDFG "%s": %s' %
+                             (name, missing_symbols))
+
         return s
 
     def _map_from_ndrange(self,
@@ -2899,8 +2878,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
-            propagate=True
-    ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
+            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
             :param name:       Tasklet (and wrapping map) name
@@ -2971,8 +2949,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             for inp, inpnode in inpdict.items():
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry,
-                                                    True)
+                    outer_memlet = propagate_memlet(self, tomemlet[inp],
+                                                    map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
                 self.add_edge(inpnode, None, map_entry, "IN_" + inp,
@@ -3004,8 +2982,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             for out, outnode in outdict.items():
                 # Add external edge
                 if propagate:
-                    outer_memlet = propagate_memlet(self, tomemlet[out], map_exit,
-                                                    True)
+                    outer_memlet = propagate_memlet(self, tomemlet[out],
+                                                    map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
                 self.add_edge(map_exit, "OUT_" + out, outnode, None,
@@ -3812,14 +3790,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # If scope(src) contains scope(dst), then src must be a data node
             elif scope_contains_scope(scope, src_node, dst_node):
                 if not isinstance(src_node, nd.AccessNode):
-                    raise InvalidSDFGEdgeError(
-                        "Memlet creates an "
-                        "invalid path (source node %s should "
-                        "be a data node)" % str(src_node),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                    pass
+                    # raise InvalidSDFGEdgeError(
+                    #     "Memlet creates an "
+                    #     "invalid path (source node %s should "
+                    #     "be a data node)" % str(src_node),
+                    #     sdfg,
+                    #     state_id,
+                    #     eid,
+                    # )
             # If scope(dst) contains scope(src), then dst must be a data node
             elif scope_contains_scope(scope, dst_node, src_node):
                 if not isinstance(dst_node, nd.AccessNode):
@@ -4049,11 +4028,6 @@ def scope_symbols(dfg):
     sdict = dfg.scope_dict()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
-        if isinstance(n, dace.graph.nodes.NestedSDFG):
-            iv, ss = n.sdfg.scope_symbols()
-            iteration_variables.update(iv)
-            subset_symbols.update(ss)
-            continue
         if not isinstance(n, dace.graph.nodes.EntryNode):
             continue
         if isinstance(n, dace.graph.nodes.MapEntry):
@@ -4112,9 +4086,12 @@ def data_symbols(dfg):
     result = collections.OrderedDict()
     # Scalars determining the size of arrays
     for d in dfg.nodes():
-        # Update symbols with symbols in nested SDFGs
+        # Update symbols with symbols used in nested SDFG invocations
         if isinstance(d, nd.NestedSDFG):
-            result.update(d.sdfg.data_symbols(True))
+            result.update((k.name, dt.Scalar(k.dtype))
+                          for m in d.symbol_mapping.values()
+                          if symbolic.issymbolic(m) for k in m.free_symbols
+                          if not k.name.startswith('__dace'))
             continue
         if not isinstance(d, nd.AccessNode):
             continue
@@ -4130,8 +4107,8 @@ def data_symbols(dfg):
 def undefined_symbols(sdfg, obj, include_scalar_data):
     """ Returns all symbols used in this object that are undefined, and thus
         must be given as input parameters. """
-    scalar_arguments = sdfg.scalar_parameters(False)
     if include_scalar_data:
+        scalar_arguments = sdfg.scalar_parameters(False)
         symbols = collections.OrderedDict(
             (name, data) for name, data in scalar_arguments)
     else:
@@ -4145,15 +4122,9 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None:
-        # Find parent Nested SDFG node
-        parent_node = next(
-            n for n in sdfg.parent.nodes()
-            if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
-        defined |= sdfg._parent_sdfg.symbols_defined_at(
-            parent_node, sdfg.parent).keys()
+
     # Don't include iteration variables
-    # (TODO: this is too lenient; take scope into account)
+    # TODO: this is too lenient; take scope into account
     defined |= iteration_variables.keys()
     defined |= {
         n.data
@@ -4241,7 +4212,7 @@ def local_transients(sdfg, dfg, entry_node):
     transients = _transients_in_scope(sdfg, current_scope, scope_dict)
 
     # Add transients defined in parent scopes
-    while current_scope is not None:
+    while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
             _transients_in_scope(sdfg, current_scope, scope_dict))

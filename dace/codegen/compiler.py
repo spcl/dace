@@ -9,11 +9,11 @@ import ctypes
 import os
 import six
 import shutil
-import hashlib
 import subprocess
 import re
-from typing import List
+from typing import Any, List
 import numpy as np
+import warnings
 
 import dace
 from dace.frontend import operations
@@ -86,23 +86,33 @@ class ReloadableDLL(object):
         self._stub.load_library.restype = ctypes.c_void_p
         self._stub.get_symbol.restype = ctypes.c_void_p
 
-        # Convert library filename to string according to OS
-        if os.name == 'nt':
-            # As UTF-16
-            lib_cfilename = ctypes.c_wchar_p(self._library_filename)
-        else:
-            # As UTF-8
-            lib_cfilename = ctypes.c_char_p(
-                self._library_filename.encode('utf-8'))
-
         # Check if library is already loaded
-        is_loaded = self._stub.is_library_loaded(lib_cfilename)
-        if is_loaded == 1:
-            raise DuplicateDLLError(
-                'Library %s is already loaded somewhere else, ' %
-                os.path.basename(self._library_filename) +
-                'either unload it or use a different name ' +
-                'for the SDFG/program.')
+        is_loaded = True
+        lib_cfilename = None
+        while is_loaded:
+            # Convert library filename to string according to OS
+            if os.name == 'nt':
+                # As UTF-16
+                lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+            else:
+                # As UTF-8
+                lib_cfilename = ctypes.c_char_p(
+                    self._library_filename.encode('utf-8'))
+
+            is_loaded = self._stub.is_library_loaded(lib_cfilename)
+            if is_loaded == 1:
+                warnings.warn('Library %s already loaded, renaming file' %
+                              self._library_filename)
+                try:
+                    shutil.copyfile(self._library_filename,
+                                    self._library_filename + '_')
+                    self._library_filename += '_'
+                except shutil.Error:
+                    raise DuplicateDLLError(
+                        'Library %s is already loaded somewhere else ' %
+                        os.path.basename(self._library_filename) +
+                        'and cannot be unloaded. Please use a different name '
+                        + 'for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
@@ -188,73 +198,58 @@ class CompiledSDFG(object):
 
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
-            if not isinstance(arg, np.ndarray) and isinstance(atype, dt.Array):
+            if not _is_array(arg) and isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an object (type %s) to an array in argument "%s"'
                     % (type(arg).__name__, a))
-            if isinstance(arg, np.ndarray) and not isinstance(atype, dt.Array):
+            if _is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
             if not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg, atype.dtype.type):
+                        arg, atype.dtype.type) and not (
+                            isinstance(arg, symbolic.symbol)
+                            and arg.dtype == atype.dtype):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             if isinstance(argtype.dtype, dace.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg)
+                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
 
         # Retain only the element datatype for upcoming checks and casts
-        argtypes = [t.dtype.as_ctypes() for t in argtypes]
+        arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
 
         sdfg = self._sdfg
-
-        # As in compilation, add symbols used in array sizes to parameters
-        symparams = {}
-        symtypes = {}
-        for symname in sdfg.undefined_symbols(False):
-            try:
-                symval = symbolic.symbol(symname)
-                symparams[symname] = symval.get()
-                symtypes[symname] = symval.dtype.as_ctypes()
-            except UnboundLocalError:
-                try:
-                    symparams[symname] = kwargs[symname]
-                except KeyError:
-                    raise UnboundLocalError('Unassigned symbol %s' % symname)
-
-        arglist.extend(
-            [symparams[k] for k in sorted(symparams.keys()) if k not in sig])
-        argtypes.extend(
-            [symtypes[k] for k in sorted(symtypes.keys()) if k not in sig])
 
         # Obtain SDFG constants
         constants = sdfg.constants
 
         # Remove symbolic constants from arguments
         callparams = tuple(
-            (arg, atype) for arg, atype in zip(arglist, argtypes)
+            (arg, actype, atype)
+            for arg, actype, atype in zip(arglist, arg_ctypes, argtypes)
             if not symbolic.issymbolic(arg) or (
                 hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
         callparams = tuple(
-            (atype(symbolic.eval(arg)),
-             atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
-            for arg, atype in callparams)
+            (actype(arg.get()), actype,
+             atype) if isinstance(arg, symbolic.symbol) else (arg, actype,
+                                                              atype)
+            for arg, actype, atype in callparams)
 
-        # Replace arrays with their pointers
-        newargs = tuple((ctypes.c_void_p(arg.__array_interface__['data'][0]),
-                         atype) if isinstance(arg, np.ndarray) else (arg,
-                                                                     atype)
-                        for arg, atype in callparams)
+        # Replace arrays with their base host/device pointers
+        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)),
+                         actype, atype) if _is_array(arg) else (arg, actype,
+                                                                atype)
+                        for arg, actype, atype in callparams)
 
         newargs = tuple(
-            atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
-            for arg, atype in newargs)
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype in newargs)
 
         self._lastargs = newargs
         return self._lastargs
@@ -667,6 +662,36 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, command,
                                             output.getvalue())
+
+
+def _is_array(obj: Any) -> bool:
+    """
+    Returns True if an object implements the ``__array_interface__`` or
+    ``__cuda_array_interface__`` standards (supported by NumPy, Numba, CuPy,
+    PyTorch, etc.). If the interface is supported, pointers can be directly
+    obtained using the ``_array_interface_ptr`` function.
+    :param obj: The given object.
+    :return: True iff the object implements the array interface.
+    """
+    if (hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
+        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False
+
+
+def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
+    """
+    If the given array implements ``__array_interface__`` (see ``_is_array``),
+    returns the base host or device pointer to the array's allocated memory.
+    :param array: Array object that implements NumPy's array interface.
+    :param array_type: Data descriptor of the array (used to get storage
+                       location to determine whether it's a host or GPU device
+                       pointer).
+    :return: A pointer to the base location of the allocated buffer.
+    """
+    if array_type.storage == dace.StorageType.GPU_Global:
+        return array.__cuda_array_interface__['data'][0]
+    return array.__array_interface__['data'][0]
 
 
 # Allow configuring and compiling a prepared build folder from the commandline.

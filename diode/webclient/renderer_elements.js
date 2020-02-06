@@ -362,6 +362,8 @@ class MapEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } 
 class MapExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([1, 0]); } }
 class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
 class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
+class PipelineEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([10, 3]); } }
+class PipelineExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([10, 3]); } }
 
 class EmptyTasklet extends Node {
     draw(renderer, ctx, mousepos) {
@@ -738,7 +740,7 @@ function ptLineDistance(p, line1, line2) {
 var SDFGElements = {SDFGElement: SDFGElement, State: State, Node: Node,Edge: Edge, Connector: Connector, AccessNode: AccessNode,
                     ScopeNode: ScopeNode, EntryNode: EntryNode, ExitNode: ExitNode, MapEntry: MapEntry, MapExit: MapExit,
                     ConsumeEntry: ConsumeEntry, ConsumeExit: ConsumeExit, EmptyTasklet: EmptyTasklet, Tasklet: Tasklet, Reduce: Reduce,
-                    NestedSDFG: NestedSDFG, LibraryNode: LibraryNode};
+                    PipelineEntry: PipelineEntry, PipelineExit: PipelineExit, NestedSDFG: NestedSDFG, LibraryNode: LibraryNode};
                     
 // Save as globals
 Object.keys(SDFGElements).forEach(function(elem) {

@@ -46,7 +46,7 @@ if __name__ == "__main__":
     mat_add(A, B, C)
     np.add(A, B, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * N))
+    diff = np.linalg.norm(C_regression - C) / (M.get() * N.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
