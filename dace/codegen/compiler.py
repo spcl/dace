@@ -208,7 +208,9 @@ class CompiledSDFG(object):
                     (atype.dtype.ctype, a))
             if not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg, atype.dtype.type):
+                        arg, atype.dtype.type) and not (
+                            isinstance(arg, symbolic.symbol)
+                            and arg.dtype == atype.dtype):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
