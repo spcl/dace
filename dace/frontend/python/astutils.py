@@ -315,7 +315,12 @@ class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
         self.repldict = repldict
 
-    def visit_Name(self, node):
+    def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
             node.id = self.repldict[node.id]
         return node
+
+    def visit_keyword(self, node: ast.keyword):
+        if node.arg in self.repldict:
+            node.arg = self.repldict[node.arg]
+        return self.generic_visit(node)

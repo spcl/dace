@@ -284,7 +284,7 @@ class SDFG(OrderedDiGraph):
             parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name'})
 
         for n in nodes:
             nci = copy.deepcopy(context_info)
@@ -309,9 +309,6 @@ class SDFG(OrderedDiGraph):
         ret.validate()
 
         return ret
-
-        # Counter to make it easy to create temp transients
-        self._temp_transients = 0
 
     @property
     def arrays(self):
@@ -2699,6 +2696,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent,
             inputs: Set[str],
             outputs: Set[str],
+            symbol_mapping: Dict[str, Any] = None,
             name=None,
             schedule=dtypes.ScheduleType.Default,
             location="-1",
@@ -2719,11 +2717,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             sdfg,
             inputs,
             outputs,
+            symbol_mapping=symbol_mapping,
             schedule=schedule,
             location=location,
             debuginfo=debuginfo,
         )
         self.add_node(s)
+
+        # Add "default" undefined symbols if None are given
+        symbols = sdfg.undefined_symbols(False)
+        if symbol_mapping is None:
+            symbol_mapping = {s: s for s in symbols.keys()}
+            s.symbol_mapping = symbol_mapping
+
+        # Validate missing symbols
+        missing_symbols = [
+            s for s in symbols.keys() if s not in symbol_mapping
+        ]
+        if missing_symbols:
+            raise ValueError('Missing symbols on nested SDFG "%s": %s' %
+                             (name, missing_symbols))
+
         return s
 
     def _map_from_ndrange(self,
@@ -3978,11 +3992,6 @@ def scope_symbols(dfg):
     sdict = dfg.scope_dict()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
-        if isinstance(n, dace.graph.nodes.NestedSDFG):
-            iv, ss = n.sdfg.scope_symbols()
-            iteration_variables.update(iv)
-            subset_symbols.update(ss)
-            continue
         if not isinstance(n, dace.graph.nodes.EntryNode):
             continue
         if isinstance(n, dace.graph.nodes.MapEntry):
@@ -4041,9 +4050,12 @@ def data_symbols(dfg):
     result = collections.OrderedDict()
     # Scalars determining the size of arrays
     for d in dfg.nodes():
-        # Update symbols with symbols in nested SDFGs
+        # Update symbols with symbols used in nested SDFG invocations
         if isinstance(d, nd.NestedSDFG):
-            result.update(d.sdfg.data_symbols(True))
+            result.update((k.name, dt.Scalar(k.dtype))
+                          for m in d.symbol_mapping.values()
+                          if symbolic.issymbolic(m) for k in m.free_symbols
+                          if not k.name.startswith('__dace'))
             continue
         if not isinstance(d, nd.AccessNode):
             continue
@@ -4059,8 +4071,8 @@ def data_symbols(dfg):
 def undefined_symbols(sdfg, obj, include_scalar_data):
     """ Returns all symbols used in this object that are undefined, and thus
         must be given as input parameters. """
-    scalar_arguments = sdfg.scalar_parameters(False)
     if include_scalar_data:
+        scalar_arguments = sdfg.scalar_parameters(False)
         symbols = collections.OrderedDict(
             (name, data) for name, data in scalar_arguments)
     else:
@@ -4074,15 +4086,9 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None:
-        # Find parent Nested SDFG node
-        parent_node = next(
-            n for n in sdfg.parent.nodes()
-            if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
-        defined |= sdfg._parent_sdfg.symbols_defined_at(
-            parent_node, sdfg.parent).keys()
+
     # Don't include iteration variables
-    # (TODO: this is too lenient; take scope into account)
+    # TODO: this is too lenient; take scope into account
     defined |= iteration_variables.keys()
     defined |= {
         n.data
