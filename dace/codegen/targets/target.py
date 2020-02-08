@@ -1,3 +1,4 @@
+import aenum
 import os
 import shutil  # which
 from typing import Dict
@@ -165,7 +166,7 @@ class IllegalCopy(TargetCodeGenerator):
                         str(dst_node) + ')')
 
 
-class DefinedType(dace.dtypes.AutoNumber):
+class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
         @see: DefinedMemlets
     """
