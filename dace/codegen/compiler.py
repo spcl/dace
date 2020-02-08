@@ -9,11 +9,11 @@ import ctypes
 import os
 import six
 import shutil
-import hashlib
 import subprocess
 import re
 from typing import Any, List
 import numpy as np
+import warnings
 
 import dace
 from dace.frontend import operations
@@ -86,23 +86,33 @@ class ReloadableDLL(object):
         self._stub.load_library.restype = ctypes.c_void_p
         self._stub.get_symbol.restype = ctypes.c_void_p
 
-        # Convert library filename to string according to OS
-        if os.name == 'nt':
-            # As UTF-16
-            lib_cfilename = ctypes.c_wchar_p(self._library_filename)
-        else:
-            # As UTF-8
-            lib_cfilename = ctypes.c_char_p(
-                self._library_filename.encode('utf-8'))
-
         # Check if library is already loaded
-        is_loaded = self._stub.is_library_loaded(lib_cfilename)
-        if is_loaded == 1:
-            raise DuplicateDLLError(
-                'Library %s is already loaded somewhere else, ' %
-                os.path.basename(self._library_filename) +
-                'either unload it or use a different name ' +
-                'for the SDFG/program.')
+        is_loaded = True
+        lib_cfilename = None
+        while is_loaded:
+            # Convert library filename to string according to OS
+            if os.name == 'nt':
+                # As UTF-16
+                lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+            else:
+                # As UTF-8
+                lib_cfilename = ctypes.c_char_p(
+                    self._library_filename.encode('utf-8'))
+
+            is_loaded = self._stub.is_library_loaded(lib_cfilename)
+            if is_loaded == 1:
+                warnings.warn('Library %s already loaded, renaming file' %
+                              self._library_filename)
+                try:
+                    shutil.copyfile(self._library_filename,
+                                    self._library_filename + '_')
+                    self._library_filename += '_'
+                except shutil.Error:
+                    raise DuplicateDLLError(
+                        'Library %s is already loaded somewhere else ' %
+                        os.path.basename(self._library_filename) +
+                        'and cannot be unloaded. Please use a different name '
+                        + 'for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
@@ -198,7 +208,9 @@ class CompiledSDFG(object):
                     (atype.dtype.ctype, a))
             if not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg, atype.dtype.type):
+                        arg, atype.dtype.type) and not (
+                            isinstance(arg, symbolic.symbol)
+                            and arg.dtype == atype.dtype):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 

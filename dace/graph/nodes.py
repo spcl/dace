@@ -5,13 +5,13 @@ import ast
 from copy import deepcopy as dcpy
 import itertools
 import dace.serialize
-from typing import Set
+from typing import Any, Dict, Set
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
-    Property, CodeProperty, LambdaProperty, ParamsProperty, RangeProperty,
-    DebugInfoProperty, SetProperty, make_properties, indirect_properties,
-    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
+    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
+    SetProperty, make_properties, indirect_properties, DataProperty,
+    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 
@@ -374,6 +374,11 @@ class NestedSDFG(CodeNode):
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
     location = Property(dtype=str, desc="SDFG execution location descriptor")
+    symbol_mapping = DictProperty(
+        key_type=str,
+        value_type=dace.symbolic.pystr_to_symbolic,
+        desc="Mapping between internal symbols and their values, expressed as "
+        "symbolic expressions")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
@@ -390,6 +395,7 @@ class NestedSDFG(CodeNode):
                  sdfg,
                  inputs: Set[str],
                  outputs: Set[str],
+                 symbol_mapping: Dict[str, Any] = None,
                  schedule=dtypes.ScheduleType.Default,
                  location="-1",
                  debuginfo=None):
@@ -398,6 +404,7 @@ class NestedSDFG(CodeNode):
         # Properties
         self.label = label
         self.sdfg = sdfg
+        self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.location = location
         self.debuginfo = debuginfo
@@ -447,6 +454,15 @@ class NestedSDFG(CodeNode):
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested '
                                 'SDFG connectors' % dname)
+
+        # Validate undefined symbols
+        symbols = set(
+            k for k in self.sdfg.undefined_symbols(False).keys()
+            if k not in connectors)
+        missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
+        if missing_symbols:
+            raise ValueError(
+                'Missing symbols on nested SDFG: %s' % (missing_symbols))
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -599,7 +615,7 @@ class Map(object):
 
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
-    params = ParamsProperty(desc="Mapped parameters")
+    params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(
         desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = Property(

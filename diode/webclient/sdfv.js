@@ -54,7 +54,7 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
                 html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
             }
             contents.innerHTML = html;
-            document.getElementById("sidebar").style.display = "block";
+            document.getElementById("sidebar").style.display = "flex";
         } else {
             document.getElementById("sidebar-contents").innerHTML = "";
             document.getElementById("sidebar-header").innerText = "Nothing selected";
@@ -65,3 +65,20 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
 function close_menu() {
   document.getElementById("sidebar").style.display = "none";
 }
+
+
+var right = document.getElementById('sidebar');
+var bar = document.getElementById('dragbar');
+
+const drag = (e) => {
+  document.selection ? document.selection.empty() : window.getSelection().removeAllRanges();
+  right.style.width = Math.max(((e.view.innerWidth - e.pageX)), 20) + 'px';
+}
+
+bar.addEventListener('mousedown', () => {
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', () => {
+        document.removeEventListener('mousemove', drag);
+    });
+});
+

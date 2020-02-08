@@ -172,12 +172,22 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
             given_shape = arg_val.shape
 
             for sym_dim, real_dim in zip(symbolic_shape, given_shape):
-                equations.append(sym_dim - real_dim)
+                repldict = {}
                 for sym in symbolic.symlist(sym_dim).values():
+                    newsym = symbolic.symbol('__SOLVE_' + str(sym))
                     if str(sym) in args:
-                        exclude.add(sym)
+                        exclude.add(newsym)
                     else:
-                        symbols.add(sym)
+                        symbols.add(newsym)
+                        exclude.add(sym)
+                    repldict[sym] = newsym
+
+                # Replace symbols with __SOLVE_ symbols so as to allow
+                # the same symbol in the called SDFG
+                if repldict:
+                    sym_dim = sym_dim.subs(repldict)
+
+                equations.append(sym_dim - real_dim)
 
     if len(symbols) == 0:
         return {}
@@ -202,7 +212,9 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
     #             raise ValueError('Ambiguous value for symbol %s in argument '
     #                              '%s: can be either %d or %d' % (
     #                 sym, arg_name, inferred_syms[sym], symval))
-    return {str(k): v for k, v in result.items()}
+
+    # Remove __SOLVE_ prefix
+    return {str(k)[8:]: v for k, v in result.items()}
 
 
 class DaceProgram:
