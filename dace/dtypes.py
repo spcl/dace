@@ -6,7 +6,10 @@ import inspect
 import numpy
 from functools import wraps
 
+from dace.registry import extensible_enum
 
+
+@extensible_enum
 class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
@@ -24,6 +27,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
 
 
+@extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
 
@@ -63,6 +67,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Max_Location = ()  # Maximum value and its location
 
 
+@extensible_enum
 class Language(aenum.AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
 
@@ -78,6 +83,7 @@ class AccessType(aenum.AutoNumberEnum):
     ReadWrite = ()
 
 
+@extensible_enum
 class InstrumentationType(aenum.AutoNumberEnum):
     """ Types of instrumentation providers.
         @note: Might be determined automatically in future versions.

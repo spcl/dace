@@ -7,6 +7,7 @@ import dace
 from dace import dtypes
 from dace.graph import nodes, nxutil
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.registry import extensible_enum
 
 
 class TargetCodeGenerator(object):
@@ -166,6 +167,7 @@ class IllegalCopy(TargetCodeGenerator):
                         str(dst_node) + ')')
 
 
+@extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
         @see: DefinedMemlets
