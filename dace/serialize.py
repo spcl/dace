@@ -127,8 +127,8 @@ def from_json(obj, context=None, known_type=None):
 
 
 def loads(*args, context=None, **kwargs):
-    return json.loads(
-        *args, object_hook=lambda x: from_json(x, context), **kwargs)
+    loaded = json.loads(*args, **kwargs)
+    return from_json(loaded, context)
 
 
 def dumps(*args, **kwargs):
