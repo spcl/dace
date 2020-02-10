@@ -21,10 +21,14 @@ class Transformation(object):
         decentralized manner.
 
         New transformations are registered with ``Transformation.register``
-        (or ``dace.registry.autoregister_params``) with one optional boolean
-        keyword argument: singlestate (default: False). If True, the
-        transformation operates on a single state; otherwise, it will be matched
-        over an entire SDFG.
+        (or ``dace.registry.autoregister_params``) with two optional boolean
+        keyword arguments: ``singlestate`` (default: False) and ``strict``
+        (default: False).
+        If ``singlestate`` is True, the transformation operates on a single
+        state; otherwise, it will be matched over an entire SDFG.
+        If ``strict`` is True, this transformation will be considered strict
+        (i.e., always important to perform) and will be performed automatically
+        as part of SDFG strict transformations.
     """
 
     # Properties

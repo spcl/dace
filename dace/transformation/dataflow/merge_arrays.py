@@ -4,7 +4,7 @@ from dace.graph import nodes
 from dace.sdfg import SDFGState
 
 
-@registry.autoregister_params(singlestate=True)
+@registry.autoregister_params(singlestate=True, strict=True)
 class MergeArrays(pattern_matching.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 

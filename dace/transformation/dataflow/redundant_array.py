@@ -7,7 +7,7 @@ from dace.transformation import pattern_matching as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True)
+@registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArray(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),

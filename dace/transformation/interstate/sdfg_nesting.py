@@ -13,7 +13,7 @@ from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
 
 
-@registry.autoregister_params(singlestate=True)
+@registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
 class InlineSDFG(pattern_matching.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.

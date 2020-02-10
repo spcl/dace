@@ -8,7 +8,7 @@ from dace.transformation import pattern_matching
 from dace.config import Config
 
 
-@registry.autoregister
+@registry.autoregister_params(strict=True)
 class StateFusion(pattern_matching.Transformation):
     """ Implements the state-fusion transformation.
         
