@@ -32,11 +32,26 @@ class RegistryTests(unittest.TestCase):
 
         self.assertTrue(Extension2 in ExtensibleClass.extensions())
 
+    def test_class_registry_args(self):
+        ExtensibleClass.register(Extension, True, 1, 2)
+        self.assertTrue(Extension in ExtensibleClass.extensions())
+        self.assertEqual(ExtensibleClass.extensions()[Extension], (True, 1, 2))
+        ExtensibleClass.unregister(Extension)
+        self.assertTrue(Extension not in ExtensibleClass.extensions())
+
+    def test_autoregister_args(self):
+        @registry.autoregister_params(False, 0)
+        class Extension3(ExtensibleClass):
+            pass
+
+        self.assertTrue(Extension3 in ExtensibleClass.extensions())
+        self.assertEqual(ExtensibleClass.extensions()[Extension3], (False, 0))
+
     def test_autoregister_fail(self):
         with self.assertRaises(TypeError):
 
             @registry.autoregister
-            class Extension3(object):
+            class Extension4(object):
                 pass
 
     def test_enum_registry(self):

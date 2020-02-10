@@ -2,7 +2,8 @@
     subclasses and values can be registered externally. """
 
 from aenum import Enum, extend_enum
-from typing import Type
+from copy import deepcopy
+from typing import Tuple, Type
 
 
 def make_registry(cls: Type):
@@ -15,15 +16,22 @@ def make_registry(cls: Type):
     registry, and the third method returns a list of currently-registered
     extensions.
     """
-    cls._registry_ = set()
-    cls.register = lambda subclass: cls._registry_.add(subclass)
-    cls.unregister = lambda subclass: cls._registry_.remove(subclass)
-    cls.extensions = lambda: list(cls._registry_)
+
+    def _register(cls: Type, subclass: Type, args: Tuple):
+        cls._registry_[subclass] = args
+
+    def _unregister(cls: Type, subclass: Type):
+        del cls._registry_[subclass]
+
+    cls._registry_ = {}
+    cls.register = lambda subclass, *args: _register(cls, subclass, args)
+    cls.unregister = lambda subclass: _unregister(cls, subclass)
+    cls.extensions = lambda: deepcopy(cls._registry_)
 
     return cls
 
 
-def autoregister(cls: Type):
+def autoregister(cls: Type, *args):
     """
     Decorator for subclasses of user-extensible classes (see ``make_registry``)
     that automatically registers the subclass with the superclass registry upon
@@ -32,11 +40,20 @@ def autoregister(cls: Type):
     registered = False
     for base in cls.__bases__:
         if hasattr(base, '_registry_') and hasattr(base, 'register'):
-            base.register(cls)
+            base.register(cls, *args)
             registered = True
     if not registered:
         raise TypeError('Class does not extend registry classes')
     return cls
+
+
+def autoregister_params(*params):
+    """
+    Decorator for subclasses of user-extensible classes (see ``make_registry``)
+    that automatically registers the subclass with the superclass registry upon
+    creation. Uses the arguments given to register the value of the subclass.
+    """
+    return lambda cls: autoregister(cls, *params)
 
 
 def extensible_enum(cls: Type):
@@ -50,13 +67,9 @@ def extensible_enum(cls: Type):
     """
     if not issubclass(cls, Enum):
         raise TypeError("Only aenum.Enum subclasses may be made extensible")
+
+    def _extend_enum(cls: Type, name: str, *value):
+        extend_enum(cls, name, *value)
+
     cls.register = lambda name, *args: _extend_enum(cls, name, *args)
     return cls
-
-
-#############
-# Helper functions
-
-
-def _extend_enum(cls: Type, name: str, *value):
-    extend_enum(cls, name, *value)
