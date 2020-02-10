@@ -1,9 +1,10 @@
 from dace.transformation import pattern_matching
-from dace import memlet
+from dace import memlet, registry
 from dace.graph import nodes
 from dace.sdfg import SDFGState
 
 
+@registry.autoregister_params(singlestate=True)
 class MergeArrays(pattern_matching.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
@@ -109,6 +110,3 @@ class MergeArrays(pattern_matching.Transformation):
         # Remove connectors from scope entry
         map.in_connectors -= set('IN_' + c for c in connectors_to_remove)
         map.out_connectors -= set('OUT_' + c for c in connectors_to_remove)
-
-
-pattern_matching.Transformation.register_pattern(MergeArrays)

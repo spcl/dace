@@ -5,7 +5,7 @@ import itertools
 import networkx as nx
 from typing import Dict, List, Set
 
-from dace import data as dt, memlet, sdfg as sd, Memlet, EmptyMemlet
+from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
 from dace.graph import nodes, nxutil
 from dace.graph.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -13,6 +13,7 @@ from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class InlineSDFG(pattern_matching.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
@@ -396,6 +397,7 @@ class InlineSDFG(pattern_matching.Transformation):
         return result
 
 
+@registry.autoregister
 @make_properties
 class NestSDFG(pattern_matching.Transformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
@@ -515,7 +517,3 @@ class NestSDFG(pattern_matching.Transformation):
             outer_state.add_edge(
                 nested_node, val, arrnode, None,
                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
-
-
-pattern_matching.Transformation.register_stateflow_pattern(NestSDFG)
-pattern_matching.Transformation.register_pattern(InlineSDFG)

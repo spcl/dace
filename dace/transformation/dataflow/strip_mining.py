@@ -3,14 +3,12 @@
 
 import dace
 from copy import deepcopy as dcpy
-from dace import dtypes, subsets, symbolic
+from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
-from math import ceil
 import sympy
-import networkx as nx
 
 
 def calc_set_image_index(map_idx, map_set, array_idx):
@@ -69,6 +67,7 @@ def calc_set_union(set_a, set_b):
     return subsets.Range(union)
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class StripMining(pattern_matching.Transformation):
     """ Implements the strip-mining transformation.
@@ -327,6 +326,3 @@ class StripMining(pattern_matching.Transformation):
 
         # Return strip-mined dimension.
         return target_dim, new_dim, new_map
-
-
-pattern_matching.Transformation.register_pattern(StripMining)

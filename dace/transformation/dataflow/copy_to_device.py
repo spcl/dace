@@ -1,14 +1,10 @@
 """ Contains classes and functions that implement copying a nested SDFG
     and its dependencies to a given device. """
 
-import dace
 from copy import deepcopy as dcpy
-from dace import data, properties, symbolic, dtypes, subsets
+from dace import data, properties, symbolic, dtypes, registry
 from dace.graph import edges, graph, nodes, nxutil
 from dace.transformation import pattern_matching
-from math import ceil
-import sympy
-import networkx as nx
 
 
 def change_storage(sdfg, storage):
@@ -20,6 +16,7 @@ def change_storage(sdfg, storage):
                 change_storage(node.sdfg, storage)
 
 
+@registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class CopyToDevice(pattern_matching.Transformation):
     """ Implements the copy-to-device transformation, which copies a nested
@@ -182,6 +179,3 @@ class CopyToDevice(pattern_matching.Transformation):
 
         # Change storage for all data inside nested SDFG to device.
         change_storage(nested_sdfg.sdfg, storage)
-
-
-pattern_matching.Transformation.register_pattern(CopyToDevice)
