@@ -1057,7 +1057,3 @@ class LibraryNode(CodeNode):
 
     def draw_node(self, sdfg, state):
         return dot.draw_node(sdfg, state, self, shape="folder")
-
-    def validate(self, sdfg, state):
-        raise ValueError("Unexpanded library node of type " + str(type(self)) +
-                         ".")
