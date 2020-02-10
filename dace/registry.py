@@ -26,7 +26,7 @@ def make_registry(cls: Type):
     cls._registry_ = {}
     cls.register = lambda subclass, **kwargs: _register(cls, subclass, kwargs)
     cls.unregister = lambda subclass: _unregister(cls, subclass)
-    cls.extensions = lambda: deepcopy(cls._registry_)
+    cls.extensions = lambda: cls._registry_
 
     return cls
 
