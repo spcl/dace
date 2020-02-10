@@ -60,8 +60,9 @@ class Edge(object):
         if json_obj['type'] != "Edge":
             raise TypeError("Invalid data type")
 
-        ret = Edge(json_obj['src'], json_obj['dst'],
-                   json_obj['attributes']['data'])
+        ret = Edge(
+            json_obj['src'], json_obj['dst'],
+            dace.serialize.from_json(json_obj['attributes']['data'], context))
 
         return ret
 
@@ -107,7 +108,8 @@ class MultiConnectorEdge(MultiEdge):
         sdfg = context['sdfg_state']
         if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
-        data = json_obj['attributes']['data']
+        data = dace.serialize.from_json(json_obj['attributes']['data'],
+                                        context)
         src_nid = json_obj['src']
         dst_nid = json_obj['dst']
 
