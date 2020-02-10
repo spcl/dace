@@ -1,4 +1,4 @@
-from typing import Set
+from typing import Optional, Set
 
 import collections
 import dace
@@ -589,11 +589,11 @@ DACE_EXPORTED void __dace_exit(%s)
                     to_visit.append(next_node)
         return seen
 
-    def generate_code(self,
-                      sdfg: SDFG,
-                      schedule: dtypes.ScheduleType,
-                      sdfg_id: str = ""
-                      ) -> (str, str, Set[TargetCodeGenerator]):
+    def generate_code(
+            self,
+            sdfg: SDFG,
+            schedule: Optional[dtypes.ScheduleType],
+            sdfg_id: str = "") -> (str, str, Set[TargetCodeGenerator]):
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.

@@ -9,7 +9,7 @@ from dace.config import Config
 
 # Import all code generation targets
 from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx, intel_fpga
-from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
+from dace.codegen.instrumentation import InstrumentationProvider
 
 
 class CodegenError(Exception):
@@ -121,18 +121,19 @@ def generate_code(sdfg) -> List[CodeObject]:
     }
 
     # Instantiate all instrumentation providers in SDFG
+    provider_mapping = InstrumentationProvider.get_provider_mapping()
     frame._dispatcher.instrumentation[
         dtypes.InstrumentationType.No_Instrumentation] = None
     for node, _ in sdfg.all_nodes_recursive():
         if hasattr(node, 'instrument'):
             frame._dispatcher.instrumentation[node.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.instrument]
+                provider_mapping[node.instrument]
         elif hasattr(node, 'consume'):
             frame._dispatcher.instrumentation[node.consume.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+                provider_mapping[node.consume.instrument]
         elif hasattr(node, 'map'):
             frame._dispatcher.instrumentation[node.map.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.map.instrument]
+                provider_mapping[node.map.instrument]
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()
