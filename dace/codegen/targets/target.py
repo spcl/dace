@@ -7,9 +7,10 @@ import dace
 from dace import dtypes
 from dace.graph import nodes, nxutil
 from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.registry import extensible_enum
+from dace.registry import extensible_enum, make_registry
 
 
+@make_registry
 class TargetCodeGenerator(object):
     """ Interface dictating functions that generate code for:
           * Array allocation/deallocation/initialization/copying

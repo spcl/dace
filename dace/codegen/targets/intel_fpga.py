@@ -6,7 +6,7 @@ from six import StringIO
 import numpy as np
 
 import dace
-from dace import subsets, dtypes
+from dace import registry, subsets, dtypes
 from dace.codegen import cppunparse
 from dace.config import Config
 from dace.codegen.codeobject import CodeObject
@@ -44,6 +44,7 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
+@registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'

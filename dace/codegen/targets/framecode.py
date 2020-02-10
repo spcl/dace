@@ -620,12 +620,6 @@ DACE_EXPORTED void __dace_exit(%s)
         # Generate code
         ###########################
 
-        if sdfg.parent is not None:
-            # Nested SDFG
-            symbols_available = sdfg.parent_sdfg.symbols_defined_at(sdfg)
-        else:
-            symbols_available = sdfg.constants
-
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
         allocated = set()

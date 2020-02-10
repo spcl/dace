@@ -11,7 +11,7 @@ from dace.codegen import cppunparse
 import dace
 from dace.config import Config
 from dace.frontend import operations
-from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace import data, registry, subsets, symbolic, dtypes, memlet as mmlt
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          find_outgoing_edges)
 from dace.codegen.prettycode import CodeIOStream
@@ -37,6 +37,7 @@ _REDUCTION_TYPE_TO_OPENMP = {
 }
 
 
+@registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
     """ SDFG CPU code generator. """
 

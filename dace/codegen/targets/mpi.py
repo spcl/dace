@@ -1,5 +1,5 @@
 import dace
-from dace import symbolic, dtypes
+from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
@@ -9,6 +9,7 @@ from dace.config import Config
 from dace.codegen import cppunparse
 
 
+@registry.autoregister_params(name='mpi')
 class MPICodeGen(TargetCodeGenerator):
     """ An MPI code generator. """
     target_name = 'mpi'
