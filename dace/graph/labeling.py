@@ -558,8 +558,6 @@ def _propagate_labels(g, sdfg):
         :param sdfg: The SDFG in which the state is situated.
         @note: This is an in-place operation on the SDFG state.
     """
-    patterns = MemletPattern.patterns()
-
     # Algorithm:
     # 1. Start propagating information from tasklets outwards (their edges
     #    are hardcoded).
@@ -708,7 +706,8 @@ def propagate_memlet(dfg_state,
         new_subset = None
         for md in aggdata:
             tmp_subset = None
-            for pattern in MemletPattern.patterns():
+            for pclass in MemletPattern.extensions():
+                pattern = pclass()
                 if pattern.match([md.subset], variable_context, mapnode.range,
                                  [md]):
                     tmp_subset = pattern.propagate(arr, [md.subset],
