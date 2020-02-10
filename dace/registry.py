@@ -3,7 +3,7 @@
 
 from aenum import Enum, extend_enum
 from copy import deepcopy
-from typing import Tuple, Type
+from typing import Dict, Type
 
 
 def make_registry(cls: Type):
@@ -17,21 +17,21 @@ def make_registry(cls: Type):
     extensions.
     """
 
-    def _register(cls: Type, subclass: Type, args: Tuple):
-        cls._registry_[subclass] = args
+    def _register(cls: Type, subclass: Type, kwargs: Dict):
+        cls._registry_[subclass] = kwargs
 
     def _unregister(cls: Type, subclass: Type):
         del cls._registry_[subclass]
 
     cls._registry_ = {}
-    cls.register = lambda subclass, *args: _register(cls, subclass, args)
+    cls.register = lambda subclass, **kwargs: _register(cls, subclass, kwargs)
     cls.unregister = lambda subclass: _unregister(cls, subclass)
     cls.extensions = lambda: deepcopy(cls._registry_)
 
     return cls
 
 
-def autoregister(cls: Type, *args):
+def autoregister(cls: Type, **kwargs):
     """
     Decorator for subclasses of user-extensible classes (see ``make_registry``)
     that automatically registers the subclass with the superclass registry upon
@@ -40,20 +40,20 @@ def autoregister(cls: Type, *args):
     registered = False
     for base in cls.__bases__:
         if hasattr(base, '_registry_') and hasattr(base, 'register'):
-            base.register(cls, *args)
+            base.register(cls, **kwargs)
             registered = True
     if not registered:
         raise TypeError('Class does not extend registry classes')
     return cls
 
 
-def autoregister_params(*params):
+def autoregister_params(**params):
     """
     Decorator for subclasses of user-extensible classes (see ``make_registry``)
     that automatically registers the subclass with the superclass registry upon
     creation. Uses the arguments given to register the value of the subclass.
     """
-    return lambda cls: autoregister(cls, *params)
+    return lambda cls: autoregister(cls, **params)
 
 
 def extensible_enum(cls: Type):
