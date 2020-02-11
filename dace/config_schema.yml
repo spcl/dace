@@ -627,22 +627,6 @@ required:
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
     #############################################
-    # Frontend settings
-
-    frontend:
-        type: dict
-        title: Frontend
-        description: Python frontend preferences
-        required:
-            implementation:
-                type: str
-                default: "sdfg"
-                title: Default operator implementation
-                description: >
-                    Sets the default operator implementation when parsing Python code into
-                    subgraphs or tasklets (can be sdfg, mkl, cublas).
-
-    #############################################
     # General settings
     debugprint:
         type: bool

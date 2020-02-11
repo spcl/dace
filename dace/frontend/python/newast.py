@@ -325,53 +325,6 @@ def _imag(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.transpose')
 def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
 
-    inparr = sdfg.arrays[inpname]
-    restype = sdfg.arrays[inpname].dtype
-    outshape = (inparr.shape[1], inparr.shape[0])
-    outname, outarr = sdfg.add_temp_transient(outshape, restype,
-                                              inparr.storage)
-    num_elements = reduce(lambda x, y: x * y, inparr.shape)
-    if num_elements == 1:
-        inp = state.add_read(inpname)
-        out = state.add_write(outname)
-        tasklet = state.add_tasklet('transpose', {'__inp'}, {'__out'},
-                                    '__out = __inp')
-        state.add_edge(inp, None, tasklet, '__inp',
-                       Memlet.from_array(inpname, inparr))
-        state.add_edge(tasklet, '__out', out, None,
-                       Memlet.from_array(outname, outarr))
-    else:
-        state.add_mapped_tasklet(
-            name='transpose',
-            map_ranges={
-                '__i%d' % i: '0:%s' % n
-                for i, n in enumerate(inparr.shape)
-            },
-            inputs={
-                '__inp':
-                Memlet.simple(
-                    inpname,
-                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
-            },
-            code='__out = __inp',
-            outputs={
-                '__out':
-                Memlet.simple(
-                    outname, ','.join([
-                        '__i%d' % i
-                        for i in range(len(inparr.shape) - 1, -1, -1)
-                    ]))
-            },
-            external_edges=True)
-
-    return outname
-
-
-@oprepo.replaces('transpose', implementation='blas')
-@oprepo.replaces('dace.transpose', implementation='blas')
-@oprepo.replaces('numpy.transpose', implementation='blas')
-def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
-
     arr1 = sdfg.arrays[inpname]
     restype = arr1.dtype
     outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]),
@@ -672,44 +625,6 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
-def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-
-    arr1 = sdfg.arrays[op1]
-    arr2 = sdfg.arrays[op2]
-    if (len(arr1.shape) != 2 or len(arr2.shape) != 2
-            or arr1.shape[1] != arr2.shape[0]):
-        raise SyntaxError('Matrix sizes must match')
-
-    type1 = arr1.dtype.type
-    type2 = arr2.dtype.type
-    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
-
-    op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
-                                        restype, arr1.storage)
-
-    state.add_mapped_tasklet(
-        '_MatMult_', {
-            '__i%d' % i: '0:%s' % s
-            for i, s in enumerate(
-                [arr1.shape[0], arr2.shape[1], arr1.shape[1]])
-        }, {
-            '__a': Memlet.simple(op1, '__i0, __i2'),
-            '__b': Memlet.simple(op2, '__i2, __i1')
-        },
-        '__c = __a * __b', {
-            '__c':
-            Memlet.simple(
-                op3,
-                '__i0, __i1',
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=0)
-        },
-        external_edges=True)
-
-    return op3
-
-
-@oprepo.replaces_operator('Array', 'MatMult', implementation='blas')
 def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     arr1 = sdfg.arrays[op1]
@@ -3285,7 +3200,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Call(self, node: ast.Call):
         from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
 
-        default_impl = Config.get('frontend', 'implementation')
         funcname = rname(node)
         func = None
 
@@ -3517,7 +3431,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: If the function is a callback, implement it as a tasklet
 
         # Otherwise, try to find a default implementation for the SDFG
-        func = oprepo.Replacements.get(funcname, default_impl)
+        func = oprepo.Replacements.get(funcname)
         if func is None:
             # Check for SDFG as fallback
             func = oprepo.Replacements.get(funcname)
@@ -3528,7 +3442,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     % funcname)
             print(
                 'WARNING: Function "%s" is not registered with an %s implementation, falling back to SDFG'
-                % (funcname, default_impl))
+                % funcname)
 
         args = [self._parse_function_arg(arg) for arg in node.args]
         keywords = {
@@ -3737,7 +3651,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
-        default_impl = Config.get('frontend', 'implementation')
         opname = None
         try:
             opname = type(node.op).__name__
@@ -3758,7 +3671,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 operand1, op1type = self._convert_num_to_array(op1)
 
         func = oprepo.Replacements.getop(
-            op1type, opname, implementation=default_impl, otherclass=op2type)
+            op1type, opname, otherclass=op2type)
         if func is None:
             # Check for SDFG as fallback
             func = oprepo.Replacements.getop(
@@ -3769,9 +3682,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     'Operator "%s" is not defined for types %s and %s' %
                     (opname, op1type, op2type))
             print(
-                'WARNING: Operator "%s" is not registered with an %s implementation for'
+                'WARNING: Operator "%s" is not registered with an implementation for'
                 'types %s and %s, falling back to SDFG' %
-                (opname, default_impl, op1type, op2type))
+                (opname, op1type, op2type))
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         result = func(self, self.sdfg, self.last_state, operand1, operand2)
