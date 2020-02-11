@@ -20,12 +20,10 @@ class CodegenError(Exception):
 def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
-    proto += "int __dace_init(" + sdfg.signature(
-        with_types=True, for_call=False) + ");\n"
-    proto += "int __dace_exit(" + sdfg.signature(
-        with_types=True, for_call=False) + ");\n"
-    proto += "void __program_" + sdfg.name + "(" + sdfg.signature(
-        with_types=True, for_call=False) + ");\n\n"
+    params = (sdfg.name, sdfg.signature(with_types=True, for_call=False))
+    proto += "int __dace_init_%s(%s);\n" % params
+    proto += "int __dace_exit_%s(%s);\n" % params
+    proto += "void __program_%s(%s);\n\n" % params
     return proto
 
 
@@ -59,15 +57,13 @@ def generate_dummy(sdfg) -> str:
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
             deallocations += "  free(" + str(arg) + ");\n"
 
-    sdfg_call = "\n  __dace_init(" + sdfg.signature(
-        with_types=False, for_call=True) + ");\n"
-    sdfg_call += "  __program_" + sdfg.name + "(" + sdfg.signature(
-        with_types=False, for_call=True) + ");\n"
-    sdfg_call += "  __dace_exit(" + sdfg.signature(
-        with_types=False, for_call=True) + ");\n\n"
+    sdfg_call = '''
+  __dace_init_{name}({params});
+  __program_{name}({params});
+  __dace_exit_{name}({params});\n\n'''.format(
+        name=sdfg.name, params=sdfg.signature(with_types=False, for_call=True))
 
-    res = ""
-    res += includes
+    res = includes
     res += header
     res += allocations
     res += sdfg_call
