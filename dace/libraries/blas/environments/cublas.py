@@ -30,7 +30,7 @@ class cuBLAS:
 
         code = """\
 const auto __dace_cuda_device = {location};
-auto &__dace_cublas_handle = dacelib::blas::CublasHandle::Get(__dace_cuda_device);
+auto &__dace_cublas_handle = dace::blas::CublasHandle::Get(__dace_cuda_device);
 cublasSetStream(__dace_cublas_handle, __dace_current_stream);\n"""
 
         return code.format(location=location)

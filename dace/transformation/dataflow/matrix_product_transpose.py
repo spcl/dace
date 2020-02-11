@@ -5,7 +5,7 @@ import dace
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
-from dacelibs.blas import nodes as blas_nodes
+import dace.libraries.blas as blas
 
 
 @make_properties
@@ -15,11 +15,11 @@ class MatrixProductTranspose(pattern_matching.Transformation):
         T(A) @ T(B) = T(B @ A)
     """
 
-    _transpose_a = blas_nodes.Transpose("")
+    _transpose_a = blas.Transpose("")
     _at = nodes.AccessNode("")
-    _transpose_b = blas_nodes.Transpose("")
+    _transpose_b = blas.Transpose("")
     _bt = nodes.AccessNode("")
-    _a_times_b = blas_nodes.MatMul("")
+    _a_times_b = blas.MatMul("")
 
     @staticmethod
     def expressions():
@@ -84,7 +84,7 @@ class MatrixProductTranspose(pattern_matching.Transformation):
             break
         tmp_name, tmp_arr = sdfg.add_temp_transient(shape, a_times_b.dtype)
         tmp_acc = graph.add_access(tmp_name)
-        transpose_c = blas_nodes.Transpose('_Transpose_', a_times_b.dtype)
+        transpose_c = blas.Transpose('_Transpose_', a_times_b.dtype)
         for edge in graph.out_edges(a_times_b):
             _, _, dst, dst_conn, memlet = edge
             graph.remove_edge(edge)

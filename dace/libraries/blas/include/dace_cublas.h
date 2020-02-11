@@ -7,7 +7,7 @@
 #include <string>     // std::to_string
 #include <unordered_map>
 
-namespace dacelib {
+namespace dace {
 
 namespace blas {
 
@@ -172,4 +172,4 @@ class CublasConstants {
 
 }  // namespace blas
 
-}  // namespace dacelib
+}  // namespace dace 

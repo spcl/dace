@@ -2,7 +2,7 @@
 
 #include <complex>  // std::complex<float>, std::complex<double>
 
-namespace dacelib {
+namespace dace {
 
 namespace blas {
 
@@ -29,5 +29,5 @@ private:
 
 }   // namespace blas
 
-}   // namespace dacelib
+}   // namespace 
 

@@ -498,7 +498,7 @@ def configure_and_compile(program_folder,
                 cmake_includes.add(os.path.dirname(header))
             abs_path = os.path.join(env_dir, header)
             if os.path.isfile(abs_path):
-                # Allow includes stored with the dacelib, specified with a
+                # Allow includes stored with the library, specified with a
                 # relative path
                 cmake_includes.add(env_dir)
                 break

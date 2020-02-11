@@ -116,12 +116,12 @@ class ExpandMatMulMKL(ExpandTransformation):
             beta = "0.0"
         elif dtype == dace.complex64:
             func = "cgemm"
-            alpha = "dacelib::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dacelib::blas::BlasConstants::Get().Complex64Zero()"
+            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
         elif dtype == dace.complex128:
             func = "zgemm"
-            alpha = "dacelib::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dacelib::blas::BlasConstants::Get().Complex128Zero()"
+            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))

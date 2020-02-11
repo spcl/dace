@@ -190,7 +190,7 @@ def get_environment(env_name):
     return env
 
 
-# Mapping from string to dacelib
+# Mapping from string to library
 def get_library(lib_name):
     try:
         lib = dace.library._DACE_REGISTERED_LIBRARIES[lib_name]

@@ -1,7 +1,7 @@
 import dace
 from dace.memlet import Memlet
 from dace.codegen.compiler import CompilerConfigurationError, CompilationError
-import dacelibs.blas as blas
+import dace.libraries.blas as blas
 import numpy as np
 import sys
 import warnings
