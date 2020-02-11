@@ -31,7 +31,7 @@ def run_test(implementation):
 
 if __name__ == '__main__':
 
-    for implementation in ["MKL", "pure"]:  # , "cuBLAS", "OpenBLAS"]:
+    for implementation in ["MKL", "pure"]:
         try:
             run_test(implementation)
         except (CompilerConfigurationError, CompilationError):

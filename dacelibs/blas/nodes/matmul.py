@@ -98,9 +98,9 @@ class ExpandMatMulPure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandMatMulOpenBLAS(ExpandTransformation):
+class ExpandMatMulMKL(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, state, sdfg):
@@ -138,109 +138,13 @@ class ExpandMatMulOpenBLAS(ExpandTransformation):
         return tasklet
 
 
-@dace.library.expansion
-class ExpandMatMulMKL(ExpandTransformation):
-
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        return ExpandMatMulOpenBLAS.expansion(node, state, sdfg)
-
-
-@dace.library.expansion
-class ExpandMatMulCuBLAS(ExpandTransformation):
-
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        dtype = node.dtype
-        if dtype == dace.float32:
-            func = "Sgemm"
-            cast = ""
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatPone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatZero()"
-        elif dtype == dace.float64:
-            func = "Dgemm"
-            cast = ""
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoublePone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoubleZero()"
-        elif dtype == dace.complex64:
-            func = "Cgemm"
-            cast = "(cuComplex*)"
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Pone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Zero()"
-        elif dtype == dace.complex128:
-            func = "Zgemm"
-            cast = "(cuDoubleComplex*)"
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Pone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Zero()"
-        else:
-            raise ValueError("Unsupported type for cuBLAS dot product: " +
-                             str(dtype))
-        (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                "cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
-                "CUBLAS_OP_N, CUBLAS_OP_N, {m}, {n}, {k}, {a}, {c}_a, {m}, "
-                "{c}_b, {k}, {b}, {c}_c, {m});").format(
-                    f=func, c=cast, m=m, n=n, k=k, a=alpha, b=beta)
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name, {"__a", "__b"}, {"__c"},
-            code,
-            language=dace.dtypes.Language.CPP)
-        nested_sdfg = dace.SDFG('_cuBLAS_MatMul_')
-        _, A = nested_sdfg.add_array('_a', (m, k), dtype)
-        _, B = nested_sdfg.add_array('_b', (k, n), dtype)
-        _, C = nested_sdfg.add_array('_c', (m, n), dtype)
-        _, AT = nested_sdfg.add_transient('_aT', (k, m), dtype)
-        _, BT = nested_sdfg.add_transient('_bT', (n, k), dtype)
-        _, CT = nested_sdfg.add_transient('_cT', (n, m), dtype)
-        nested_state = nested_sdfg.add_state('_cuBLAS_MatMul_')
-        acc1 = nested_state.add_read('_a')
-        acc2 = nested_state.add_read('_b')
-        acc3 = nested_state.add_write('_c')
-        acc4 = nested_state.add_access('_aT')
-        acc5 = nested_state.add_access('_bT')
-        acc6 = nested_state.add_access('_cT')
-        from .. import Transpose
-        trans_a = Transpose('_Transpose_a', dtype)
-        trans_b = Transpose('_Transpose_b', dtype)
-        trans_c = Transpose('_Transpose_c', dtype)
-        nested_state.add_edge(acc1, None, trans_a, '_inp',
-                              dace.Memlet.from_array('_a', A))
-        nested_state.add_edge(trans_a, '_out', acc4, None,
-                              dace.Memlet.from_array('_aT', AT))
-        nested_state.add_edge(acc2, None, trans_b, '_inp',
-                              dace.Memlet.from_array('_b', B))
-        nested_state.add_edge(trans_b, '_out', acc5, None,
-                              dace.Memlet.from_array('_bT', BT))
-        nested_state.add_edge(acc6, None, trans_c, '_inp',
-                              dace.Memlet.from_array('_cT', CT))
-        nested_state.add_edge(trans_c, '_out', acc3, None,
-                              dace.Memlet.from_array('_c', C))
-        nested_state.add_edge(acc4, None, tasklet, '__a',
-                              dace.Memlet.from_array('_aT', AT))
-        nested_state.add_edge(acc5, None, tasklet, '__b',
-                              dace.Memlet.from_array('_bT', BT))
-        nested_state.add_edge(tasklet, '__c', acc6, None,
-                              dace.Memlet.from_array('_cT', CT))
-        nested_node = dace.graph.nodes.NestedSDFG(
-            '_cuBLAS_MatMul_', nested_sdfg, {'_a', '_b'}, {'_c'})
-        gpu_transform_tasklet(nested_sdfg, nested_state, tasklet)
-        return nested_node
-
-
 @dace.library.node
 class MatMul(dace.graph.nodes.LibraryNode):
 
     # Global properties
     implementations = {
         "pure": ExpandMatMulPure,
-        "OpenBLAS": ExpandMatMulOpenBLAS,
-        "MKL": ExpandMatMulMKL,
-        "cuBLAS": ExpandMatMulCuBLAS,
+        "MKL": ExpandMatMulMKL
     }
     default_implementation = None
 

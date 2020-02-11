@@ -89,45 +89,6 @@ class ExpandTransposePure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandTransposeOpenBLAS(ExpandTransformation):
-
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        dtype = node.dtype
-
-        if dtype == dace.float32:
-            func = "somatcopy"
-            alpha = "1.0f"
-        elif dtype == dace.float64:
-            func = "domatcopy"
-            alpha = "1.0"
-        elif dtype == dace.complex64:
-            func = "comatcopy"
-            alpha = "dacelib::blas::BlasConstants::Get().Complex64Pone()"
-        elif dtype == dace.complex128:
-            func = "zomatcopy"
-            alpha = "dacelib::blas::BlasConstants::Get().Complex128Pone()"
-        else:
-            raise ValueError("Unsupported type for OpenBLAS omatcopy: " +
-                             str(dtype))
-
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
-        code = ("cblas_{f}(CblasRowMajor, CblasTrans, {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(
-                    f=func, m=m, n=n, a=alpha)
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP)
-        return tasklet
-
-
-@dace.library.expansion
 class ExpandTransposeMKL(ExpandTransformation):
 
     environments = [environments.intel_mkl.IntelMKL]
@@ -164,65 +125,13 @@ class ExpandTransposeMKL(ExpandTransformation):
         return tasklet
 
 
-@dace.library.expansion
-class ExpandTransposeCuBLAS(ExpandTransformation):
-
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        dtype = node.dtype
-        if dtype == dace.float32:
-            func = "Sgeam"
-            cast = ""
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatPone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).FloatZero()"
-        elif dtype == dace.float64:
-            func = "Dgeam"
-            cast = ""
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoublePone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).DoubleZero()"
-        elif dtype == dace.complex64:
-            func = "Cgeam"
-            cast = "(cuComplex*)"
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Pone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex64Zero()"
-        elif dtype == dace.complex128:
-            func = "Zgeam"
-            cast = "(cuDoubleComplex*)"
-            alpha = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Pone()"
-            beta = "dacelib::blas::CublasConstants::Get(__dace_cuda_device).Complex128Zero()"
-        else:
-            raise ValueError("Unsupported type for cuBLAS geam: " + str(dtype))
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                "cublasStatus_t _result = cublas{f}(__dace_cublas_handle, "
-                "CUBLAS_OP_T, CUBLAS_OP_N, {m}, {n}, {a}, {c}_inp, {n}, "
-                "{b}, {c}_inp, {m}, {c}_out, {m});").format(
-                    f=func, c=cast, m=m, n=n, a=alpha, b=beta)
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP)
-        return tasklet
-
-    @staticmethod
-    def postprocessing(sdfg, state, expansion):
-        gpu_transform_tasklet(sdfg, state, expansion)
-
-
 @dace.library.node
 class Transpose(dace.graph.nodes.LibraryNode):
 
     # Global properties
     implementations = {
         "pure": ExpandTransposePure,
-        "OpenBLAS": ExpandTransposeOpenBLAS,
         "MKL": ExpandTransposeMKL,
-        "cuBLAS": ExpandTransposeCuBLAS,
     }
     default_implementation = None
 
