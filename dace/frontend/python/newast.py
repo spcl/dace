@@ -22,8 +22,6 @@ from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
-import dacelibs.blas as blas
-
 import numpy as np
 import sympy
 
@@ -332,7 +330,8 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
 
     acc1 = state.add_read(inpname)
     acc2 = state.add_write(outname)
-    tasklet = blas.nodes.transpose.Transpose('_Transpose_', restype)
+    import dacelibs.blas  # Avoid import loop
+    tasklet = dacelibs.blas.Transpose('_Transpose_', restype)
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_inp',
                    dace.Memlet.from_array(inpname, arr1))
@@ -643,7 +642,8 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     acc1 = state.add_read(op1)
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
-    tasklet = blas.nodes.matmul.MatMul('_MatMult_', restype)
+    import dacelibs.blas  # Avoid import loop
+    tasklet = dacelibs.blas.MatMul('_MatMult_', restype)
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(
         op1, arr1))

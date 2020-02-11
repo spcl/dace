@@ -112,7 +112,7 @@ class Dot(dace.graph.nodes.LibraryNode):
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
     }
-    default_implementation = "pure"
+    default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)

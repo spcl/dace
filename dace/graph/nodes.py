@@ -7,6 +7,7 @@ import dace
 import itertools
 import dace.serialize
 from typing import Any, Dict, Set
+from dace.config import Config
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
@@ -17,6 +18,7 @@ from dace.properties import (
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 import pydoc
+import warnings
 
 # -----------------------------------------------------------------------------
 
@@ -1012,19 +1014,44 @@ class LibraryNode(CodeNode):
         """Create and perform the expansion transformation for this library
            node."""
         implementation = self.implementation
+        library_name = type(self)._dace_library_name
+        try:
+            config_implementation = Config.get("library", library_name,
+                                               "default_implementation")
+        except KeyError:
+            # Non-standard libraries are not defined in the config schema, and
+            # thus might not exist in the config.
+            config_implementation = None
+        if config_implementation is not None:
+            try:
+                config_override = Config.get("library", library_name,
+                                             "override")
+                if config_override:
+                    if implementation is not None:
+                        warnings.warn(
+                            "Overriding explicitly specified "
+                            "implementation {} for {} with {}.".format(
+                                implementation, self.label,
+                                config_implementation))
+                    implementation = config_implementation
+            except KeyError:
+                config_override = False
         # If not explicitly set, try the node default
         if implementation is None:
             implementation = type(self).default_implementation
-        # If no node default, try library default
-        if implementation is None:
-            import dace.library  # Avoid cyclic dependency
-            lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)
-                                                          ._dace_library_name]
-            implementation = lib.default_implementation
-        # Otherwise we don't know how to expand
-        if implementation is None:
-            raise ValueError("No implementation or default "
-                             "implementation specified.")
+            # If no node default, try library default
+            if implementation is None:
+                import dace.library  # Avoid cyclic dependency
+                lib = dace.library._DACE_REGISTERED_LIBRARIES[type(
+                    self)._dace_library_name]
+                implementation = lib.default_implementation
+                # Try the default specified in the config
+                if implementation is None:
+                    implementation = config_implementation
+                    # Otherwise we don't know how to expand
+                    if implementation is None:
+                        raise ValueError("No implementation or default "
+                                         "implementation specified.")
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation: " + implementation)
         transformation_type = type(self).implementations[implementation]

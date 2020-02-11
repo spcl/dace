@@ -224,7 +224,7 @@ class Transpose(dace.graph.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "cuBLAS": ExpandTransposeCuBLAS,
     }
-    default_implementation = "pure"
+    default_implementation = None
 
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 

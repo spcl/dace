@@ -193,12 +193,12 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
             code,
             language=dace.dtypes.Language.CPP)
         nested_sdfg = dace.SDFG('_cuBLAS_MatMul_')
-        A = nested_sdfg.add_array('_a', (m, k), dtype)
-        B = nested_sdfg.add_array('_b', (k, n), dtype)
-        C = nested_sdfg.add_array('_c', (m, n), dtype)
-        AT = nested_sdfg.add_transient('_aT', (k, m), dtype)
-        BT = nested_sdfg.add_transient('_bT', (n, k), dtype)
-        CT = nested_sdfg.add_transient('_cT', (n, m), dtype)
+        _, A = nested_sdfg.add_array('_a', (m, k), dtype)
+        _, B = nested_sdfg.add_array('_b', (k, n), dtype)
+        _, C = nested_sdfg.add_array('_c', (m, n), dtype)
+        _, AT = nested_sdfg.add_transient('_aT', (k, m), dtype)
+        _, BT = nested_sdfg.add_transient('_bT', (n, k), dtype)
+        _, CT = nested_sdfg.add_transient('_cT', (n, m), dtype)
         nested_state = nested_sdfg.add_state('_cuBLAS_MatMul_')
         acc1 = nested_state.add_read('_a')
         acc2 = nested_state.add_read('_b')
@@ -244,7 +244,7 @@ class MatMul(dace.graph.nodes.LibraryNode):
         "MKL": ExpandMatMulMKL,
         "cuBLAS": ExpandMatMulCuBLAS,
     }
-    default_implementation = "pure"
+    default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
