@@ -187,9 +187,7 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                 "{c}_b, {k}, {b}, {c}_c, {m});").format(
                     f=func, c=cast, m=m, n=n, k=k, a=alpha, b=beta)
         tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
+            node.name, {"__a", "__b"}, {"__c"},
             code,
             language=dace.dtypes.Language.CPP)
         nested_sdfg = dace.SDFG('_cuBLAS_MatMul_')
@@ -222,11 +220,11 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                               dace.Memlet.from_array('_cT', CT))
         nested_state.add_edge(trans_c, '_out', acc3, None,
                               dace.Memlet.from_array('_c', C))
-        nested_state.add_edge(acc4, None, tasklet, '_a',
+        nested_state.add_edge(acc4, None, tasklet, '__a',
                               dace.Memlet.from_array('_aT', AT))
-        nested_state.add_edge(acc5, None, tasklet, '_b',
+        nested_state.add_edge(acc5, None, tasklet, '__b',
                               dace.Memlet.from_array('_bT', BT))
-        nested_state.add_edge(tasklet, '_c', acc6, None,
+        nested_state.add_edge(tasklet, '__c', acc6, None,
                               dace.Memlet.from_array('_cT', CT))
         nested_node = dace.graph.nodes.NestedSDFG(
             '_cuBLAS_MatMul_', nested_sdfg, {'_a', '_b'}, {'_c'})

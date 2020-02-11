@@ -232,7 +232,6 @@ class Transpose(dace.graph.nodes.LibraryNode):
         super().__init__(
             name, location=location, inputs={'_inp'}, outputs={'_out'})
         self.dtype = dtype
-        # self.location = location
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
