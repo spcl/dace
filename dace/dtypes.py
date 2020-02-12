@@ -136,7 +136,7 @@ _CTYPES = {
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
     numpy.uint64: "unsigned long long",
-    numpy.float16: "half",
+    numpy.float16: "dace::float16",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",

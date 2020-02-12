@@ -68,6 +68,7 @@ namespace dace
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
     typedef short half;
+    typedef half float16;
     #endif
 
     enum NumAccesses
