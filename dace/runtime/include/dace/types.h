@@ -37,7 +37,6 @@
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline
-    typedef short half;
 #endif
 
 #ifdef __CUDA_ARCH__

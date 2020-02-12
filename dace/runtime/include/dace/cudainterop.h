@@ -17,6 +17,7 @@ enum cudaMemcpyKind {
     cudaMemcpyDeviceToDevice = 3,
     cudaMemcpyDefault = 4
 };
+typedef short half;
 
 #include "cuda/cudacommon.cuh"
 
