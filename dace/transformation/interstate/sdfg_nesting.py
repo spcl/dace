@@ -195,6 +195,14 @@ class InlineSDFG(pattern_matching.Transformation):
         #######################################################
         # Collect and update top-level SDFG metadata
 
+        # Global/init/exit code
+        if nsdfg.global_code:
+            sdfg.set_global_code(sdfg.global_code + nsdfg.global_code)
+        if nsdfg.init_code:
+            sdfg.set_init_code(sdfg.init_code + nsdfg.init_code)
+        if nsdfg.exit_code:
+            sdfg.set_exit_code(sdfg.exit_code + nsdfg.exit_code)
+
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
