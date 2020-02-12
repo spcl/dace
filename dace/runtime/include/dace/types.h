@@ -37,6 +37,7 @@
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline
+    typedef short half;
 #endif
 
 #ifdef __CUDA_ARCH__
@@ -57,7 +58,7 @@ namespace dace
     typedef uint16_t uint16;
     typedef uint32_t uint32;
     typedef uint64_t uint64;
-    //typedef half float16;
+    typedef half float16;
     typedef float float32;
     typedef double float64;
 
