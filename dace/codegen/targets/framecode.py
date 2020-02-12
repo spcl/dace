@@ -79,7 +79,8 @@ class DaCeCodeGenerator(object):
         # Write constants
         self.generate_constants(sdfg, global_stream)
 
-        global_stream.write(sdfg.global_code, sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            global_stream.write(sd.global_code, sd)
 
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
