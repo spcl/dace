@@ -99,10 +99,14 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data):
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('numpy.ndarray')
-def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
-                  dtype: dace.typeclass):
+@oprepo.replaces('dace.ndarray')
+def _define_local(sdfg: SDFG,
+                  state: SDFGState,
+                  shape: Shape,
+                  dtype: dace.typeclass,
+                  storage: dtypes.StorageType = None):
     """ Defines a local array in a DaCe program. """
-    name, _ = sdfg.add_temp_transient(shape, dtype)
+    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
     return name
 
 
