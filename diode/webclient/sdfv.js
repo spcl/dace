@@ -53,6 +53,18 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
                 html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
                 html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
             }
+
+            // If access node, add array information too
+            if (elem instanceof AccessNode) {
+                let sdfg_array = elem.sdfg.attributes._arrays[elem.attributes().data];
+                html += "<br /><h4>Array properties:</h4>";
+                for (let attr of Object.entries(sdfg_array.attributes)) {
+                    if (attr[0] === "layout" || attr[0] === "sdfg") continue;
+                    html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
+                    html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                }
+            }
+
             contents.innerHTML = html;
             document.getElementById("sidebar").style.display = "flex";
         } else {

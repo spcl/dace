@@ -91,6 +91,8 @@ def from_json(obj, context=None, known_type=None):
             if isinstance(obj, str):
                 if hasattr(known_type, "from_string"):
                     return known_type.from_string(obj)
+        if isinstance(obj, list):
+            return [from_json(o, context) for o in obj]
         # Otherwise we don't know what to do with this
         return obj
     attr_type = None
@@ -127,8 +129,8 @@ def from_json(obj, context=None, known_type=None):
 
 
 def loads(*args, context=None, **kwargs):
-    return json.loads(
-        *args, object_hook=lambda x: from_json(x, context), **kwargs)
+    loaded = json.loads(*args, **kwargs)
+    return from_json(loaded, context)
 
 
 def dumps(*args, **kwargs):

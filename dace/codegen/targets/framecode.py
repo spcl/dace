@@ -160,10 +160,10 @@ DACE_EXPORTED void __program_%s(%s)
 
         callsite_stream.write(
             """
-DACE_EXPORTED int __dace_init(%s)
+DACE_EXPORTED int __dace_init_%s(%s)
 {
     int __result = 0;
-""" % params, sdfg)
+""" % (sdfg.name, params), sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
@@ -180,9 +180,9 @@ DACE_EXPORTED int __dace_init(%s)
     return __result;
 }
 
-DACE_EXPORTED void __dace_exit(%s)
+DACE_EXPORTED void __dace_exit_%s(%s)
 {
-""" % params, sdfg)
+""" % (sdfg.name, params), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
