@@ -522,6 +522,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             function_stream, callsite_stream)
 
         # Generate SMI init if needed
+        #TODO: we should sinchronize across different programs in the case of separate SDFGs (needed if we have one
+        # program per SDFG)
         if self.enable_smi:
             host_code_body_stream.write(
                 "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
@@ -995,6 +997,7 @@ __kernel void \\
                         raise dace.codegen.codegen.CodegenError(
                             "Port for remote stream {} must be a constant or a number"
                             .format(dst_node.label))
+                    #TODO handle dynamic number of accesses in SMI
                     result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port)
