@@ -12,7 +12,6 @@ from dace.sdfg import SDFG
 from dace.codegen.compiler import generate_program_folder, configure_and_compile
 from dace.codegen.codegen import CodeObject
 from dace.config import Config
-from dace.codegen.instrumentation.papi import PAPISettings, PAPIUtils
 
 
 def _task(obj):
@@ -83,9 +82,6 @@ class Executor(object):
 
     def run(self, dace_state, fail_on_nonzero=False):
         sdfg = dace_state.get_sdfg()
-
-        # Check counter validity
-        PAPIUtils.check_performance_counters(self)
 
         if self.remote:
             self.show_output("Executing DaCe program " + sdfg.name + " on " +
@@ -163,45 +159,26 @@ class Executor(object):
             # to remote_dace_dir
             so_name = "lib" + dace_progname + "." + self.config_get(
                 'compiler', 'library_extension')
-            self.copy_file_from_remote(remote_dace_dir + "/build/" + so_name,
-                                       tmpfolder + "/" + so_name)
-            self.copy_file_to_remote(tmpfolder + "/" + so_name,
-                                     remote_dace_dir)
+            self.copy_file_from_remote(
+                os.path.join(remote_dace_dir, 'build', so_name),
+                os.path.join(tmpfolder, so_name))
+            self.copy_file_to_remote(
+                os.path.join(tmpfolder, so_name), remote_dace_dir)
 
             dace_file = dace_state.get_dace_tmpfile()
             if dace_file is None:
                 raise ValueError("Dace file is None!")
 
-            remote_dace_file = remote_workdir + "/" + os.path.basename(
-                dace_file)
+            remote_dace_file = os.path.join(remote_workdir,
+                                            os.path.basename(dace_file))
             self.copy_file_to_remote(dace_file, remote_dace_file)
 
-            papi = PAPIUtils.is_papi_used(sdfg)
-
-            # We got the file there, now we can run with different
-            # configurations.
-            if papi:
-                multirun_num = PAPISettings.perf_multirun_num(
-                    config=self._config)
-                for iteration in range(multirun_num):
-                    optdict, omp_thread_num = PAPIUtils.get_run_options(
-                        self, iteration)
-
-                    self.remote_exec_dace(
-                        remote_workdir,
-                        remote_dace_file,
-                        use_mpi,
-                        fail_on_nonzero,
-                        omp_num_threads=omp_thread_num,
-                        repetitions=dace_state.repetitions,
-                        additional_options_dict=optdict)
-            else:
-                self.remote_exec_dace(
-                    remote_workdir,
-                    remote_dace_file,
-                    use_mpi,
-                    fail_on_nonzero,
-                    repetitions=dace_state.repetitions)
+            self.remote_exec_dace(
+                remote_workdir,
+                remote_dace_file,
+                use_mpi,
+                fail_on_nonzero,
+                repetitions=dace_state.repetitions)
 
             self.show_output("Execution Terminated\n")
 
@@ -211,14 +188,12 @@ class Executor(object):
             except RuntimeError:
                 pass
 
-            if papi:
-                # Copy back the vectorization results
-                PAPIUtils.retrieve_vectorization_report(
-                    self, code_objects, remote_dace_dir)
-
-                # Copy back the instrumentation results
-                PAPIUtils.retrieve_instrumentation_results(
-                    self, remote_workdir)
+            # Copy back the instrumentation and vectorization results
+            try:
+                self.copy_folder_from_remote(
+                    os.path.join(remote_dace_dir, 'perf'), ".")
+            except RuntimeError:
+                pass
 
             try:
                 self.remote_delete_file(remote_workdir + "/results.log")
@@ -382,6 +357,14 @@ class Executor(object):
                 self.copy_folder_to_remote(src + "/" + str(subdir),
                                            dst + "/" + str(subdir))
             return
+
+    def copy_folder_from_remote(self, src: str, dst: str):
+        s = Template(self.config_get("execution", "general", "copycmd_r2l"))
+        cmd = s.substitute(
+            host=self.config_get("execution", "general", "host"),
+            srcfile="-r " + src,
+            dstfile=dst)
+        self.exec_cmd_and_show_output(cmd)
 
     def copy_file_from_remote(self, src, dst):
         s = Template(self.config_get("execution", "general", "copycmd_r2l"))

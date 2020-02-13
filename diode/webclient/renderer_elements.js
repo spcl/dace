@@ -184,14 +184,19 @@ class Edge extends SDFGElement {
         ctx.beginPath();
         ctx.moveTo(edge.points[0].x, edge.points[0].y);
 
-        let i;
-        for (i = 1; i < edge.points.length - 2; i++) {
-            let xm = (edge.points[i].x + edge.points[i + 1].x) / 2.0;
-            let ym = (edge.points[i].y + edge.points[i + 1].y) / 2.0;
-            ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, xm, ym);
+        if (edge.points.length == 2) {
+            // Straight line can be drawn
+            ctx.lineTo(edge.points[1].x, edge.points[1].y);
+        } else {
+            let i;
+            for (i = 1; i < edge.points.length - 2; i++) {
+                let xm = (edge.points[i].x + edge.points[i + 1].x) / 2.0;
+                let ym = (edge.points[i].y + edge.points[i + 1].y) / 2.0;
+                ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, xm, ym);
+            }
+            ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y,
+                                 edge.points[i+1].x, edge.points[i+1].y);
         }
-        ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y,
-                             edge.points[i+1].x, edge.points[i+1].y);
 
         let style = this.strokeStyle();
         if (style !== 'black')
@@ -357,6 +362,8 @@ class MapEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } 
 class MapExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([1, 0]); } }
 class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
 class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
+class PipelineEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([10, 3]); } }
+class PipelineExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([10, 3]); } }
 
 class EmptyTasklet extends Node {
     draw(renderer, ctx, mousepos) {
@@ -730,7 +737,7 @@ function ptLineDistance(p, line1, line2) {
 var SDFGElements = {SDFGElement: SDFGElement, State: State, Node: Node,Edge: Edge, Connector: Connector, AccessNode: AccessNode,
                     ScopeNode: ScopeNode, EntryNode: EntryNode, ExitNode: ExitNode, MapEntry: MapEntry, MapExit: MapExit,
                     ConsumeEntry: ConsumeEntry, ConsumeExit: ConsumeExit, EmptyTasklet: EmptyTasklet, Tasklet: Tasklet, Reduce: Reduce,
-                    NestedSDFG: NestedSDFG};
+                    PipelineEntry: PipelineEntry, PipelineExit: PipelineExit, NestedSDFG: NestedSDFG};
                     
 // Save as globals
 Object.keys(SDFGElements).forEach(function(elem) {

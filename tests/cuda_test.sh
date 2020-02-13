@@ -4,6 +4,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
@@ -100,80 +101,91 @@ bail() {
 
 runtestopt() {
     TESTS=`expr $TESTS + 1`
-    opts=$(join_by_newline ${@:4})
-    echo "$opts\ny" | timeout $TEST_TIMEOUT $1 $PYTHONPATH/tests/$2
+    opts=$(join_by_newline ${@:3})
+    echo "$opts\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/tests/$1
     if [ $? -ne 0 ]; then
-        bail "$1 $2 ($3, optimized)"
+        bail "$PYTHON_BINARY $1 ($2, optimized)"
         return 1
     fi
     
     checkoutput # Check for spills in the assembly
-    if [ $? -ne 0 ]; then bail "$1 $2 ($3, assembly)"; return 1; fi
+    if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $1 ($2, assembly)"; return 1; fi
+    return 0
+}
+
+runtestargs() {
+    TESTS=`expr $TESTS + 1`
+    yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/tests/$*
+    if [ $? -ne 0 ]; then
+        bail "$PYTHON_BINARY $*"
+        return 1
+    fi
+    
+    checkoutput # Check for spills in the assembly
+    if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $* (assembly)"; return 1; fi
     return 0
 }
 
 runopt() {
     TESTS=`expr $TESTS + 1`
-    opts=$(join_by_newline ${@:4})
-    echo "$opts\ny" | timeout $TEST_TIMEOUT $1 $PYTHONPATH/$2
+    opts=$(join_by_newline ${@:3})
+    echo "$opts\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/$1
     if [ $? -ne 0 ]; then
-        bail "$1 $2 ($3, optimized)"
+        bail "$PYTHON_BINARY $1 ($2, optimized)"
         return 1
     fi
     
     checkoutput # Check for spills in the assembly
-    if [ $? -ne 0 ]; then bail "$1 $2 ($3, assembly)"; return 1; fi
+    if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $1 ($2, assembly)"; return 1; fi
     return 0
 }
 
-runone() {
-    echo "Running $1"
-    runtestopt $1 cuda_grid_test.py $2
-    runtestopt $1 cuda_grid_test.py $2 'GPUTransformMap$0'
+runall() {
+    echo "Running $PYTHON_BINARY"
+    runtestopt cuda_grid_test.py $1
+    runtestopt cuda_grid_test.py $1 'GPUTransformMap$0'
 
-    runtestopt $1 cuda_grid2d_test.py $2
-    runtestopt $1 cuda_grid2d_test.py $2 'GPUTransformMap$0'
+    runtestopt cuda_grid2d_test.py $1
+    runtestopt cuda_grid2d_test.py $1 'GPUTransformMap$0'
     
-    runtestopt $1 cuda_grid_test.py $2 'GPUTransformMap$0' 'Vectorization$0'
+    runtestopt cuda_grid_test.py $1 'GPUTransformMap$0' 'Vectorization$0'
     # Check that output was vectorized
     if [ $? -eq 0 ] && [ $DACE_optimizer_automatic_strict_transformations -ne 0 ]; then 
         check_vectorization
-        if [ $? -ne 0 ]; then bail "$1 cuda_grid_test.py ($2, wideload)"; fi
+        if [ $? -ne 0 ]; then bail "$PYTHON_BINARY cuda_grid_test.py ($1, wideload)"; fi
     fi
 
-    runtestopt $1 cuda_block_test.py $2
-    runtestopt $1 cuda_block_test.py $2 'GPUTransformMap$0'
+    runtestopt cuda_block_test.py $1
+    runtestopt cuda_block_test.py $1 'GPUTransformMap$0'
 
-    runtestopt $1 cuda_smem_test.py $2
-    runtestopt $1 cuda_smem_test.py $2 'GPUTransformMap$0'
-    runtestopt $1 cuda_smem_test.py $2 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_A")'
+    runtestopt cuda_smem_test.py $1
+    runtestopt cuda_smem_test.py $1 'GPUTransformMap$0'
+    runtestopt cuda_smem_test.py $1 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_A")'
     
-    runtestopt $1 cuda_smem2d_test.py $2
-    runtestopt $1 cuda_smem2d_test.py $2 'GPUTransformMap$0'
-    runtestopt $1 cuda_smem2d_test.py $2 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_V")'
+    runtestopt cuda_smem2d_test.py $1
+    runtestopt cuda_smem2d_test.py $1 'GPUTransformMap$0'
+    runtestopt cuda_smem2d_test.py $1 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_V")'
     
-    runopt $1 samples/simple/sum.py $2
-    runopt $1 samples/simple/sum.py $2 'GPUTransformMap$0'
+    runopt samples/simple/sum.py $1
+    runopt samples/simple/sum.py $1 'GPUTransformMap$0'
     
-    runtestopt $1 cuda_blockreduce.py $2 'GPUTransformMap$0'
-    
-    runtestopt $1 cuda_highdim_kernel_test.py $2 'GPUTransformMap$0(fullcopy=True)'
-    
-    runtestopt $1 multistream_copy_cudatest.py $2
-    runtestopt $1 multistream_kernel_cudatest.py $2
-    runtestopt $1 multistream_custom_cudatest.py $2
+    runtestopt cuda_blockreduce.py $1 'GPUTransformMap$0'
 
-    runtestopt $1 multiprogram_cudatest.py $2
-
-    runtestopt $1 wcr_cudatest.py $2
+    runtestopt cuda_highdim_kernel_test.py $1 'GPUTransformMap$0(fullcopy=True)'
     
-    runopt $1 samples/simple/axpy.py $2 'GPUTransformSDFG$0'
+    runtestopt multistream_copy_cudatest.py $1
+    runtestopt multistream_kernel_cudatest.py $1
+    runtestopt multistream_custom_cudatest.py $1
+
+    runtestopt multiprogram_cudatest.py $1
+
+    runtestopt wcr_cudatest.py $1
+    
+    runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
+    
+    runtestargs instrumentation_test.py gpu
 }
 
-runall() {
-    #runone python2 $1
-    runone python3 $1
-}
 
 # Check if GPU tests can be run
 nvidia-smi >/dev/null 2>&1

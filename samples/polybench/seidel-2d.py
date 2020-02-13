@@ -25,7 +25,7 @@ sizes = [{
     tsteps: 1000,
     N: 4000
 }]
-args = [([N, N], datatype), tsteps]
+args = [([N, N], datatype)]
 
 
 @dace.program(datatype[N, N], dace.int32)
@@ -51,7 +51,7 @@ def seidel2d(A, tsteps):
                            a9) / datatype(9.0)
 
 
-def init_array(A, tsteps):
+def init_array(A):
     n = N.get()
     for i in range(n):
         for j in range(n):

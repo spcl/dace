@@ -91,17 +91,10 @@ class RedundantArray(pm.Transformation):
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
+        # TODO: Should the array be removed from the SDFG?
+        # del sdfg.arrays[in_array]
         if Config.get_bool("debugprint"):
             RedundantArray._arrays_removed += 1
-
-    @staticmethod
-    def print_debuginfo():
-        print(
-            "Automatically removed {} redundant arrays using RedundantArray transform."
-            .format(RedundantArray._arrays_removed))
-
-    def modifies_graph(self):
-        return True
 
 
 pm.Transformation.register_pattern(RedundantArray)

@@ -60,4 +60,5 @@ setup(
         'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
         'scikit-build', 'cmake'
     ],
+    tests_require=['coverage'],
     scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])

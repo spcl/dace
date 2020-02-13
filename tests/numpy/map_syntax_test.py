@@ -20,6 +20,6 @@ if __name__ == '__main__':
     B = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
     copy3d(A, B)
 
-    diff = np.linalg.norm(B - A) / dace.eval(M * N)
+    diff = np.linalg.norm(B - A) / (M.get() * N.get())
     print('Difference:', diff)
     exit(1 if diff >= 1e-5 else 0)

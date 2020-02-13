@@ -4,6 +4,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 ERRORS=0
@@ -24,25 +25,21 @@ join_by_newline() {
 
 
 runtestopt() {
-    opts=$(join_by_newline ${@:4})
-    echo "$opts\ny" | timeout $TEST_TIMEOUT $1 $PYTHONPATH/samples/simple/$2
+    opts=$(join_by_newline ${@:3})
+    echo "$opts\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/simple/$1
     if [ $? -ne 0 ]; then
-        /bin/echo -e "${RED}ERROR${NC} in test $1 $2 ($3, optimized)" 1>&2
+        /bin/echo -e "${RED}ERROR${NC} in test $1 ($2, optimized)" 1>&2
         ERRORS=`expr $ERRORS + 1`
-        FAILED_TESTS="${FAILED_TESTS}    $1 $2 ($3, optimized)\n"
+        FAILED_TESTS="${FAILED_TESTS}    $1 ($2, optimized)\n"
     fi
     TESTS=`expr $TESTS + 1`
 }
 
 
-runone() {
-    echo "Running $1"
-    runtestopt $1 gemm.py $2
-    runtestopt $1 gemm.py $2 'MapReduceFusion$0'
-}
-
 runall() {
-    runone python3 $1
+    echo "Running $PYTHON_BINARY"
+    runtestopt gemm.py $1
+    runtestopt gemm.py $1 'MapReduceFusion$0'
 }
 
 DACE_compiler_use_cache=0

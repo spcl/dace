@@ -50,12 +50,12 @@ if __name__ == "__main__":
     gemm(A, B, C)
 
     if dace.Config.get_bool('profiling'):
-        dace.timethis('gemm', 'numpy', dace.eval(2 * M * K * N), np.dot, A, B,
-                      C_regression)
+        dace.timethis('gemm', 'numpy', (2 * M.get() * K.get() * N.get()),
+                      np.dot, A, B, C_regression)
     else:
         np.dot(A, B, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * N))
+    diff = np.linalg.norm(C_regression - C) / (M.get() * N.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

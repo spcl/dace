@@ -265,7 +265,7 @@ if __name__ == "__main__":
         M.set(args["M"])
         # M must always be specialized, as it's used for the static buffer size
         sdfg = make_sdfg(False)
-        sdfg.specialize()
+        sdfg.specialize(dict(M=M))
         N.set(args["N"])
         K.set(args["K"])
     else:
@@ -273,7 +273,7 @@ if __name__ == "__main__":
         N.set(args["N"])
         K.set(args["K"])
         sdfg = make_sdfg(True)
-        sdfg.specialize()
+        sdfg.specialize(dict(M=M, N=N, K=K))
 
     print("Matrix multiplication {}x{}x{} ({}specialized)".format(
         M.get(), N.get(), K.get(), "" if args["specialize"] else "not "))
@@ -300,7 +300,7 @@ if __name__ == "__main__":
         sdfg(A=A, B=B, C=C, N=N, K=K)
     np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(dace.eval(M * K))
+    diff = np.linalg.norm(C_regression - C) / float(M.get() * K.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

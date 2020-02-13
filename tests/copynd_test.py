@@ -1,10 +1,8 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-import argparse
 import dace
 import numpy as np
-from scipy import ndimage
 
 if __name__ == "__main__":
     print("==== Program start ====")
@@ -100,8 +98,9 @@ if __name__ == "__main__":
     sdfg.draw_to_file()
 
     array_data = [
-        np.random.rand(*[dace.eval(s) for s in a.desc(sdfg).shape]).astype(
-            a.desc(sdfg).dtype.type) for a in arrays
+        np.random.rand(*[
+            dace.symbolic.evaluate(s, {N: N.get()}) for s in a.desc(sdfg).shape
+        ]).astype(a.desc(sdfg).dtype.type) for a in arrays
     ]
 
     args = {anode.label: adata for anode, adata in zip(arrays, array_data)}

@@ -576,12 +576,12 @@ if __name__ == "__main__":
         num_stages = 2 * W.get() - 1
         N.set(args["N"])
         sdfg = make_sdfg(True)
-        sdfg.specialize()
+        sdfg.specialize(dict(W=W, N=N))
     else:
         W.set(args["W"])
         num_stages = 2 * W.get() - 1
         sdfg = make_sdfg(False)
-        sdfg.specialize()
+        sdfg.specialize(dict(W=W))
         N.set(args["N"])
     sdfg.add_constant("num_stages", dace.int32(num_stages))
 
@@ -600,7 +600,7 @@ if __name__ == "__main__":
 
     sdfg.draw_to_file()
     if args["specialize"]:
-        sdfg.specialize()
+        sdfg.specialize(dict(N=N))
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio)
     else:
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio, N=N)

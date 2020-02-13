@@ -4,6 +4,7 @@ import functools
 import itertools
 import sympy as sp
 from six import StringIO
+import warnings
 
 from dace.codegen import cppunparse
 
@@ -241,9 +242,21 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream)
 
+        # TODO: immaterial arrays should not allocate memory
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or nodedesc.storage == dtypes.StorageType.Immaterial
-              ):  # TODO: immaterial arrays should not allocate memory
+              or (nodedesc.storage in [
+                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
+
+            if nodedesc.storage in [
+                    dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+            ]:
+                warnings.warn(
+                    'Variable-length array %s with size %s '
+                    'detected and was allocated on heap instead of '
+                    '%s' % (name, sym2cpp(arrsize), nodedesc.storage))
+
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
                 (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
@@ -345,11 +358,15 @@ class CPUCodeGen(TargetCodeGenerator):
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         nodedesc = node.desc(sdfg)
+        arrsize = nodedesc.total_size
         if isinstance(nodedesc, data.Scalar):
             return
         elif isinstance(nodedesc, data.Stream):
             return
-        elif nodedesc.storage == dtypes.StorageType.CPU_Heap:
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or (nodedesc.storage in [
+                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
             callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
                                   node)
         else:
@@ -465,8 +482,10 @@ class CPUCodeGen(TargetCodeGenerator):
             # Corner cases
 
             # Writing one index
-            if isinstance(memlet.subset,
-                          subsets.Indices) and memlet.wcr is None:
+            if (isinstance(memlet.subset, subsets.Indices)
+                    and memlet.wcr is None
+                    and self._dispatcher.defined_vars.get(
+                        vconn) == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet,
                                                           False)),
@@ -695,7 +714,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
 
             # code->code (e.g., tasklet to tasklet)
-            if isinstance(v, nodes.CodeNode):
+            if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
                 shared_data_name = edge.data.data
                 result.write(
                     "%s = %s;" % (shared_data_name, edge.src_conn),
@@ -1237,12 +1256,13 @@ class CPUCodeGen(TargetCodeGenerator):
         for edge in state_dfg.in_edges(node):
             u = edge.src
             memlet = edge.data
+            src_node = state_dfg.memlet_path(edge)[0].src
 
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
                 # Special case: code->code
-                if isinstance(edge.src, nodes.CodeNode):
+                if isinstance(src_node, nodes.CodeNode):
                     shared_data_name = edge.data.data
 
                     # Read variable from shared storage
@@ -1261,8 +1281,6 @@ class CPUCodeGen(TargetCodeGenerator):
                                                       DefinedType.Scalar)
 
                 else:
-                    src_node = find_input_arraynode(state_dfg, edge)
-
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -1286,7 +1304,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # followed by code<->code
         tasklet_out_connectors = set()
         for edge in state_dfg.out_edges(node):
-            if isinstance(edge.dst, nodes.CodeNode):
+            dst_node = state_dfg.memlet_path(edge)[-1].dst
+            if isinstance(dst_node, nodes.CodeNode):
                 # Handling this in a separate pass just below
                 continue
 
@@ -1294,8 +1313,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
                 else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
-
                     self._dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -1314,9 +1331,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for edge in state_dfg.out_edges(node):
             # Special case: code->code
+            dst_node = state_dfg.memlet_path(edge)[-1].dst
             if edge.src_conn is None:
                 continue
-            elif (isinstance(edge.dst, nodes.CodeNode)
+            elif (isinstance(dst_node, nodes.CodeNode)
                   and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
 
@@ -1329,7 +1347,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     local_name,
                 )
                 outer_stream_begin.write(code, sdfg, state_id,
-                                         [edge.src, edge.dst])
+                                         [edge.src, dst_node])
                 arg_type = sdfg.arrays[edge.data.data]
                 if (isinstance(arg_type, dace.data.Scalar)
                         or isinstance(arg_type, dace.dtypes.typeclass)):
@@ -1448,7 +1466,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg,
             dfg: ScopeSubgraphView,
             state_id,
-            node,
+            node: nodes.NestedSDFG,
             function_stream: CodeIOStream,
             callsite_stream: CodeIOStream,
     ):
@@ -1484,8 +1502,27 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 callsite_stream.write(out_code, sdfg, state_id, node)
 
-        callsite_stream.write("\n    ///////////////////\n", sdfg, state_id,
+        callsite_stream.write("\n{    ///////////////////\n", sdfg, state_id,
                               node)
+
+        # Emit symbol mappings
+        # HACK: We first emit variables of the form __dacesym_X = Y to avoid
+        #       overriding symbolic expressions when the symbol names match
+        # TODO: When emitting nested SDFGs as separate functions,
+        #       remove the workaround
+        for symname, symval in sorted(node.symbol_mapping.items()):
+            callsite_stream.write(
+                '{dtype} __dacesym_{symname} = {symval};\n'.format(
+                    dtype=symbolic.symtype(symval),
+                    symname=symname,
+                    symval=sym2cpp(symval)), sdfg, state_id, node)
+        for sym in sorted(node.symbol_mapping.keys()):
+            callsite_stream.write(
+                'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
+                sdfg,
+                state_id,
+                node)
+        ## End of symbol mappings
 
         old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
@@ -1502,7 +1539,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._toplevel_schedule = old_schedule
 
-        callsite_stream.write("    ///////////////////\n\n", sdfg, state_id,
+        callsite_stream.write("}    ///////////////////\n\n", sdfg, state_id,
                               node)
 
         # Process outgoing memlets with the internal SDFG
@@ -1977,10 +2014,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         for d in range(input_num_dims):
             if d in axes:
                 # Dimension is being reduced.
-                axis_vars.append("__i%d" % d)
-            else:
+                axis_vars.append(symbolic.pystr_to_symbolic("__i%d" % d))
+            elif input_size[d] != 1:
                 # Dimension is NOT being reduced.
-                axis_vars.append("__o%d" % octr)
+                axis_vars.append(symbolic.pystr_to_symbolic("__o%d" % octr))
                 ri = input_size[d]
                 # Iterate over the dimensions of the output memlet and find
                 # the one that is matching with the input memlet dimension.
@@ -1994,6 +2031,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                         output_axis_vars[i] = octr
                         break
                 octr += 1
+            else:  # input_size == 1, no additional offset necessary
+                axis_vars.append(0)
         # Example:
         # __i0 -> first dimension of inp (size K)
         # __o0 -> second dimension of inp and out (size M)
@@ -2015,12 +2054,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         for axis in output_dims:
             octr = output_axis_vars[axis]
             callsite_stream.write(
-                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
-                format(
+                "for (int {var} = {begin}; {var} < {end}; ++{var}) {{".format(
                     var="__o%d" % octr,
-                    begin=output_subset[axis][0],
-                    end=output_subset[axis][1] + 1,
-                    skip=output_subset[axis][2],
+                    begin=0,
+                    end=output_size[axis],
                 ),
                 sdfg,
                 state_id,
@@ -2055,10 +2092,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         outvar = ("__tmpout" if use_tmpout else cpp_array_expr(
             sdfg,
             output_memlet,
-            offset=[("__o%d" % output_axis_vars[i])
-                    if i in output_axis_vars.keys() else r[0]
-                    for i, r in enumerate(output_subset)],
-            relative_offset=False,
+            indices=[
+                symbolic.pystr_to_symbolic("__o%d" % output_axis_vars[i])
+                if i in output_axis_vars.keys() else 0
+                for i, r in enumerate(output_subset)
+            ],
         ))
         # Example (pseudocode):
         # out[i, __o0, __o1]
@@ -2077,12 +2115,10 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         input_subset = input_memlet.subset
         for axis in axes:
             callsite_stream.write(
-                "for (int {var} = {begin}; {var} < {end}; {var} += {skip}) {{".
-                format(
+                "for (int {var} = {begin}; {var} < {end}; ++{var}) {{".format(
                     var="__i%d" % axis,
-                    begin=input_subset[axis][0],
-                    end=input_subset[axis][1] + 1,
-                    skip=input_subset[axis][2],
+                    begin=0,
+                    end=input_size[axis],
                 ),
                 sdfg,
                 state_id,
@@ -2096,22 +2132,24 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         credtype = "dace::ReductionType::" + str(
             redtype)[str(redtype).find(".") + 1:]
 
-        invar = cpp_array_expr(
-            sdfg, input_memlet, offset=axis_vars, relative_offset=False)
+        atomic_suffix = ('_atomic' if output_memlet.wcr_conflict else '')
+
+        invar = cpp_array_expr(sdfg, input_memlet, indices=axis_vars)
 
         if redtype != dtypes.ReductionType.Custom:
             callsite_stream.write(
-                "dace::wcr_fixed<%s, %s>::reduce_atomic(&%s, %s);" %
-                (credtype, output_type, outvar, invar),
+                "dace::wcr_fixed<%s, %s>::reduce%s(&%s, %s);" %
+                (credtype, output_type, atomic_suffix, outvar, invar),
                 sdfg,
                 state_id,
                 node,
             )  # cpp_array_expr(), cpp_array_expr()
         else:
             callsite_stream.write(
-                'dace::wcr_custom<%s>::template reduce_atomic(%s, &%s, %s);' %
-                (output_type, unparse_cr(sdfg, node.wcr), outvar, invar), sdfg,
-                state_id, node)  #cpp_array_expr(), cpp_array_expr()
+                'dace::wcr_custom<%s>::template reduce%s(%s, &%s, %s);' %
+                (output_type, atomic_suffix, unparse_cr(sdfg, node.wcr),
+                 outvar, invar), sdfg, state_id,
+                node)  #cpp_array_expr(), cpp_array_expr()
 
         #############################################################
         # Generate closing braces
@@ -2342,15 +2380,17 @@ def ndslice_cpp(slice, dims, rowmajor=True):
 def cpp_offset_expr(d: data.Data,
                     subset_in: subsets.Subset,
                     offset=None,
-                    packed_veclen=1):
+                    packed_veclen=1,
+                    indices=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
         :param d: The data structure to use for sizes/strides.
-        :param subset: The subset to offset by.
+        :param subset_in: The subset to offset by.
         :param offset: An additional list of offsets or a Subset object
         :param packed_veclen: If packed types are targeted, specifies the
                               vector length that the final offset should be
                               divided by.
+        :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
     subset = copy.deepcopy(subset_in)
@@ -2366,9 +2406,9 @@ def cpp_offset_expr(d: data.Data,
     subset.offset(subsets.Indices(d.offset), False)
 
     # Obtain start range from offsetted subset
-    slice = [0] * len(d.strides)  # subset.min_element()
+    indices = indices or ([0] * len(d.strides))
 
-    index = subset.at(slice, d.strides)
+    index = subset.at(indices, d.strides)
     if packed_veclen > 1:
         index /= packed_veclen
 
@@ -2381,13 +2421,14 @@ def cpp_array_expr(sdfg,
                    offset=None,
                    relative_offset=True,
                    packed_veclen=1,
-                   use_other_subset=False):
+                   use_other_subset=False,
+                   indices=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data], s, o,
-                                    packed_veclen)
+    offset_cppstr = cpp_offset_expr(
+        sdfg.arrays[memlet.data], s, o, packed_veclen, indices=indices)
 
     if with_brackets:
         return "%s[%s]" % (memlet.data, offset_cppstr)
