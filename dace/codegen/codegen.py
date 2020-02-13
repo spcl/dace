@@ -129,10 +129,11 @@ def generate_code(sdfg) -> List[CodeObject]:
     }
 
     # Generate frame code (and the rest of the code)
-    global_code, frame_code, used_targets = frame.generate_code(sdfg, None)
+    (global_code, frame_code, used_targets,
+     used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
         CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
-                   'Frame')
+                   'Frame', environments=used_environments)
     ]
 
     # Create code objects for each target

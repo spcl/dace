@@ -19,7 +19,8 @@ from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, Defi
 from dace.graph import nodes, nxutil
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        find_input_arraynode, find_output_arraynode,
-                       is_devicelevel, is_array_stream_view)
+                       is_devicelevel, is_array_stream_view,
+                       NodeNotExpandedError)
 
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.properties import LambdaProperty
@@ -151,7 +152,12 @@ class CPUCodeGen(TargetCodeGenerator):
     def generate_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
         # Dynamically obtain node generator according to class name
-        gen = getattr(self, "_generate_" + type(node).__name__)
+        try:
+            gen = getattr(self, "_generate_" + type(node).__name__)
+        except AttributeError:
+            if isinstance(node, nodes.LibraryNode):
+                raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
+            raise
 
         gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
@@ -1471,6 +1477,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream: CodeIOStream,
             callsite_stream: CodeIOStream,
     ):
+        callsite_stream.write('{', sdfg, state_id, node)
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
         # If SDFG parent is not set, set it
@@ -1530,8 +1537,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         sdfg_label = "_%d_%d" % (state_id, dfg.node_id(node))
         # Generate code for internal SDFG
-        global_code, local_code, used_targets = self._frame.generate_code(
+        global_code, local_code, used_targets, used_environments = self._frame.generate_code(
             node.sdfg, node.schedule, sdfg_label)
+        self._dispatcher._used_environments |= used_environments
 
         # Write generated code in the proper places (nested SDFG writes
         # location info)
@@ -1556,6 +1564,7 @@ class CPUCodeGen(TargetCodeGenerator):
             skip_wcr=True)
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
+        callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_MapEntry(
             self,

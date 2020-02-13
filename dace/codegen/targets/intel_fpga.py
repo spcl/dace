@@ -722,7 +722,7 @@ __kernel void \\
         sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
 
         # Generate code for internal SDFG
-        global_code, local_code, used_targets = \
+        global_code, local_code, used_targets, used_environments = \
             self._frame.generate_code(node.sdfg, node.schedule, sdfg_label)
 
         # Write generated code in the proper places (nested SDFG writes
