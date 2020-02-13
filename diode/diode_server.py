@@ -3,8 +3,10 @@
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
+from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
+from dace.graph.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -15,6 +17,7 @@ from diode.remote_execution import AsyncExecutor
 
 import traceback
 import os
+import pydoc
 import threading
 import queue
 import time
@@ -457,6 +460,55 @@ def getEnum(name):
     })
 
 
+@app.route('/dace/api/v1.0/getLibImpl/<string:name>', methods=['GET'])
+def get_library_implementations(name):
+    """
+        Helper function to enumerate available implementations for a given
+        library node.
+
+        Returns:
+            enum: List of string-representations of implementations
+    """
+
+    cls = pydoc.locate(name)
+    if cls is None:
+        return jsonify([])
+
+    return jsonify(list(cls.implementations.keys()))
+
+
+@app.route('/dace/api/v1.0/expand/', methods=['POST'])
+def expand_node_or_sdfg():
+    """
+        Performs expansion of a single library node or an entire SDFG.
+        Fields:
+        sdfg (required): SDFG as JSON
+        nodeid (not required): A list of: [SDFG ID, state ID, node ID]
+    """
+
+    try:
+        sdfg = dace.SDFG.from_json(request.json['sdfg'])
+    except KeyError:
+        return jsonify({'error': 'SDFG not given'})
+
+    try:
+        sdfg_id, state_id, node_id = request.json['nodeid']
+    except KeyError:
+        sdfg_id, state_id, node_id = None, None, None
+
+    if sdfg_id is None:
+        sdfg.expand_library_nodes()
+    else:
+        context_sdfg = sdfg.sdfg_list[sdfg_id]
+        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        if isinstance(node, LibraryNode):
+            node.expand(context_sdfg)
+        else:
+            return jsonify({'error': 'The given node is not a library node'})
+
+    return jsonify({'sdfg': sdfg.to_json()})
+
+
 def collect_all_SDFG_nodes(sdfg):
     ret = []
     for sid, state in enumerate(sdfg.nodes()):
@@ -766,15 +818,25 @@ def compileProgram(request, language, perfopts=None):
         codegen_sdfgs = copy.deepcopy(sdfg_dict)
         codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
-            from dace.codegen import codegen
-            if sdfg_eval_order != []:
-                sdfg_eval_order.reverse()
-                for x in sdfg_eval_order:
-                    s = codegen_sdfgs[x]
-                    code_tuple_dict[x] = codegen.generate_code(s)
+            if sdfg_eval_order:
+                sdfg_eval = [(n, codegen_sdfgs[n])
+                             for n in reversed(sdfg_eval_order)]
             else:
-                for n, s in codegen_sdfgs.items():
+                sdfg_eval = codegen_sdfgs.items()
+
+            for n, s in sdfg_eval:
+                try:
+                    if Config.get_bool('diode', 'general',
+                                       'library_autoexpand'):
+                        s.expand_library_nodes()
+
                     code_tuple_dict[n] = codegen.generate_code(s)
+                except dace.sdfg.NodeNotExpandedError as ex:
+                    code_tuple_dict[n] = [str(ex)]
+                except Exception:  # Forward exception to output code
+                    code_tuple_dict[n] = [
+                        'Code generation failed:\n' + traceback.format_exc()
+                    ]
 
         if dace_state is None:
             if "code" in request.json:
@@ -1022,9 +1084,12 @@ def compile(language):
         compounds = {}
         for n, s in sdfgs.items():
             compounds[n] = {
-                "sdfg": s.to_json(),
-                "matching_opts": opts[n]['matching_opts'],
-                "generated_code": [*map(lambda x: x.code, code_tuples[n])]
+                "sdfg":
+                s.to_json(),
+                "matching_opts":
+                opts[n]['matching_opts'],
+                "generated_code":
+                [*map(lambda x: getattr(x, 'code', str(x)), code_tuples[n])]
             }
         return jsonify({"compounds": compounds})
 

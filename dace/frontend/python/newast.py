@@ -318,6 +318,29 @@ def _imag(sdfg: SDFG, state: SDFGState, input: str):
                         _complex_to_scalar(inptype))
 
 
+@oprepo.replaces('transpose')
+@oprepo.replaces('dace.transpose')
+@oprepo.replaces('numpy.transpose')
+def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
+
+    arr1 = sdfg.arrays[inpname]
+    restype = arr1.dtype
+    outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]),
+                                            restype, arr1.storage)
+
+    acc1 = state.add_read(inpname)
+    acc2 = state.add_write(outname)
+    import dace.libraries.blas  # Avoid import loop
+    tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
+    state.add_node(tasklet)
+    state.add_edge(acc1, None, tasklet, '_inp',
+                   dace.Memlet.from_array(inpname, arr1))
+    state.add_edge(tasklet, '_out', acc2, None,
+                   dace.Memlet.from_array(outname, arr2))
+
+    return outname
+
+
 ##############################################################################
 # Python operation replacements ##############################################
 ##############################################################################
@@ -616,24 +639,18 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
                                         restype, arr1.storage)
 
-    state.add_mapped_tasklet(
-        '_MatMult_', {
-            '__i%d' % i: '0:%s' % s
-            for i, s in enumerate(
-                [arr1.shape[0], arr2.shape[1], arr1.shape[1]])
-        }, {
-            '__a': Memlet.simple(op1, '__i0, __i2'),
-            '__b': Memlet.simple(op2, '__i2, __i1')
-        },
-        '__c = __a * __b', {
-            '__c':
-            Memlet.simple(
-                op3,
-                '__i0, __i1',
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=0)
-        },
-        external_edges=True)
+    acc1 = state.add_read(op1)
+    acc2 = state.add_read(op2)
+    acc3 = state.add_write(op3)
+    import dace.libraries.blas as blas  # Avoid import loop
+    tasklet = blas.MatMul('_MatMult_', restype)
+    state.add_node(tasklet)
+    state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(
+        op1, arr1))
+    state.add_edge(acc2, None, tasklet, '_b', dace.Memlet.from_array(
+        op2, arr2))
+    state.add_edge(tasklet, '_c', acc3, None, dace.Memlet.from_array(
+        op3, arr3))
 
     return op3
 
@@ -1339,8 +1356,8 @@ class GlobalResolver(ast.NodeTransformer):
 
 
 class TaskletTransformer(ExtNodeTransformer):
-    """ A visitor that traverses a data-centric tasklet, removes memlet 
-        annotations and returns input and output memlets. 
+    """ A visitor that traverses a data-centric tasklet, removes memlet
+        annotations and returns input and output memlets.
     """
 
     def __init__(self,
@@ -1356,7 +1373,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  variables: Dict[str, str] = dict(),
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str],
                                 str] = dict()):
-        """ Creates an AST parser for tasklets. 
+        """ Creates an AST parser for tasklets.
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
         """
@@ -1392,7 +1409,7 @@ class TaskletTransformer(ExtNodeTransformer):
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
     def parse_tasklet(self, tasklet_ast: TaskletType):
-        """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets. 
+        """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
             :param tasklet_ast: The Tasklet's Python AST to parse.
             :return: 3-tuple of (Tasklet node, input memlets, output memlets).
             @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
@@ -1670,7 +1687,7 @@ class TaskletTransformer(ExtNodeTransformer):
 
 
 class ProgramVisitor(ExtNodeVisitor):
-    """ A visitor that traverses a data-centric Python program AST and 
+    """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
     """
 
@@ -1689,7 +1706,7 @@ class ProgramVisitor(ExtNodeVisitor):
             nested: bool = False,
             tmp_idx: int = 0):
         """ ProgramVisitor init method
-        
+
         Arguments:
             name {str} -- Name of DaCe program
             filename {str} -- Name of file containing DaCe program
@@ -1700,7 +1717,7 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
             other_sdfgs {Dict[str, Union[SDFG, DaceProgram]]} -- Other SDFGs
-        
+
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
             tmp_idx {int} -- First idx for tmp transient names (default: {0})
@@ -1761,13 +1778,13 @@ class ProgramVisitor(ExtNodeVisitor):
     def parse_program(self, program: ast.FunctionDef,
                       is_tasklet: bool = False):
         """ Parses a DaCe program or tasklet
-        
+
         Arguments:
             program {ast.FunctionDef} -- DaCe program or tasklet
-        
+
         Keyword Arguments:
             is_tasklet {bool} -- True, if program is tasklet (default: {False})
-        
+
         Returns:
             Tuple[SDFG, Dict, Dict] -- Parsed SDFG, its inputs and outputs
         """
@@ -2009,15 +2026,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_for_indices(self, node: ast.Expr):
         """Parses the indices of a for-loop statement
-        
+
         Arguments:
             node {ast.Expr} -- Target of ast.For node
-        
+
         Raises:
             DaceSyntaxError: If target is not ast.Tuple
             DaceSyntaxError: If index is not ast.Name
             DaceSyntaxError: If index ID is duplicate
-        
+
         Returns:
             List[str] -- List of index IDs
         """
@@ -2047,13 +2064,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_value(self, node: Union[ast.Name, ast.Num]):
         """Parses a value
-        
+
         Arguments:
             node {Union[ast.Name, ast.Num]} -- Value node
-        
+
         Raises:
             DaceSyntaxError: If node is not ast.Name or ast.Num
-        
+
         Returns:
             str -- Value id or number as string
         """
@@ -2067,10 +2084,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
-        
+
         Arguments:
             node {ast.Slice} -- Slice node
-        
+
         Returns:
             Tuple[str] -- Range in (from, to, step) format
         """
@@ -2080,10 +2097,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_index_as_range(self, node: ast.Index):
         """Parses an index as range
-        
+
         Arguments:
             node {ast.Index} -- Index node
-        
+
         Returns:
             Tuple[str] -- Range in (from, to, step) format
         """
@@ -2093,15 +2110,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_for_iterator(self, node: ast.Expr):
         """Parses the iterator of a for-loop statement
-        
+
         Arguments:
             node {ast.Expr} -- Iterator (iter) of ast.For node
-        
+
         Raises:
             DaceSyntaxError: If iterator is not ast.Subscript
             DaceSyntaxError: If iterator type is not supported
             NotImplementedError: If iterator type is not implemented
-        
+
         Returns:
             Tuple[str, List[str]] -- Iterator type and iteration ranges
         """
@@ -3060,14 +3077,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_shape(self, node: Union[ast.List, ast.Tuple, ast.Attribute]):
         """Parses the shape of an array
-        
+
         Arguments:
             node {Union[ast.List, ast.Tuple, ast.Attribute]} -- Shape node
-        
+
         Raises:
             DaceSyntaxError: If shape node is ast.Attribute, but the attribute is not a shape
             DaceSyntaxError: If shape node is neither a list/tuple nor an attribute
-        
+
         Returns:
             List[Union[str, int, dace.symbol]] -- Shape
         """
@@ -3092,14 +3109,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_dtype(self, node: ast.Attribute):
         """Parses the dtype of an array
-        
+
         Arguments:
             node {ast.Attribute} -- Dtype node
-        
+
         Raises:
             DaceSyntaxError: If dtype node is an ast.Attribute, but the attribute is not a dtype
             DaceSyntaxError: If dtype node is not ast.Attribute
-        
+
         Returns:
             Any -- Dtype
         """
@@ -3122,10 +3139,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_ndarray(self, node: ast.Call):
         """Parses a call to numpy.ndarray
-        
+
         Arguments:
             node {ast.Call} -- Call node
-        
+
         Returns:
             Tuple[shape, dtype] -- Shape and dtype of the array
         """
@@ -3183,7 +3200,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Call(self, node: ast.Call):
         from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
 
-        default_impl = Config.get('frontend', 'implementation')
         funcname = rname(node)
         func = None
 
@@ -3415,7 +3431,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: If the function is a callback, implement it as a tasklet
 
         # Otherwise, try to find a default implementation for the SDFG
-        func = oprepo.Replacements.get(funcname, default_impl)
+        func = oprepo.Replacements.get(funcname)
         if func is None:
             # Check for SDFG as fallback
             func = oprepo.Replacements.get(funcname)
@@ -3426,7 +3442,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     % funcname)
             print(
                 'WARNING: Function "%s" is not registered with an %s implementation, falling back to SDFG'
-                % (funcname, default_impl))
+                % funcname)
 
         args = [self._parse_function_arg(arg) for arg in node.args]
         keywords = {
@@ -3635,7 +3651,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
-        default_impl = Config.get('frontend', 'implementation')
         opname = None
         try:
             opname = type(node.op).__name__
@@ -3656,7 +3671,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 operand1, op1type = self._convert_num_to_array(op1)
 
         func = oprepo.Replacements.getop(
-            op1type, opname, implementation=default_impl, otherclass=op2type)
+            op1type, opname, otherclass=op2type)
         if func is None:
             # Check for SDFG as fallback
             func = oprepo.Replacements.getop(
@@ -3667,9 +3682,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     'Operator "%s" is not defined for types %s and %s' %
                     (opname, op1type, op2type))
             print(
-                'WARNING: Operator "%s" is not registered with an %s implementation for'
+                'WARNING: Operator "%s" is not registered with an implementation for'
                 'types %s and %s, falling back to SDFG' %
-                (opname, default_impl, op1type, op2type))
+                (opname, op1type, op2type))
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         result = func(self, self.sdfg, self.last_state, operand1, operand2)

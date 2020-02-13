@@ -231,6 +231,7 @@ class TargetDispatcher(object):
 
     def __init__(self):
         self._used_targets = set()
+        self._used_environments = set()
 
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
@@ -266,6 +267,12 @@ class TargetDispatcher(object):
         """ Returns a list of targets (code generators) that were triggered
             during generation. """
         return self._used_targets
+
+    @property
+    def used_environments(self):
+        """ Returns a list of environments required to build and run the code.
+        """
+        return self._used_environments
 
     def register_state_dispatcher(self, dispatcher, predicate=None):
         """ Registers a code generator that processes a single state, calling
@@ -465,6 +472,11 @@ class TargetDispatcher(object):
     def dispatch_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
         """ Dispatches a code generator for a single node. """
+
+        # If this node depends on any environments, register this for
+        # generating header code later
+        if hasattr(node, "environments"):
+            self._used_environments |= node.environments
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator

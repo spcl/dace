@@ -2,8 +2,10 @@
 """
 
 from __future__ import print_function
-import inspect
+import copy
 import dace
+import inspect
+from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.graph import labeling, graph as gr, nodes as nd
@@ -233,6 +235,63 @@ class Transformation(object):
     @staticmethod
     def print_debuginfo():
         pass
+
+class ExpandTransformation(Transformation):
+    """Base class for transformations that simply expand a node into a
+       subgraph, and thus needs only simple matching and replacement
+       functionality. Subclasses only need to implement the method
+       "expansion".
+    """
+
+    @classmethod
+    def expressions(clc):
+        return [nxutil.node_path_graph(clc._match_node)]
+
+    @staticmethod
+    def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
+                       candidate: Dict[dace.graph.nodes.Node, int],
+                       expr_index: int,
+                       sdfg,
+                       strict: bool = False):
+        # All we need is the correct node
+        return True
+
+    @classmethod
+    def match_to_str(clc, graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
+                     candidate: Dict[dace.graph.nodes.Node, int]):
+        node = graph.nodes()[candidate[clc._match_node]]
+        return str(node)
+
+    @staticmethod
+    def expansion(node):
+        raise NotImplementedError("Must be implemented by subclass")
+
+    @staticmethod
+    def postprocessing(sdfg, state, expansion):
+        pass
+
+    def apply(self, sdfg, *args, **kwargs):
+        state = sdfg.nodes()[self.state_id]
+        node = state.nodes()[self.subgraph[type(self)._match_node]]
+        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        if isinstance(expansion, dace.SDFG):
+            expansion = state.add_nested_sdfg(
+                expansion,
+                sdfg,
+                node.in_connectors,
+                node.out_connectors,
+                name=node.name)
+        elif isinstance(expansion, dace.graph.nodes.CodeNode):
+            pass
+        else:
+            raise TypeError("Node expansion must be a CodeNode or an SDFG")
+        expansion.environments = copy.copy(
+            set(map(lambda a: a.__name__,
+                    type(self).environments)))
+        dace.graph.nxutil.change_edge_dest(state, node, expansion)
+        dace.graph.nxutil.change_edge_src(state, node, expansion)
+        state.remove_node(node)
+        type(self).postprocessing(sdfg, state, expansion)
 
 
 # Module functions ############################################################
