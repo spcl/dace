@@ -1,18 +1,12 @@
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
-import copy
-import itertools
-
-from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, symbolic
-from dace.config import Config
+from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.graph import nodes, nxutil, edges as ed
-from dace.transformation import pattern_matching, optimizer
+from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 
-from dace.transformation.dataflow import RedundantArray
-from dace.transformation.interstate import StateFusion
 
-
+@registry.autoregister
 @make_properties
 class GPUTransformSDFG(pattern_matching.Transformation):
     """ Implements the GPUTransformSDFG transformation.
@@ -337,6 +331,3 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         # Apply strict state fusions greedily.
         sdfg.apply_strict_transformations()
-
-
-pattern_matching.Transformation.register_stateflow_pattern(GPUTransformSDFG)

@@ -98,19 +98,33 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data):
 
 
 @oprepo.replaces('dace.define_local')
+@oprepo.replaces('dace.ndarray')
+def _define_local_ex(sdfg: SDFG,
+                     state: SDFGState,
+                     shape: Shape,
+                     dtype: dace.typeclass,
+                     storage: dtypes.StorageType = dtypes.StorageType.Default):
+    """ Defines a local array in a DaCe program. """
+    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
+    return name
+
+
 @oprepo.replaces('numpy.ndarray')
 def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
                   dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
-    name, _ = sdfg.add_temp_transient(shape, dtype)
-    return name
+    return _define_local_ex(sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
-def _define_local_scalar(sdfg: SDFG, state: SDFGState, dtype: dace.typeclass):
+def _define_local_scalar(
+        sdfg: SDFG,
+        state: SDFGState,
+        dtype: dace.typeclass,
+        storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    sdfg.add_scalar(name, dtype, transient=True)
+    sdfg.add_scalar(name, dtype, transient=True, storage=storage)
     return name
 
 

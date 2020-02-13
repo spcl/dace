@@ -1,5 +1,6 @@
 #!flask/bin/python
 
+import aenum
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
@@ -28,7 +29,7 @@ app = Flask(__name__)
 enum_list = [
     typename
     for typename, dtype in inspect.getmembers(dace.dtypes, inspect.isclass)
-    if issubclass(dtype, dace.dtypes.AutoNumber)
+    if issubclass(dtype, aenum.Enum)
 ]
 
 es_ref = []

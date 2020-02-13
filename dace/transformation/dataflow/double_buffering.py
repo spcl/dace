@@ -3,7 +3,7 @@
 import copy
 import itertools
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic
+from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
@@ -11,6 +11,7 @@ from dace.transformation import pattern_matching
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
+@registry.autoregister_params(singlestate=True)
 class DoubleBuffering(pattern_matching.Transformation):
     """ Implements the double buffering pattern, which pipelines reading
         and processing data by creating a second copy of the memory.
@@ -231,6 +232,3 @@ class DoubleBuffering(pattern_matching.Transformation):
                                  if symbolic.issymbolic(dim) else dim)
 
         return new_subset
-
-
-pattern_matching.Transformation.register_pattern(DoubleBuffering)

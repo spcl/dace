@@ -668,6 +668,14 @@ class SDFG(OrderedDiGraph):
             yield node, self
             yield from node.all_nodes_recursive()
 
+    def all_sdfgs_recursive(self):
+        """ Iterate over this and all nested SDFGs. """
+        yield self
+        for state in self.nodes():
+            for node in state.nodes():
+                if isinstance(node, nd.NestedSDFG):
+                    yield from node.sdfg.all_sdfgs_recursive()
+
     def all_edges_recursive(self):
         """ Iterate over all edges in this SDFG, including state edges,
             inter-state edges, and recursively edges within nested SDFGs,
@@ -1863,13 +1871,15 @@ subgraph cluster_state_{state} {{
 
             B{Note:} This is an in-place operation on the SDFG.
         """
-        from dace.transformation.dataflow import RedundantArray, MergeArrays
-        from dace.transformation.interstate import StateFusion, InlineSDFG
+        # These are imported in order to update the transformation registry
+        from dace.transformation import dataflow, interstate
+        # This is imported here to avoid an import loop
+        from dace.transformation.pattern_matching import Transformation
 
         strict_transformations = [
-            StateFusion, RedundantArray, MergeArrays, InlineSDFG
+            k for k, v in Transformation.extensions().items()
+            if v.get('strict', False)
         ]
-
         self.apply_transformations(
             strict_transformations, validate=validate, strict=True)
 

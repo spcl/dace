@@ -8,7 +8,7 @@ import warnings
 
 import dace
 from dace.frontend import operations
-from dace import subsets, symbolic, dtypes, data as dt
+from dace import registry, subsets, symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.graph import nodes
 from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
@@ -47,6 +47,7 @@ def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     return True
 
 
+@registry.autoregister_params(name='cuda')
 class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA) code generator. """
     target_name = 'cuda'

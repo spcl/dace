@@ -2,7 +2,7 @@
     Used for collecting CPU performance counters. """
 
 import dace
-from dace import dtypes, symbolic
+from dace import dtypes, registry, symbolic
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.targets.common import sym2cpp
 from dace.config import Config
@@ -35,6 +35,7 @@ def _unified_id(node_id: int, state_id: int) -> int:
     return (int(state_id) << 16) | int(node_id)
 
 
+@registry.autoregister_params(type=dtypes.InstrumentationType.PAPI_Counters)
 class PAPIInstrumentation(InstrumentationProvider):
     """ Instrumentation provider that reports CPU performance counters using
         the PAPI library. """

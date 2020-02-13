@@ -19,7 +19,7 @@ import dace
 from dace.frontend import operations
 from dace import symbolic, data as dt
 from dace.config import Config
-from dace.codegen import codegen
+from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import make_absolute
 
@@ -433,7 +433,9 @@ def configure_and_compile(program_folder,
         else:
             path = os.path.join(target_name, file_name)
         files.append(path)
-        targets[target_name] = codegen.STRING_TO_TARGET[target_name]
+        targets[target_name] = next(
+            k for k, v in TargetCodeGenerator.extensions().items()
+            if v['name'] == target_name)
 
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

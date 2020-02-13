@@ -3,31 +3,18 @@ from typing import List
 
 from dace import dtypes
 from dace import data
-from dace.codegen.targets import framecode
+from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 
-# Import all code generation targets
-from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx, intel_fpga
-from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
+# Import CPU code generator. TODO: Remove when refactored
+from dace.codegen.targets import cpu
+
+from dace.codegen.instrumentation import InstrumentationProvider
 
 
 class CodegenError(Exception):
     pass
-
-
-STRING_TO_TARGET = {
-    "cpu": cpu.CPUCodeGen,
-    "cuda": cuda.CUDACodeGen,
-    "immaterial": immaterial.ImmaterialCodeGen,
-    "mpi": mpi.MPICodeGen,
-    "intel_fpga": intel_fpga.IntelFPGACodeGen,
-    "xilinx": xilinx.XilinxCodeGen,
-}
-
-_TARGET_REGISTER_ORDER = [
-    'cpu', 'cuda', 'immaterial', 'mpi', 'intel_fpga', 'xilinx'
-]
 
 
 def generate_headers(sdfg) -> str:
@@ -110,25 +97,32 @@ def generate_code(sdfg) -> List[CodeObject]:
         sdfg = sdfg2
 
     frame = framecode.DaCeCodeGenerator()
-    # Instantiate all targets (who register themselves with framecodegen)
-    targets = {
-        name: STRING_TO_TARGET[name](frame, sdfg)
-        for name in _TARGET_REGISTER_ORDER
-    }
+
+    # Instantiate CPU first (as it is used by the other code generators)
+    # TODO: Refactor the parts used by other code generators out of CPU
+    targets = {'cpu': cpu.CPUCodeGen(frame, sdfg)}
+
+    # Instantiate the rest of the targets
+    targets.update({
+        v['name']: k(frame, sdfg)
+        for k, v in target.TargetCodeGenerator.extensions().items()
+        if v['name'] not in targets
+    })
 
     # Instantiate all instrumentation providers in SDFG
+    provider_mapping = InstrumentationProvider.get_provider_mapping()
     frame._dispatcher.instrumentation[
         dtypes.InstrumentationType.No_Instrumentation] = None
     for node, _ in sdfg.all_nodes_recursive():
         if hasattr(node, 'instrument'):
             frame._dispatcher.instrumentation[node.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.instrument]
+                provider_mapping[node.instrument]
         elif hasattr(node, 'consume'):
             frame._dispatcher.instrumentation[node.consume.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+                provider_mapping[node.consume.instrument]
         elif hasattr(node, 'map'):
             frame._dispatcher.instrumentation[node.map.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.map.instrument]
+                provider_mapping[node.map.instrument]
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()
