@@ -2,94 +2,36 @@
 """
 
 from __future__ import print_function
-import inspect
+import copy
 import dace
+import inspect
+from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property, SubgraphProperty
+from dace.registry import make_registry
 from dace.graph import labeling, graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Dict, List, Tuple, Type, Union
 
 
+@make_registry
 @make_properties
 class Transformation(object):
     """ Base class for transformations, as well as a static registry of
         transformations, where new transformations can be added in a
         decentralized manner.
+
+        New transformations are registered with ``Transformation.register``
+        (or ``dace.registry.autoregister_params``) with two optional boolean
+        keyword arguments: ``singlestate`` (default: False) and ``strict``
+        (default: False).
+        If ``singlestate`` is True, the transformation operates on a single
+        state; otherwise, it will be matched over an entire SDFG.
+        If ``strict`` is True, this transformation will be considered strict
+        (i.e., always important to perform) and will be performed automatically
+        as part of SDFG strict transformations.
     """
-
-    ####################################################################
-    # Transformation registry
-
-    # Class attributes
-
-    _patterns = set()
-    _stateflow_patterns = set()
-
-    # Static methods
-
-    @staticmethod
-    def patterns():
-        """ Returns a list of single-state (dataflow) transformations
-            currently in the registry. """
-
-        pattern_list = sorted(
-            Transformation._patterns, key=lambda cls: cls.__name__)
-        return pattern_list
-
-    @staticmethod
-    def stateflow_patterns():
-        """ Returns a list of multiple-state (interstate) transformations
-            currently in the registry. """
-
-        pattern_list = sorted(
-            Transformation._stateflow_patterns, key=lambda cls: cls.__name__)
-        return pattern_list
-
-    @staticmethod
-    def register_pattern(clazz):
-        """ Registers a single-state (dataflow) transformation in the registry.
-            :param clazz: The Transformation class type.
-        """
-
-        if not issubclass(clazz, Transformation):
-            raise TypeError
-        Transformation._patterns.add(clazz)
-
-    @staticmethod
-    def register_stateflow_pattern(clazz):
-        """ Registers a multi-state transformation in the registry.
-            :param clazz: The Transformation class type.
-        """
-
-        if not issubclass(clazz, Transformation):
-            raise TypeError
-        Transformation._stateflow_patterns.add(clazz)
-
-    @staticmethod
-    def register_pattern_file(filename):
-        """ Registers all transformations in a single Python file. """
-
-        pattern_members = {}
-        with open(filename) as pattern_file:
-            exec(pattern_file.read(), pattern_members)
-        for member in pattern_members.values():
-            if inspect.isclass(member) and issubclass(member, Transformation):
-                Transformation.register_pattern(member)
-
-    @staticmethod
-    def deregister_pattern(clazz):
-        """ De-registers a transformation.
-            :param clazz: The Transformation class type.
-        """
-
-        if not issubclass(clazz, Transformation):
-            raise TypeError
-        Transformation._patterns.remove(clazz)
-
-    ####################################################################
-    # Static and object methods
 
     # Properties
     sdfg_id = Property(dtype=int, category="(Debug)")
@@ -215,6 +157,9 @@ class Transformation(object):
     def __str__(self):
         return type(self).__name__
 
+    def modifies_graph(self):
+        return True
+
     def print_match(self, sdfg):
         """ Returns a string representation of the pattern match on the
             given SDFG. Used for printing matches in the console UI.
@@ -230,9 +175,63 @@ class Transformation(object):
         string += type(self).match_to_str(graph, self.subgraph)
         return string
 
+
+class ExpandTransformation(Transformation):
+    """Base class for transformations that simply expand a node into a
+       subgraph, and thus needs only simple matching and replacement
+       functionality. Subclasses only need to implement the method
+       "expansion".
+    """
+
+    @classmethod
+    def expressions(clc):
+        return [nxutil.node_path_graph(clc._match_node)]
+
     @staticmethod
-    def print_debuginfo():
+    def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
+                       candidate: Dict[dace.graph.nodes.Node, int],
+                       expr_index: int,
+                       sdfg,
+                       strict: bool = False):
+        # All we need is the correct node
+        return True
+
+    @classmethod
+    def match_to_str(clc, graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
+                     candidate: Dict[dace.graph.nodes.Node, int]):
+        node = graph.nodes()[candidate[clc._match_node]]
+        return str(node)
+
+    @staticmethod
+    def expansion(node):
+        raise NotImplementedError("Must be implemented by subclass")
+
+    @staticmethod
+    def postprocessing(sdfg, state, expansion):
         pass
+
+    def apply(self, sdfg, *args, **kwargs):
+        state = sdfg.nodes()[self.state_id]
+        node = state.nodes()[self.subgraph[type(self)._match_node]]
+        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        if isinstance(expansion, dace.SDFG):
+            expansion = state.add_nested_sdfg(
+                expansion,
+                sdfg,
+                node.in_connectors,
+                node.out_connectors,
+                name=node.name)
+        elif isinstance(expansion, dace.graph.nodes.CodeNode):
+            pass
+        else:
+            raise TypeError("Node expansion must be a CodeNode or an SDFG")
+        expansion.environments = copy.copy(
+            set(map(lambda a: a.__name__,
+                    type(self).environments)))
+        dace.graph.nxutil.change_edge_dest(state, node, expansion)
+        dace.graph.nxutil.change_edge_src(state, node, expansion)
+        state.remove_node(node)
+        type(self).postprocessing(sdfg, state, expansion)
 
 
 # Module functions ############################################################

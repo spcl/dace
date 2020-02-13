@@ -2,9 +2,8 @@
     (with local storage). """
 
 import copy
-import itertools
 
-from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
@@ -32,6 +31,7 @@ def in_path(path, edge, nodetype, forward=True):
     return False
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class GPUTransformLocalStorage(pattern_matching.Transformation):
     """Implements the GPUTransformLocalStorage transformation.
@@ -542,13 +542,3 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
 
     def modifies_graph(self):
         return True
-
-    @staticmethod
-    def print_debuginfo():
-        print("Automatically cloned {} arrays for the GPU.".format(
-            GPUTransformLocalStorage._arrays_removed))
-        print("Automatically changed {} maps for the GPU.".format(
-            GPUTransformLocalStorage._maps_transformed))
-
-
-pattern_matching.Transformation.register_pattern(GPUTransformLocalStorage)

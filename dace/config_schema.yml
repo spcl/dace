@@ -565,30 +565,13 @@ required:
                 title: General
                 description: General DIODE Preferences
                 required:
- 
-                    show_transfed:
+                    library_autoexpand:
                         type: bool
-                        default: False
-                        title: (EXPERIMENTAL) Show Transformation Editor
+                        default: True
+                        title: Auto-Expand Library Nodes
                         description: >
-                            Show (or hide) the experimental transformation
-                            editor.
-    
-                    show_sdfged:
-                        type: bool
-                        default: False
-                        title: (EXPERIMENTAL) Show SDFG Editor
-                        description: >
-                            Show (or hide) the experimental SDFG Editor.
-
-                    show_optgraph:
-                        type: bool
-                        default: False
-                        title: Show Optimization Graph
-                        description: >
-                            Show available transformations as a graph. This is
-                            discouraged as the optimization graph may be too
-                            large to be useful.
+                            Automatically expand library nodes upon compilation, rather than
+                            expecting the nodes be expanded manually to the chosen implementation.
 
             fonts:
                 type: dict
@@ -612,7 +595,7 @@ required:
                         title: Transformation Editor
                         type: font
                         description: Font used to render pattern match code.
-        
+
     instrumentation:
         type: dict
         title: Instrumentation
@@ -642,22 +625,6 @@ required:
                         default: false
                         description: >
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
-
-    #############################################
-    # Frontend settings
-
-    frontend:
-        type: dict
-        title: Frontend
-        description: Python frontend preferences
-        required:
-            implementation:
-                type: str
-                default: "sdfg"
-                title: Default operator implementation
-                description: >
-                    Sets the default operator implementation when parsing Python code into
-                    subgraphs or tasklets (can be sdfg, mkl, cublas).
 
     #############################################
     # General settings
@@ -701,3 +668,37 @@ required:
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+
+            blas_implementation:
+                type: str
+                default: pure
+                title: Default BLAS Implementation
+                description: >
+                    Default library to use when implementing BLAS library nodes
+                    encountered in an SDFG, if no other implementation has been
+                    explicitly specified.
+
+    #############################################
+    # DaCe library settings 
+
+    library:
+        type: dict
+        title: Library
+        description: Settings for handling the use of DaCe libraries.
+        required:
+            blas:
+                type: dict
+                title: BLAS
+                description: Built-in BLAS DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: pure 
+                        description: Default implementation BLAS library nodes.  
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+

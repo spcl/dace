@@ -668,9 +668,13 @@ class SDFGRenderer {
     }
 
     destroy() {
-        this.canvas_manager.destroy();
-        this.container.removeChild(this.canvas);
-        this.container.removeChild(this.toolbar);
+        try {
+            this.canvas_manager.destroy();
+            this.container.removeChild(this.canvas);
+            this.container.removeChild(this.toolbar);
+        } catch (ex) {
+            // Do nothing
+        }
     }
 
     // Initializes the DOM

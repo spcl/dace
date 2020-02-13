@@ -1,25 +1,15 @@
-from six import StringIO
-import collections
-import functools
 import os
-import itertools
 import re
-import sympy as sp
 
 import dace
-from dace import subsets
+from dace import registry
 from dace.config import Config
-from dace.frontend import operations
 from dace.graph import nodes
-from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
+from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute, DefinedType)
-from dace.codegen.targets.cpu import cpp_offset_expr, cpp_array_expr
+from dace.codegen.targets.target import make_absolute, DefinedType
 from dace.codegen.targets import cpu, fpga
-
-from dace.codegen import cppunparse
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "hlslib::op::Min",
@@ -30,6 +20,7 @@ REDUCTION_TYPE_TO_HLSLIB = {
 }
 
 
+@registry.autoregister_params(name='xilinx')
 class XilinxCodeGen(fpga.FPGACodeGen):
     """ Xilinx FPGA code generator. """
 

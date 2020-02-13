@@ -7,7 +7,7 @@ K = dace.symbol('K')
 
 
 @dace.program
-def my_assign(X_in : dace.float32[N], X_out : dace.float32[N]):
+def my_assign(X_in: dace.float32[N], X_out: dace.float32[N]):
     X_out[:] = X_in[:]
 
 

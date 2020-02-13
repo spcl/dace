@@ -35,9 +35,11 @@ class Optimizer(object):
             self.sdfg = copy.deepcopy(sdfg)
 
         # Initialize patterns to search for
-        self.patterns = pattern_matching.Transformation.patterns()
-        self.stateflow_patterns = pattern_matching.Transformation.stateflow_patterns(
-        )
+        self.patterns = set(
+            k for k, v in pattern_matching.Transformation.extensions().items()
+            if v.get('singlestate', False))
+        self.stateflow_patterns = set(pattern_matching.Transformation.
+                                      extensions().keys()) - self.patterns
         self.applied_patterns = set()
 
     def optimize(self):

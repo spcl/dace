@@ -15,6 +15,8 @@ from dace import SDFG, SDFGState
 from dace.graph import labeling
 from dace.graph.nodes import Tasklet, NestedSDFG
 from dace.frontend.tensorflow.winograd import winograd_convolution
+from dace.frontend.tensorflow.transformations.redundant_array import (
+    TensorflowRedundantArray)
 
 try:
     import tensorflow as tf
