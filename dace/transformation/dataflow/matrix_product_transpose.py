@@ -2,12 +2,14 @@
 
 from copy import deepcopy as dcpy
 import dace
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace import registry
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 import dace.libraries.blas as blas
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class MatrixProductTranspose(pattern_matching.Transformation):
     """ Implements the matrix-matrix product transpose transformation.
@@ -42,7 +44,8 @@ class MatrixProductTranspose(pattern_matching.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         _at = graph.nodes()[candidate[MatrixProductTranspose._at]]
-        _a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
+        _a_times_b = graph.nodes()[candidate[
+            MatrixProductTranspose._a_times_b]]
         edges = graph.edges_between(_at, _a_times_b)
         # Enforce unique match
         if len(edges) != 1:
@@ -54,18 +57,23 @@ class MatrixProductTranspose(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        transpose_a = graph.nodes()[candidate[MatrixProductTranspose._transpose_a]]
-        transpose_b = graph.nodes()[candidate[MatrixProductTranspose._transpose_b]]
+        transpose_a = graph.nodes()[candidate[
+            MatrixProductTranspose._transpose_a]]
+        transpose_b = graph.nodes()[candidate[
+            MatrixProductTranspose._transpose_b]]
         a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        transpose_a = graph.nodes()[self.subgraph[MatrixProductTranspose._transpose_a]]
+        transpose_a = graph.nodes()[self.subgraph[
+            MatrixProductTranspose._transpose_a]]
         _at = graph.nodes()[self.subgraph[MatrixProductTranspose._at]]
-        transpose_b = graph.nodes()[self.subgraph[MatrixProductTranspose._transpose_b]]
+        transpose_b = graph.nodes()[self.subgraph[
+            MatrixProductTranspose._transpose_b]]
         _bt = graph.nodes()[self.subgraph[MatrixProductTranspose._bt]]
-        a_times_b = graph.nodes()[self.subgraph[MatrixProductTranspose._a_times_b]]
+        a_times_b = graph.nodes()[self.subgraph[
+            MatrixProductTranspose._a_times_b]]
 
         for src, src_conn, _, _, memlet in graph.in_edges(transpose_a):
             graph.add_edge(src, src_conn, a_times_b, '_b', memlet)
@@ -93,6 +101,3 @@ class MatrixProductTranspose(pattern_matching.Transformation):
                        dace.Memlet.from_array(tmp_name, tmp_arr))
         graph.add_edge(tmp_acc, None, transpose_c, '_inp',
                        dace.Memlet.from_array(tmp_name, tmp_arr))
-
-
-pattern_matching.Transformation.register_pattern(MatrixProductTranspose)
