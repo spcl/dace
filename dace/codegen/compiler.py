@@ -149,8 +149,8 @@ class CompiledSDFG(object):
         self._initialized = False
         self._lastargs = ()
         lib.load()  # Explicitly load the library
-        self._init = lib.get_symbol('__dace_init')
-        self._exit = lib.get_symbol('__dace_exit')
+        self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
+        self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
     @property

@@ -53,8 +53,20 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
                 html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
                 html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
             }
+
+            // If access node, add array information too
+            if (elem instanceof AccessNode) {
+                let sdfg_array = elem.sdfg.attributes._arrays[elem.attributes().data];
+                html += "<br /><h4>Array properties:</h4>";
+                for (let attr of Object.entries(sdfg_array.attributes)) {
+                    if (attr[0] === "layout" || attr[0] === "sdfg") continue;
+                    html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
+                    html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                }
+            }
+
             contents.innerHTML = html;
-            document.getElementById("sidebar").style.display = "block";
+            document.getElementById("sidebar").style.display = "flex";
         } else {
             document.getElementById("sidebar-contents").innerHTML = "";
             document.getElementById("sidebar-header").innerText = "Nothing selected";
@@ -65,3 +77,20 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
 function close_menu() {
   document.getElementById("sidebar").style.display = "none";
 }
+
+
+var right = document.getElementById('sidebar');
+var bar = document.getElementById('dragbar');
+
+const drag = (e) => {
+  document.selection ? document.selection.empty() : window.getSelection().removeAllRanges();
+  right.style.width = Math.max(((e.view.innerWidth - e.pageX)), 20) + 'px';
+}
+
+bar.addEventListener('mousedown', () => {
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', () => {
+        document.removeEventListener('mousemove', drag);
+    });
+});
+
