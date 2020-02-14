@@ -1843,7 +1843,7 @@ subgraph cluster_state_{state} {{
             return False
         return True
 
-    def apply_strict_transformations(self, validate=True):
+    def apply_strict_transformations(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -1858,79 +1858,129 @@ subgraph cluster_state_{state} {{
         ]
 
         self.apply_transformations(
-            strict_transformations, validate=validate, strict=True)
+            strict_transformations,
+            validate=validate,
+            strict=True,
+            apply_repeatedly=True,
+            validate_all=validate_all)
 
     def apply_transformations(self,
-                              patterns: Union[Type, List[Type]],
+                              xforms: Union[Type, List[Type]],
+                              options: Optional[Union[Dict[str, Any], List[
+                                  Dict[str, Any]]]] = None,
                               validate: bool = True,
+                              validate_all: bool = False,
                               strict: bool = False,
                               states: Optional[List[Any]] = None,
-                              apply_once: bool = False,
-                              properties: Dict[str, Any] = None):
-        """ This function applies transformations as given in the argument
-            patterns. Operates in-place.
-            :param patterns: A Transformation class or a list thereof to apply.
-            :param validate: If True, validates after every transformation.
+                              apply_repeatedly: bool = False) -> int:
+        """ This function applies a transformation or a sequence thereof.
+            Operates in-place.
+            :param xforms: A Transformation class or a sequence.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
-            :param apply_once: If True, applies the first found transformation
-                               and returns. Otherwise, applies until no further
-                               transformations are found.
-            :param properties: Properties to set when applying transformations.
+            :param apply_repeatedly: If True, applies the given transformations
+                                     repeatedly (where options match the items
+                                     in the sequence), until none can be found.
+            :return: Number of transformations applied
         """
         # Avoiding import loops
         from dace.transformation import optimizer
         from dace.transformation.pattern_matching import Transformation
 
-        if isinstance(patterns, type) and issubclass(patterns, Transformation):
-            patterns = [patterns]
-
-        # Apply strict state fusions greedily.
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        applied = True
         applied_transformations = collections.defaultdict(int)
-        while applied:
-            applied = False
-            # Find and apply immediately
-            for match in opt.get_pattern_matches(
-                    strict=strict, patterns=patterns, states=states):
+
+        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+            xforms = [xforms]
+
+        # If applying repeatedly, ensure transformations are unique
+        if apply_repeatedly and len(xforms) != len(set(xforms)):
+            raise ValueError('Transformation set must be unique')
+
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+
+        if not apply_repeatedly:
+            for xform, opts in zip(xforms, options):
+                # Find only the first match
+                try:
+                    match = next(
+                        m for m in opt.get_pattern_matches(
+                            strict=strict, patterns=[xform], states=states))
+                except StopIteration:
+                    continue
                 sdfg = self.sdfg_list[match.sdfg_id]
-                if properties is not None:
-                    for prop_name, prop_val in properties.items():
-                        setattr(match, prop_name, prop_val)
+
+                # Set transformation properties
+                for prop_name, prop_val in opts.items():
+                    setattr(match, prop_name, prop_val)
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
-                if validate:
-                    self.fill_scope_connectors()
+                if validate_all:
                     self.validate()
-                applied = True
-                break
-            if apply_once and applied:
-                break
+        else:
+            applied = True
+            while applied:
+                applied = False
+                # Find and apply one of
+                for match in opt.get_pattern_matches(
+                        strict=strict, patterns=xforms, states=states):
+                    sdfg = self.sdfg_list[match.sdfg_id]
+
+                    # Set transformation properties
+                    opts = next(
+                        o for x, o in zip(xforms, options) if type(match) is x)
+                    for prop_name, prop_val in opts.items():
+                        setattr(match, prop_name, prop_val)
+
+                    match.apply(sdfg)
+                    applied_transformations[type(match).__name__] += 1
+                    if validate_all:
+                        self.validate()
+                    applied = True
+                    break
+
+        if validate:
+            self.validate()
 
         if Config.get_bool('debugprint') and len(applied_transformations) > 0:
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
 
+        return sum(applied_transformations.values())
+
     def apply_gpu_transformations(self,
                                   states=None,
                                   validate=True,
+                                  validate_all=False,
                                   strict=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
-            @note: It is recommended to apply redundant array removal
+            :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
             you can apply_strict_transformations() after this transformation.
-            @note: This is an in-place operation on the SDFG.
+            :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
         from dace.transformation.dataflow import GPUTransformLocalStorage
 
-        patterns = [GPUTransformLocalStorage]
         self.apply_transformations(
-            patterns, validate=validate, strict=strict, states=states)
+            GPUTransformLocalStorage,
+            apply_repeatedly=True,
+            validate=validate,
+            validate_all=validate_all,
+            strict=strict,
+            states=states)
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
