@@ -1,24 +1,16 @@
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
-import enum
+import aenum
 import inspect
 import numpy
-import pydoc
 from functools import wraps
 
-
-class AutoNumber(enum.Enum):
-    """ Backwards-compatible version of Enum's `auto()` """
-
-    def __new__(cls):
-        value = len(cls.__members__) + 1
-        obj = object.__new__(cls)
-        obj._value_ = value
-        return obj
+from dace.registry import extensible_enum
 
 
-class StorageType(AutoNumber):
+@extensible_enum
+class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
@@ -35,7 +27,8 @@ class StorageType(AutoNumber):
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
 
 
-class ScheduleType(AutoNumber):
+@extensible_enum
+class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
 
     Default = ()  # Scope-default parallel schedule
@@ -56,7 +49,7 @@ GPU_SCHEDULES = [
 ]
 
 
-class ReductionType(AutoNumber):
+class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
     Custom = ()  # Defined by an arbitrary lambda function
@@ -74,14 +67,15 @@ class ReductionType(AutoNumber):
     Max_Location = ()  # Maximum value and its location
 
 
-class Language(AutoNumber):
+@extensible_enum
+class Language(aenum.AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
 
     Python = ()
     CPP = ()
 
 
-class AccessType(AutoNumber):
+class AccessType(aenum.AutoNumberEnum):
     """ Types of access to an `AccessNode`. """
 
     ReadOnly = ()
@@ -89,7 +83,8 @@ class AccessType(AutoNumber):
     ReadWrite = ()
 
 
-class InstrumentationType(AutoNumber):
+@extensible_enum
+class InstrumentationType(aenum.AutoNumberEnum):
     """ Types of instrumentation providers.
         @note: Might be determined automatically in future versions.
     """
@@ -141,7 +136,7 @@ _CTYPES = {
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
     numpy.uint64: "unsigned long long",
-    numpy.float16: "half",
+    numpy.float16: "dace::float16",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
@@ -175,7 +170,6 @@ _BYTES = {
     float: 4,
     bool: 1,
     numpy.bool: 1,
-    numpy.int8: 1,
     numpy.int8: 1,
     numpy.int16: 2,
     numpy.int32: 4,

@@ -1,11 +1,13 @@
 """ This module contains classes and functions that implement the orthogonal
     tiling transformation. """
 
+from dace import registry
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class MapTiling(pattern_matching.Transformation):
     """ Implements the orthogonal tiling transformation.
@@ -90,6 +92,3 @@ class MapTiling(pattern_matching.Transformation):
                                           mapcollapse_subgraph, 0)
                 mapcollapse.apply(sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
-
-
-pattern_matching.Transformation.register_pattern(MapTiling)

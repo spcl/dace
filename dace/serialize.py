@@ -1,4 +1,4 @@
-import enum
+import aenum
 import json
 import numpy as np
 import dace.dtypes
@@ -73,7 +73,7 @@ def to_json(obj):
     elif isinstance(obj, np.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
-    elif isinstance(obj, enum.Enum):
+    elif isinstance(obj, aenum.Enum):
         # Store just the name of this key
         return obj._name_
     else:
@@ -85,12 +85,14 @@ def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
         if known_type is not None:
             # For enums, resolve using the type if known
-            if issubclass(known_type, enum.Enum) and isinstance(obj, str):
+            if issubclass(known_type, aenum.Enum) and isinstance(obj, str):
                 return known_type[obj]
             # If we can, convert from string
             if isinstance(obj, str):
                 if hasattr(known_type, "from_string"):
                     return known_type.from_string(obj)
+        if isinstance(obj, list):
+            return [from_json(o, context) for o in obj]
         # Otherwise we don't know what to do with this
         return obj
     attr_type = None
@@ -127,8 +129,8 @@ def from_json(obj, context=None, known_type=None):
 
 
 def loads(*args, context=None, **kwargs):
-    return json.loads(
-        *args, object_hook=lambda x: from_json(x, context), **kwargs)
+    loaded = json.loads(*args, **kwargs)
+    return from_json(loaded, context)
 
 
 def dumps(*args, **kwargs):

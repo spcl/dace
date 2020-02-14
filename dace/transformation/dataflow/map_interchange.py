@@ -1,13 +1,14 @@
 """ Implements the map interchange transformation. """
 
-from copy import deepcopy as dcpy
 import dace
+from dace import registry
 from dace.graph import nodes, nxutil
 from dace.symbolic import symlist
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class MapInterchange(pattern_matching.Transformation):
     """ Implements the map-interchange transformation.
@@ -138,6 +139,3 @@ class MapInterchange(pattern_matching.Transformation):
         # Add edges between the map entries and exits.
         for e in entry_edges + exit_edges:
             graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data)
-
-
-pattern_matching.Transformation.register_pattern(MapInterchange)

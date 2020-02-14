@@ -254,11 +254,11 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                         newmemlet.subset = type(edge.data.subset)(
                             [r for r in newsubset if r is not None])
 
-                graph.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
+                graph.add_edge(node, None, edge.dst, edge.dst_conn,
                                newmemlet)
 
                 edge.data.other_subset = newmemlet.subset
-                graph.add_edge(edge.src, None, node, None, edge.data)
+                graph.add_edge(edge.src, edge.src_conn, node, None, edge.data)
     for array_name, node in out_cloned_arraynodes.items():
         graph.add_node(node)
         is_scalar = isinstance(sdfg.arrays[array_name], dace.data.Scalar)
@@ -295,13 +295,13 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                         newmemlet.subset = type(edge.data.subset)(
                             [r for r in newsubset if r is not None])
 
-                graph.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
+                graph.add_edge(edge.src, edge.src_conn, node, None,
                                newmemlet)
 
                 edge.data.data = node.data
                 edge.data.other_subset = edge.data.subset
                 edge.data.subset = newmemlet.subset
-                graph.add_edge(node, None, edge.dst, None, edge.data)
+                graph.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
 
 
 class ValidationError(Exception):

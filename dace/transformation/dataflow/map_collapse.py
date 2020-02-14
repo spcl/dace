@@ -1,6 +1,6 @@
 """ Contains classes that implement the map-collapse transformation. """
 
-from copy import deepcopy as dcpy
+from dace import registry
 from dace.symbolic import symlist
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
@@ -8,6 +8,7 @@ from dace.properties import make_properties
 from typing import Tuple
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class MapCollapse(pattern_matching.Transformation):
     """ Implements the Map Collapse pattern.
@@ -110,6 +111,3 @@ class MapCollapse(pattern_matching.Transformation):
 
         return nxutil.merge_maps(graph, outer_map_entry, outer_map_exit,
                                  inner_map_entry, inner_map_exit)
-
-
-pattern_matching.Transformation.register_pattern(MapCollapse)

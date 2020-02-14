@@ -126,6 +126,16 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return "%s (at state %s%s)" % (self.message, str(state.label), nodestr)
 
 
+class NodeNotExpandedError(InvalidSDFGNodeError):
+    """
+    Exception that is raised whenever a library node was not expanded
+    before code generation.
+    """
+
+    def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
+        super().__init__('Library node not expanded', sdfg, state_id, node_id)
+
+
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
 
@@ -657,6 +667,14 @@ class SDFG(OrderedDiGraph):
         for node in self.nodes():
             yield node, self
             yield from node.all_nodes_recursive()
+
+    def all_sdfgs_recursive(self):
+        """ Iterate over this and all nested SDFGs. """
+        yield self
+        for state in self.nodes():
+            for node in state.nodes():
+                if isinstance(node, nd.NestedSDFG):
+                    yield from node.sdfg.all_sdfgs_recursive()
 
     def all_edges_recursive(self):
         """ Iterate over all edges in this SDFG, including state edges,
@@ -1659,6 +1677,9 @@ subgraph cluster_state_{state} {{
             opt = optclass(sdfg)
             sdfg = opt.optimize()
 
+        # Recursively expand library nodes that haven't been expanded yet
+        sdfg.expand_library_nodes()
+
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
@@ -1666,7 +1687,7 @@ subgraph cluster_state_{state} {{
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            self, program_objects, os.path.join(".dacecache", sdfg.name))
+            sdfg, program_objects, os.path.join(".dacecache", sdfg.name))
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder)
@@ -1850,13 +1871,15 @@ subgraph cluster_state_{state} {{
 
             B{Note:} This is an in-place operation on the SDFG.
         """
-        from dace.transformation.dataflow import RedundantArray, MergeArrays
-        from dace.transformation.interstate import StateFusion, InlineSDFG
+        # These are imported in order to update the transformation registry
+        from dace.transformation import dataflow, interstate
+        # This is imported here to avoid an import loop
+        from dace.transformation.pattern_matching import Transformation
 
         strict_transformations = [
-            StateFusion, RedundantArray, MergeArrays, InlineSDFG
+            k for k, v in Transformation.extensions().items()
+            if v.get('strict', False)
         ]
-
         self.apply_transformations(
             strict_transformations,
             validate=validate,
@@ -1981,6 +2004,28 @@ subgraph cluster_state_{state} {{
             strict=strict,
             states=states)
 
+    def expand_library_nodes(self):
+        """ Recursively expand all unexpanded library nodes in the SDFG,
+            resulting in a "pure" SDFG that the code generator can handle.
+        """
+
+        states = list(self.states())
+        while len(states) > 0:
+            state = states.pop()
+            expanded_something = False
+            for node in list(state.nodes()):  # Make sure we have a copy
+                if isinstance(node, nd.NestedSDFG):
+                    node.sdfg.expand_library_nodes()  # Call recursively
+                elif isinstance(node, nd.LibraryNode):
+                    node.expand(self)
+                    print("Automatically expanded library node \"" +
+                          str(node) + "\".")
+                    # We made a copy of the original list of nodes, so we keep
+                    # iterating even though this list has now changed
+                    expanded_something = True
+            if expanded_something:
+                states.append(state)  # Nodes have changed. Check state again
+
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
             :return: A list of `CodeObject` objects containing the generated
@@ -2034,8 +2079,9 @@ class MemletTrackingView(object):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
-        while not isinstance(curedge.src,
-                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+        while not isinstance(
+                curedge.src,
+            (nd.CodeNode, nd.AccessNode, nd.Reduce, nd.LibraryNode)):
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
