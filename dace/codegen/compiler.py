@@ -423,7 +423,6 @@ def configure_and_compile(program_folder,
         line.strip().split(",")
         for line in open(os.path.join(program_folder, "dace_files.csv"), "r")
     ]
-    #TODO va messo qui smi
 
     # Get absolute paths and targets for all source files
     files = []
@@ -436,7 +435,7 @@ def configure_and_compile(program_folder,
         files.append(path)
         targets[target_name] = next(
             k for k, v in TargetCodeGenerator.extensions().items()
-            if v['name'] == target_name)
+            if v['name'] == target_name or target_name in v['name'])
 
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

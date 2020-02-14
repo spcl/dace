@@ -104,9 +104,9 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Instantiate the rest of the targets
     targets.update({
-        v['name']: k(frame, sdfg)
+        v['name'][0] if isinstance(v['name'], list) else v['name']: k(frame, sdfg)
         for k, v in target.TargetCodeGenerator.extensions().items()
-        if v['name'] not in targets
+        if (v['name'][0] if isinstance(v['name'], list) else v['name']) not in targets
     })
 
     # Instantiate all instrumentation providers in SDFG

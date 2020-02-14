@@ -51,7 +51,7 @@ TYPE_TO_SMI_TYPE = {
 }
 
 
-@registry.autoregister_params(name='intel_fpga')
+@registry.autoregister_params(name=['intel_fpga', 'intel_fpga_smi'])
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'
@@ -183,7 +183,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                                   code=code)
                               for (name, code) in self._host_codes
                           ])))
-
+        # Since CodeObject defines target_name, I have to explicitely indicate intel_fpga_smi if remote streams are used
         host_code_obj = CodeObject(
             self._program_name,
             host_code.getvalue(),
