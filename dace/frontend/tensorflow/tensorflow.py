@@ -2008,10 +2008,11 @@ class TFSession:
             image_dims_list = image.desc(self.graph).shape
             filter_dims_list = filter.desc(self.graph).shape
             [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
-
+            pad = strides[H] * (output.desc(self.graph).shape[H] - 1) + \
+                  filter.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-            if padding == "SAME":
+            if padding == "SAME" and pad > 0:
                 paddedInput, paddedDims = self.inputPadding(
                     node,
                     image,
@@ -2175,7 +2176,7 @@ class TFSession:
             else:
                 self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
-            if padding == "SAME":
+            if padding == "SAME" and pad > 0:
                 state.add_edge(paddedImage, None, tasklet, 'x',
                                Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
             else:
@@ -2932,10 +2933,9 @@ class TFSession:
 
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-            if padding == "SAME":
-                pad = int(strides[H] * (int(gradient.desc(self.graph).shape[H]) - 1) +
-                          filter_dims_list[0] - int(output.desc(self.graph).shape[H]))
-
+            pad = int(strides[H] * (int(gradient.desc(self.graph).shape[H]) - 1) +
+                      filter_dims_list[0] - int(output.desc(self.graph).shape[H]))
+            if padding == "SAME" and pad > 0:
                 # If padding is even (padding is on each side the same)
                 if pad % 2 == 0:
                     paddingUp = pad // 2
@@ -3090,7 +3090,7 @@ class TFSession:
                 self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
             # for same padding: remove padding to get original image size
-            if padding == "SAME":
+            if padding == "SAME" and pad > 0:
                 mapParams = output_params
                 mapRange = output_dims
                 paddedOutputParams = output_params[:]
@@ -3347,9 +3347,11 @@ class TFSession:
             [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
             image_dims_list = image.desc(self.graph).shape
 
+            pad = strides[H] * (gradient.desc(self.graph).shape[H] - 1) \
+                  + output.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-            if padding == "SAME":
+            if padding == "SAME" and pad > 0:
                 paddedInput, paddedDims = self.inputPadding(
                     node,
                     image,
@@ -3502,7 +3504,7 @@ class TFSession:
                 idx = [3, 2, 0, 1]  # KCRS
             mapInput = self.map_output_filter(node, idx, output)
 
-            if padding == "SAME":
+            if padding == "SAME" and pad > 0:
                 state.add_edge(paddedImage, None, tasklet, 'x',
                                Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
             else:
