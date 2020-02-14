@@ -2782,6 +2782,8 @@ class DIODE_Project {
         this._listeners = {};
 
         this._closed_windows = [];
+
+        this._blob = null;
     }
 
     clearTransformationHistory() {
@@ -2987,8 +2989,48 @@ class DIODE_Project {
         return JSON.parse(tmp);
     }
 
+    createblob(data) {
+      var blob = new Blob([data], {
+        type: 'text/plain'
+      });
+
+      // If we are replacing a previously generated file we need to
+      // manually revoke the object URL to avoid memory leaks.
+      if (this._blob !== null) {
+        window.URL.revokeObjectURL(this._blob);
+      }
+
+      this._blob = window.URL.createObjectURL(blob);
+
+      return this._blob;
+    }
+
     save() {
-        // TODO: Save current open file
+        // Save current open file as SDFG
+        this.request(['sdfg_object'], x => {
+            let sdfg = x.sdfg_object;
+            let filename = null;
+            if (typeof (sdfg) != 'string') {
+                filename = Object.keys(x.sdfg_object)[0];
+                sdfg = stringify_sdfg(Object.values(x.sdfg_object)[0]);
+            } else {
+                let sdfg_obj = parse_sdfg(sdfg);
+                filename = sdfg_obj.attributes.name;
+            }
+            filename += '.sdfg';
+
+            var link = document.createElement('a');
+            link.setAttribute('download', filename);
+            link.href = this.createblob(sdfg);
+            document.body.appendChild(link);
+
+            // wait for the link to be added to the document
+            window.requestAnimationFrame(function () {
+                var event = new MouseEvent('click');
+                link.dispatchEvent(event);
+                document.body.removeChild(link);
+            });
+        });
     }
 
     request(list, callback, options={}) {

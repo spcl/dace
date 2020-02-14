@@ -855,6 +855,7 @@ function start_DIODE() {
         diode.open_diode_settings();
     });
     diode.addKeyShortcut('r', () => { diode.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true }); });
+    diode.addKeyShortcut('s', () => { diode.project().save(); }, false, true);
 
     diode.setupEvents();
 
