@@ -3890,8 +3890,8 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
     if include_exit:
         children_nodes = set(node_to_children[entry_node])
     else:
-        # Assume the last node in the scope list is the exit node
-        children_nodes = set(node_to_children[entry_node][:-1])
+        children_nodes = set(n for n in node_to_children[entry_node]
+                             if not isinstance(n, nd.ExitNode))
     map_nodes = [
         node for node in children_nodes if isinstance(node, nd.EntryNode)
     ]
