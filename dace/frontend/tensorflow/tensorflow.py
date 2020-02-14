@@ -368,15 +368,14 @@ class TFSession:
         """
         self.cudnn = cudnn and gpu
         from dace.config import Config
-        
-        # Set libraries for cudnn
-        if os.name == 'nt' and not 'cudnn.lib' in Config.get('compiler','cpu','libs') and self.cudnn:
-            Config.append('compiler', 'cpu', 'libs', value='cudnn.lib;')
-            Config.append('compiler','cpu','libs', value='cuda.lib')
-        elif os.name != 'nt' and not ' libcudnn.so' in Config.get('compiler','cpu','libs') and self.cudnn:
-            Config.append('compiler', 'cpu', 'libs', value=' libcudnn.so') 
 
-        
+        # Set libraries for cudnn
+        if os.name == 'nt' and not 'cudnn.lib' in Config.get('compiler', 'cpu', 'libs') and self.cudnn:
+            Config.append('compiler', 'cpu', 'libs', value='cudnn.lib;')
+            Config.append('compiler', 'cpu', 'libs', value='cuda.lib')
+        elif os.name != 'nt' and not ' libcudnn.so' in Config.get('compiler', 'cpu', 'libs') and self.cudnn:
+            Config.append('compiler', 'cpu', 'libs', value=' libcudnn.so')
+
         # Create a unique name for this session
         if name is None:
             global _LASTSESSION
@@ -509,7 +508,7 @@ class TFSession:
             if gpu:
                 from dace.transformation.interstate import GPUTransformSDFG
                 self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
-                
+
                 '''for aname, array in self.graph.arrays.items():
                     if array is None:
                         continue
@@ -2007,6 +2006,8 @@ class TFSession:
             filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
             output = self.create_and_add_output_node(node)[0]
             image_dims_list = image.desc(self.graph).shape
+            filter_dims_list = filter.desc(self.graph).shape
+            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
 
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
@@ -2015,9 +2016,9 @@ class TFSession:
                     node,
                     image,
                     image.desc(self.graph),
-                    output.desc(self.graph).shape[2],
+                    output.desc(self.graph).shape[H],
                     filter.desc(self.graph).shape[0],
-                    strides[1],
+                    strides[H],
                     image_dims,
                 )
                 paddedImage = paddedInput
@@ -2028,22 +2029,17 @@ class TFSession:
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
-                if data_format == "NHWC":
-                    padh = explicit_paddings[2]
-                    padw = explicit_paddings[4]
-                else:
-                    padh = explicit_paddings[4]
-                    padw = explicit_paddings[6]
+                padh = explicit_paddings[H * 2]
+                padw = explicit_paddings[W * 2]
 
             # change filter format from RSCK to target format for cuDNN
-            idx = [3,0,1,2]    #KRSC
-            if data_format=='NCHW':
-                idx = [3,2,0,1]    #KCRS
+            idx = [3, 0, 1, 2]  # KRSC
+            if data_format == 'NCHW':
+                idx = [3, 2, 0, 1]  # KCRS
             mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
-            filter_dims_list = mapOutput.desc(self.graph).shape
 
             tasklet = state.add_tasklet(
-                name= string_builder(node.type),
+                name=string_builder(node.type),
                 inputs={'x', 'f'},
                 outputs={'y'},
                 code='''
@@ -2157,15 +2153,10 @@ class TFSession:
                                                          &workSpaceSizeInBytes_{i}));
                 
                 cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
-            '''.format(N=image_dims_list[data_format.find('N')],
-                       C=image_dims_list[data_format.find('C')],
-                       H=image_dims_list[data_format.find('H')],
-                       W=image_dims_list[data_format.find('W')],
-                       K=filter_dims_list[data_format.find('N')],
-                       R=filter_dims_list[data_format.find('H')],
-                       S=filter_dims_list[data_format.find('W')],
-                       padh=padh, padw=padw, vstr=strides[1], hstr=strides[2],
-                       dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
+            '''.format(N=image_dims_list[N], C=image_dims_list[C], H=image_dims_list[H], W=image_dims_list[W],
+                       K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1],
+                       padh=padh, padw=padw, vstr=strides[H], hstr=strides[W],
+                       dilh=dilations[H], dilw=dilations[W], i=local_count, format=data_format)
 
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
@@ -2189,11 +2180,11 @@ class TFSession:
                                Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
             else:
                 state.add_edge(image, None, tasklet, 'x',
-                           Memlet.from_array(image.label, image.desc(self.graph)))
+                               Memlet.from_array(image.label, image.desc(self.graph)))
             state.add_edge(mapOutput, None, tasklet, 'f',
                            Memlet.from_array(mapOutput.label, mapOutput.desc(self.graph)))
             state.add_edge(tasklet, 'y', output, None,
-                           Memlet.from_array(output.label, output.desc(self.graph)))          
+                           Memlet.from_array(output.label, output.desc(self.graph)))
         else:
             local_ctr = str(next(_atomic_count))
             inputList = []
@@ -2264,7 +2255,7 @@ class TFSession:
             self.reinitCR(outputList[0], outputParams, outputDims, "0")
             tasklet = state.add_tasklet(
                 mapLabel, {"j0", "j1"}, {"out"},
-                "out = j0 * j1;")  #printf(\"%f\\t\", j0);")
+                "out = j0 * j1;")  # printf(\"%f\\t\", j0);")
             self.add_out_memlets(outputList, mapExit, reduce_node, outputDims,
                                  outputParams)
             self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
@@ -2284,7 +2275,6 @@ class TFSession:
                     wcr_identity=0)
                 state.add_edge(tasklet, name, mapExit2, None, memlet)
                 state.add_edge(mapExit2, None, reduce_node, None, memlet)
-            
 
     def visit_BiasAdd(self, node):
 
@@ -2922,11 +2912,12 @@ class TFSession:
             output = self.create_and_add_output_node(node)[0]
             output_dims = self.get_default_dims(node.outputs[0])
             output_params = self.get_default_params(node.outputs[0])
+            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
 
             # change filter format from RSCK to target format for cuDNN
-            idx = [3,0,1,2]    #KRSC
-            if data_format=='NCHW':
-                idx = [3,2,0,1]    #KCRS
+            idx = [3, 0, 1, 2]  # KRSC
+            if data_format == 'NCHW':
+                idx = [3, 2, 0, 1]  # KCRS
             mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
 
             filter_dims_list = filter.desc(self.graph).shape
@@ -2936,18 +2927,14 @@ class TFSession:
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
-                if data_format == "NHWC":
-                    padh = explicit_paddings[2]
-                    padw = explicit_paddings[4]
-                else:
-                    padh = explicit_paddings[4]
-                    padw = explicit_paddings[6]
+                padh = explicit_paddings[H*2]
+                padw = explicit_paddings[W*2]
 
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
             if padding == "SAME":
-                pad = int(strides[1] * (int(gradient.desc(self.graph).shape[1]) - 1) +
-                          filter_dims_list[0] - int(output.desc(self.graph).shape[1]))
+                pad = int(strides[H] * (int(gradient.desc(self.graph).shape[H]) - 1) +
+                          filter_dims_list[0] - int(output.desc(self.graph).shape[H]))
 
                 # If padding is even (padding is on each side the same)
                 if pad % 2 == 0:
@@ -2960,8 +2947,8 @@ class TFSession:
                     paddingDown = paddingUp + 1
 
                 paddedOutputDims = self.get_default_dims(node.outputs[0])
-                paddedOutputDims[1] += "+" + str(paddingUp) + "+" + str(paddingDown)
-                paddedOutputDims[2] += "+" + str(paddingUp) + "+" + str(paddingDown)
+                paddedOutputDims[H] += "+" + str(paddingUp) + "+" + str(paddingDown)
+                paddedOutputDims[W] += "+" + str(paddingUp) + "+" + str(paddingDown)
 
                 paddedOutput = state.add_transient(
                     string_builder(node.outputs[0].name) + "_padded",
@@ -3008,7 +2995,6 @@ class TFSession:
                     int out_h = 0;
                     int out_w = 0;
                     
-                    
                     #define checkCUDNN(expression)                           \\
                     {{                                                       \\
                       cudnnStatus_t status = (expression);                   \\
@@ -3028,6 +3014,7 @@ class TFSession:
                     size_t workSpaceSizeInBytes_{i} = 0;
                     void* workSpace_{i}{{nullptr}};
                 '''.format(i=local_count))
+
             init_code = '''
                 cudnnCreate(&cudnn_handle_{i});
                 
@@ -3080,12 +3067,10 @@ class TFSession:
                     cudnn_handle_{i}, fDesc_{i}, yDesc_{i}, convDesc_{i}, xDesc_{i}, algo_{i}, &workSpaceSizeInBytes_{i}));
 
                 cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});   
-            '''.format(N=output_dims_list[data_format.find('N')],
-                       C=output_dims_list[data_format.find('C')],
-                       H=output_dims_list[data_format.find('H')],
-                       W=output_dims_list[data_format.find('W')],
-                       K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1], padh=padh, padw=padw,
-                       vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2], i=local_count, format=data_format)
+            '''.format(N=output_dims_list[N], C=output_dims_list[C], H=output_dims_list[H], W=output_dims_list[W],
+                       K=filter_dims_list[3], R=filter_dims_list[0], S=filter_dims_list[1],
+                       padh=padh, padw=padw, vstr=strides[H], hstr=strides[W], dilh=dilations[H], dilw=dilations[W],
+                       i=local_count, format=data_format)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
@@ -3104,18 +3089,13 @@ class TFSession:
             else:
                 self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
-            state.add_edge(gradient, None, tasklet, 'dy', 
-                           Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(mapOutput, None, tasklet, 'w', 
-                               Memlet.from_array(mapOutput.label, mapOutput.desc(self.graph)))
-
             # for same padding: remove padding to get original image size
             if padding == "SAME":
                 mapParams = output_params
                 mapRange = output_dims
                 paddedOutputParams = output_params[:]
-                paddedOutputParams[1] = output_params[1] + "+" + str(paddingUp)
-                paddedOutputParams[2] = output_params[2] + "+" + str(paddingUp)
+                paddedOutputParams[H] = output_params[H] + "+" + str(paddingUp)
+                paddedOutputParams[W] = output_params[W] + "+" + str(paddingUp)
 
                 mapLabel = string_builder(node.type) + "_padding_tasklet"
                 mapEntry, mapExit = state.add_map(mapLabel,
@@ -3126,11 +3106,15 @@ class TFSession:
                                     [paddedOutputParams])
                 self.add_out_memlets([output], mapExit, padding_tasklet, [output_dims],
                                      [output_params])
-                state.add_edge(tasklet, 'dx', paddedOutput, None, 
-                           Memlet.from_array(paddedOutput.label, paddedOutput.desc(self.graph)))
-            else:        
+                state.add_edge(tasklet, 'dx', paddedOutput, None,
+                               Memlet.from_array(paddedOutput.label, paddedOutput.desc(self.graph)))
+            else:
                 state.add_edge(tasklet, 'dx', output, None,
                                Memlet.from_array(output.label, output.desc(self.graph)))
+            state.add_edge(gradient, None, tasklet, 'dy',
+                           Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(mapOutput, None, tasklet, 'w',
+                           Memlet.from_array(mapOutput.label, mapOutput.desc(self.graph)))
 
         else:
             inputNodes = []
@@ -3346,7 +3330,6 @@ class TFSession:
             )
             state.add_edge(tasklet, "out", mapExit2, None, memlet)
             state.add_edge(mapExit2, None, reduce_node, None, memlet)
-        
 
     def visit_Conv2DBackpropFilter(self, node):
         if self.cudnn:
@@ -3361,17 +3344,19 @@ class TFSession:
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
             output = self.create_and_add_output_node(node)[0]
+            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
+            image_dims_list = image.desc(self.graph).shape
+
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
-            image_dims_list = image.desc(self.graph).shape
             if padding == "SAME":
                 paddedInput, paddedDims = self.inputPadding(
                     node,
                     image,
                     image.desc(self.graph),
-                    gradient.desc(self.graph).shape[2],
+                    gradient.desc(self.graph).shape[H],
                     output.desc(self.graph).shape[0],
-                    strides[1],
+                    strides[H],
                     image_dims,
                 )
                 paddedImage = paddedInput
@@ -3382,12 +3367,8 @@ class TFSession:
             padh = 0
             padw = 0
             if padding == "EXPLICIT":
-                if data_format == "NHWC":
-                    padh = explicit_paddings[2]
-                    padw = explicit_paddings[4]
-                else:
-                    padh = explicit_paddings[4]
-                    padw = explicit_paddings[6]
+                padh = explicit_paddings[H*2]
+                padw = explicit_paddings[W*2]
 
             output_dims_list = output.desc(self.graph).shape
             tasklet = state.add_tasklet(
@@ -3493,17 +3474,15 @@ class TFSession:
                         cudnn_handle_{i}, xDesc_{i}, yDesc_{i}, convDesc_{i}, fDesc_{i}, algo_{i}, &workSpaceSizeInBytes_{i}));
     
                     cudaMalloc(&workSpace_{i}, workSpaceSizeInBytes_{i});
-            '''.format(N=image_dims_list[data_format.find('N')],
-                       C=image_dims_list[data_format.find('C')],
-                       H=image_dims_list[data_format.find('H')],
-                       W=image_dims_list[data_format.find('W')],
+            '''.format(N=image_dims_list[N], C=image_dims_list[C], H=image_dims_list[H], W=image_dims_list[W],
                        K=output_dims_list[3], R=output_dims_list[0], S=output_dims_list[1],
-                       padh=padh, padw=padw, vstr=strides[1], hstr=strides[2], dilh=dilations[1], dilw=dilations[2],
+                       padh=padh, padw=padw, vstr=strides[H], hstr=strides[W], dilh=dilations[H], dilw=dilations[W],
                        i=local_count, format=data_format)
             if len(self.graph.init_code) == 0:
                 self.graph.set_init_code(init_code)
             else:
                 self.graph.set_init_code(self.graph.init_code + init_code)
+
             exit_code = '''
                 cudnnDestroy(cudnn_handle_{i});
                 cudnnDestroyTensorDescriptor(xDesc_{i});
@@ -3518,9 +3497,9 @@ class TFSession:
                 self.graph.set_exit_code(self.graph.exit_code + exit_code)
 
             # change filter format from KRSC/KCRS to RSCK for tensorflow
-            idx = [3,0,1,2]    #KRSC
-            if data_format=='NCHW':
-                idx = [3,2,0,1]    #KCRS
+            idx = [3, 0, 1, 2]  # KRSC
+            if data_format == 'NCHW':
+                idx = [3, 2, 0, 1]  # KCRS
             mapInput = self.map_output_filter(node, idx, output)
 
             if padding == "SAME":
@@ -3529,11 +3508,11 @@ class TFSession:
             else:
                 state.add_edge(image, None, tasklet, 'x',
                                Memlet.from_array(image.label, image.desc(self.graph)))
-            state.add_edge(gradient, None, tasklet, 'dy', 
+            state.add_edge(gradient, None, tasklet, 'dy',
                            Memlet.from_array(gradient.label, gradient.desc(self.graph)))
-            state.add_edge(tasklet, 'dw', mapInput, None, 
+            state.add_edge(tasklet, 'dw', mapInput, None,
                            Memlet.from_array(mapInput.label, mapInput.desc(self.graph)))
-        
+
         else:
             # convolve loss over input.
             # may need to dilate loss and may need to pad input (no correlation)
@@ -4611,12 +4590,12 @@ class TFSession:
             mapRange = inputDims
             mapLabel = string_builder(node.type) + "_padding_tasklet"
             mapEntry, mapExit = state.add_map(mapLabel,
-                                           dict(zip(mapParams, mapRange)))
+                                              dict(zip(mapParams, mapRange)))
             tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
             self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
-                              [inputParams])
+                                [inputParams])
             self.add_out_memlets([output], mapExit, tasklet, [outputDims],
-                               [outputParams])
+                                 [outputParams])
         else:
             self.state.add_edge(inpnode, None, output, None, padMemlet)
         return output, outputDims
