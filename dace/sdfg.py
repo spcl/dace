@@ -1972,11 +1972,10 @@ subgraph cluster_state_{state} {{
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
-        from dace.transformation.dataflow import GPUTransformLocalStorage
+        from dace.transformation.interstate import GPUTransformSDFG
 
         self.apply_transformations(
-            GPUTransformLocalStorage,
-            apply_repeatedly=True,
+            GPUTransformSDFG,
             validate=validate,
             validate_all=validate_all,
             strict=strict,
