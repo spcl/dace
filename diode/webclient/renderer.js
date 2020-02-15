@@ -881,6 +881,7 @@ class SDFGRenderer {
         let oldctx = this.ctx;
         this.ctx = ctx;
         this.ctx.lod = !save_all;
+        this.ctx.pdf = true;
         // Center on saved region
         if (!save_all)
             this.ctx.translate(-curx, -cury);

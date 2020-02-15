@@ -260,6 +260,11 @@ class Connector extends SDFGElement {
         ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "#f0fdff";
+        if (ctx.pdf) { // PDFs do not support stroke and fill on the same object
+            ctx.beginPath();
+            drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
+            ctx.closePath();
+        }
         ctx.fill();
         ctx.fillStyle = "black";
         ctx.strokeStyle = "black";
@@ -307,6 +312,11 @@ class AccessNode extends Node {
         ctx.lineWidth = 1.0;
         ctx.setLineDash([1, 0]);
         ctx.fillStyle = "white";
+        if (ctx.pdf) { // PDFs do not support stroke and fill on the same object
+            ctx.beginPath();
+            drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
+            ctx.closePath();
+        }
         ctx.fill();
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(this.label());
@@ -316,11 +326,11 @@ class AccessNode extends Node {
 
 class ScopeNode extends Node {
     draw(renderer, ctx, mousepos) {
+        let draw_shape;
         if (this.data.node.attributes.is_collapsed) {
-            drawHexagon(ctx, this.x, this.y, this.width, this.height);
+            draw_shape = () => drawHexagon(ctx, this.x, this.y, this.width, this.height);
         } else {
-            let topleft = this.topleft();
-            drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
+            draw_shape = () => drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
         }
         ctx.strokeStyle = this.strokeStyle();
 
@@ -330,10 +340,12 @@ class ScopeNode extends Node {
         else
             ctx.setLineDash([1, 0]);
 
-
+        draw_shape();
         ctx.stroke();
         ctx.setLineDash([1, 0]);
         ctx.fillStyle = "white";
+        if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+            draw_shape();
         ctx.fill();
         ctx.fillStyle = "black";
 
@@ -378,6 +390,8 @@ class Tasklet extends Node {
         ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "white";
+        if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+            drawOctagon(ctx, topleft, this.width, this.height);
         ctx.fill();
         ctx.fillStyle = "black";
 
@@ -425,15 +439,20 @@ class Tasklet extends Node {
 class Reduce extends Node {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
-        ctx.beginPath();
-        ctx.moveTo(topleft.x, topleft.y);
-        ctx.lineTo(topleft.x + this.width / 2, topleft.y + this.height);
-        ctx.lineTo(topleft.x + this.width, topleft.y);
-        ctx.lineTo(topleft.x, topleft.y);
-        ctx.closePath();
+        let draw_shape = () => {
+            ctx.beginPath();
+            ctx.moveTo(topleft.x, topleft.y);
+            ctx.lineTo(topleft.x + this.width / 2, topleft.y + this.height);
+            ctx.lineTo(topleft.x + this.width, topleft.y);
+            ctx.lineTo(topleft.x, topleft.y);
+            ctx.closePath();
+        };
         ctx.strokeStyle = this.strokeStyle();
+        draw_shape();
         ctx.stroke();
         ctx.fillStyle = "white";
+        if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+            draw_shape();
         ctx.fill();
         ctx.fillStyle = "black";
 
@@ -456,6 +475,8 @@ class NestedSDFG extends Node {
             ctx.strokeStyle = this.strokeStyle();
             ctx.stroke();
             ctx.fillStyle = 'white';
+            if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+                drawOctagon(ctx, topleft, this.width, this.height);
             ctx.fill();
             ctx.fillStyle = 'black';
             let label = this.data.node.attributes.label;
