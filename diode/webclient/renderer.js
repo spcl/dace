@@ -692,21 +692,24 @@ class SDFGRenderer {
         let d;
 
         // Menu bar
-        d = document.createElement('button');
-        d.innerHTML = '<i class="material-icons">menu</i>';
-        d.style = 'padding-bottom: 0px;';
-        let that = this;
-        d.onclick = function() {
-            let rect = this.getBoundingClientRect();
-            let cmenu = new ContextMenu();
-            cmenu.addOption("Save view as PNG", x => that.save_as_png());
-            cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
-            cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
-            that.menu = cmenu;
-            cmenu.show(rect.left, rect.bottom);
-        };
-        d.title = 'Menu';
-        this.toolbar.appendChild(d);
+        try {
+            ContextMenu;
+            d = document.createElement('button');
+            d.innerHTML = '<i class="material-icons">menu</i>';
+            d.style = 'padding-bottom: 0px;';
+            let that = this;
+            d.onclick = function () {
+                let rect = this.getBoundingClientRect();
+                let cmenu = new ContextMenu();
+                cmenu.addOption("Save view as PNG", x => that.save_as_png());
+                cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
+                cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                that.menu = cmenu;
+                cmenu.show(rect.left, rect.bottom);
+            };
+            d.title = 'Menu';
+            this.toolbar.appendChild(d);
+        } catch (ex) {}
 
         // Zoom to fit
         d = document.createElement('button');
