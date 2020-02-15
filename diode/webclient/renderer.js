@@ -7,6 +7,7 @@ class CanvasManager {
     }
     constructor(ctx, renderer, canvas) {
         this.ctx = ctx;
+        this.ctx.lod = true;
         this.canvas = canvas;
         this.anim_id = null;
         this.prev_time = null;
