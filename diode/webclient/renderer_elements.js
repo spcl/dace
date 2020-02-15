@@ -476,7 +476,7 @@ class NestedSDFG extends Node {
             ctx.stroke();
             ctx.fillStyle = 'white';
             if (ctx.pdf) // PDFs do not support stroke and fill on the same object
-                drawOctagon(ctx, topleft, this.width, this.height);
+                drawOctagon(ctx, {x: topleft.x + 2.5, y: topleft.y + 2.5}, this.width - 5, this.height - 5);
             ctx.fill();
             ctx.fillStyle = 'black';
             let label = this.data.node.attributes.label;
