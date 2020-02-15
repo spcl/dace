@@ -700,6 +700,8 @@ class SDFGRenderer {
             let rect = this.getBoundingClientRect();
             let cmenu = new ContextMenu();
             cmenu.addOption("Save view as PNG", x => that.save_as_png());
+            cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
+            cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
             that.menu = cmenu;
             cmenu.show(rect.left, rect.bottom);
         };
@@ -852,6 +854,46 @@ class SDFGRenderer {
         this.save('sdfg.png', this.canvas.toDataURL('image/png'));
     }
 
+    save_as_pdf(save_all=false) {
+        let stream = blobStream();
+
+        // Compute document size
+        let curx = this.canvas_manager.mapPixelToCoordsX(0);
+        let cury = this.canvas_manager.mapPixelToCoordsY(0);
+        let size;
+        if (save_all) {
+            // Get size of entire graph
+            let elements = this.graph.nodes().map(x => this.graph.node(x));
+            let bb = boundingBox(elements);
+            size = [bb.width, bb.height];
+        } else {
+            // Get size of current view
+            let endx = this.canvas_manager.mapPixelToCoordsX(this.canvas.width);
+            let endy = this.canvas_manager.mapPixelToCoordsY(this.canvas.height);
+            let curw = endx - curx, curh = endy - cury;
+            size = [curw, curh];
+        }
+        //
+
+        let ctx = new canvas2pdf.PdfContext(stream, {
+            size: size
+        });
+        let oldctx = this.ctx;
+        this.ctx = ctx;
+        this.ctx.lod = !save_all;
+        // Center on saved region
+        if (!save_all)
+            this.ctx.translate(-curx, -cury);
+
+        this.draw_async();
+
+        ctx.stream.on('finish', () => {
+            this.save('sdfg.pdf', ctx.stream.toBlobURL('application/pdf'));
+            this.ctx = oldctx;
+            this.draw_async();
+        });
+    }
+
     // Render SDFG
     draw(dt) {
         let ctx = this.ctx;
@@ -874,6 +916,10 @@ class SDFGRenderer {
     on_pre_draw() { }
 
     on_post_draw() {
+        try {
+            this.ctx.end();
+        } catch (ex) {}
+        
         if (this.tooltip) {
             let FONTSIZE = 18; // in pixels
             let br = this.canvas.getBoundingClientRect();
