@@ -12,6 +12,11 @@ function init_sdfv(sdfg) {
     $('#reload').click(function(e){
         reload_file();
     });
+    $('#search-btn').click(function(e){
+        if (renderer)
+            setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
+                                                    $('#search-case')[0].checked);}, 1);
+    });
 
     if (sdfg !== null)
         renderer = new SDFGRenderer(sdfg, document.getElementById('contents'),
@@ -31,6 +36,57 @@ function file_read_complete() {
     if (renderer)
         renderer.destroy();
     renderer = new SDFGRenderer(sdfg, document.getElementById('contents'), mouse_event);
+    close_menu();
+}
+
+function find_recursive(graph, query, results, case_sensitive) {
+    for (let nodeid of graph.nodes()) {
+        let node = graph.node(nodeid);
+        let label = node.label();
+        if (!case_sensitive)
+            label = label.toLowerCase();
+        if (label.indexOf(query) !== -1)
+            results.push(node);
+        // Enter states or nested SDFGs recursively
+        if (node.data.graph)
+            find_recursive(node.data.graph, query, results, case_sensitive);
+    }
+    for (let edgeid of graph.edges()) {
+        let edge = graph.edge(edgeid);
+        let label = edge.label();
+        if (!case_sensitive)
+            label = label.toLowerCase();
+        if (label.indexOf(query) !== -1)
+            results.push(edge);
+    }
+}
+
+function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
+    // Modify sidebar header
+    document.getElementById("sidebar-header").innerText = 'Search Results for "' + query + '"';
+
+    let results = [];
+    if (!case_sensitive)
+        query = query.toLowerCase();
+    find_recursive(sdfg, query, results, case_sensitive);
+
+    // Zoom to bounding box of all results first
+    if (results.length > 0)
+        renderer.zoom_to_view(results);
+
+    // Show clickable results in sidebar
+    let sidebar = document.getElementById("sidebar-contents");
+    sidebar.innerHTML = '';
+    for (let result of results) {
+        let d = document.createElement('div');
+        d.className = 'context_menu_option';
+        d.innerHTML = result.type() + ' ' + result.label();
+        d.onclick = () => {renderer.zoom_to_view([result])};
+        sidebar.appendChild(d);
+    }
+
+    // Open sidebar if closed
+    document.getElementById("sidebar").style.display = "flex";
 }
 
 function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
