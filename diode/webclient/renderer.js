@@ -171,25 +171,25 @@ class CanvasManager {
         let scale = 1, tx = 0, ty = 0;
         if (rect.width > rect.height) {
             scale = canvas_w / rect.width;
-            tx = rect.x;
-            ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+            tx = -rect.x;
+            ty = -rect.y - (rect.height/2) + (canvas_h / scale / 2);
 
             // Now other dimension does not fit, scale it as well
             if (rect.height * scale > canvas_h) {
                 scale = canvas_h / rect.height;
-                tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
-                ty = rect.y;
+                tx = -rect.x - (rect.width/2) + (canvas_w / scale / 2);
+                ty = -rect.y;
             }
         } else {
             scale = canvas_h / rect.height;
-            tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
-            ty = rect.y;
+            tx = -rect.x - (rect.width/2) + (canvas_w / scale / 2);
+            ty = -rect.y;
         
             // Now other dimension does not fit, scale it as well
             if (rect.width * scale > canvas_w) {
                 scale = canvas_w / rect.width;
-                tx = rect.x;
-                ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+                tx = -rect.x;
+                ty = -rect.y - (rect.height/2) + (canvas_h / scale / 2);
             }
         }
 
@@ -671,7 +671,8 @@ class SDFGRenderer {
 
     destroy() {
         try {
-            this.menu.destroy();
+            if (this.menu)
+                this.menu.destroy();
             this.canvas_manager.destroy();
             this.container.removeChild(this.canvas);
             this.container.removeChild(this.toolbar);
