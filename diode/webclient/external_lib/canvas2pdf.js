@@ -426,7 +426,10 @@
   };
 
   canvas2pdf.PdfContext.prototype.setLineDash = function (dashArray) {
-    console.log('setLineDash not implemented');
+    if (dashArray[1] == 0)
+      this.doc.undash();
+    else
+      this.doc.dash(dashArray[1]);
   };
 
   canvas2pdf.PdfContext.prototype.drawFocusRing = function () {
