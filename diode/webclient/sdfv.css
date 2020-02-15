@@ -40,8 +40,8 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
 }
 
 .context_menu_option {
-    font-weight: 500;
     font-size: 14px;
+    font-family: "Segoe UI", Arial, sans-serif;
     padding: 10px 40px 10px 20px;
     cursor: pointer;
 }
