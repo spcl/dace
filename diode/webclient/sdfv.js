@@ -35,6 +35,8 @@ function file_read_complete() {
 
 function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
     if (evtype === 'click' || evtype === 'dblclick') {
+        if (renderer.menu)
+            renderer.menu.destroy();
         if (elem) {
             // Change header
             document.getElementById("sidebar-header").innerText = elem.type() + " " + elem.label();

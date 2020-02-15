@@ -653,6 +653,7 @@ class SDFGRenderer {
         this.ctx = null;
         this.canvas = null;
         this.toolbar = null;
+        this.menu = null;
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
@@ -670,6 +671,7 @@ class SDFGRenderer {
 
     destroy() {
         try {
+            this.menu.destroy();
             this.canvas_manager.destroy();
             this.container.removeChild(this.canvas);
             this.container.removeChild(this.toolbar);
@@ -690,14 +692,19 @@ class SDFGRenderer {
         let d;
 
         // Menu bar
-        /*
-        let d = document.createElement('button');
+        d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">menu</i>';
         d.style = 'padding-bottom: 0px;';
-        d.onclick = () => {};
+        let that = this;
+        d.onclick = function() {
+            let rect = this.getBoundingClientRect();
+            let cmenu = new ContextMenu();
+            cmenu.addOption("Save view as PNG", x => that.save_as_png());
+            that.menu = cmenu;
+            cmenu.show(rect.left, rect.bottom);
+        };
         d.title = 'Menu';
         this.toolbar.appendChild(d);
-        */
 
         // Zoom to fit
         d = document.createElement('button');
@@ -824,6 +831,25 @@ class SDFGRenderer {
         });
         this.relayout();
         this.draw_async();
+    }
+
+    // Save functions
+    save(filename, contents) {
+        var link = document.createElement('a');
+        link.setAttribute('download', filename);
+        link.href = contents;
+        document.body.appendChild(link);
+
+        // wait for the link to be added to the document
+        window.requestAnimationFrame(function () {
+            var event = new MouseEvent('click');
+            link.dispatchEvent(event);
+            document.body.removeChild(link);
+        });
+    }
+
+    save_as_png() {
+        this.save('sdfg.png', this.canvas.toDataURL('image/png'));
     }
 
     // Render SDFG
