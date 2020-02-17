@@ -12,6 +12,10 @@ function init_sdfv(sdfg) {
     $('#reload').click(function(e){
         reload_file();
     });
+    $('#outline').click(function(e){
+        if (renderer)
+            setTimeout(() => outline(renderer, renderer.graph), 1);
+    });
     $('#search-btn').click(function(e){
         if (renderer)
             setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
@@ -84,6 +88,51 @@ function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
         d.onclick = () => {renderer.zoom_to_view([result])};
         sidebar.appendChild(d);
     }
+
+    // Open sidebar if closed
+    document.getElementById("sidebar").style.display = "flex";
+}
+
+function outline_recursive(renderer, graph, elements) {
+    for (let nodeid of graph.nodes()) {
+        let node = graph.node(nodeid);
+        let d = document.createElement('div');
+        d.className = 'context_menu_option';
+        d.innerHTML = node.type() + ' ' + node.label();
+        d.onclick = (e) => {
+            renderer.zoom_to_view([node]);
+
+            // Ensure that the innermost div is the one that handles the event
+            if (!e) e = window.event;
+            e.cancelBubble = true;
+            if (e.stopPropagation) e.stopPropagation();
+        };
+
+        // Traverse states or nested SDFGs
+        if (node.data.graph)
+            outline_recursive(renderer, node.data.graph, d);
+
+        elements.appendChild(d);
+    }
+}
+
+function outline(renderer, sdfg) {
+    // Modify sidebar header
+    document.getElementById("sidebar-header").innerText = 'SDFG Outline';
+
+    let sidebar = document.getElementById("sidebar-contents");
+    sidebar.innerHTML = '';
+
+    // Entire SDFG
+    let d = document.createElement('div');
+    d.className = 'context_menu_option';
+    d.innerHTML = '<i class="material-icons" style="font-size: inherit">filter_center_focus</i> SDFG ' +
+        renderer.sdfg.attributes.name;
+    d.onclick = () => renderer.zoom_to_view();
+    sidebar.appendChild(d);
+
+    // Add elements to tree view in sidebar
+    outline_recursive(renderer, sdfg, sidebar);
 
     // Open sidebar if closed
     document.getElementById("sidebar").style.display = "flex";
