@@ -9,7 +9,10 @@
 
     <script src="./webclient/renderer_dir/dagre.js"></script>
     <script src="./webclient/external_lib/jquery.min.js"></script>
-    
+    <script src="./webclient/external_lib/pdfkit.standalone.js"></script>
+    <script src="./webclient/external_lib/blob-stream.js"></script>
+    <script src="./webclient/external_lib/canvas2pdf.js"></script>
+
     <script src="./webclient/renderer_dir/global_vars.js"></script>
     <script src="./webclient/renderer_elements.js"></script>
     <script src="./webclient/context_menu.js"></script>
@@ -26,7 +29,15 @@
         <div id="sidebar-contents"></div>
     </div>
 </div>  
-<div id="filepicker"><form><input type="file" accept=".sdfg,.json"> <input type="button" id="reload" value="Refresh"></form></div>
+<div id="filepicker"><form>
+    <input type="file" accept=".sdfg,.json"> <input type="button" id="reload" value="Refresh">
+    <input type="button" id="outline" value="SDFG Outline">
+</form></div>
+<div><form>
+    <input id="search" type="text" placeholder="Search in graph elements">
+    <input type="button" id="search-btn" value="Search">
+    <input type="checkbox" id="search-case"> Case Sensitive
+</form></div>
 <div id="contents"></div>
 <script src="./webclient/sdfv.js"></script>
 <script>

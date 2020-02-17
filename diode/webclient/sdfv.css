@@ -25,10 +25,27 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
 .w3-button:hover{color:#000!important;background-color:#ccc!important}
 
 .dragbar {
-  padding: 3px;
-  height: 100%;
-  width: 2px;
-  display: flex;
-  cursor: col-resize;
-  background-color: silver;
+    padding: 3px;
+    height: 100%;
+    width: 2px;
+    display: flex;
+    cursor: col-resize;
+    background-color: silver;
+}
+
+.context_menu {
+    position: absolute;
+    background-color: #fdfdfd;
+    box-shadow: 0 4px 5px 3px rgba(0, 0, 0, 0.2);
+}
+
+.context_menu_option {
+    font-size: 14px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    padding: 10px 40px 10px 20px;
+    cursor: pointer;
+}
+
+.context_menu_option:hover {
+    background: rgba(0, 0, 0, 0.1);
 }
