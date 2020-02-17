@@ -260,6 +260,11 @@ class Connector extends SDFGElement {
         ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "#f0fdff";
+        if (ctx.pdf) { // PDFs do not support stroke and fill on the same object
+            ctx.beginPath();
+            drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
+            ctx.closePath();
+        }
         ctx.fill();
         ctx.fillStyle = "black";
         ctx.strokeStyle = "black";
@@ -307,6 +312,11 @@ class AccessNode extends Node {
         ctx.lineWidth = 1.0;
         ctx.setLineDash([1, 0]);
         ctx.fillStyle = "white";
+        if (ctx.pdf) { // PDFs do not support stroke and fill on the same object
+            ctx.beginPath();
+            drawEllipse(ctx, topleft.x, topleft.y, this.width, this.height);
+            ctx.closePath();
+        }
         ctx.fill();
         ctx.fillStyle = "black";
         var textmetrics = ctx.measureText(this.label());
@@ -316,11 +326,11 @@ class AccessNode extends Node {
 
 class ScopeNode extends Node {
     draw(renderer, ctx, mousepos) {
+        let draw_shape;
         if (this.data.node.attributes.is_collapsed) {
-            drawHexagon(ctx, this.x, this.y, this.width, this.height);
+            draw_shape = () => drawHexagon(ctx, this.x, this.y, this.width, this.height);
         } else {
-            let topleft = this.topleft();
-            drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
+            draw_shape = () => drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
         }
         ctx.strokeStyle = this.strokeStyle();
 
@@ -330,10 +340,12 @@ class ScopeNode extends Node {
         else
             ctx.setLineDash([1, 0]);
 
-
+        draw_shape();
         ctx.stroke();
         ctx.setLineDash([1, 0]);
         ctx.fillStyle = "white";
+        if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+            draw_shape();
         ctx.fill();
         ctx.fillStyle = "black";
 
@@ -378,11 +390,13 @@ class Tasklet extends Node {
         ctx.strokeStyle = this.strokeStyle();
         ctx.stroke();
         ctx.fillStyle = "white";
+        if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+            drawOctagon(ctx, topleft, this.width, this.height);
         ctx.fill();
         ctx.fillStyle = "black";
 
         let ppp = renderer.canvas_manager.points_per_pixel();
-        if (ppp < TASKLET_LOD) {
+        if (!ctx.lod || ppp < TASKLET_LOD) {
             // If we are close to the tasklet, show its contents
             let code = this.attributes().code.string_data;
             let lines = code.split('\n');
@@ -425,15 +439,20 @@ class Tasklet extends Node {
 class Reduce extends Node {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
-        ctx.beginPath();
-        ctx.moveTo(topleft.x, topleft.y);
-        ctx.lineTo(topleft.x + this.width / 2, topleft.y + this.height);
-        ctx.lineTo(topleft.x + this.width, topleft.y);
-        ctx.lineTo(topleft.x, topleft.y);
-        ctx.closePath();
+        let draw_shape = () => {
+            ctx.beginPath();
+            ctx.moveTo(topleft.x, topleft.y);
+            ctx.lineTo(topleft.x + this.width / 2, topleft.y + this.height);
+            ctx.lineTo(topleft.x + this.width, topleft.y);
+            ctx.lineTo(topleft.x, topleft.y);
+            ctx.closePath();
+        };
         ctx.strokeStyle = this.strokeStyle();
+        draw_shape();
         ctx.stroke();
         ctx.fillStyle = "white";
+        if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+            draw_shape();
         ctx.fill();
         ctx.fillStyle = "black";
 
@@ -456,6 +475,8 @@ class NestedSDFG extends Node {
             ctx.strokeStyle = this.strokeStyle();
             ctx.stroke();
             ctx.fillStyle = 'white';
+            if (ctx.pdf) // PDFs do not support stroke and fill on the same object
+                drawOctagon(ctx, {x: topleft.x + 2.5, y: topleft.y + 2.5}, this.width - 5, this.height - 5);
             ctx.fill();
             ctx.fillStyle = 'black';
             let label = this.data.node.attributes.label;
@@ -507,7 +528,7 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
 
     // Render state machine
     let g = sdfg_dagre;
-    if (ppp < EDGE_LOD)
+    if (!ctx.lod || ppp < EDGE_LOD)
         g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
 
 
@@ -517,12 +538,12 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
     g.nodes().forEach( v => {
         let node = g.node(v);
 
-        if (ppp >= STATE_LOD || node.width / ppp < STATE_LOD) {
+        if (ctx.lod && (ppp >= STATE_LOD || node.width / ppp < STATE_LOD)) {
             node.simple_draw(renderer, ctx, mousepos);
             return;
         }
         // Skip invisible states
-        if (!node.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+        if (ctx.lod && !node.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
             return;
 
         node.draw(renderer, ctx, mousepos);
@@ -534,9 +555,9 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
 
-                if (!n.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+                if (ctx.lod && !n.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
                     return;
-                if (ppp >= NODE_LOD) {
+                if (ctx.lod && ppp >= NODE_LOD) {
                     n.simple_draw(renderer, ctx, mousepos);
                     return;
                 }
@@ -545,11 +566,11 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
                 n.in_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
                 n.out_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
             });
-            if (ppp >= EDGE_LOD)
+            if (ctx.lod && ppp >= EDGE_LOD)
                 return;
             ng.edges().forEach(e => {
                 let edge = ng.edge(e);
-                if (!edge.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+                if (ctx.lod && !edge.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
                     return;
                 ng.edge(e).draw(renderer, ctx, mousepos);
             });
@@ -625,7 +646,7 @@ function drawAdaptiveText(ctx, renderer, far_text, close_text,
     let FONTSIZE = Math.min(ppp * font_multiplier, max_font_size);
     let yoffset = LINEHEIGHT / 2.0;
     let oldfont = ctx.font;
-    if (ppp >= ppp_thres) { // Far text
+    if (ctx.lod && ppp >= ppp_thres) { // Far text
         ctx.font = FONTSIZE + "px sans-serif";
         label = far_text;
         yoffset = FONTSIZE / 2.0 - h / 6.0;
@@ -633,7 +654,7 @@ function drawAdaptiveText(ctx, renderer, far_text, close_text,
 
     let textmetrics = ctx.measureText(label);
     let tw = textmetrics.width;
-    if (ppp >= ppp_thres && tw > w) {
+    if (ctx.lod && ppp >= ppp_thres && tw > w) {
         FONTSIZE = FONTSIZE / (tw / w);
         ctx.font = FONTSIZE + "px sans-serif";
         yoffset = FONTSIZE / 2.0 - h / 6.0;
@@ -642,7 +663,7 @@ function drawAdaptiveText(ctx, renderer, far_text, close_text,
 
     ctx.fillText(label, x - tw / 2.0, y + yoffset);
 
-    if (ppp >= ppp_thres)
+    if (ctx.lod && ppp >= ppp_thres)
         ctx.font = oldfont;
 }
 
