@@ -1880,11 +1880,10 @@ subgraph cluster_state_{state} {{
             k for k, v in Transformation.extensions().items()
             if v.get('strict', False)
         ]
-        self.apply_transformations(
+        self.apply_transformations_repeated(
             strict_transformations,
             validate=validate,
             strict=True,
-            apply_repeatedly=True,
             validate_all=validate_all)
 
     def apply_transformations(self,
@@ -1894,10 +1893,9 @@ subgraph cluster_state_{state} {{
                               validate: bool = True,
                               validate_all: bool = False,
                               strict: bool = False,
-                              states: Optional[List[Any]] = None,
-                              apply_repeatedly: bool = False) -> int:
-        """ This function applies a transformation or a sequence thereof.
-            Operates in-place.
+                              states: Optional[List[Any]] = None) -> int:
+        """ This function applies a transformation or a sequence thereof
+            consecutively. Operates in-place.
             :param xforms: A Transformation class or a sequence.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
@@ -1906,10 +1904,16 @@ subgraph cluster_state_{state} {{
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
-            :param apply_repeatedly: If True, applies the given transformations
-                                     repeatedly (where options match the items
-                                     in the sequence), until none can be found.
-            :return: Number of transformations applied
+            :return: Number of transformations applied.
+
+            Examples::
+
+                      # Applies MapTiling, then MapFusion, followed by
+                      # GPUTransformSDFG, specifying parameters only for the
+                      # first transformation.
+                      sdfg.apply_transformations(
+                        [MapTiling, MapFusion, GPUTransformSDFG],
+                        options=[{'tile_size': 16}, {}, {}])
         """
         # Avoiding import loops
         from dace.transformation import optimizer
@@ -1920,8 +1924,79 @@ subgraph cluster_state_{state} {{
         if isinstance(xforms, type) and issubclass(xforms, Transformation):
             xforms = [xforms]
 
-        # If applying repeatedly, ensure transformations are unique
-        if apply_repeatedly and len(xforms) != len(set(xforms)):
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+
+        for xform, opts in zip(xforms, options):
+            # Find only the first match
+            try:
+                match = next(
+                    m for m in opt.get_pattern_matches(
+                        strict=strict, patterns=[xform], states=states))
+            except StopIteration:
+                continue
+            sdfg = self.sdfg_list[match.sdfg_id]
+
+            # Set transformation properties
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                self.validate()
+
+        if validate:
+            self.validate()
+
+        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+            print('Applied {}.'.format(', '.join([
+                '%d %s' % (v, k) for k, v in applied_transformations.items()
+            ])))
+
+        return sum(applied_transformations.values())
+
+    def apply_transformations_repeated(
+            self,
+            xforms: Union[Type, List[Type]],
+            options: Optional[Union[Dict[str, Any], List[Dict[str,
+                                                              Any]]]] = None,
+            validate: bool = True,
+            validate_all: bool = False,
+            strict: bool = False,
+            states: Optional[List[Any]] = None) -> int:
+        """ This function repeatedly applies a transformation or a set of
+            (unique) transformations until none can be found. Operates in-place.
+            :param xforms: A Transformation class or a set thereof.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
+            :param strict: If True, operates in strict transformation mode.
+            :param states: If not None, specifies a subset of states to
+                           apply transformations on.
+            :return: Number of transformations applied.
+
+            Examples::
+
+                    # Applies InlineSDFG until no more subgraphs can be inlined
+                    sdfg.apply_transformations_repeated(InlineSDFG)
+        """
+        # Avoiding import loops
+        from dace.transformation import optimizer
+        from dace.transformation.pattern_matching import Transformation
+
+        applied_transformations = collections.defaultdict(int)
+
+        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+            xforms = [xforms]
+
+        # Ensure transformations are unique
+        if len(xforms) != len(set(xforms)):
             raise ValueError('Transformation set must be unique')
 
         if isinstance(options, dict):
@@ -1932,45 +2007,26 @@ subgraph cluster_state_{state} {{
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
-        if not apply_repeatedly:
-            for xform, opts in zip(xforms, options):
-                # Find only the first match
-                try:
-                    match = next(
-                        m for m in opt.get_pattern_matches(
-                            strict=strict, patterns=[xform], states=states))
-                except StopIteration:
-                    continue
+        applied = True
+        while applied:
+            applied = False
+            # Find and apply one of
+            for match in opt.get_pattern_matches(
+                    strict=strict, patterns=xforms, states=states):
                 sdfg = self.sdfg_list[match.sdfg_id]
 
                 # Set transformation properties
+                opts = next(
+                    o for x, o in zip(xforms, options) if type(match) is x)
                 for prop_name, prop_val in opts.items():
                     setattr(match, prop_name, prop_val)
+
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate_all:
                     self.validate()
-        else:
-            applied = True
-            while applied:
-                applied = False
-                # Find and apply one of
-                for match in opt.get_pattern_matches(
-                        strict=strict, patterns=xforms, states=states):
-                    sdfg = self.sdfg_list[match.sdfg_id]
-
-                    # Set transformation properties
-                    opts = next(
-                        o for x, o in zip(xforms, options) if type(match) is x)
-                    for prop_name, prop_val in opts.items():
-                        setattr(match, prop_name, prop_val)
-
-                    match.apply(sdfg)
-                    applied_transformations[type(match).__name__] += 1
-                    if validate_all:
-                        self.validate()
-                    applied = True
-                    break
+                applied = True
+                break
 
         if validate:
             self.validate()
