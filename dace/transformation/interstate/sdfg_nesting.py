@@ -72,7 +72,9 @@ class InlineSDFG(pattern_matching.Transformation):
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
                     if (node.data in out_connectors
-                            and nstate.out_degree(node) > 0):
+                            and nstate.out_degree(node) > 0
+                            and (node.data not in in_connectors
+                                 or nstate.in_degree(node) > 0)):
                         return False
                     if (node.data in in_connectors and any(
                             e.dst.data in all_connectors
