@@ -1,7 +1,7 @@
 import copy
 import dace
 from dace.graph import nodes
-# from dace.transformation.dataflow import MapFission
+from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
 import unittest
@@ -76,7 +76,7 @@ class MapFissionTest(unittest.TestCase):
         B = np.random.rand(2)
 
         graph = copy.deepcopy(sdfg)
-        #graph.apply_transformations(MapFission, apply_once=True)
+        graph.apply_transformations(MapFission, apply_once=True)
         graph(A=A, B=B)
 
         self.assertTrue(np.allclose(B, expected))
@@ -94,7 +94,7 @@ class MapFissionTest(unittest.TestCase):
         subgraph = state.scope_subgraph(
             topmap, include_entry=False, include_exit=False)
         nest_state_subgraph(graph, state, subgraph)
-        # graph.apply_transformations(MapFission, apply_once=True)
+        graph.apply_transformations(MapFission, apply_once=True)
         graph(A=A, B=B)
         self.assertTrue(np.allclose(B, expected))
 
