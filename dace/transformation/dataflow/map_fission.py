@@ -105,6 +105,16 @@ class MapFission(pattern_matching.Transformation):
         return inputs & outputs
 
     @staticmethod
+    def _outside_map(node, scope_dict, entry_nodes):
+        """ Returns True iff node is not in any of the scopes spanned by
+            entry_nodes. """
+        while scope_dict[node] is not None:
+            if scope_dict[node] in entry_nodes:
+                return False
+            node = scope_dict[node]
+        return True
+
+    @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         map_node = graph.node(candidate[MapFission._map_entry])
         nsdfg_node = None
@@ -182,24 +192,175 @@ class MapFission(pattern_matching.Transformation):
     def apply(self, sdfg: sd.SDFG):
         graph: sd.SDFGState = sdfg.nodes()[self.state_id]
         map_entry = graph.node(self.subgraph[MapFission._map_entry])
+        map_exit = graph.exit_nodes(map_entry)[0]
 
         # Obtain subgraph to perform fission to
         if self.expr_index == 0:  # Map with subgraph
-            subgraphs = [
-                graph.scope_subgraph(
-                    map_entry, include_entry=False, include_exit=False)
-            ]
+            subgraphs = [(graph,
+                          graph.scope_subgraph(
+                              map_entry,
+                              include_entry=False,
+                              include_exit=False))]
+            parent = sdfg
         else:  # Map with nested SDFG
             nsdfg_node: nodes.NestedSDFG = graph.node(
                 self.subgraph[MapFission._nested_sdfg])
-            subgraphs = nsdfg_node.sdfg.nodes()
+            subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
+            parent = nsdfg_node.sdfg
 
-        for subgraph in subgraphs:
-            # TODO: Collect all intermediate components and border arrays/code->code edges
+        # Get map information
+        outer_map: nodes.Map = map_entry.map
+        mapsize = outer_map.range.size()
+
+        for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
+            sources = subgraph.source_nodes()
+            sinks = subgraph.sink_nodes()
 
-        # TODO: Add extra arrays and dimensions
+            # Collect external edges for source/sink nodes
+            edge_to_outer = {}
+            for node in sources:
+                for edge in state.in_edges(node):
+                    path = state.memlet_path(edge)
+                    eindex = path.index(edge)
+                    edge_to_outer[edge] = path[eindex - 1]
+            for node in sinks:
+                for edge in state.out_edges(node):
+                    path = state.memlet_path(edge)
+                    eindex = path.index(edge)
+                    edge_to_outer[edge] = path[eindex + 1]
 
-        # TODO: Add extra maps
+            # Collect all border arrays and code->code edges
+            arrays = MapFission._border_arrays(components, subgraph, sources,
+                                               sinks)
+            scalars = defaultdict(list)
+            for _, component_out in components:
+                for e in subgraph.out_edges(component_out):
+                    if isinstance(e.dst, nodes.CodeNode):
+                        scalars[e.data.data].append(e)
 
-        # TODO: Remove outer map
+            # Create new arrays for scalars
+            for scalar, edges in scalars.items():
+                desc = parent.arrays[scalar]
+                name, newdesc = parent.add_temp_transient(
+                    mapsize,
+                    desc.dtype,
+                    desc.storage,
+                    toplevel=desc.toplevel,
+                    debuginfo=desc.debuginfo,
+                    allow_conflicts=desc.allow_conflicts)
+
+                # Add extra nodes in component boundaries
+                for edge in edges:
+                    anode = state.add_access(name)
+                    state.add_edge(
+                        edge.src, edge.src_conn, anode, None,
+                        mm.Memlet(
+                            name, outer_map.range.num_elements(),
+                            subsets.Range.from_string(','.join(
+                                outer_map.params)), 1))
+                    state.add_edge(
+                        anode, None, edge.dst, edge.dst_conn,
+                        mm.Memlet(
+                            name, outer_map.range.num_elements(),
+                            subsets.Range.from_string(','.join(
+                                outer_map.params)), 1))
+                    state.remove_edge(edge)
+
+            # Add extra maps around components
+            new_map_entries = []
+            for component_in, component_out in components:
+                me, mx = state.add_map(
+                    outer_map.label + '_fission',
+                    [(p, '0:1') for p in outer_map.params],
+                    outer_map.schedule,
+                    unroll=outer_map.unroll,
+                    debuginfo=outer_map.debuginfo)
+
+                # Add dynamic input connectors
+                for conn in map_entry.in_connectors:
+                    if not conn.startswith('IN_'):
+                        me.add_in_connector(conn)
+
+                me.map.range = dcpy(outer_map.range)
+                new_map_entries.append(me)
+
+                # Reconnect edges through new map
+                for e in state.in_edges(component_in):
+                    state.add_edge(me, None, e.dst, e.dst_conn, dcpy(e.data))
+                    # Reconnect inner edges at source directly to external nodes
+                    if component_in in sources:
+                        state.add_edge(edge_to_outer[e].src,
+                                       edge_to_outer[e].src_conn, me, None,
+                                       dcpy(edge_to_outer[e].data))
+                    else:
+                        state.add_edge(e.src, e.src_conn, me, None,
+                                       dcpy(e.data))
+                    state.remove_edge(e)
+
+                for e in state.out_edges(component_out):
+                    state.add_edge(e.src, e.src_conn, mx, None, dcpy(e.data))
+                    # Reconnect inner edges at sink directly to external nodes
+                    if component_out in sinks:
+                        state.add_edge(mx, None, edge_to_outer[e].dst,
+                                       edge_to_outer[e].dst_conn,
+                                       dcpy(edge_to_outer[e].data))
+                    else:
+                        state.add_edge(mx, None, e.dst, e.dst_conn,
+                                       dcpy(e.data))
+                    state.remove_edge(e)
+
+            # Connect other sources/sinks not in components (access nodes)
+            # directly to external nodes
+            for node in sources:
+                if isinstance(node, nodes.AccessNode):
+                    for edge in state.in_edges(node):
+                        outer_edge = edge_to_outer[edge]
+                        memlet = dcpy(edge.data)
+                        memlet.subset = subsets.Range(outer_map.range.ranges +
+                                                      memlet.subset.ranges)
+                        state.add_edge(outer_edge.src, outer_edge.src_conn,
+                                       edge.dst, edge.dst_conn, memlet)
+            for node in sinks:
+                if isinstance(node, nodes.AccessNode):
+                    for edge in state.out_edges(node):
+                        outer_edge = edge_to_outer[edge]
+                        state.add_edge(edge.src, edge.src_conn, outer_edge.dst,
+                                       outer_edge.dst_conn,
+                                       dcpy(outer_edge.data))
+
+            # Augment arrays by prepending map dimensions
+            for array in arrays:
+                desc = parent.arrays[array]
+                for sz in reversed(mapsize):
+                    desc.strides = [desc.total_size] + list(desc.strides)
+                    desc.total_size = desc.total_size * sz
+
+                desc.shape = mapsize + list(desc.shape)
+                desc.offset = [0] * len(mapsize) + list(desc.offset)
+
+            # Fill scope connectors so that memlets can be tracked below
+            state.fill_scope_connectors()
+
+            # Fill in memlet trees for border transients
+            # NOTE: Memlet propagation should run to correct the outer edges
+            for node in subgraph.nodes():
+                if isinstance(node, nodes.AccessNode) and node.data in arrays:
+                    for edge in state.all_edges(node):
+                        for e in state.memlet_tree(edge):
+                            # Prepend map dimensions to memlet
+                            e.data.subset = subsets.Range(
+                                [(d, d, 1) for d in outer_map.params] +
+                                e.data.subset.ranges)
+
+            # Re-introduce dynamic range map memlets
+            for edge in sd.dynamic_map_inputs(graph, map_entry):
+                if self.expr_index == 0:  # Subgraph
+                    for me in new_map_entries:
+                        state.add_edge(edge.src, edge.src_conn, me,
+                                       edge.dst_conn, dcpy(edge.data))
+                else:  # TODO: Add connectors to Nested SDFG
+                    raise NotImplementedError
+
+        # Remove outer map
+        graph.remove_nodes_from([map_entry, map_exit])
