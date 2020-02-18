@@ -79,17 +79,14 @@ if __name__ == "__main__":
 
     # Compute gradients and compare
     # Tensorflow
-
-    config = tf.ConfigProto(device_count={'GPU':0})
-    config.gpu_options.allow_growth = True
-    with tf.Session(config=config) as sess:
+    with tf.Session() as sess:
         sess.run(init)
         tf_gradients = sess.run(gradients)
 
     # DaCe
     with TFSession(seed=SEED) as sess:
-        sess.run(init, gpu=True)
-        dace_gradients = sess.run(gradients, gpu=True)
+        sess.run(init)
+        dace_gradients = sess.run(gradients)
 
     # Compare
     for tfgrad, dacegrad in zip(tf_gradients, dace_gradients):
