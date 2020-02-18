@@ -145,7 +145,8 @@ class TFSession:
             initializer,
             iterations,
             feed_dict,
-            gpu=False,
+            gpu=True,
+            cudnn=True,
             nodes=None,
             output_gradients=False,
     ):
@@ -331,6 +332,9 @@ class TFSession:
         print("Adding connectors")
         self.graph.fill_scope_connectors()
         # self.graph.apply_strict_transformations(validate=False)
+
+        gpu = gpu and tf.test.is_gpu_available()
+        self.cudnn = gpu and cudnn
         if gpu:
             self.graph.apply_gpu_transformations()
 
@@ -507,18 +511,19 @@ class TFSession:
                 self.graph.arrays[output].transient = False
             ############################
             # Compile the SDFG
+            gpu = gpu and tf.test.is_gpu_available()
+            self.cudnn = gpu and cudnn
             if gpu:
-                from dace.transformation.interstate import GPUTransformSDFG
-                self.graph.apply_transformations([GPUTransformSDFG], apply_once=True)
+                self.graph.apply_gpu_transformations()
 
-                '''for aname, array in self.graph.arrays.items():
-                    if array is None:
-                        continue
-                    if array.storage in [
-                            dace.StorageType.Default,
-                            dace.StorageType.CPU_Heap,
-                    ]:
-                        array.storage = dace.StorageType.CPU_Pinned'''
+                #for aname, array in self.graph.arrays.items():
+                #    if array is None:
+                #        continue
+                #    if array.storage in [
+                #            dace.StorageType.Default,
+                #            dace.StorageType.CPU_Heap,
+                #    ]:
+                #        array.storage = dace.StorageType.CPU_Pinned
 
                 # Modify sdfg_args
                 # import numba.cuda
