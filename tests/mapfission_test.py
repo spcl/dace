@@ -77,7 +77,7 @@ class MapFissionTest(unittest.TestCase):
         B = np.random.rand(2)
 
         graph = copy.deepcopy(sdfg)
-        graph.apply_transformations(MapFission, apply_once=True)
+        graph.apply_transformations(MapFission)
         graph(A=A, B=B)
 
         self.assertTrue(np.allclose(B, expected))
@@ -95,7 +95,7 @@ class MapFissionTest(unittest.TestCase):
         subgraph = state.scope_subgraph(
             topmap, include_entry=False, include_exit=False)
         nest_state_subgraph(graph, state, subgraph)
-        graph.apply_transformations(MapFission, apply_once=True)
+        graph.apply_transformations(MapFission)
         graph(A=A, B=B)
         self.assertTrue(np.allclose(B, expected))
 
