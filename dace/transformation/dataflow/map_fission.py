@@ -2,12 +2,11 @@
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import dtypes, registry, symbolic, sdfg as sd, memlet as mm, subsets
-from dace.graph import nodes, nxutil, labeling
+from dace import registry, sdfg as sd, memlet as mm, subsets
+from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedDiGraph
-from dace.sdfg import replace
 from dace.transformation import pattern_matching
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 @registry.autoregister_params(singlestate=True)
@@ -118,6 +117,12 @@ class MapFission(pattern_matching.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         map_node = graph.node(candidate[MapFission._map_entry])
         nsdfg_node = None
+
+        # If the map is dynamic-ranged, the resulting border arrays would be
+        # dynamically sized
+        if sd.has_dynamic_map_inputs(graph, map_node):
+            return False
+
         if expr_index == 0:  # Map with subgraph
             subgraphs = [
                 graph.scope_subgraph(
@@ -154,8 +159,8 @@ class MapFission(pattern_matching.Transformation):
             if len(external_arrays) > 0:
                 return False
 
-            # 1. In nested SDFGs and subgraphs, ensure none of the border
-            #    values are non-transients
+            # In nested SDFGs and subgraphs, ensure none of the border
+            # values are non-transients
             for array in border_arrays:
                 if expr_index == 0:
                     ndesc = sdfg.arrays[array]
@@ -165,8 +170,8 @@ class MapFission(pattern_matching.Transformation):
                 if ndesc.transient is False:
                     return False
 
-            # 2. In subgraphs, make sure transients are not used/allocated
-            #    in other scopes or states
+            # In subgraphs, make sure transients are not used/allocated
+            # in other scopes or states
             if expr_index == 0:
                 # Find all nodes not in subgraph
                 not_subgraph = set(
@@ -193,6 +198,7 @@ class MapFission(pattern_matching.Transformation):
         graph: sd.SDFGState = sdfg.nodes()[self.state_id]
         map_entry = graph.node(self.subgraph[MapFission._map_entry])
         map_exit = graph.exit_nodes(map_entry)[0]
+        nsdfg_node: Optional[nodes.NestedSDFG] = None
 
         # Obtain subgraph to perform fission to
         if self.expr_index == 0:  # Map with subgraph
@@ -203,8 +209,7 @@ class MapFission(pattern_matching.Transformation):
                               include_exit=False))]
             parent = sdfg
         else:  # Map with nested SDFG
-            nsdfg_node: nodes.NestedSDFG = graph.node(
-                self.subgraph[MapFission._nested_sdfg])
+            nsdfg_node = graph.node(self.subgraph[MapFission._nested_sdfg])
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
             parent = nsdfg_node.sdfg
 
@@ -401,15 +406,6 @@ class MapFission(pattern_matching.Transformation):
                             e.data.subset = subsets.Range(
                                 [(d, d, 1) for d in outer_map.params] +
                                 e.data.subset.ranges)
-
-            # Re-introduce dynamic range map memlets
-            for edge in sd.dynamic_map_inputs(graph, map_entry):
-                if self.expr_index == 0:  # Subgraph
-                    for me in new_map_entries:
-                        state.add_edge(edge.src, edge.src_conn, me,
-                                       edge.dst_conn, dcpy(edge.data))
-                else:  # TODO: Add connectors to Nested SDFG
-                    raise NotImplementedError
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
