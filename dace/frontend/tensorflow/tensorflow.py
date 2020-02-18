@@ -2014,10 +2014,11 @@ class TFSession:
             image_dims_list = image.desc(self.graph).shape
             filter_dims_list = filter.desc(self.graph).shape
             [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
-            pad = strides[H] * (output.desc(self.graph).shape[H] - 1) + \
-                  filter.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
+
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
+            pad = strides[H] * (output.desc(self.graph).shape[H] - 1) + \
+                  filter.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
             if padding == "SAME" and pad > 0:
                 paddedInput, paddedDims = self.inputPadding(
                     node,
@@ -2919,6 +2920,8 @@ class TFSession:
             output = self.create_and_add_output_node(node)[0]
             output_dims = self.get_default_dims(node.outputs[0])
             output_params = self.get_default_params(node.outputs[0])
+            filter_dims_list = filter.desc(self.graph).shape
+            output_dims_list = output.desc(self.graph).shape
             [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
 
             # change filter format from RSCK to target format for cuDNN
@@ -2927,8 +2930,6 @@ class TFSession:
                 idx = [3, 2, 0, 1]  # KCRS
             mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
 
-            filter_dims_list = filter.desc(self.graph).shape
-            output_dims_list = output.desc(self.graph).shape
             # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
             # assuming pad_top = pad_bottom, pad_left = pad_right
             padh = 0
@@ -3346,17 +3347,17 @@ class TFSession:
             explicit_paddings = node.get_attr("explicit_paddings")
             padding = node.get_attr("padding").decode("utf-8")
             strides = node.get_attr("strides")
-
             image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
             gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
             output = self.create_and_add_output_node(node)[0]
-            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
             image_dims_list = image.desc(self.graph).shape
+            output_dims_list = output.desc(self.graph).shape
+            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
 
-            pad = strides[H] * (gradient.desc(self.graph).shape[H] - 1) \
-                  + output.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
             # add a padding map for same padding(zero padding so that input and
             # output of convolution have the same size)
+            pad = strides[H] * (gradient.desc(self.graph).shape[H] - 1) + \
+                  output.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
             if padding == "SAME" and pad > 0:
                 paddedInput, paddedDims = self.inputPadding(
                     node,
@@ -3378,7 +3379,7 @@ class TFSession:
                 padh = explicit_paddings[H*2]
                 padw = explicit_paddings[W*2]
 
-            output_dims_list = output.desc(self.graph).shape
+
             tasklet = state.add_tasklet(
                 name=string_builder(node.type),
                 inputs={'x', 'dy'},
