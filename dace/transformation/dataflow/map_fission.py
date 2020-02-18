@@ -220,15 +220,31 @@ class MapFission(pattern_matching.Transformation):
             # Collect external edges for source/sink nodes
             edge_to_outer = {}
             for node in sources:
-                for edge in state.in_edges(node):
-                    path = state.memlet_path(edge)
-                    eindex = path.index(edge)
-                    edge_to_outer[edge] = path[eindex - 1]
+                if self.expr_index == 0:
+                    # Subgraphs use the corresponding outer map edges
+                    for edge in state.in_edges(node):
+                        path = state.memlet_path(edge)
+                        eindex = path.index(edge)
+                        edge_to_outer[edge] = path[eindex - 1]
+                elif isinstance(node, nodes.AccessNode):
+                    # Nested SDFGs use the internal map edges of the node
+                    outer_edge = next(
+                        e for e in graph.in_edges(nsdfg_node)
+                        if e.dst_conn == node.data)
+                    edge_to_outer[node] = outer_edge
+
             for node in sinks:
-                for edge in state.out_edges(node):
-                    path = state.memlet_path(edge)
-                    eindex = path.index(edge)
-                    edge_to_outer[edge] = path[eindex + 1]
+                if self.expr_index == 0:
+                    for edge in state.out_edges(node):
+                        path = state.memlet_path(edge)
+                        eindex = path.index(edge)
+                        edge_to_outer[edge] = path[eindex + 1]
+                elif isinstance(node, nodes.AccessNode):
+                    # Nested SDFGs use the internal map edges of the node
+                    outer_edge = next(
+                        e for e in graph.out_edges(nsdfg_node)
+                        if e.src_conn == node.data)
+                    edge_to_outer[node] = outer_edge
 
             # Collect all border arrays and code->code edges
             arrays = MapFission._border_arrays(components, subgraph, sources,
@@ -328,6 +344,7 @@ class MapFission(pattern_matching.Transformation):
                                                       memlet.subset.ranges)
                         state.add_edge(outer_edge.src, outer_edge.src_conn,
                                        edge.dst, edge.dst_conn, memlet)
+
             for node in sinks:
                 if isinstance(node, nodes.AccessNode):
                     for edge in state.out_edges(node):
@@ -349,7 +366,30 @@ class MapFission(pattern_matching.Transformation):
             # Fill scope connectors so that memlets can be tracked below
             state.fill_scope_connectors()
 
-            # TODO: nodes to outer transients broken in nested SDFGS
+            # Correct connectors and memlets in nested SDFGs to account for
+            # missing outside map
+            if self.expr_index == 1:
+                modified_arrays = set()
+                for node in list(sources) + list(sinks):
+                    if isinstance(node, nodes.AccessNode):
+                        outer_edge = edge_to_outer[node]
+                        desc = parent.arrays[node.data]
+                        old_subset = outer_edge.data.subset
+
+                        # Modify shape of internal array to match outer one
+                        if node.data not in modified_arrays:
+                            outer_desc = sdfg.arrays[outer_edge.data.data]
+                            desc.shape = outer_desc.shape
+                            desc.strides = outer_desc.strides
+                            desc.total_size = outer_desc.total_size
+                            modified_arrays.add(node.data)
+
+                        # Inside the nested SDFG, offset all memlets to include
+                        # the offsets from within the map.
+                        # NOTE: Relies on propagation to fix outer memlets
+                        for edge in state.all_edges(node):
+                            for e in state.memlet_tree(edge):
+                                e.data.subset.offset(old_subset, False)
 
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
@@ -371,11 +411,16 @@ class MapFission(pattern_matching.Transformation):
                 else:  # TODO: Add connectors to Nested SDFG
                     raise NotImplementedError
 
-        # If nested SDFG, reconnect nodes around map
+        # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
             for edge in graph.in_edges(map_entry):
                 if not edge.dst_conn or not edge.dst_conn.startswith('IN_'):
                     continue
+
+                # Modify edge coming into nested SDFG to include entire array
+                desc = sdfg.arrays[edge.data.data]
+                edge.data.subset = subsets.Range.from_array(desc)
+
                 # Find matching edge inside map
                 inner_edge = next(
                     e for e in graph.out_edges(map_entry)
@@ -384,6 +429,10 @@ class MapFission(pattern_matching.Transformation):
                                inner_edge.dst_conn, dcpy(edge.data))
 
             for edge in graph.out_edges(map_exit):
+                # Modify edge coming out of nested SDFG to include entire array
+                desc = sdfg.arrays[edge.data.data]
+                edge.data.subset = subsets.Range.from_array(desc)
+
                 # Find matching edge inside map
                 inner_edge = next(
                     e for e in graph.in_edges(map_exit)
