@@ -2808,7 +2808,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_map(
             self,
             name,
-            ndrange: Dict[str, str],
+            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
             schedule=dtypes.ScheduleType.Default,
             unroll=False,
             debuginfo=None,
