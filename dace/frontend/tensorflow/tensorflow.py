@@ -145,7 +145,7 @@ class TFSession:
             initializer,
             iterations,
             feed_dict,
-            gpu=True,
+            gpu=False,
             cudnn=True,
             nodes=None,
             output_gradients=False,
