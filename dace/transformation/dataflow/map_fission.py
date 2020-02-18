@@ -297,6 +297,10 @@ class MapFission(pattern_matching.Transformation):
                         state.add_edge(e.src, e.src_conn, me, None,
                                        dcpy(e.data))
                     state.remove_edge(e)
+                # Empty memlet edge in nested SDFGs
+                if state.in_degree(component_in) == 0:
+                    state.add_edge(me, None, component_in, None,
+                                   mm.EmptyMemlet())
 
                 for e in state.out_edges(component_out):
                     state.add_edge(e.src, e.src_conn, mx, None, dcpy(e.data))
@@ -309,7 +313,10 @@ class MapFission(pattern_matching.Transformation):
                         state.add_edge(mx, None, e.dst, e.dst_conn,
                                        dcpy(e.data))
                     state.remove_edge(e)
-
+                # Empty memlet edge in nested SDFGs
+                if state.out_degree(component_out) == 0:
+                    state.add_edge(component_out, None, mx, None,
+                                   mm.EmptyMemlet())
             # Connect other sources/sinks not in components (access nodes)
             # directly to external nodes
             for node in sources:
@@ -342,6 +349,8 @@ class MapFission(pattern_matching.Transformation):
             # Fill scope connectors so that memlets can be tracked below
             state.fill_scope_connectors()
 
+            # TODO: nodes to outer transients broken in nested SDFGS
+
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
             for node in subgraph.nodes():
@@ -361,6 +370,26 @@ class MapFission(pattern_matching.Transformation):
                                        edge.dst_conn, dcpy(edge.data))
                 else:  # TODO: Add connectors to Nested SDFG
                     raise NotImplementedError
+
+        # If nested SDFG, reconnect nodes around map
+        if self.expr_index == 1:
+            for edge in graph.in_edges(map_entry):
+                if not edge.dst_conn or not edge.dst_conn.startswith('IN_'):
+                    continue
+                # Find matching edge inside map
+                inner_edge = next(
+                    e for e in graph.out_edges(map_entry)
+                    if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
+                graph.add_edge(edge.src, edge.src_conn, nsdfg_node,
+                               inner_edge.dst_conn, dcpy(edge.data))
+
+            for edge in graph.out_edges(map_exit):
+                # Find matching edge inside map
+                inner_edge = next(
+                    e for e in graph.in_edges(map_exit)
+                    if e.dst_conn[3:] == edge.src_conn[4:])
+                graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst,
+                               edge.dst_conn, dcpy(edge.data))
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
