@@ -900,10 +900,12 @@ class CPPUnparser:
         self.write("(", infer_type)
         self.dispatch(t.test, infer_type)
         self.write(" ? ", infer_type)
-        self.dispatch(t.body, infer_type)
+        type_body = self.dispatch(t.body, infer_type)
         self.write(" : ", infer_type)
-        self.dispatch(t.orelse, infer_type)
+        type_orelse = self.dispatch(t.orelse, infer_type)
         self.write(")", infer_type)
+        return dace.dtypes._CTYPES_RULES[frozenset(
+            (type_body, type_orelse))] if infer_type is True else None
 
     def _Set(self, t):
         raise SyntaxError('Invalid C++')
