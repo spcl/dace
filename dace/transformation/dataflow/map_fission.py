@@ -1,12 +1,13 @@
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
-from dace import dtypes, registry, symbolic, sdfg as sd
-from dace.graph import nodes, nxutil
+from collections import defaultdict
+from dace import dtypes, registry, symbolic, sdfg as sd, memlet as mm, subsets
+from dace.graph import nodes, nxutil, labeling
 from dace.graph.graph import OrderedDiGraph
 from dace.sdfg import replace
 from dace.transformation import pattern_matching
-from typing import List, Union
+from typing import List, Tuple
 
 
 @registry.autoregister_params(singlestate=True)
@@ -48,18 +49,60 @@ class MapFission(pattern_matching.Transformation):
         ]
 
     @staticmethod
-    def _components(subgraph: sd.SubgraphView) -> List[nodes.Node]:
-        """ Returns the list of non-array components in this subgraph. """
+    def _components(
+            subgraph: sd.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+        """
+        Returns the list of tuples non-array components in this subgraph.
+        Each element in the list is a 2 tuple of (input node, output node) of
+        the component.
+        """
         graph = (subgraph
                  if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
         sdict = subgraph.scope_dict(node_to_children=True)
-        ns = [
-            graph.exit_nodes(n)[0] if isinstance(n, nodes.EntryNode) else n
-            for n in sdict[None]
-            if isinstance(n, (nodes.CodeNode, nodes.EntryNode))
-        ]
+        ns = [(n, graph.exit_nodes(n)[0])
+              if isinstance(n, nodes.EntryNode) else (n, n)
+              for n in sdict[None]
+              if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
         return ns
+
+    @staticmethod
+    def _border_arrays(components, subgraph, sources, sinks):
+        """ Returns a set of array names that are local to the fission
+            subgraph. """
+        result = set()
+        # In subgraphs, transient source/sink nodes (that do not come from
+        # outside the map) are also border arrays
+        use_sources_sinks = not isinstance(subgraph, sd.SDFGState)
+
+        for component_in, component_out in components:
+            for e in subgraph.in_edges(component_in):
+                if (isinstance(e.src, nodes.AccessNode)
+                        and (use_sources_sinks or e.src not in sources)):
+                    result.add(e.src.data)
+            for e in subgraph.out_edges(component_out):
+                if (isinstance(e.dst, nodes.AccessNode)
+                        and (use_sources_sinks or e.dst not in sinks)):
+                    result.add(e.dst.data)
+
+        return result
+
+    @staticmethod
+    def _internal_border_arrays(components, subgraph):
+        """ Returns the set of border arrays that appear between computational
+            components (i.e., without sources and sinks). """
+        inputs = set()
+        outputs = set()
+
+        for component_in, component_out in components:
+            for e in subgraph.in_edges(component_in):
+                if isinstance(e.src, nodes.AccessNode):
+                    inputs.add(e.src.data)
+            for e in subgraph.out_edges(component_out):
+                if isinstance(e.dst, nodes.AccessNode):
+                    outputs.add(e.dst.data)
+
+        return inputs & outputs
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -81,19 +124,25 @@ class MapFission(pattern_matching.Transformation):
         for sg in subgraphs:
             components = MapFission._components(sg)
             snodes = sg.nodes()
+            sources = sg.source_nodes()
+            sinks = sg.sink_nodes()
             # Test that the subgraphs have more than one computational component
             if len(snodes) > 0 and len(components) <= 1:
                 return False
 
             # Test that the components are connected by transients that are not
             # used anywhere else
-            border_arrays = set()
-            for component in components:
-                sinks = sg.sink_nodes()
-                for e in sg.out_edges(component):
-                    if (isinstance(e.dst, nodes.AccessNode)
-                            and e.dst not in sinks):
-                        border_arrays.add(e.dst.data)
+            border_arrays = MapFission._border_arrays(components, sg, sources,
+                                                      sinks)
+
+            # Fail if there are arrays inside the map that are not a direct
+            # output of a computational component
+            # TODO(later): Support this case? Ambiguous array sizes and memlets
+            external_arrays = (
+                border_arrays - MapFission._internal_border_arrays(
+                    components, sg))
+            if len(external_arrays) > 0:
+                return False
 
             # 1. In nested SDFGs and subgraphs, ensure none of the border
             #    values are non-transients
@@ -117,8 +166,8 @@ class MapFission(pattern_matching.Transformation):
                     set(n.data for s in sdfg.nodes() if s != graph
                         for n in s.nodes() if isinstance(n, nodes.AccessNode)))
 
-                for component in components:
-                    for e in sg.out_edges(component):
+                for _, component_out in components:
+                    for e in sg.out_edges(component_out):
                         if isinstance(e.dst, nodes.AccessNode):
                             if e.dst.data in not_subgraph:
                                 return False
