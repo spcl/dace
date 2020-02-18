@@ -49,7 +49,11 @@ class Node(object):
         labelstr = str(self)
         typestr = getattr(self, '__jsontype__', str(type(self).__name__))
 
-        scope_entry_node = parent.entry_node(self)
+        try:
+            scope_entry_node = parent.entry_node(self)
+        except RuntimeError:
+            scope_entry_node = None
+
         if scope_entry_node is not None:
             ens = parent.exit_nodes(parent.entry_node(self))
             scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
@@ -60,9 +64,12 @@ class Node(object):
 
         # The scope exit of an entry node is the matching exit node
         if isinstance(self, EntryNode):
-            scope_exit_nodes = [
-                str(parent.node_id(x)) for x in parent.exit_nodes(self)
-            ]
+            try:
+                scope_exit_nodes = [
+                    str(parent.node_id(x)) for x in parent.exit_nodes(self)
+                ]
+            except RuntimeError:
+                scope_exit_nodes = []
 
         retdict = {
             "type": typestr,

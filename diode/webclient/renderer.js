@@ -478,6 +478,8 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
     // Process nodes hierarchically
     let toplevel_nodes = sdfg_state.scope_dict[-1];
+    if (toplevel_nodes === undefined)
+        toplevel_nodes = Object.keys(sdfg_state.nodes);
     let drawn_nodes = new Set();
 
     function layout_node(node) {

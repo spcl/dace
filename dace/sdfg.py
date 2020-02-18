@@ -263,12 +263,19 @@ class SDFG(OrderedDiGraph):
         tmp = super().to_json()
 
         # Inject the undefined symbols
-        tmp['undefined_symbols'] = [
-            (k, v.to_json())
-            for k, v in sorted(self.undefined_symbols(True).items())
-        ]
-        tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
-            self.scalar_parameters(True), key=lambda x: x[0])]
+        try:
+            tmp['undefined_symbols'] = [
+                (k, v.to_json())
+                for k, v in sorted(self.undefined_symbols(True).items())
+            ]
+        except RuntimeError:
+            tmp['undefined_symbols'] = []
+
+        try:
+            tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
+                self.scalar_parameters(True), key=lambda x: x[0])]
+        except RuntimeError:
+            tmp['scalar_parameters'] = []
 
         tmp['attributes']['name'] = self.name
 
@@ -2552,6 +2559,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return dot.draw_node(graph, self, shape="Msquare")
 
     def to_json(self, parent=None):
+        # Create scope dictionary with a failsafe
+        try:
+            scope_dict = {
+                k: sorted(v)
+                for k, v in sorted(
+                    self.scope_dict(node_to_children=True, return_ids=True)
+                    .items())
+            }
+        except RuntimeError:
+            scope_dict = {}
+
         ret = {
             'type':
             type(self).__name__,
@@ -2561,12 +2579,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent.node_id(self) if parent is not None else None,
             'collapsed':
             self.is_collapsed,
-            'scope_dict': {
-                k: sorted(v)
-                for k, v in sorted(
-                    self.scope_dict(node_to_children=True, return_ids=True)
-                    .items())
-            },
+            'scope_dict':
+            scope_dict,
             'nodes': [n.to_json(self) for n in self.nodes()],
             'edges': [
                 e.to_json(self) for e in sorted(

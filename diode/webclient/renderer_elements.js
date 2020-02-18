@@ -352,7 +352,14 @@ class ScopeNode extends Node {
         let far_label = this.attributes().label;
         if (this.scopeend()) {  // Get label from scope entry
             let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
-            far_label = entry.attributes.label;
+            if (entry !== undefined)
+                far_label = entry.attributes.label;
+            else {
+                far_label = this.label();
+                let ind = far_label.indexOf('[');
+                if (ind > 0)
+                    far_label = far_label.substring(0, ind);
+            }
         }
 
         drawAdaptiveText(ctx, renderer, far_label,
