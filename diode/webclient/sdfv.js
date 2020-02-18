@@ -98,7 +98,9 @@ function outline_recursive(renderer, graph, elements) {
         let node = graph.node(nodeid);
         let d = document.createElement('div');
         d.className = 'context_menu_option';
-        d.innerHTML = node.type() + ' ' + node.label();
+        let is_collapsed = node.attributes().is_collapsed;
+        is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
+        d.innerHTML = node.type() + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
         d.onclick = (e) => {
             renderer.zoom_to_view([node]);
 
@@ -109,7 +111,7 @@ function outline_recursive(renderer, graph, elements) {
         };
 
         // Traverse states or nested SDFGs
-        if (node.data.graph)
+        if (node.data.graph && !is_collapsed)
             outline_recursive(renderer, node.data.graph, d);
 
         elements.appendChild(d);

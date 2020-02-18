@@ -31,10 +31,10 @@ if __name__ == '__main__':
     C = np.random.rand(32).astype(np.float32)
 
     s1 = prog1.to_sdfg()
-    s1.apply_transformations([GPUTransformMap], apply_once=True)
+    s1.apply_transformations(GPUTransformMap)
 
     s2 = prog2.to_sdfg()
-    s2.apply_transformations([GPUTransformMap], apply_once=True)
+    s2.apply_transformations(GPUTransformMap)
 
     s1func = s1.compile(optimizer='')
     s2func = s2.compile(optimizer='')
