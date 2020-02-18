@@ -525,6 +525,40 @@ class NestedSDFG extends Node {
 }
 
 class LibraryNode extends Node {
+    _path(ctx) {
+        let hexseg = this.height / 6.0;
+        let topleft = this.topleft();
+        ctx.beginPath();
+        ctx.moveTo(topleft.x, topleft.y);
+        ctx.lineTo(topleft.x + this.width - hexseg, topleft.y);
+        ctx.lineTo(topleft.x + this.width, topleft.y + hexseg);
+        ctx.lineTo(topleft.x + this.width, topleft.y + this.height);
+        ctx.lineTo(topleft.x, topleft.y + this.height);
+        ctx.closePath();
+    }
+
+    _path2(ctx) {
+        let hexseg = this.height / 6.0;
+        let topleft = this.topleft();
+        ctx.beginPath();
+        ctx.moveTo(topleft.x + this.width - hexseg, topleft.y);
+        ctx.lineTo(topleft.x + this.width - hexseg, topleft.y + hexseg);
+        ctx.lineTo(topleft.x + this.width, topleft.y + hexseg);
+    }
+
+    draw(renderer, ctx, mousepos) {
+        ctx.fillStyle = "white";
+        this._path(ctx);
+        ctx.fill();
+        ctx.strokeStyle = this.strokeStyle();
+        this._path(ctx);
+        ctx.stroke();
+        this._path2(ctx);
+        ctx.stroke();
+        ctx.fillStyle = "black";
+        let textw = ctx.measureText(this.label()).width;
+        ctx.fillText(this.label(), this.x - textw/2, this.y + LINEHEIGHT/4);
+    }
 }
 
 //////////////////////////////////////////////////////
