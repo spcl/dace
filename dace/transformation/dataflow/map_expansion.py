@@ -1,15 +1,14 @@
 """ Contains classes that implement the map-expansion transformation. """
 
-import copy
 from typing import Dict
 import dace
-from dace import dtypes, subsets, symbolic
-from dace.memlet import EmptyMemlet
+from dace import dtypes, registry, subsets, symbolic
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import pattern_matching as pm
 
 
+@registry.autoregister_params(singlestate=True)
 class MapExpansion(pm.Transformation):
     """ Implements the map-expansion pattern.
 
@@ -112,6 +111,3 @@ class MapExpansion(pm.Transformation):
                 memlet=edge.data,
                 src_conn=edge.src_conn,
                 dst_conn=edge.dst_conn)
-
-
-pm.Transformation.register_pattern(MapExpansion)

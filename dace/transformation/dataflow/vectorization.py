@@ -1,10 +1,11 @@
 """ Contains classes that implement the vectorization transformation. """
-from dace import data, dtypes, symbolic
+from dace import data, registry, symbolic
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class Vectorization(pattern_matching.Transformation):
     """ Implements the vectorization transformation.
@@ -154,9 +155,3 @@ class Vectorization(pattern_matching.Transformation):
                 except AttributeError:
                     raise
         return
-
-    def modifies_graph(self):
-        return True
-
-
-pattern_matching.Transformation.register_pattern(Vectorization)

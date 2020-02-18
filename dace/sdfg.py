@@ -126,6 +126,16 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return "%s (at state %s%s)" % (self.message, str(state.label), nodestr)
 
 
+class NodeNotExpandedError(InvalidSDFGNodeError):
+    """
+    Exception that is raised whenever a library node was not expanded
+    before code generation.
+    """
+
+    def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
+        super().__init__('Library node not expanded', sdfg, state_id, node_id)
+
+
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
 
@@ -284,7 +294,7 @@ class SDFG(OrderedDiGraph):
             parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name'})
 
         for n in nodes:
             nci = copy.deepcopy(context_info)
@@ -309,9 +319,6 @@ class SDFG(OrderedDiGraph):
         ret.validate()
 
         return ret
-
-        # Counter to make it easy to create temp transients
-        self._temp_transients = 0
 
     @property
     def arrays(self):
@@ -661,6 +668,14 @@ class SDFG(OrderedDiGraph):
             yield node, self
             yield from node.all_nodes_recursive()
 
+    def all_sdfgs_recursive(self):
+        """ Iterate over this and all nested SDFGs. """
+        yield self
+        for state in self.nodes():
+            for node in state.nodes():
+                if isinstance(node, nd.NestedSDFG):
+                    yield from node.sdfg.all_sdfgs_recursive()
+
     def all_edges_recursive(self):
         """ Iterate over all edges in this SDFG, including state edges,
             inter-state edges, and recursively edges within nested SDFGs,
@@ -696,8 +711,8 @@ class SDFG(OrderedDiGraph):
                 if isinstance(expr, str):
                     expr = symbolic.pystr_to_symbolic(expr, simplify=False)
                 if isinstance(expr, sp.Expr):
-                    for s in dace.symbolic.symbols_in_sympy_expr(expr):
-                        used[s] = dt.Scalar(symbolic.symbol(s).dtype)
+                    for sname, s in dace.symbolic.symlist(expr).items():
+                        used[sname] = dt.Scalar(s.dtype)
                 elif expr is None or isinstance(expr, int):
                     pass  # Nothing to extract, or a constant
                 else:
@@ -1605,47 +1620,25 @@ subgraph cluster_state_{state} {{
         state = self.find_state(state_id_or_label)
         return state.find_node(node_id_or_label)
 
-    def specialize(self, additional_symbols=None, specialize_all_symbols=True):
+    def specialize(self, symbols: Dict[str, Any]):
         """ Sets symbolic values in this SDFG to constants.
-            :param additional_symbols: Additional values to specialize.
-            :param specialize_all_symbols: If True, raises an
-                   UnboundLocalError if at least one of the symbols in the
-                   SDFG is unset.
+            :param symbols: Values to specialize.
         """
-        syms = {}
-        additional_symbols = additional_symbols or {}
-        undefined_symbols = self.undefined_symbols(False)
-        # scalar_arguments = self.scalar_parameters(False)
-        for (
-                symname
-        ) in undefined_symbols:  # itertools.chain(undefined_symbols, scalar_arguments):
-            try:
-                syms[symname] = symbolic.symbol(symname).get()
-            except UnboundLocalError:
-                # Allow scalar arguments to remain undefined, but fail on
-                # symbols
-                if specialize_all_symbols and symname not in additional_symbols:
-                    pass
-
-        # Augment symbol values from additional symbols
-        syms.update({
+        # Set symbol values to add
+        syms = {
             # If symbols are passed, extract the value. If constants are
             # passed, use them directly.
             name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in additional_symbols.items()
-        })
+            for name, val in symbols.items()
+        }
 
         # Update constants
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def compile(self, specialize=None, optimizer=None, output_file=None) -> \
+    def compile(self, optimizer=None, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
-
-            :param specialize: If True, specializes all symbols to their
-                               defined values as constants. If None, uses
-                               configuration setting.
             :param optimizer: If defines a valid class name, it will be called
                               during compilation to transform the SDFG as
                               necessary. If None, uses configuration setting.
@@ -1674,20 +1667,18 @@ subgraph cluster_state_{state} {{
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        # Propagate memlets in the graph
-        if self._propagate:
-            propagate_labels_sdfg(sdfg)
-
-        # Specialize SDFG to its symbol values
-        if (specialize is None and Config.get_bool(
-                "optimizer", "autospecialize")) or specialize == True:
-            sdfg.specialize()
-
         # Optimize SDFG using the CLI or external hooks
         optclass = _get_optimizer_class(optimizer)
         if optclass is not None:
+            # Propagate memlets in the graph
+            if self._propagate:
+                propagate_labels_sdfg(sdfg)
+
             opt = optclass(sdfg)
             sdfg = opt.optimize()
+
+        # Recursively expand library nodes that haven't been expanded yet
+        sdfg.expand_library_nodes()
 
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
 
@@ -1696,7 +1687,7 @@ subgraph cluster_state_{state} {{
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            self, program_objects, os.path.join(".dacecache", sdfg.name))
+            sdfg, program_objects, os.path.join(".dacecache", sdfg.name))
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder)
@@ -1873,100 +1864,226 @@ subgraph cluster_state_{state} {{
             return False
         return True
 
-    def apply_strict_transformations(self, validate=True):
+    def apply_strict_transformations(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
 
             B{Note:} This is an in-place operation on the SDFG.
         """
-        from dace.transformation.dataflow import RedundantArray, MergeArrays
-        from dace.transformation.interstate import StateFusion, InlineSDFG
+        # These are imported in order to update the transformation registry
+        from dace.transformation import dataflow, interstate
+        # This is imported here to avoid an import loop
+        from dace.transformation.pattern_matching import Transformation
 
         strict_transformations = [
-            StateFusion, RedundantArray, MergeArrays, InlineSDFG
+            k for k, v in Transformation.extensions().items()
+            if v.get('strict', False)
         ]
-
-        self.apply_transformations(
-            strict_transformations, validate=validate, strict=True)
+        self.apply_transformations_repeated(
+            strict_transformations,
+            validate=validate,
+            strict=True,
+            validate_all=validate_all)
 
     def apply_transformations(self,
-                              patterns: Union[Type, List[Type]],
+                              xforms: Union[Type, List[Type]],
+                              options: Optional[Union[Dict[str, Any], List[
+                                  Dict[str, Any]]]] = None,
                               validate: bool = True,
+                              validate_all: bool = False,
                               strict: bool = False,
-                              states: Optional[List[Any]] = None,
-                              apply_once: bool = False,
-                              properties: Dict[str, Any] = None):
-        """ This function applies transformations as given in the argument
-            patterns. Operates in-place.
-            :param patterns: A Transformation class or a list thereof to apply.
-            :param validate: If True, validates after every transformation.
+                              states: Optional[List[Any]] = None) -> int:
+        """ This function applies a transformation or a sequence thereof
+            consecutively. Operates in-place.
+            :param xforms: A Transformation class or a sequence.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
-            :param apply_once: If True, applies the first found transformation
-                               and returns. Otherwise, applies until no further
-                               transformations are found.
-            :param properties: Properties to set when applying transformations.
+            :return: Number of transformations applied.
+
+            Examples::
+
+                      # Applies MapTiling, then MapFusion, followed by
+                      # GPUTransformSDFG, specifying parameters only for the
+                      # first transformation.
+                      sdfg.apply_transformations(
+                        [MapTiling, MapFusion, GPUTransformSDFG],
+                        options=[{'tile_size': 16}, {}, {}])
         """
         # Avoiding import loops
         from dace.transformation import optimizer
         from dace.transformation.pattern_matching import Transformation
 
-        if isinstance(patterns, type) and issubclass(patterns, Transformation):
-            patterns = [patterns]
-
-        # Apply strict state fusions greedily.
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        applied = True
         applied_transformations = collections.defaultdict(int)
-        while applied:
-            applied = False
-            # Find and apply immediately
-            for match in opt.get_pattern_matches(
-                    strict=strict, patterns=patterns, states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
-                if properties is not None:
-                    for prop_name, prop_val in properties.items():
-                        setattr(match, prop_name, prop_val)
-                match.apply(sdfg)
-                applied_transformations[type(match).__name__] += 1
-                if validate:
-                    self.fill_scope_connectors()
-                    self.validate()
-                applied = True
-                break
-            if apply_once and applied:
-                break
+
+        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+            xforms = [xforms]
+
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+
+        for xform, opts in zip(xforms, options):
+            # Find only the first match
+            try:
+                match = next(
+                    m for m in opt.get_pattern_matches(
+                        strict=strict, patterns=[xform], states=states))
+            except StopIteration:
+                continue
+            sdfg = self.sdfg_list[match.sdfg_id]
+
+            # Set transformation properties
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                self.validate()
+
+        if validate:
+            self.validate()
 
         if Config.get_bool('debugprint') and len(applied_transformations) > 0:
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
 
+        return sum(applied_transformations.values())
+
+    def apply_transformations_repeated(
+            self,
+            xforms: Union[Type, List[Type]],
+            options: Optional[Union[Dict[str, Any], List[Dict[str,
+                                                              Any]]]] = None,
+            validate: bool = True,
+            validate_all: bool = False,
+            strict: bool = False,
+            states: Optional[List[Any]] = None) -> int:
+        """ This function repeatedly applies a transformation or a set of
+            (unique) transformations until none can be found. Operates in-place.
+            :param xforms: A Transformation class or a set thereof.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
+            :param strict: If True, operates in strict transformation mode.
+            :param states: If not None, specifies a subset of states to
+                           apply transformations on.
+            :return: Number of transformations applied.
+
+            Examples::
+
+                    # Applies InlineSDFG until no more subgraphs can be inlined
+                    sdfg.apply_transformations_repeated(InlineSDFG)
+        """
+        # Avoiding import loops
+        from dace.transformation import optimizer
+        from dace.transformation.pattern_matching import Transformation
+
+        applied_transformations = collections.defaultdict(int)
+
+        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+            xforms = [xforms]
+
+        # Ensure transformations are unique
+        if len(xforms) != len(set(xforms)):
+            raise ValueError('Transformation set must be unique')
+
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+
+        applied = True
+        while applied:
+            applied = False
+            # Find and apply one of
+            for match in opt.get_pattern_matches(
+                    strict=strict, patterns=xforms, states=states):
+                sdfg = self.sdfg_list[match.sdfg_id]
+
+                # Set transformation properties
+                opts = next(
+                    o for x, o in zip(xforms, options) if type(match) is x)
+                for prop_name, prop_val in opts.items():
+                    setattr(match, prop_name, prop_val)
+
+                match.apply(sdfg)
+                applied_transformations[type(match).__name__] += 1
+                if validate_all:
+                    self.validate()
+                applied = True
+                break
+
+        if validate:
+            self.validate()
+
+        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+            print('Applied {}.'.format(', '.join([
+                '%d %s' % (v, k) for k, v in applied_transformations.items()
+            ])))
+
+        return sum(applied_transformations.values())
+
     def apply_gpu_transformations(self,
                                   states=None,
                                   validate=True,
+                                  validate_all=False,
                                   strict=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
-            @note: It is recommended to apply redundant array removal
+            :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
             you can apply_strict_transformations() after this transformation.
-            @note: This is an in-place operation on the SDFG.
+            :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
-        from dace.transformation.dataflow import GPUTransformLocalStorage
+        from dace.transformation.interstate import GPUTransformSDFG
 
-        patterns = [GPUTransformLocalStorage]
         self.apply_transformations(
-            patterns, validate=validate, strict=strict, states=states)
+            GPUTransformSDFG,
+            validate=validate,
+            validate_all=validate_all,
+            strict=strict,
+            states=states)
 
-    def generate_code(self, specialize=None):
+    def expand_library_nodes(self):
+        """ Recursively expand all unexpanded library nodes in the SDFG,
+            resulting in a "pure" SDFG that the code generator can handle.
+        """
+
+        states = list(self.states())
+        while len(states) > 0:
+            state = states.pop()
+            expanded_something = False
+            for node in list(state.nodes()):  # Make sure we have a copy
+                if isinstance(node, nd.NestedSDFG):
+                    node.sdfg.expand_library_nodes()  # Call recursively
+                elif isinstance(node, nd.LibraryNode):
+                    node.expand(self)
+                    print("Automatically expanded library node \"" +
+                          str(node) + "\".")
+                    # We made a copy of the original list of nodes, so we keep
+                    # iterating even though this list has now changed
+                    expanded_something = True
+            if expanded_something:
+                states.append(state)  # Nodes have changed. Check state again
+
+    def generate_code(self):
         """ Generates code from this SDFG and returns it.
-            :param specialize: If True, specializes all set symbols to their
-                               values in the generated code. If None,
-                               uses default configuration value.
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
@@ -1984,11 +2101,6 @@ subgraph cluster_state_{state} {{
         # Propagate memlets in the graph
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
-
-        # Specialize SDFG to its symbol values
-        if (specialize is None and Config.get_bool(
-                "optimizer", "autospecialize")) or specialize == True:
-            sdfg.specialize()
 
         sdfg.draw_to_file()
         sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
@@ -2023,8 +2135,9 @@ class MemletTrackingView(object):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
-        while not isinstance(curedge.src,
-                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+        while not isinstance(
+                curedge.src,
+            (nd.CodeNode, nd.AccessNode, nd.Reduce, nd.LibraryNode)):
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -2734,6 +2847,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent,
             inputs: Set[str],
             outputs: Set[str],
+            symbol_mapping: Dict[str, Any] = None,
             name=None,
             schedule=dtypes.ScheduleType.Default,
             location="-1",
@@ -2754,11 +2868,27 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             sdfg,
             inputs,
             outputs,
+            symbol_mapping=symbol_mapping,
             schedule=schedule,
             location=location,
             debuginfo=debuginfo,
         )
         self.add_node(s)
+
+        # Add "default" undefined symbols if None are given
+        symbols = sdfg.undefined_symbols(False)
+        if symbol_mapping is None:
+            symbol_mapping = {s: s for s in symbols.keys()}
+            s.symbol_mapping = symbol_mapping
+
+        # Validate missing symbols
+        missing_symbols = [
+            s for s in symbols.keys() if s not in symbol_mapping
+        ]
+        if missing_symbols:
+            raise ValueError('Missing symbols on nested SDFG "%s": %s' %
+                             (name, missing_symbols))
+
         return s
 
     def _map_from_ndrange(self,
@@ -2863,7 +2993,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
-    ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
+            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
             :param name:       Tasklet (and wrapping map) name
@@ -2933,8 +3063,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if external_edges:
             for inp, inpnode in inpdict.items():
                 # Add external edge
-                outer_memlet = propagate_memlet(self, tomemlet[inp], map_entry,
-                                                True)
+                if propagate:
+                    outer_memlet = propagate_memlet(self, tomemlet[inp],
+                                                    map_entry, True)
+                else:
+                    outer_memlet = tomemlet[inp]
                 self.add_edge(inpnode, None, map_entry, "IN_" + inp,
                               outer_memlet)
 
@@ -2963,8 +3096,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if external_edges:
             for out, outnode in outdict.items():
                 # Add external edge
-                outer_memlet = propagate_memlet(self, tomemlet[out], map_exit,
-                                                True)
+                if propagate:
+                    outer_memlet = propagate_memlet(self, tomemlet[out],
+                                                    map_exit, True)
+                else:
+                    outer_memlet = tomemlet[out]
                 self.add_edge(map_exit, "OUT_" + out, outnode, None,
                               outer_memlet)
 
@@ -3112,7 +3248,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         *path_nodes,
                         memlet=None,
                         src_conn=None,
-                        dst_conn=None):
+                        dst_conn=None,
+                        propagate=True):
         """ Adds a path of memlet edges between the given nodes, propagating
             from the given innermost memlet.
 
@@ -3211,8 +3348,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if i < len(edges) - 1:
                 snode = edge.dst if propagate_forward else edge.src
                 if not isinstance(cur_memlet, dace.memlet.EmptyMemlet):
-                    cur_memlet = propagate_memlet(self, cur_memlet, snode,
-                                                  True)
+                    if propagate:
+                        cur_memlet = propagate_memlet(self, cur_memlet, snode,
+                                                      True)
 
     # DEPRECATED FUNCTIONS
     ######################################
@@ -3767,14 +3905,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # If scope(src) contains scope(dst), then src must be a data node
             elif scope_contains_scope(scope, src_node, dst_node):
                 if not isinstance(src_node, nd.AccessNode):
-                    raise InvalidSDFGEdgeError(
-                        "Memlet creates an "
-                        "invalid path (source node %s should "
-                        "be a data node)" % str(src_node),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                    pass
+                    # raise InvalidSDFGEdgeError(
+                    #     "Memlet creates an "
+                    #     "invalid path (source node %s should "
+                    #     "be a data node)" % str(src_node),
+                    #     sdfg,
+                    #     state_id,
+                    #     eid,
+                    # )
             # If scope(dst) contains scope(src), then dst must be a data node
             elif scope_contains_scope(scope, dst_node, src_node):
                 if not isinstance(dst_node, nd.AccessNode):
@@ -4004,11 +4143,6 @@ def scope_symbols(dfg):
     sdict = dfg.scope_dict()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
-        if isinstance(n, dace.graph.nodes.NestedSDFG):
-            iv, ss = n.sdfg.scope_symbols()
-            iteration_variables.update(iv)
-            subset_symbols.update(ss)
-            continue
         if not isinstance(n, dace.graph.nodes.EntryNode):
             continue
         if isinstance(n, dace.graph.nodes.MapEntry):
@@ -4067,9 +4201,12 @@ def data_symbols(dfg):
     result = collections.OrderedDict()
     # Scalars determining the size of arrays
     for d in dfg.nodes():
-        # Update symbols with symbols in nested SDFGs
+        # Update symbols with symbols used in nested SDFG invocations
         if isinstance(d, nd.NestedSDFG):
-            result.update(d.sdfg.data_symbols(True))
+            result.update((k.name, dt.Scalar(k.dtype))
+                          for m in d.symbol_mapping.values()
+                          if symbolic.issymbolic(m) for k in m.free_symbols
+                          if not k.name.startswith('__dace'))
             continue
         if not isinstance(d, nd.AccessNode):
             continue
@@ -4085,8 +4222,8 @@ def data_symbols(dfg):
 def undefined_symbols(sdfg, obj, include_scalar_data):
     """ Returns all symbols used in this object that are undefined, and thus
         must be given as input parameters. """
-    scalar_arguments = sdfg.scalar_parameters(False)
     if include_scalar_data:
+        scalar_arguments = sdfg.scalar_parameters(False)
         symbols = collections.OrderedDict(
             (name, data) for name, data in scalar_arguments)
     else:
@@ -4100,15 +4237,9 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     symbols.update(used)
     iteration_variables, subset_symbols = obj.scope_symbols()
     symbols.update(subset_symbols)
-    if sdfg.parent is not None:
-        # Find parent Nested SDFG node
-        parent_node = next(
-            n for n in sdfg.parent.nodes()
-            if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
-        defined |= sdfg._parent_sdfg.symbols_defined_at(
-            parent_node, sdfg.parent).keys()
+
     # Don't include iteration variables
-    # (TODO: this is too lenient; take scope into account)
+    # TODO: this is too lenient; take scope into account
     defined |= iteration_variables.keys()
     defined |= {
         n.data
@@ -4196,7 +4327,7 @@ def local_transients(sdfg, dfg, entry_node):
     transients = _transients_in_scope(sdfg, current_scope, scope_dict)
 
     # Add transients defined in parent scopes
-    while current_scope is not None:
+    while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
             _transients_in_scope(sdfg, current_scope, scope_dict))

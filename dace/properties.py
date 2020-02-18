@@ -1,10 +1,7 @@
 import ast
-import astunparse
-import enum
 from collections import OrderedDict
 import copy
 from dace.frontend.python.astutils import unparse
-import itertools
 import json
 import pydoc
 import re
@@ -457,7 +454,15 @@ def indirect_properties(indirect_class, indirect_function, override=False):
     def indirection(cls):
         # For every property in the class we are indirecting to, create an
         # indirection property in this class
-        for prop in indirect_class.__properties__.values():
+        inherited_props = {}
+        for base_cls in cls.__bases__:
+            if hasattr(base_cls, "__properties__"):
+                inherited_props.update(base_cls.__properties__)
+        for name, prop in indirect_class.__properties__.items():
+            if (name in inherited_props
+                    and type(inherited_props[name]) == type(prop)):
+                # Base class could already have indirected properties
+                continue
             indirect_property(cls, indirect_function, prop, override)
         return make_properties(cls)
 
@@ -529,9 +534,11 @@ class ListProperty(Property):
         # Otherwise, convert to strings
         return list(map(str, l))
 
-    @staticmethod
-    def from_string(s):
-        return list(s)
+    def from_string(self, s):
+        if s.startswith('[') and s.endswith(']'):
+            return [self.element_type(d.strip()) for d in s[1:-1].split(',')]
+        else:
+            return list(s)
 
     def from_json(self, data, sdfg=None):
         if data is None:
@@ -543,6 +550,90 @@ class ListProperty(Property):
             return [self.element_type.from_json(elem) for elem in data]
         # Type-checks (casts) to the element type
         return list(map(self.element_type, data))
+
+
+class DictProperty(Property):
+    """ Property type for dictionaries. """
+
+    def __init__(self, key_type, value_type, *args, **kwargs):
+        """
+        Create a dictionary property with uniform key/value types.
+
+        The type of each element in the dictionary can be given as a type class,
+        or as a function that converts an element to the wanted type (e.g.,
+        `dace.symbolic.pystr_to_symbolic` for symbolic expressions).
+        :param key_type: The type of the keys in the dictionary.
+        :param value_type: The type of the values in the dictionary.
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
+        """
+        kwargs['dtype'] = dict
+        super().__init__(*args, **kwargs)
+        self.key_type = key_type
+        self.value_type = value_type
+
+    def __set__(self, obj, val):
+        if isinstance(val, str):
+            val = ast.literal_eval(val)
+        elif isinstance(val, (tuple, list)):
+            val = {k[0]: k[1] for k in val}
+        elif isinstance(val, dict):
+            val = {
+                self.key_type(k): self.value_type(v)
+                for k, v in val.items()
+            }
+        super(DictProperty, self).__set__(obj, val)
+
+    @staticmethod
+    def to_string(d):
+        return str(d)
+
+    def to_json(self, d):
+        if d is None:
+            return None
+        saved_dictionary = d
+
+        # If key knows how to convert itself, let it
+        if hasattr(self.key_type, "to_json"):
+            saved_dictionary = {
+                k.to_json(): v
+                for k, v in saved_dictionary.items()
+            }
+        # Otherwise, if the keys are not a native JSON type, convert to strings
+        elif self.key_type not in (int, float, list, tuple, dict, str):
+            saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}
+
+        # Same as above, but for values
+        if hasattr(self.value_type, "to_json"):
+            saved_dictionary = {
+                k: v.to_json()
+                for k, v in saved_dictionary.items()
+            }
+        elif self.value_type not in (int, float, list, tuple, dict, str):
+            saved_dictionary = {k: str(v) for k, v in saved_dictionary.items()}
+
+        return saved_dictionary
+
+    @staticmethod
+    def from_string(s):
+        return dict(s)
+
+    def from_json(self, data, sdfg=None):
+        if data is None:
+            return data
+        if not isinstance(data, dict):
+            raise TypeError('DictProperty expects a dictionary input, got '
+                            '%s' % data)
+        # If element knows how to convert itself, let it
+        key_json = hasattr(self.key_type, "from_json")
+        value_json = hasattr(self.value_type, "from_json")
+
+        return {
+            self.key_type.from_json(k, sdfg)
+            if key_json else self.key_type(k): self.value_type.from_json(
+                v, sdfg) if value_json else self.value_type(v)
+            for k, v in data.items()
+        }
 
 
 ###############################################################################
@@ -652,31 +743,6 @@ class DebugInfoProperty(Property):
         if info_available:
             di = DebugInfo(f, sl, sc, el, ec)
         return di
-
-
-class ParamsProperty(Property):
-    """ Property for list of parameters, such as parameters for a Map. """
-
-    @property
-    def dtype(self):
-        return list
-
-    @staticmethod
-    def to_string(l):
-        return "[{}]".format(", ".join(map(str, l)))
-
-    @staticmethod
-    def from_string(s):
-        return [
-            sp.Symbol(m.group(0))
-            for m in re.finditer("[a-zA-Z_][a-zA-Z0-9_]*", s)
-        ]
-
-    def to_json(self, l):
-        return l
-
-    def from_json(self, l, sdfg=None):
-        return l
 
 
 class SetProperty(Property):
@@ -1239,3 +1305,14 @@ class TypeClassProperty(Property):
             return dace.serialize.from_json(obj)
         else:
             raise TypeError("Cannot parse type from: {}".format(obj))
+
+
+class LibraryImplementationProperty(Property):
+    """
+    Property for choosing an implementation type for a library node. On the
+    Python side it is a standard property, but can expand into a combo-box in
+    DIODE.
+    """
+
+    def typestring(self):
+        return "LibraryImplementationProperty"

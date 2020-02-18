@@ -25,11 +25,11 @@ from .redundant_array_copying import (
     RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
 from .merge_arrays import MergeArrays
 
-# TensorFlow-specific transformations
-from .tensorflow_redundant_array import TensorflowRedundantArray
-
 # Device-related
 from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
+
+# Algorithmic
+from .matrix_product_transpose import MatrixProductTranspose

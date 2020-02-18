@@ -3,17 +3,22 @@
 
 import ast
 from copy import deepcopy as dcpy
+import dace
 import itertools
 import dace.serialize
-from typing import Set
+from typing import Any, Dict, Set
+from dace.config import Config
 from dace.graph import dot, graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
-    Property, CodeProperty, LambdaProperty, ParamsProperty, RangeProperty,
-    DebugInfoProperty, SetProperty, make_properties, indirect_properties,
-    DataProperty, SymbolicProperty, ListProperty, SDFGReferenceProperty)
+    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
+    SetProperty, make_properties, indirect_properties, DataProperty,
+    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty,
+    LibraryImplementationProperty)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
+import pydoc
+import warnings
 
 # -----------------------------------------------------------------------------
 
@@ -42,7 +47,7 @@ class Node(object):
 
     def to_json(self, parent):
         labelstr = str(self)
-        typestr = str(type(self).__name__)
+        typestr = getattr(self, '__jsontype__', str(type(self).__name__))
 
         scope_entry_node = parent.entry_node(self)
         if scope_entry_node is not None:
@@ -235,11 +240,27 @@ class AccessNode(Node):
 # ------------------------------------------------------------------------------
 
 
+@make_properties
 class CodeNode(Node):
     """ A node that contains runnable code with acyclic external data
         dependencies. May either be a tasklet or a nested SDFG, and
         denoted by an octagonal shape. """
-    pass
+
+    label = Property(dtype=str, desc="Name of the CodeNode")
+    location = Property(
+        dtype=str,
+        desc="CodeNode execution location descriptor",
+        allow_none=True)
+    environments = SetProperty(
+        str,
+        desc="Environments required by CMake to build and run this code node.",
+        default=set())
+
+    def __init__(self, label="", location=None, inputs=None, outputs=None):
+        super(CodeNode, self).__init__(inputs or set(), outputs or set())
+        # Properties
+        self.label = label
+        self.location = location
 
 
 @make_properties
@@ -251,7 +272,6 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    label = Property(dtype=str, desc="Name of the tasklet")
     code = CodeProperty(desc="Tasklet code", default="")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution", default="")
@@ -260,8 +280,6 @@ class Tasklet(CodeNode):
         default="")
     code_exit = CodeProperty(
         desc="Extra code that is called on DaCe runtime cleanup", default="")
-    location = Property(
-        dtype=str, desc="Tasklet execution location descriptor")
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -280,15 +298,13 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location="-1",
                  debuginfo=None):
-        super(Tasklet, self).__init__(inputs or set(), outputs or set())
+        super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.label = label
         # Set the language directly
         #self.language = language
         self.code = {'code_or_block': code, 'language': language}
 
-        self.location = location
         self.code_global = {'code_or_block': code_global, 'language': language}
         self.code_init = {'code_or_block': code_init, 'language': language}
         self.code_exit = {'code_or_block': code_exit, 'language': language}
@@ -363,7 +379,6 @@ class NestedSDFG(CodeNode):
         @note: A nested SDFG cannot create recursion (one of its parent SDFGs).
     """
 
-    label = Property(dtype=str, desc="Name of the SDFG")
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
     schedule = Property(
@@ -373,7 +388,11 @@ class NestedSDFG(CodeNode):
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
-    location = Property(dtype=str, desc="SDFG execution location descriptor")
+    symbol_mapping = DictProperty(
+        key_type=str,
+        value_type=dace.symbolic.pystr_to_symbolic,
+        desc="Mapping between internal symbols and their values, expressed as "
+        "symbolic expressions")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(
         dtype=bool,
@@ -390,16 +409,16 @@ class NestedSDFG(CodeNode):
                  sdfg,
                  inputs: Set[str],
                  outputs: Set[str],
+                 symbol_mapping: Dict[str, Any] = None,
                  schedule=dtypes.ScheduleType.Default,
                  location="-1",
                  debuginfo=None):
-        super(NestedSDFG, self).__init__(inputs, outputs)
+        super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.label = label
         self.sdfg = sdfg
+        self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
-        self.location = location
         self.debuginfo = debuginfo
 
     @staticmethod
@@ -448,6 +467,15 @@ class NestedSDFG(CodeNode):
                 raise NameError('Data descriptor "%s" not found in nested '
                                 'SDFG connectors' % dname)
 
+        # Validate undefined symbols
+        symbols = set(
+            k for k in self.sdfg.undefined_symbols(False).keys()
+            if k not in connectors)
+        missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
+        if missing_symbols:
+            raise ValueError(
+                'Missing symbols on nested SDFG: %s' % (missing_symbols))
+
         # Recursively validate nested SDFG
         self.sdfg.validate()
 
@@ -490,9 +518,13 @@ class MapEntry(EntryNode):
         self._map = map
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        m = Map("", [], [])
-        ret = MapEntry(map=m)
+    def map_type():
+        return Map
+
+    @classmethod
+    def from_json(clc, json_obj, context=None):
+        m = clc.map_type()("", [], [])
+        ret = clc(map=m)
 
         try:
             # Set map reference to map exit
@@ -536,16 +568,20 @@ class MapExit(ExitNode):
         self._map = map
 
     @staticmethod
-    def from_json(json_obj, context=None):
+    def map_type():
+        return Map
+
+    @classmethod
+    def from_json(clc, json_obj, context=None):
         try:
             # Set map reference to map entry
             entry_node = context['sdfg_state'].node(
                 int(json_obj['scope_entry']))
 
-            ret = MapExit(map=entry_node.map)
+            ret = clc(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
-            ret = MapExit(Map('_', [], []))
+            ret = clc(clc.map_type()('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
@@ -591,7 +627,7 @@ class Map(object):
 
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
-    params = ParamsProperty(desc="Mapped parameters")
+    params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(
         desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = Property(
@@ -922,3 +958,129 @@ class Reduce(Node):
 
         return 'Op: {op}\nAxes: {axes}'.format(
             axes=('all' if self.axes is None else str(self.axes)), op=wcrstr)
+
+
+# ------------------------------------------------------------------------------
+
+
+@make_properties
+class LibraryNode(CodeNode):
+
+    name = Property(dtype=str, desc="Name of node")
+    implementation = LibraryImplementationProperty(
+        dtype=str,
+        allow_none=True,
+        desc=("Which implementation this library node will expand into."
+              "Must match a key in the list of possible implementations."))
+
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = name
+        self.label = name
+
+    # Overrides subclasses to return LibraryNode as their JSON type
+    @property
+    def __jsontype__(self):
+        return 'LibraryNode'
+
+    # Based on https://stackoverflow.com/a/2020083/6489142
+    def _fullclassname(self):
+        module = self.__class__.__module__
+        if module is None or module == str.__class__.__module__:
+            return self.__class__.__name__  # Avoid reporting __builtin__
+        else:
+            return module + '.' + self.__class__.__name__
+
+    def to_json(self, parent):
+        jsonobj = super().to_json(parent)
+        jsonobj['classpath'] = self._fullclassname()
+        return jsonobj
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        if cls == LibraryNode:
+            clazz = pydoc.locate(json_obj['classpath'])
+            if clazz is None:
+                raise TypeError('Unrecognized library node type "%s"' %
+                                json_obj['classpath'])
+            return clazz.from_json(json_obj, context)
+        else:  # Subclasses are actual library nodes
+            ret = cls(json_obj['attributes']['name'])
+            dace.serialize.set_properties_from_json(
+                ret, json_obj, context=context)
+            return ret
+
+    def expand(self, sdfg, *args, **kwargs):
+        """Create and perform the expansion transformation for this library
+           node."""
+        implementation = self.implementation
+        library_name = type(self)._dace_library_name
+        try:
+            config_implementation = Config.get("library", library_name,
+                                               "default_implementation")
+        except KeyError:
+            # Non-standard libraries are not defined in the config schema, and
+            # thus might not exist in the config.
+            config_implementation = None
+        if config_implementation is not None:
+            try:
+                config_override = Config.get("library", library_name,
+                                             "override")
+                if config_override:
+                    if implementation is not None:
+                        warnings.warn(
+                            "Overriding explicitly specified "
+                            "implementation {} for {} with {}.".format(
+                                implementation, self.label,
+                                config_implementation))
+                    implementation = config_implementation
+            except KeyError:
+                config_override = False
+        # If not explicitly set, try the node default
+        if implementation is None:
+            implementation = type(self).default_implementation
+            # If no node default, try library default
+            if implementation is None:
+                import dace.library  # Avoid cyclic dependency
+                lib = dace.library._DACE_REGISTERED_LIBRARIES[type(
+                    self)._dace_library_name]
+                implementation = lib.default_implementation
+                # Try the default specified in the config
+                if implementation is None:
+                    implementation = config_implementation
+                    # Otherwise we don't know how to expand
+                    if implementation is None:
+                        raise ValueError("No implementation or default "
+                                         "implementation specified.")
+        if implementation not in self.implementations.keys():
+            raise KeyError("Unknown implementation: " + implementation)
+        transformation_type = type(self).implementations[implementation]
+        states = sdfg.states_for_node(self)
+        if len(states) < 1:
+            raise ValueError("Node \"" + str(self) +
+                             "\" not found in SDFG \"" + str(sdfg) + "\".")
+        if len(states) > 1:
+            raise ValueError("Node \"" + str(self) +
+                             "\" found in multiple states: " + ", ".join(
+                                 str(s) for s in states))
+        state = states[0]
+        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        state_id = sdfg.nodes().index(state)
+        subgraph = {transformation_type._match_node: state.node_id(self)}
+        transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
+        transformation.apply(sdfg, *args, **kwargs)
+
+    @classmethod
+    def register_implementation(clc, name, transformation_type):
+        """Register an implementation to belong to this library node type."""
+        clc.implementations[name] = transformation_type
+        match_node_name = "__" + transformation_type.__name__
+        if (hasattr(transformation_type, "_match_node")
+                and transformation_type._match_node != match_node_name):
+            raise ValueError(
+                "Transformation " + transformation_type.__name__ +
+                " is already registered with a different library node.")
+        transformation_type._match_node = clc(match_node_name)
+
+    def draw_node(self, sdfg, state):
+        return dot.draw_node(sdfg, state, self, shape="folder")

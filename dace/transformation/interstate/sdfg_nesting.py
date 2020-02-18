@@ -5,7 +5,7 @@ import itertools
 import networkx as nx
 from typing import Dict, List, Set
 
-from dace import data as dt, memlet, sdfg as sd, Memlet, EmptyMemlet
+from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
 from dace.graph import nodes, nxutil
 from dace.graph.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -13,6 +13,7 @@ from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
 
 
+@registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
 class InlineSDFG(pattern_matching.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
@@ -194,6 +195,14 @@ class InlineSDFG(pattern_matching.Transformation):
         #######################################################
         # Collect and update top-level SDFG metadata
 
+        # Global/init/exit code
+        if nsdfg.global_code:
+            sdfg.set_global_code(sdfg.global_code + nsdfg.global_code)
+        if nsdfg.init_code:
+            sdfg.set_init_code(sdfg.init_code + nsdfg.init_code)
+        if nsdfg.exit_code:
+            sdfg.set_exit_code(sdfg.exit_code + nsdfg.exit_code)
+
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
@@ -265,6 +274,10 @@ class InlineSDFG(pattern_matching.Transformation):
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
+
+        # Replace symbols using invocation symbol mapping
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            nsdfg.replace(symname, symvalue)
 
         # Replace data names with their top-level counterparts
         repldict = {}
@@ -392,6 +405,7 @@ class InlineSDFG(pattern_matching.Transformation):
         return result
 
 
+@registry.autoregister
 @make_properties
 class NestSDFG(pattern_matching.Transformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
@@ -511,7 +525,3 @@ class NestSDFG(pattern_matching.Transformation):
             outer_state.add_edge(
                 nested_node, val, arrnode, None,
                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
-
-
-pattern_matching.Transformation.register_stateflow_pattern(NestSDFG)
-pattern_matching.Transformation.register_pattern(InlineSDFG)

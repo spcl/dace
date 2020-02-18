@@ -39,9 +39,11 @@ def dace_softmax(X_in: dace.float32[N], X_out: dace.float32[N]):
 
         x_out = x_in / x_sum
 
+
 def softmax(x):
     e_x = np.exp(x - np.max(x, axis=0))
     return e_x / e_x.sum(axis=0)
+
 
 if __name__ == '__main__':
     X = np.array([1, 2, 3, 4, 5], dtype=np.float32)
@@ -52,5 +54,3 @@ if __name__ == '__main__':
 
     if not np.allclose(softmax(X), Y):
         exit(1)
-
-

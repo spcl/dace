@@ -23,7 +23,7 @@ def bla(AA, BB):
 
 
 @dace.program
-def prog(A, B, C):
+def prog(A: dace.float64[W], B: dace.float64[W], C: dace.float64[W]):
     bla(A, B)
     bla(B, C)
 
@@ -36,10 +36,10 @@ if __name__ == '__main__':
     C = dace.ndarray([W])
 
     A[:] = np.mgrid[0:W.get()]
-    B[:] = dace.float32(0.0)
-    C[:] = dace.float32(0.0)
+    B[:] = 0.0
+    C[:] = 0.0
 
-    prog(A, B, C, W=W)
+    prog(A, B, C)
 
     diff = np.linalg.norm((-(-A + 1) + 1) - C) / W.get()
     print("Difference:", diff)

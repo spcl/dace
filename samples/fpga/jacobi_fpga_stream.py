@@ -603,11 +603,13 @@ if __name__ == "__main__":
         T.set(args["T"])
 
     jacobi = make_sdfg(args["specialize"])
-    jacobi.specialize()
+    jacobi.specialize(dict(W=W))
 
     if not args["specialize"]:
         H.set(args["H"])
         T.set(args["T"])
+    else:
+        jacobi.specialize(dict(H=H, T=T))
 
     print("Jacobi Stencil {}x{} ({} steps, {}specialized)".format(
         H.get(), W.get(), T.get(), ("" if args["specialize"] else "not ")))
@@ -636,8 +638,8 @@ if __name__ == "__main__":
         regression = ndimage.convolve(
             regression, kernel, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(A[2:H.get() - 2, 2:W.get() - 2] -
-                              regression) / dace.eval(H * W)
+    residual = np.linalg.norm(A[2:H.get() - 2, 2:W.get() - 2] - regression) / (
+        H.get() * W.get())
     print("Residual:", residual)
     diff = np.abs(A[2:H.get() - 2, 2:W.get() - 2] - regression)
     wrong_elements = np.transpose(np.nonzero(diff >= 0.01))

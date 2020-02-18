@@ -1,6 +1,6 @@
 import {REST_request, FormBuilder, setup_drag_n_drop} from "./main.js"
-import { Appearance } from "./diode_appearance.js"
-import { SDFG_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
+import {Appearance} from "./diode_appearance.js"
+import {SDFG_Parser, SDFG_PropUtil} from "./sdfg_parser.js"
 import * as DiodeTables from "./table.js"
 import * as Roofline from "./renderer_dir/Roofline/main.js"
 
@@ -29,7 +29,7 @@ class DIODE_Settings {
     hasChanged() {
         return this.changed != {};
     }
-    
+
     changedValues() {
         return this.changed;
     }
@@ -51,12 +51,12 @@ class DIODE_Context {
         this.initial_state = state;
 
         this.created = state.created;
-        if(this.created == undefined) {
+        if (this.created == undefined) {
             this.created = this.diode.getPseudorandom();
             this.saveToState({created: this.created});
         }
         this._project = null;
-        if(state.project_id != undefined && state.project_id != null && state.project_id != "null") {
+        if (state.project_id != undefined && state.project_id != null && state.project_id != "null") {
             this._project = new DIODE_Project(this.diode, state.project_id);
         }
 
@@ -71,22 +71,23 @@ class DIODE_Context {
         return this._project;
     }
 
-    on(name, data, keep_alive_when_closed=false) {
+    on(name, data, keep_alive_when_closed = false) {
         let eh = this.diode.goldenlayout.eventHub;
 
         let params = [name, data];
         eh.on(...params);
         this._event_listeners.push(params);
 
-        if(keep_alive_when_closed) {
+        if (keep_alive_when_closed) {
             // NOTE: The new function has to be created because the function cannot be identical
             // (This is, because the handler is removed by (name, function) pairs)
             this.closed_on(name, (x) => data(x));
         }
     }
+
     // same as on(), but only active when the window is closed (in the closed windows list)
     closed_on(name, data) {
-        
+
 
         let params = [name, data];
         this._event_listeners_closed.push(params);
@@ -96,7 +97,7 @@ class DIODE_Context {
         // This function has to be called when reopening from the closed windows list
         // DO NOT call inside destroy()!
         let eh = this.diode.goldenlayout.eventHub;
-        for(let x of this._event_listeners_closed) {
+        for (let x of this._event_listeners_closed) {
             eh.unbind(...x);
         }
         this._event_listeners_closed = [];
@@ -107,7 +108,7 @@ class DIODE_Context {
         console.log("destroying", this);
         // Unlink all event listeners
         let eh = this.diode.goldenlayout.eventHub;
-        for(let x of this._event_listeners) {
+        for (let x of this._event_listeners) {
             eh.unbind(...x);
         }
         this._event_listeners = [];
@@ -121,25 +122,25 @@ class DIODE_Context {
 
         // Add to closed-windows list
         console.log("closing", this);
-        
+
         this.project().addToClosedWindowsList(this.container._config.componentName, this.getState());
 
         // Install the event listeners to listen when the window is closed
         let eh = this.diode.goldenlayout.eventHub;
-        for(let params of this._event_listeners_closed) {
+        for (let params of this._event_listeners_closed) {
             eh.on(...params);
         }
     }
 
     setupEvents(project) {
-        if(this._project == null) {
+        if (this._project == null) {
             this._project = project;
         }
 
         this.container.extendState({'project_id': this._project.eventString('')})
 
         this.on('destroy-' + this.getState().created, msg => {
-            if(!this._no_user_destroy) {
+            if (!this._no_user_destroy) {
                 // _might_ be a user destroy - call close
                 this.close();
             }
@@ -198,8 +199,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
     saveToState(dict_value) {
         let renamed_dict = {};
         let json_list = ['sdfg_data', 'sdfg'];
-        for(let x of Object.entries(dict_value)) {
-            renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof(x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
+        for (let x of Object.entries(dict_value)) {
+            renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof (x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
         }
         super.saveToState(renamed_dict);
 
@@ -209,8 +210,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
     resetState(dict_value) {
         let renamed_dict = {};
         let json_list = ['sdfg_data', 'sdfg'];
-        for(let x of Object.entries(dict_value)) {
-            renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof(x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
+        for (let x of Object.entries(dict_value)) {
+            renamed_dict[x[0]] = (json_list.includes(x[0]) && typeof (x[1]) != 'string') ? JSON.stringify(x[1]) : x[1];
         }
         super.resetState(renamed_dict);
         console.assert(this.getState().sdfg == undefined);
@@ -220,8 +221,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let _state = super.getState();
         let _transformed_state = {};
         let json_list = ['sdfg_data', 'sdfg'];
-        for(let x of Object.entries(_state)) {
-            _transformed_state[x[0]] = (typeof(x[1]) == 'string' && json_list.includes(x[0])) ? JSON.parse(x[1]) : x[1];
+        for (let x of Object.entries(_state)) {
+            _transformed_state[x[0]] = (typeof (x[1]) == 'string' && json_list.includes(x[0])) ? JSON.parse(x[1]) : x[1];
         }
         return _transformed_state;
     }
@@ -234,11 +235,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-new-sdfg'), (msg) => {
 
-            if(typeof(msg) == 'string') msg = parse_sdfg(msg);
-            if(msg.sdfg_name === this.getState()['sdfg_name']) {
+            if (typeof (msg) == 'string') msg = parse_sdfg(msg);
+            if (msg.sdfg_name === this.getState()['sdfg_name']) {
                 // Ok
-            }
-            else {
+            } else {
                 // Names don't match - don't replace this one then.
                 // #TODO: This means that renamed SDFGs will not work as expected.
                 return;
@@ -252,7 +252,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.on(this._project.eventString('-req-sdfg-msg'), msg => {
 
             let ret = this.message_handler_filter(msg);
-            if(ret === undefined) {
+            if (ret === undefined) {
                 ret = 'ok';
             }
             setTimeout(() => eh.emit(transthis._project.eventString('sdfg-msg'), ret), 1);
@@ -260,7 +260,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.on(this._project.eventString('-req-sdfg_props'), msg => {
             // Echo with data
-            if(msg != undefined) {
+            if (msg != undefined) {
                 this.discardInvalidated(msg);
             }
             let resp = this.getChangedSDFGPropertiesFromState();
@@ -272,13 +272,12 @@ class DIODE_Context_SDFG extends DIODE_Context {
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
             // Emit ok directly (to avoid caller timing out)
             setTimeout(() => eh.emit(this.project().eventString("property-changed-" + this.getState().created), "ok"), 1);
-            
-            if(msg.type == "symbol-properties") {
+
+            if (msg.type == "symbol-properties") {
                 this.symbolPropertyChanged(msg.element, msg.name, msg.value);
-            }
-            else
+            } else
                 this.propertyChanged(msg.element, msg.name, msg.value);
-            
+
         }, true);
 
         this.on(this.project().eventString('-req-delete-data-symbol-' + this.getState().created), (msg) => {
@@ -324,18 +323,18 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let sdfg = o['sdfg'];
 
         let found = false;
-        for(let x of Object.keys(sdfg.attributes._arrays)) {
-            if(x == aname) {
+        for (let x of Object.keys(sdfg.attributes._arrays)) {
+            if (x == aname) {
                 // Matching name
                 delete sdfg.attributes._arrays[x];
                 found = true;
                 break;
             }
         }
-        if(!found) console.error("Did not find symbol " + name + " in SDFG, this is a fatal error");
+        if (!found) console.error("Did not find symbol " + name + " in SDFG, this is a fatal error");
 
         let old = this.getState();
-        if(old.type == "SDFG")
+        if (old.type == "SDFG")
             console.error("Defensive programming no longer allowed; change input");
         else
             old.sdfg_data.sdfg = sdfg;
@@ -344,17 +343,18 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         this.diode.refreshSDFG();
     }
+
     addDataSymbol(type, aname) {
 
-        if(aname == "") {
+        if (aname == "") {
             alert("Invalid symbol name. Enter a symbol name in the input field");
             return;
         }
 
         // Create a dummy element, then allow changing later
         let typestr = "";
-        if(type == "Scalar") typestr = "Scalar";
-        else if(type == "Array") typestr = "Array";
+        if (type == "Scalar") typestr = "Scalar";
+        else if (type == "Array") typestr = "Array";
         let data = {
             type: typestr,
             attributes: {
@@ -366,21 +366,21 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let sdfg = o['sdfg'];
 
         let found = false;
-        for(let x of Object.keys(sdfg.attributes._arrays)) {
-            if(x == aname) {
+        for (let x of Object.keys(sdfg.attributes._arrays)) {
+            if (x == aname) {
                 // Matching name
                 found = true;
                 break;
             }
         }
-        if(found) {
+        if (found) {
             this.diode.toast("Cannot add symbol", "A symbol with name " + aname + " does already exist.", "error", 3000);
             return;
         }
 
         sdfg.attributes._arrays[aname] = data;
         let old = this.getState();
-        if(old.type == "SDFG")
+        if (old.type == "SDFG")
             console.error("Defensive programming no longer allowed; change input");
         else
             old.sdfg_data.sdfg = sdfg;
@@ -394,50 +394,42 @@ class DIODE_Context_SDFG extends DIODE_Context {
     analysisProvider(aname, nodeinfo) {
 
         let unified_id = null;
-        if(nodeinfo != null) {
+        if (nodeinfo != null) {
             unified_id = (parseInt(nodeinfo.stateid) << 16) | parseInt(nodeinfo.nodeid);
         }
         console.log("analysisProvider", aname, nodeinfo);
-        if(aname == "getstates") {
+        if (aname == "getstates") {
 
             let states = this._analysis_values.map(x => (x.forUnifiedID >> 16) & 0xFFFF);
             return states;
-        }
-        else if(aname == "getnodes") {
+        } else if (aname == "getnodes") {
             let nodes = this._analysis_values.map(x => (x.forUnifiedID) & 0xFFFF);
             return nodes;
-        }
-        else if(aname == "all_vec_analyses") {
+        } else if (aname == "all_vec_analyses") {
             let vec_analyses = this._analysis_values.filter(x => x.AnalysisName == 'VectorizationAnalysis');
             let fltrd_vec_analyses = vec_analyses.filter(x => x.forUnifiedID == unified_id);
             return fltrd_vec_analyses;
-        }
-        else if(aname == 'CriticalPathAnalysis') {
+        } else if (aname == 'CriticalPathAnalysis') {
             let cpa = this._analysis_values.filter(x => x.AnalysisName == 'CriticalPathAnalysis');
             let filtered = cpa.filter(x => x.forUnifiedID == unified_id);
             return filtered;
-        }
-        else if(aname == 'ParallelizationAnalysis') {
+        } else if (aname == 'ParallelizationAnalysis') {
             let pa = this._analysis_values.filter(x => x.AnalysisName == 'ThreadAnalysis');
             let filtered = pa.filter(x => x.forUnifiedID == unified_id);
             return filtered;
-        }
-        else if(aname == 'MemoryAnalysis') {
+        } else if (aname == 'MemoryAnalysis') {
             let ma = this._analysis_values.filter(x => x.AnalysisName == 'MemoryAnalysis');
             let filtered = ma.filter(x => x.forUnifiedID == unified_id);
             return filtered;
-        }
-        else if(aname == 'MemOpAnalysis') {
+        } else if (aname == 'MemOpAnalysis') {
             let moa = this._analysis_values.filter(x => x.AnalysisName == 'MemoryOpAnalysis');
             let filtered = moa.filter(x => x.forUnifiedID == unified_id);
             return filtered;
-        }
-        else if(aname == 'CacheOpAnalysis') {
+        } else if (aname == 'CacheOpAnalysis') {
             let coa = this._analysis_values.filter(x => x.AnalysisName == 'CacheOpAnalysis');
             let filtered = coa.filter(x => x.forUnifiedID == unified_id);
             return filtered;
-        }
-        else if(aname == "defaultRun") {
+        } else if (aname == "defaultRun") {
             // This pseudo-element returns a filter function that returns only elements from the "default" run configuration
             // #TODO: Make the default run configurable.
             // For now, the default run is the run with the most committed cores
@@ -451,8 +443,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 let max_num = Math.max(...tmp.map(x => parseInt(x)));
                 return x.filter(z => z.runopts == '# ;export OMP_NUM_THREADS=' + max_num + '; Running in multirun config');
             };
-        }
-        else {
+        } else {
             throw "#TODO";
         }
     }
@@ -462,25 +453,29 @@ class DIODE_Context_SDFG extends DIODE_Context {
             This function is a compatibility layer
         */
         msg = JSON.parse(msg);
-        if(msg.sdfg_name != this.getState()['sdfg_name']) {
+        if (msg.sdfg_name != this.getState()['sdfg_name']) {
             return;
         }
         if (msg.type == 'clear-highlights') {
             if (this.highlighted_elements)
-                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+                this.highlighted_elements.forEach(e => {
+                    if (e) e.stroke_color = null;
+                });
             this.highlighted_elements = [];
             this.renderer_pane.draw_async();
         }
-        if(msg.type == 'highlight-elements') {
+        if (msg.type == 'highlight-elements') {
             // Clear previously highlighted elements
             if (this.highlighted_elements)
-                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+                this.highlighted_elements.forEach(e => {
+                    if (e) e.stroke_color = null;
+                });
             this.highlighted_elements = [];
-            
+
             let graph = this.renderer_pane.graph;
 
             // The input contains a list of multiple elements
-            for(let x of msg.elements) {
+            for (let x of msg.elements) {
                 let sid = x[0], nid = x[1];
                 let elem = null;
                 if (sid == -1)
@@ -489,17 +484,18 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     elem = graph.node(sid).data.graph.node(nid);
                 this.highlighted_elements.push(elem);
             }
-            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "#D35400";});
+            this.highlighted_elements.forEach(e => {
+                if (e) e.stroke_color = "#D35400";
+            });
             this.renderer_pane.draw_async();
-        }
-        else {
+        } else {
             // Default behavior is passing through (must be an object, not JSON-string)
             //this._message_handler(msg);
         }
     }
 
     // Returns a goldenlayout component if exists, or null if doesn't
-    has_component(comp_name, parent=null) {
+    has_component(comp_name, parent = null) {
         // If parent component not provided, use root window
         if (!parent)
             parent = this.diode.goldenlayout.root;
@@ -516,23 +512,22 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
     render_free_variables(force_open) {
         let sdfg_dat = this.getSDFGDataFromState();
-        if(sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
+        if (sdfg_dat.type != "SDFG") sdfg_dat = sdfg_dat.sdfg;
         this.diode.replaceOrCreate(['render-free-vars'], 'PropWinComponent', {
-            data: sdfg_dat,
-            calling_context: this.created
-        },
-        () => {
-            console.log("Calling recreation function");
-            let config = {
-                type: 'component',
-                componentName: 'PropWinComponent',
-                componentState: {
-                }
-            };
+                data: sdfg_dat,
+                calling_context: this.created
+            },
+            () => {
+                console.log("Calling recreation function");
+                let config = {
+                    type: 'component',
+                    componentName: 'PropWinComponent',
+                    componentState: {}
+                };
 
-            this.diode.addContentItem(config);
-            setTimeout(() => this.render_free_variables(force_open), 1);
-        });
+                this.diode.addContentItem(config);
+                setTimeout(() => this.render_free_variables(force_open), 1);
+            });
     }
 
     merge_properties(node_a, aprefix, node_b, bprefix) {
@@ -543,27 +538,26 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let ex_attrs = SDFG_PropUtil.getAttributeNames(node_b);
 
         let new_attrs = {};
-       
-        for(let na of en_attrs) {
+
+        for (let na of en_attrs) {
             let meta = SDFG_PropUtil.getMetaFor(node_a, na);
-            if(meta.indirected) {
+            if (meta.indirected) {
                 // Most likely shared. Don't change.
                 new_attrs['_meta_' + na] = meta;
                 new_attrs[na] = node_a.attributes[na];
-            }
-            else {
+            } else {
                 // Private. Add, but force-set a new Category (in this case, MapEntry)
                 let mcpy = JSON.parse(JSON.stringify(meta));
                 mcpy['category'] = node_a.type + " - " + mcpy['category'];
                 new_attrs['_meta_' + aprefix + na] = mcpy;
                 new_attrs[aprefix + na] = node_a.attributes[na];
             }
-            
+
         }
         // Same for ex_attrs, but don't add if shared
-        for(let xa of ex_attrs) {
+        for (let xa of ex_attrs) {
             let meta = SDFG_PropUtil.getMetaFor(node_b, xa);
-            if(!meta.indirected) {
+            if (!meta.indirected) {
                 let mcpy = JSON.parse(JSON.stringify(meta));
                 mcpy['category'] = node_b.type + " - " + mcpy['category'];
                 mcpy['_noderef'] = node_b.node_id;
@@ -588,16 +582,15 @@ class DIODE_Context_SDFG extends DIODE_Context {
     getSDFGDataFromState() {
         let _state = this.getState();
         let o = null;
-        if(_state.sdfg != undefined) {
+        if (_state.sdfg != undefined) {
             o = _state;
-        }
-        else {
+        } else {
             o = _state['sdfg_data'];
         }
-        if((typeof o) == 'string') {
+        if ((typeof o) == 'string') {
             o = JSON.parse(o);
         }
-        while(typeof o.sdfg == 'string') {
+        while (typeof o.sdfg == 'string') {
             o.sdfg = JSON.parse(o.sdfg);
         }
         return o;
@@ -617,10 +610,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
     }
 
     getSDFGElementReference(node_id, state_id) {
-        if(node_id != null && node_id.constructor == Object) {
+        if (node_id != null && node_id.constructor == Object) {
             return this.getEdgeReference(node_id, state_id);
-        }
-        else {
+        } else {
             return this.getNodeReference(node_id, state_id);
         }
     }
@@ -629,20 +621,20 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let o = this.getSDFGDataFromState();
         let sdfg = o['sdfg'];
 
-        if(state_id == undefined) {
+        if (state_id == undefined) {
             // Look for sdfg-level edges
-            for(let e of sdfg.edges) {
-                if(e.src == node_id.src && e.dst == node_id.dst) {
+            for (let e of sdfg.edges) {
+                if (e.src == node_id.src && e.dst == node_id.dst) {
                     return [e.attributes.data, sdfg];
                 }
             }
         }
 
-        for(let x of sdfg.nodes) {
-            if(x.id == state_id) {
-                for(let e of x.edges) {
+        for (let x of sdfg.nodes) {
+            if (x.id == state_id) {
+                for (let e of x.edges) {
 
-                    if(e.src == node_id.src && e.dst == node_id.dst) {
+                    if (e.src == node_id.src && e.dst == node_id.dst) {
                         return [e.attributes.data, sdfg];
                     }
                 }
@@ -656,13 +648,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
         let o = this.getSDFGDataFromState();
         let sdfg = o['sdfg'];
 
-        for(let x of sdfg.nodes) {
-            if(x.id == state_id) {
+        for (let x of sdfg.nodes) {
+            if (x.id == state_id) {
 
-                if(node_id == null) return [x, sdfg];
-                for(let n of x.nodes) {
+                if (node_id == null) return [x, sdfg];
+                for (let n of x.nodes) {
 
-                    if(n.id == node_id) {
+                    if (n.id == node_id) {
                         return [n, sdfg];
                     }
                 }
@@ -678,25 +670,25 @@ class DIODE_Context_SDFG extends DIODE_Context {
             A data symbol was changed.
         */
         console.log("symbolPropertyChanged", name, value);
-        
+
         // Search arrays first
         let o = this.getSDFGDataFromState();
         let sdfg = o['sdfg'];
 
         let found = false;
         let d = node.data();
-        for(let x of Object.keys(sdfg.attributes._arrays)) {
-            if(x == d[0]) {
+        for (let x of Object.keys(sdfg.attributes._arrays)) {
+            if (x == d[0]) {
                 // Matching name
                 sdfg.attributes._arrays[x].attributes[name] = value;
                 found = true;
                 break;
             }
         }
-        if(!found) console.error("Did not find symbol " + name + " in SDFG, this is a fatal error");
+        if (!found) console.error("Did not find symbol " + name + " in SDFG, this is a fatal error");
 
         let old = this.getState();
-        if(old.type == "SDFG")
+        if (old.type == "SDFG")
             console.error("Defensive programming no longer allowed; change input");
         else
             old.sdfg_data.sdfg = sdfg;
@@ -717,7 +709,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
         nref.attributes[name] = value;
 
         let old = this.getState();
-        if(old.type == "SDFG")
+        if (old.type == "SDFG")
             old = sdfg;
         else
             old.sdfg_data.sdfg = sdfg;
@@ -729,11 +721,11 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
 
     create_renderer_pane(sdfg_data = undefined, update = false) {
-        if(sdfg_data == undefined) {
+        if (sdfg_data == undefined) {
             sdfg_data = this.getState()["sdfg_data"];
         }
         let tmp = sdfg_data;
-        if((typeof tmp) === 'string') {
+        if ((typeof tmp) === 'string') {
             tmp = parse_sdfg(sdfg_data);
         } else {
             if ('sdfg' in sdfg_data)
@@ -747,7 +739,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // This means deleting any property delivered
             // This is just so we don't accidentally use the old format
             console.assert(tmp.sdfg_props === undefined);
-            
+
         }
 
         {
@@ -785,7 +777,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Clear context menu
         if (evtype === 'click' || evtype === 'doubleclick' || evtype === 'mousedown' || evtype === 'contextmenu' ||
-                evtype === 'wheel') {
+            evtype === 'wheel') {
             if (this.contextmenu) {
                 this.contextmenu.destroy();
                 this.contextmenu = null;
@@ -796,7 +788,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
         if (total_elements == 0 && evtype === 'click') {
             // Clear highlighted elements
             if (this.highlighted_elements)
-                this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+                this.highlighted_elements.forEach(e => {
+                    if (e) e.stroke_color = null;
+                });
 
             // Nothing was selected
             this.render_free_variables(false);
@@ -855,14 +849,13 @@ class DIODE_Context_SDFG extends DIODE_Context {
             // Toggle collapsed state
             if (sdfg_elem && 'is_collapsed' in sdfg_elem.attributes) {
                 cmenu.addOption((sdfg_elem.attributes.is_collapsed) ? 'Expand' : 'Collapse',
-                x => {
-                    sdfg_elem.attributes.is_collapsed = !sdfg_elem.attributes.is_collapsed;
-                    this.renderer_pane.relayout();
-                    this.renderer_pane.draw_async();
-                });
+                    x => {
+                        sdfg_elem.attributes.is_collapsed = !sdfg_elem.attributes.is_collapsed;
+                        this.renderer_pane.relayout();
+                        this.renderer_pane.draw_async();
+                    });
             }
             ///////////////////////////////////////////////////////////
-
 
 
             cmenu.addOption("Show transformations", x => {
@@ -934,7 +927,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
 
         // Clear highlighted elements
         if (this.highlighted_elements)
-            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = null;});
+            this.highlighted_elements.forEach(e => {
+                if (e) e.stroke_color = null;
+            });
         // Mark this element red
         this.highlighted_elements = [foreground_elem];
 
@@ -966,8 +961,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
                         pdata.value = value;
                         pdata.name = k;
 
-                        properties.push({property: pdata, element: element, sdfg: foreground_elem.sdfg,
-                            category: element.type + ' - ' + pdata.category});
+                        properties.push({
+                            property: pdata, element: element, sdfg: foreground_elem.sdfg,
+                            category: element.type + ' - ' + pdata.category
+                        });
                     }
                 });
                 this.renderProperties({
@@ -979,12 +976,14 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 render_props([foreground_elem.data]);
             else if (foreground_elem instanceof Node) {
                 let n = foreground_elem.data.node;
+                // Set state ID, if exists
+                n.parent_id = foreground_elem.parent_id;
                 let state = foreground_elem.sdfg.nodes[foreground_elem.parent_id];
                 // Special case treatment for scoping nodes (i.e. Maps, Consumes, ...)
                 if (n.type.endsWith("Entry")) {
                     // Find the matching exit node
                     let exit_node = find_exit_for_entry(state.nodes, n);
-                    
+
                     // Highlight both entry and exit nodes
                     let gstate = renderer.graph.node(foreground_elem.parent_id);
                     let rnode = gstate.data.graph.node(exit_node.id);
@@ -1011,7 +1010,9 @@ class DIODE_Context_SDFG extends DIODE_Context {
             } else if (foreground_elem instanceof State)
                 render_props([foreground_elem.data.state]);
 
-            this.highlighted_elements.forEach(e => {if(e) e.stroke_color = "red";});
+            this.highlighted_elements.forEach(e => {
+                if (e) e.stroke_color = "red";
+            });
             renderer.draw_async();
         }, 0);
 
@@ -1019,7 +1020,6 @@ class DIODE_Context_SDFG extends DIODE_Context {
         return false;
     }
 }
-
 
 
 class DIODE_Context_TransformationHistory extends DIODE_Context {
@@ -1032,7 +1032,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
         super.setupEvents(project);
 
         let eh = this.diode.goldenlayout.eventHub;
-        
+
         this.on(this.project().eventString('-req-update-tfh'), msg => {
 
             // Load from project
@@ -1042,7 +1042,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
         });
     }
 
-    create(hist=[]) {
+    create(hist = []) {
         let parent_element = this.container.getElement();
         $(parent_element).css('overflow', 'auto');
         $(parent_element)[0].setAttribute("data-hint", '{"type": "DIODE_Element", "name": "TransformationHistory"}');
@@ -1065,7 +1065,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
         parent_element.appendChild(history_base_div);
 
         let i = 0;
-        for(let x of hist) {
+        for (let x of hist) {
             this.addElementToHistory(x, i);
             ++i;
         }
@@ -1076,14 +1076,14 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
 
         let elem = document.createElement("div");
         elem.classList = "transformation_history_list_element";
-        
+
         let title = document.createElement("div");
         title.classList = "transformation_history_list_element_title";
         title.innerText = Object.values(simple_node)[0][0].name;
 
         let ctrl = document.createElement("div");
         ctrl.classList = "flex_row transformation_history_list_element_control";
-        
+
         {
             let revert = document.createElement("div");
             revert.classList = "revert-button";
@@ -1098,12 +1098,12 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
             revert.addEventListener('click', _x => {
                 // Reset to the associated checkpoint
                 let tsh = this.project().getTransformationSnapshots()[index];
-                this.diode.multiple_SDFGs_available({ compounds: tsh[1] });
+                this.diode.multiple_SDFGs_available({compounds: tsh[1]});
 
                 // Remove the descending checkpoints
                 this.project().discardTransformationsAfter(index);
 
-                if(true) {
+                if (true) {
                     this.diode.gatherProjectElementsAndCompile(this, {}, {
                         sdfg_over_code: true,
 
@@ -1113,7 +1113,7 @@ class DIODE_Context_TransformationHistory extends DIODE_Context {
 
             ctrl.appendChild(revert);
         }
-        
+
         elem.appendChild(title);
         elem.appendChild(ctrl);
         hsd.appendChild(elem);
@@ -1143,17 +1143,17 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-extend-optgraph'), (msg) => {
-            
+
             let o = msg;
-            if(typeof(o) == "string") {
+            if (typeof (o) == "string") {
                 JSON.parse(msg);
             }
             let sel = o[this.getState()['for_sdfg']];
-            if(sel === undefined) {
+            if (sel === undefined) {
                 return;
             }
             setTimeout(() => eh.emit(transthis._project.eventString('extend-optgraph'), 'ok'), 1);
-            
+
             this.create(sel);
         });
 
@@ -1168,7 +1168,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             // In any case, inform the requester that the request will be treated
             let o = JSON.parse(msg);
             let sel = o.matching_opts;
-            if(sel === undefined) {
+            if (sel === undefined) {
                 //eh.emit(transthis._project.eventString('new-optgraph-' + sname), 'not ok');
                 return;
             }
@@ -1180,7 +1180,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         this.on(this.project().eventString('-req-highlight-transformations-' + sname), msg => {
 
             this.getTransformations(msg).forEach(x => this.highlightTransformation(x));
-            
+
         });
 
         this.on(this.project().eventString('-req-get-transformations-' + sname), msg => {
@@ -1189,15 +1189,15 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
             setTimeout(() => eh.emit(transthis._project.eventString('get-transformations-' + sname), transforms), 1);
         });
-        
+
         this.on(this.project().eventString('-req-apply-transformation-' + sname), msg => {
-            
+
             let children = this.getState()['optstruct'];
-            for(let c of Object.values(children)) {
-                for(let d of c) {
-                    
-                    if(d === undefined) continue;
-                    if(d.id_name == msg) {
+            for (let c of Object.values(children)) {
+                for (let d of c) {
+
+                    if (d === undefined) continue;
+                    if (d.id_name == msg) {
                         // Call directly.
                         // (The click handler invokes the simple transformation)
                         d.representative.dispatchEvent(new Event('click'));
@@ -1215,7 +1215,9 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             let x = JSON.parse(msg);
             this.applyTransformation(...x);
         });
-
+        this.on(this.project().eventString('-req-append-history'), msg => {
+            this.appendHistoryItem(msg.new_sdfg, msg.item_name);
+        });
 
         this.on(this.project().eventString('-req-property-changed-' + this.getState().created), (msg) => {
             this.propertyChanged(msg.element, msg.name, msg.value);
@@ -1227,13 +1229,13 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         let ret = [];
         let selstring = "s" + affecting.state_id + "_" + affecting.node_id;
         let children = this.getState()['optstruct'];
-        for(let c of Object.values(children)) {
-            for(let d of c) {
-                
-                if(d === undefined) continue;
+        for (let c of Object.values(children)) {
+            for (let d of c) {
+
+                if (d === undefined) continue;
                 let affects = d.affects;
 
-                if(affects.includes(selstring)) {
+                if (affects.includes(selstring)) {
                     ret.push(d);
                 }
             }
@@ -1244,7 +1246,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     highlightTransformation(node) {
         let repr = node.representative;
         let s = repr.parentNode;
-        while(s) {
+        while (s) {
             s.classList.remove("at_collapse");
             s = s.previousElementSibling;
         }
@@ -1283,10 +1285,10 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         });
     }
 
-    
+
     sendHighlightRequest(idstring_list) {
         this._project.request(['sdfg-msg'], resp => {
-            
+
         }, {
             params: JSON.stringify({
                 type: 'highlight-elements',
@@ -1294,12 +1296,12 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
                 elements: idstring_list
             }),
             timeout: 1000
-        });        
+        });
     }
 
     sendClearHighlightRequest() {
         this._project.request(['sdfg-msg'], resp => {
-            
+
         }, {
             params: JSON.stringify({
                 sdfg_name: this.getState()['for_sdfg'],
@@ -1310,30 +1312,30 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 
     addNodes(og) {
-        
+
         let full = {};
         // Load the available data
-        for(let x of og) {
-            if(full[x.opt_name] === undefined) {
+        for (let x of og) {
+            if (full[x.opt_name] === undefined) {
                 full[x.opt_name] = []
             }
             full[x.opt_name].push(x);
         }
         let arrayed = [];
-        for(let x of Object.entries(full)) {
+        for (let x of Object.entries(full)) {
             let k = x[0];
             let v = x[1];
             arrayed.push([k, v]);
         }
         let sorted = arrayed.sort((a, b) => a[0].localeCompare(b[0]));
-        for(let z of sorted) {
+        for (let z of sorted) {
             let y = z[0];
             let x = z[1];
 
             let i = 0;
             let container_node = undefined;
-            if(x.length > 1) {
-                
+            if (x.length > 1) {
+
                 container_node = document.createElement('div');
                 container_node.classList = "flex_column";
 
@@ -1350,10 +1352,10 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
                 }
 
                 container_node.appendChild(c_title);
-                
-                this._transformation_list.appendChild(container_node); 
+
+                this._transformation_list.appendChild(container_node);
             }
-            for(let n of x) {
+            for (let n of x) {
                 this.addNode(n, i, container_node);
                 ++i;
             }
@@ -1379,7 +1381,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
     }
 
     applyTransformation(x, pos, _title) {
-        if(this.operation_running) return;
+        if (this.operation_running) return;
         this.operation_running = true;
         let _state = this.getState();
         let optstruct = _state['optstruct'];
@@ -1403,7 +1405,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
         this.project().request(['sdfg_object'], x => {
             console.log("Got snapshot", x);
-            if(typeof(x.sdfg_object) == 'string')
+            if (typeof (x.sdfg_object) == 'string')
                 x.sdfg_object = JSON.parse(x.sdfg_object);
 
             this.project().saveSnapshot(x['sdfg_object'], named);
@@ -1420,18 +1422,53 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         }, {});
     }
 
-    addNode(x, pos=0, parent_override=undefined) {
+    appendHistoryItem(new_sdfg, item_name) {
+        if (this.operation_running) return;
+        this.operation_running = true;
+        let named = {};
+        named[this.getState()['for_sdfg']] = [{
+            name: item_name,
+            params: {}
+        }];
+
+        let tmp = () => {
+            // Update SDFG
+            this.diode.gatherProjectElementsAndCompile(this, {
+                code: stringify_sdfg(new_sdfg)
+            }, {});
+        };
+
+        this.project().request(['sdfg_object'], x => {
+            console.log("Got snapshot", x);
+            if (typeof (x.sdfg_object) == 'string')
+                x.sdfg_object = JSON.parse(x.sdfg_object);
+
+            this.project().saveSnapshot(x['sdfg_object'], named);
+
+            this.project().request(['update-tfh'], x => {
+                this.operation_running = false;
+            }, {
+                on_timeout: () => {
+                    this.operation_running = false;
+                }
+            });
+
+            setTimeout(tmp, 10);
+        }, {});
+    }
+
+    addNode(x, pos = 0, parent_override = undefined) {
 
         let _title = x.opt_name;
 
         // Add a suffix
-        if(pos != 0) {
+        if (pos != 0) {
             _title += "$" + pos;
         }
         x.id_name = _title;
 
         let at_list = (parent_override === undefined) ?
-                        this._transformation_list : parent_override;
+            this._transformation_list : parent_override;
 
         // Create the element
         let list_elem = document.createElement("div");
@@ -1447,7 +1484,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         title.addEventListener('mouseleave', _x => {
             this.sendClearHighlightRequest();
         });
-        
+
         title.addEventListener('click', _x => {
 
             this.applyTransformation(x, pos, _title);
@@ -1489,22 +1526,21 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
         at_list.appendChild(list_elem);
     }
 
-    create(newstate=undefined) {
-        if(newstate != undefined) {
+    create(newstate = undefined) {
+        if (newstate != undefined) {
 
             let _state = this.getState();
             Object.assign(_state, newstate);
             this.resetState(_state);
         }
         let _state = this.getState();
-        if(typeof(_state) == 'string') {
+        if (typeof (_state) == 'string') {
             _state = JSON.parse(_state);
         }
         let matching_opts = undefined;
-        if(_state.matching_opts != undefined) {
+        if (_state.matching_opts != undefined) {
             matching_opts = _state.matching_opts;
-        }
-        else if(_state.optgraph_data != undefined) {
+        } else if (_state.optgraph_data != undefined) {
             let _data = JSON.parse(_state.optgraph_data);
             matching_opts = _data.matching_opts;
         }
@@ -1521,7 +1557,7 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
 
         parent.appendChild(at_div);
 
-        if(matching_opts != undefined) {
+        if (matching_opts != undefined) {
             this.addNodes(matching_opts);
         }
     }
@@ -1554,44 +1590,45 @@ class DIODE_Context_CodeIn extends DIODE_Context {
             setTimeout(() => eh.emit(transthis._project.eventString('new_error'), 'ok'), 1);
             this.highlight_error(msg);
         });
-        
+
         this.on(this.project().eventString('-req-highlight-code'), msg => {
             setTimeout(() => eh.emit(transthis._project.eventString('highlight-code'), 'ok'), 1);
             this.highlight_code(msg);
         });
-        
+
         this.on(this.project().eventString('-req-set-inputcode'), msg => {
             setTimeout(() => eh.emit(transthis._project.eventString('set-inputcode'), 'ok'), 1);
-            
+
             this.editor.setValue(msg);
             this.editor.clearSelection();
         });
-        
+
         this.on(this.project().eventString('-req-clear-errors'), msg => {
             setTimeout(() => eh.emit(transthis._project.eventString('clear-errors'), 'ok'), 1);
             this.clearErrors();
         });
-        
+
     }
 
     highlight_code(dbg_info) {
-        let s_c  = dbg_info.start_col;
+        let s_c = dbg_info.start_col;
         let e_c = dbg_info.end_col;
-        if(e_c <= s_c) {
+        if (e_c <= s_c) {
             // The source data is broken; work-around this limitation by setting the end-column has high as possible
             e_c = 2000;
         }
         let markerrange = new ace.Range(dbg_info.start_line - 1, s_c, dbg_info.end_line - 1, e_c);
         // Create a unique class to be able to select the marker later
         let uc = "chm_" + this.diode.getPseudorandom();
-            
+
         let marker = this.editor.session.addMarker(
             markerrange,
             "code_highlight " + uc
         );
 
         this.editor.resize(true);
-        this.editor.scrollToLine(dbg_info.start_line, true, true, function () {});
+        this.editor.scrollToLine(dbg_info.start_line, true, true, function () {
+        });
         this.editor.gotoLine(dbg_info.start_line, 10, true);
 
         setTimeout(() => {
@@ -1600,7 +1637,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
     }
 
     clearErrors() {
-        for(let m of this._markers) {
+        for (let m of this._markers) {
             this.editor.getSession().removeMarker(m);
         }
         this._markers = [];
@@ -1608,13 +1645,13 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
     highlight_error(error) {
 
-        if(error.type == "SyntaxError") {
+        if (error.type == "SyntaxError") {
             let lineno = parseInt(error.line);
             let offset = parseInt(error.offset);
             let text = error.text;
-            
+
             lineno -= 1;
-            
+
             let lineval = this.editor.session.getLine(lineno);
 
 
@@ -1624,18 +1661,17 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
             // Create a unique class to be able to select the marker later
             let uc = "sem_" + this.diode.getPseudorandom();
-            
+
             let marker = this.editor.session.addMarker(
                 markerrange,
                 "syntax_error_highlight " + uc
             );
 
             this._markers.push(marker);
-            
+
             // #TODO: Either find a way to display the error information directly as a tooltip (which ace does not seem to support trivially)
             // #TODO: or add a dedicated error-view.
-        }
-        else {
+        } else {
             console.log("Untreated error type", error);
         }
     }
@@ -1645,7 +1681,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
     }
 
     compile(code) {
-        for(let m of this._markers) {
+        for (let m of this._markers) {
             this.editor.getSession().removeMarker(m);
         }
         this._markers = [];
@@ -1662,8 +1698,6 @@ class DIODE_Context_CodeIn extends DIODE_Context {
     }
 
 
-    
-
     compile_and_run(code) {
 
         let millis = this.diode.getPseudorandom();
@@ -1675,7 +1709,7 @@ class DIODE_Context_CodeIn extends DIODE_Context {
             title: "Terminal",
             type: 'component',
             componentName: 'TerminalComponent',
-            componentState: { created: millis }
+            componentState: {created: millis}
         };
         this.diode.addContentItem(terminal_config);
 
@@ -1683,7 +1717,10 @@ class DIODE_Context_CodeIn extends DIODE_Context {
 
         this._terminal_identifer = terminal_identifier;
 
-        this.diode.gatherProjectElementsAndCompile(this, {}/*{ 'code': code}*/, { run: true, term_id: terminal_identifier });
+        this.diode.gatherProjectElementsAndCompile(this, {}/*{ 'code': code}*/, {
+            run: true,
+            term_id: terminal_identifier
+        });
     }
 
 }
@@ -1703,7 +1740,7 @@ class DIODE_Context_CodeOut extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
         this.on(this._project.eventString('-req-new-codeout'), (msg) => {
 
-            if(msg.sdfg_name != this.getState()['sdfg_name']) {
+            if (msg.sdfg_name != this.getState()['sdfg_name']) {
                 // Name mismatch; ignore
                 return;
             }
@@ -1722,32 +1759,31 @@ class DIODE_Context_CodeOut extends DIODE_Context {
 
     setCode(extracted) {
         let input = extracted;
-        if(typeof extracted === "string") {
+        if (typeof extracted === "string") {
             extracted = JSON.parse(extracted);
         }
 
-        if(typeof extracted.generated_code == "string") {
+        if (typeof extracted.generated_code == "string") {
             this.editor.setValue(this.cleanCode(extracted.generated_code));
             this.editor.clearSelection();
-        }
-        else {
+        } else {
             // Probably an array type
             this.editor.setValue("");
             this.editor.clearSelection();
-            for(let c of extracted.generated_code) {
+            for (let c of extracted.generated_code) {
                 let v = c;
-                if(extracted.generated_code.length > 1) {
+                if (extracted.generated_code.length > 1) {
                     v = "\n\n\n" + "#########  NEXT CODE FILE ############\n\n\n" + v;
                 }
                 let session = this.editor.getSession();
                 session.insert({
                     row: session.getLength(),
                     column: 0
-                 }, this.cleanCode(v));
+                }, this.cleanCode(v));
                 this.editor.clearSelection();
             }
         }
-        this.saveToState({ 'code': input });
+        this.saveToState({'code': input});
     }
 
     setEditorReference(editor) {
@@ -1783,20 +1819,20 @@ class DIODE_Context_Error extends DIODE_Context {
 
     setError(error) {
         console.log("error", error);
-    
+
         let error_string = "";
-        if(typeof(error) == "string")
+        if (typeof (error) == "string")
             this.editor.setValue(error);
-        else if(Array.isArray(error)) {
-            for(let e of error) {
-                if(e.msg != undefined) {
+        else if (Array.isArray(error)) {
+            for (let e of error) {
+                if (e.msg != undefined) {
                     error_string += e.msg;
                 }
                 console.log("Error element", e);
             }
             this.editor.setValue(error_string);
         }
-        this.saveToState({ 'error': error });
+        this.saveToState({'error': error});
     }
 
     setEditorReference(editor) {
@@ -1837,20 +1873,20 @@ class DIODE_Context_PerfTimes extends DIODE_Context {
         elem.appendChild(canvas);
 
         let oldstate = this.getState();
-        if(oldstate.runtimes === undefined) {
+        if (oldstate.runtimes === undefined) {
             oldstate.runtimes = [];
         }
 
         console.log("Execution times loaded", oldstate.runtimes)
 
         let labels = [];
-        for(let i = 0; i < oldstate.runtimes.length; ++i) {
+        for (let i = 0; i < oldstate.runtimes.length; ++i) {
             labels.push(i);
         }
 
         this._chart = new Chart(canvas.getContext("2d"), {
             type: 'bar',
-            
+
             data: {
                 labels: labels,
                 datasets: [{
@@ -1890,7 +1926,7 @@ class DIODE_Context_PerfTimes extends DIODE_Context {
 
     addTime(runtime) {
         let oldstate = this.getState();
-        if(oldstate.runtimes === undefined) {
+        if (oldstate.runtimes === undefined) {
             oldstate.runtimes = [];
         }
         oldstate.runtimes.push(runtime);
@@ -1920,10 +1956,10 @@ class DIODE_Context_Roofline extends DIODE_Context {
     }
 
     create() {
-        let parent =  this.container.getElement()[0];
+        let parent = this.container.getElement()[0];
         parent.style.width = "100%";
         parent.style.height = "100%";
-        
+
         let canvas = document.createElement("canvas");
         canvas.width = 1920;
         canvas.height = 1080;
@@ -1944,10 +1980,9 @@ class DIODE_Context_Roofline extends DIODE_Context {
 
         parent.addEventListener("resize", on_resize);
 
-        if(window.ResizeObserver) {
+        if (window.ResizeObserver) {
             new ResizeObserver(on_resize).observe(parent);
-        }
-        else {
+        } else {
             console.warn("ResizeObserver not available");
         }
 
@@ -1973,7 +2008,7 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
     */
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
-        
+
     }
 
     setupEvents(project) {
@@ -1989,11 +2024,11 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
                     let done = true;
                     let resp = JSON.parse(xhr.response);
                     let elems = resp.elements;
-                    for(let e of elems) {
+                    for (let e of elems) {
                         let o = e.options;
-                        if(typeof(o) == 'string') {
+                        if (typeof (o) == 'string') {
                             console.log("o is ", o);
-                            if(o == "endgroup") {
+                            if (o == "endgroup") {
                                 // At least started, not done yet
                                 done = false;
                                 started = true;
@@ -2001,7 +2036,7 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
                         }
                     }
 
-                    if(started && done) {
+                    if (started && done) {
                         started = false;
                         this.diode.load_perfdata();
                     }
@@ -2046,7 +2081,8 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
         delete_but.addEventListener("click", () => {
             REST_request("/dace/api/v1.0/perfdata/reset/", {
                 client_id: this.diode.getClientID()
-            }, x => {})
+            }, x => {
+            })
         });
 
         let delete_can_but = document.createElement("button");
@@ -2054,7 +2090,8 @@ class DIODE_Context_InstrumentationControl extends DIODE_Context {
         delete_can_but.addEventListener("click", () => {
             REST_request("/dace/api/v1.0/can/reset/", {
                 client_id: this.diode.getClientID()
-            }, x => {})
+            }, x => {
+            })
         });
 
         let render_but = document.createElement("button");
@@ -2096,8 +2133,8 @@ class DIODE_Context_Terminal extends DIODE_Context {
     append(output) {
         let session = this.editor.getSession();
         session.insert({
-           row: session.getLength(),
-           column: 0
+            row: session.getLength(),
+            column: 0
         }, output);
 
         let curr_str = session.getValue();
@@ -2105,18 +2142,19 @@ class DIODE_Context_Terminal extends DIODE_Context {
         // Extract performance information if available
         let re = /~#~#([^\n]+)/gm;
         let matches = [...curr_str.matchAll(re)];
-        for(let m of matches) {
+        for (let m of matches) {
             console.log("Got match", m);
             // We want to access the second element (index 1) because it contains the list
             let perflist = m[1];
             // Because this is a python list, it may contain "'" (single quotes), which is invalid json
             perflist = perflist.replace(/\'/g, '');
             perflist = JSON.parse(perflist);
-            perflist.sort((a,b) => a - b);
+            perflist.sort((a, b) => a - b);
             let median_val = perflist[Math.floor(perflist.length / 2)];
 
             console.log("Got median execution time", median_val);
-            this.project().request(['new-time'], () => {}, {
+            this.project().request(['new-time'], () => {
+            }, {
                 params: {
                     time: median_val
                 }
@@ -2124,7 +2162,7 @@ class DIODE_Context_Terminal extends DIODE_Context {
         }
 
         this.container.extendState({
-             "current_value": curr_str
+            "current_value": curr_str
         });
         this.editor.clearSelection();
     }
@@ -2139,9 +2177,9 @@ class DIODE_Context_StartPage extends DIODE_Context {
     create() {
         let plus = `<svg width="50" height="50" version="1.1" viewBox="0 0 13.2 13.2" xmlns="http://www.w3.org/2000/svg"><g transform="translate(0 -284)"><g fill="none" stroke="#008000" stroke-width="2.65"><path d="m6.61 285v10.6"/><path d="m1.32 290h10.6"/></g></g></svg>`
         plus = "data:image/svg+xml;base64," + btoa(plus);
-        
+
         this.container.setTitle("Start Page");
-        
+
 
         let parent = $(this.container.getElement())[0];
 
@@ -2174,7 +2212,6 @@ class DIODE_Context_StartPage extends DIODE_Context {
             }));
 
 
-            
             let recent_title = document.createElement('div');
             recent_title.innerText = "Recent";
             recent_title.classList = "startpage_title";
@@ -2188,12 +2225,12 @@ class DIODE_Context_StartPage extends DIODE_Context {
             resource_title.classList = "startpage_title";
             startpage_resources.appendChild(resource_title);
         }
-        
+
 
         // Load elements from list
         {
             let projects = DIODE_Project.getSavedProjects();
-            for(let p of projects) {
+            for (let p of projects) {
                 console.log("p", p);
 
                 let pdata = DIODE_Project.getProjectData(p);
@@ -2232,14 +2269,14 @@ class DIODE_Context_StartPage extends DIODE_Context {
 
         startpage_container.appendChild(startpage_recent);
         startpage_container.appendChild(startpage_resources);
-     
+
         parent.appendChild(startpage_container);
     }
 
-    createStartpageListElement(name, time, info, image=undefined, onclick = x => x) {
+    createStartpageListElement(name, time, info, image = undefined, onclick = x => x) {
 
         let diode_image = `<svg width="50" height="50" version="1.1" viewBox="0 0 13.229 13.229" xmlns="http://www.w3.org/2000/svg"><g transform="translate(0 -283.77)" fill="none" stroke="#000" stroke-linecap="round" stroke-width=".68792"><path d="m3.3994 287.29v6.9099l6.5603-3.7876-6.5644-3.7899z" stroke-linejoin="round"/><g><path d="m3.3191 290.39h-2.6127"/><path d="m12.624 290.41h-2.6647v-3.3585"/><path d="m9.9597 290.41v2.9962"/></g></g></svg>`
-        if(image == undefined) {
+        if (image == undefined) {
             image = "data:image/svg+xml;base64," + btoa(diode_image);
         }
         let elem = document.createElement("div");
@@ -2266,13 +2303,13 @@ class DIODE_Context_StartPage extends DIODE_Context {
                 proj_detail.innerText = info;
 
                 col2.appendChild(proj_name);
-                if(info != null)
+                if (info != null)
                     col2.appendChild(proj_detail);
                 else {
                     // We have space to use - use a bigger font
                     proj_name.style.fontSize = "1.2rem";
-                    
-                    
+
+
                     col2.style.justifyContent = "center";
                 }
             }
@@ -2286,7 +2323,7 @@ class DIODE_Context_StartPage extends DIODE_Context {
                 proj_date.innerText = time;
                 let proj_unused = document.createElement('span');
 
-                if(proj_date != null) {
+                if (proj_date != null) {
                     col3.appendChild(proj_date);
                     col3.appendChild(proj_unused);
                 }
@@ -2305,7 +2342,7 @@ class DIODE_Context_StartPage extends DIODE_Context {
 class DIODE_Context_DIODESettings extends DIODE_Context {
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
-        
+
         this._settings_container = null;
 
         this._editor_themes = this.getThemes();
@@ -2341,8 +2378,8 @@ class DIODE_Context_DIODESettings extends DIODE_Context {
 
                 DIODE.setTheme(val);
                 DIODE.loadTheme().then(x => {
-                    this.diode._appearance.setFromAceEditorTheme(val);
-                }
+                        this.diode._appearance.setFromAceEditorTheme(val);
+                    }
                 );
             }, theme_names, DIODE.editorTheme());
 
@@ -2355,7 +2392,7 @@ class DIODE_Context_DIODESettings extends DIODE_Context {
         {
             let cont = FormBuilder.createContainer(undefined);
             let label = FormBuilder.createLabel(undefined, "Compile on property change", "When false, the program is not recompiled after a property change");
-            
+
             let input = FormBuilder.createToggleSwitch(undefined, x => {
                 let val = x.checked;
                 DIODE.setRecompileOnPropertyChange(val);
@@ -2370,7 +2407,7 @@ class DIODE_Context_DIODESettings extends DIODE_Context {
         {
             let cont = FormBuilder.createContainer(undefined);
             let label = FormBuilder.createLabel(undefined, "DaCe Debug mode", "When true, the program shows elements primarily useful for debugging and developing DaCe/DIODE.");
-            
+
             let input = FormBuilder.createToggleSwitch(undefined, x => {
                 let val = x.checked;
                 DIODE.setDebugDevMode(val);
@@ -2385,12 +2422,12 @@ class DIODE_Context_DIODESettings extends DIODE_Context {
         {
             let cont = FormBuilder.createContainer(undefined);
             let label = FormBuilder.createLabel(undefined, "UI Font", "Select the font used in the UI (does not affect code panes and SDFG renderers)");
-            
+
             let current = Appearance.getClassProperties("diode_appearance")['fontFamily'];
 
             let input = FormBuilder.createSelectInput(undefined, x => {
                 let val = x.value;
-               
+
                 this.diode._appearance.setFont(val);
                 this.diode._appearance.apply();
             }, Appearance.fonts(), current);
@@ -2408,7 +2445,7 @@ class DIODE_Context_DIODESettings extends DIODE_Context {
 class DIODE_Context_RunConfig extends DIODE_Context {
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
-        
+
         this._settings_container = null;
 
     }
@@ -2417,7 +2454,7 @@ class DIODE_Context_RunConfig extends DIODE_Context {
         let parent = this.container.getElement()[0];
 
         let runopts_container = document.createElement("div");
-        
+
         let runopts_general_container = document.createElement("div");
 
         let values = {
@@ -2437,11 +2474,11 @@ class DIODE_Context_RunConfig extends DIODE_Context {
         // Build the callback object
         transthis = {
             propertyChanged: (node, name, value) => {
-                if(name == "Configuration name") {
-                    if(this.diode.getRunConfigs().map(x => x['Configuration name']).includes(value)) {
+                if (name == "Configuration name") {
+                    if (this.diode.getRunConfigs().map(x => x['Configuration name']).includes(value)) {
                         // Load values and reset inputs
                         let copy = this.diode.getRunConfigs(value);
-                        for(let x of Object.keys(copy)) {
+                        for (let x of Object.keys(copy)) {
                             let v = copy[x];
                             let ps = params.find(y => y.name == x);
                             ps.value = v;
@@ -2467,58 +2504,58 @@ class DIODE_Context_RunConfig extends DIODE_Context {
         */
         {
             params = [{
-                    name: "Configuration name",
-                    type: "combobox",
-                    value: values['Configuration name'],
-                    options: this.diode.getRunConfigs().map(x => x['Configuration name']),
-                    desc: "Name of this configuration",
-                }, {
-                    name: "Host",
-                    type: "hosttype",
-                    value: values['Host'],
-                    desc: "Host executing the programs",
-                },
+                name: "Configuration name",
+                type: "combobox",
+                value: values['Configuration name'],
+                options: this.diode.getRunConfigs().map(x => x['Configuration name']),
+                desc: "Name of this configuration",
+            }, {
+                name: "Host",
+                type: "hosttype",
+                value: values['Host'],
+                desc: "Host executing the programs",
+            },
             ]; // Array of elements
 
             // Add category (common to all elements)
             params.forEach(x => x.category = "General");
 
             let remoteparams = [{
-                    name: "Use SSH",
-                    type: "bool",
-                    value: values['Use SSH'],
-                    desc: "Use SSH. Mandatory for remote hosts, optional for localhost.",
-                }, {
-                    name: "SSH Key",
-                    type: "str",
-                    value: values['SSH Key'],
-                    desc: "Public SSH key (id_rsa.pub) to add to remote authorized_keys. This key must not be password-protected!",
-                }, {
-                    name: "SSH Key override",
-                    type: "str",
-                    value: values['SSH Key override'],
-                    desc: "Override the identity key file (ssh option -i) with this value if your password-free key is not id_rsa"
-                }
+                name: "Use SSH",
+                type: "bool",
+                value: values['Use SSH'],
+                desc: "Use SSH. Mandatory for remote hosts, optional for localhost.",
+            }, {
+                name: "SSH Key",
+                type: "str",
+                value: values['SSH Key'],
+                desc: "Public SSH key (id_rsa.pub) to add to remote authorized_keys. This key must not be password-protected!",
+            }, {
+                name: "SSH Key override",
+                type: "str",
+                value: values['SSH Key override'],
+                desc: "Override the identity key file (ssh option -i) with this value if your password-free key is not id_rsa"
+            }
             ];
 
             // Add category (common to all elements)
             remoteparams.forEach(x => x.category = "Remote");
 
             let instrumentationparams = [{
-                    name: "Instrumentation",
-                    type: "selectinput",
-                    value: values['Instrumentation'],
-                    options: ['off', 'minimal', 'full'],
-                    desc: "Set instrumentation mode (CPU only)",
-                },
+                name: "Instrumentation",
+                type: "selectinput",
+                value: values['Instrumentation'],
+                options: ['off', 'minimal', 'full'],
+                desc: "Set instrumentation mode (CPU only)",
+            },
                 {
                     name: "Number of threads",
                     type: "list",
                     value: values['Number of threads'],
                     desc: "Sets the number of OpenMP threads." +
-                           "If multiple numbers are specified, the program is executed once for every number of threads specified. Specify 0 to use system default"
+                        "If multiple numbers are specified, the program is executed once for every number of threads specified. Specify 0 to use system default"
                 },
-                
+
             ];
 
             // Add category (common to all elements)
@@ -2535,7 +2572,6 @@ class DIODE_Context_RunConfig extends DIODE_Context {
             // Build the settings
             this.diode.renderProperties(transthis, node, params, runopts_general_container, {});
         }
-            
 
 
         runopts_container.appendChild(runopts_general_container);
@@ -2550,7 +2586,6 @@ class DIODE_Context_RunConfig extends DIODE_Context {
         });
         parent.appendChild(apply_button);
     }
-
 
 
 }
@@ -2573,18 +2608,17 @@ class DIODE_Context_Settings extends DIODE_Context {
     link_togglable_onclick(element, toToggle) {
         let toggleclassname = "collapsed_container";
         element.on('click', () => {
-            if(toToggle.hasClass(toggleclassname)) {
+            if (toToggle.hasClass(toggleclassname)) {
                 toToggle.removeClass(toggleclassname)
-            }
-            else {
+            } else {
                 toToggle.addClass(toggleclassname)
             }
         });
     }
 
-    parse_settings2(settings, parent=undefined, path = []) {
+    parse_settings2(settings, parent = undefined, path = []) {
         let is_topmost = false;
-        if(parent === undefined) {
+        if (parent === undefined) {
             parent = new ValueTreeNode("Settings", null);
             is_topmost = true;
         }
@@ -2598,14 +2632,13 @@ class DIODE_Context_Settings extends DIODE_Context {
                 let meta = value.meta;
                 let val = value.value;
 
-                if(meta.type == 'dict') {
+                if (meta.type == 'dict') {
                     dicts.push([key, value]);
-                }
-                else {
+                } else {
                     values.push([key, value]);
                 }
             });
-        
+
         let settings_lookup = {};
         // Create the elements that are not in subcategories (=dicts) here
         let dt = new DiodeTables.Table();
@@ -2621,20 +2654,20 @@ class DIODE_Context_Settings extends DIODE_Context {
                 tmp.key = key;
                 return tmp;
             });
-            
+
             let cur_dt = dt;
 
             let dtc = null;
             let categories = {};
-            for(let x of params) {
-                
+            for (let x of params) {
+
                 let cat = x.category;
-                if(categories[cat] == undefined) {
+                if (categories[cat] == undefined) {
                     categories[cat] = [];
                 }
                 categories[cat].push(x);
             }
-            if(!DIODE.debugDevMode()) {
+            if (!DIODE.debugDevMode()) {
                 delete categories["(Debug)"]
             }
             // INSERTED
@@ -2645,8 +2678,8 @@ class DIODE_Context_Settings extends DIODE_Context {
                 }
             };
             // !INSERTED
-            for(let z of Object.entries(categories)) {
-                
+            for (let z of Object.entries(categories)) {
+
                 // Sort within category
                 let cat_name = z[0];
                 let y = z[1].sort((a, b) => a.name.localeCompare(b.name));
@@ -2654,20 +2687,20 @@ class DIODE_Context_Settings extends DIODE_Context {
 
                 // Add Category header
                 cur_dt = dt;
-                let sp  = document.createElement('span');
+                let sp = document.createElement('span');
                 sp.innerText = cat_name;
                 let tr = cur_dt.addRow(sp);
                 tr.childNodes[0].colSpan = "2";
 
                 dtc = new DiodeTables.TableCategory(cur_dt, tr);
 
-                for(let x of y) {
+                for (let x of y) {
 
                     settings_lookup[path] = x.value;
-                
+
                     let value_part = diode.getMatchingInput(transthis, x, [...path, x.key]);
                     let cr = cur_dt.addRow(x.name, value_part);
-                    if(dtc != null) {
+                    if (dtc != null) {
                         dtc.addContentRow(cr);
                     }
                 }
@@ -2676,7 +2709,7 @@ class DIODE_Context_Settings extends DIODE_Context {
         }
         // Link handlers
         parent.setHandler("activate", (node, level) => {
-            if(level == 1) {
+            if (level == 1) {
                 let repr = node.representative();
                 // Clear all selections in this tree
                 node.head().asPreOrderArray(x => x.representative()).forEach(x => x.classList.remove("selected"));
@@ -2690,7 +2723,7 @@ class DIODE_Context_Settings extends DIODE_Context {
         // Recurse into (sorted) dicts
         dicts = dicts.sort((a, b) => a[1].meta.title.localeCompare(b[1].meta.title));
 
-        for(let d of dicts) {
+        for (let d of dicts) {
             let key = d[0];
             d = d[1];
             let setting_path = path.concat(key);
@@ -2705,7 +2738,7 @@ class DIODE_Context_Settings extends DIODE_Context {
             settings_lookup = {...settings_lookup, ...tmp};
         }
 
-        if(is_topmost) {
+        if (is_topmost) {
             let _tree = new TreeView(parent);
             _tree.create_html_in($("#diode_settings_container")[0]);
         }
@@ -2722,13 +2755,13 @@ class DIODE_Context_Settings extends DIODE_Context {
 
                 this.diode._settings = new DIODE_Settings(settings);
                 //this.diode._settings = null;
-    
+
             }
         });
     }
 
     set_settings() {
-        if(!this.diode.settings().hasChanged()) {
+        if (!this.diode.settings().hasChanged()) {
             // Do not update if nothing has changed
             return;
         }
@@ -2739,14 +2772,14 @@ class DIODE_Context_Settings extends DIODE_Context {
             "confirmed": this.diode.settings().values()
         });
         // #TODO: Maybe only update when a "save"-Button is clicked?
-        
+
         let transthis = this;
         let client_id = this.diode.getClientID();
         let post_params = changed_values;
         post_params['client_id'] = client_id;
         // Debounce
-        let debounced = this.diode.debounce("settings-changed", function() {
-            
+        let debounced = this.diode.debounce("settings-changed", function () {
+
             REST_request("/dace/api/v1.0/preferences/set", post_params, (xhr) => {
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     transthis.diode.settings().clearChanged();
@@ -2763,12 +2796,11 @@ Coordinates windows belonging to the same project.
 
 */
 class DIODE_Project {
-    constructor(diode, project_id=undefined) {
+    constructor(diode, project_id = undefined) {
         this._diode = diode;
-        if(project_id === undefined || project_id === null) {
+        if (project_id === undefined || project_id === null) {
             this._project_id = diode.getPseudorandom();
-        }
-        else {
+        } else {
             this._project_id = project_id;
         }
         this.setup();
@@ -2788,14 +2820,14 @@ class DIODE_Project {
 
     getTransformationSnapshots() {
         let sdata = sessionStorage.getItem("transformation_snapshots");
-        if(sdata == null) {
+        if (sdata == null) {
             sdata = [];
-        }
-        else
+        } else
             sdata = JSON.parse(sdata);
 
         return sdata;
     }
+
     getTransformationHistory() {
         let sdata = this.getTransformationSnapshots();
         return sdata.map(x => x[0]);
@@ -2803,7 +2835,7 @@ class DIODE_Project {
 
     discardTransformationsAfter(index) {
         let sdata = this.getTransformationSnapshots();
-        
+
         // Cut the tail off and resave
         sessionStorage.setItem("transformation_snapshots", JSON.stringify(sdata.slice(0, index)));
         // Send the update notification
@@ -2835,23 +2867,21 @@ class DIODE_Project {
 
         let rets = [];
 
-        for(let x of list) {
+        for (let x of list) {
             let cname = x[0];
             let state = x[1];
 
-            if(state.created === name) {
+            if (state.created === name) {
                 // Found the requested element
 
                 rets.push([cname, state]);
 
-                if(remove) {
+                if (remove) {
                     // Don't put into the new list
-                }
-                else {
+                } else {
                     new_list.push([cname, state]);
                 }
-            }
-            else {
+            } else {
                 // Not found
                 new_list.push([cname, state]);
             }
@@ -2893,11 +2923,11 @@ class DIODE_Project {
 
     getClosedWindowsList() {
         let tmp = sessionStorage.getItem(this._project_id + "-closed-window-list");
-        if(typeof(tmp) === "string") {
+        if (typeof (tmp) === "string") {
             tmp = JSON.parse(tmp);
         }
 
-        if(tmp === null) {
+        if (tmp === null) {
             return [];
         }
         return tmp;
@@ -2914,13 +2944,11 @@ class DIODE_Project {
         let transthis = this;
         let cb = (msg) => {
             let tmp = transthis._rcvbuf[id][event];
-            if(tmp instanceof Array) {
+            if (tmp instanceof Array) {
                 transthis._rcvbuf[id][event].push(msg);
-            }
-            else if(tmp instanceof Object) {
+            } else if (tmp instanceof Object) {
                 Object.assign(transthis._rcvbuf[id][event], msg);
-            }
-            else {
+            } else {
                 transthis._rcvbuf[id][event] = msg;
             }
         };
@@ -2932,7 +2960,7 @@ class DIODE_Project {
 
     stopListening(id) {
         let hub = this._diode.goldenlayout.eventHub;
-        for(let x of this._listeners[id]) {
+        for (let x of this._listeners[id]) {
             hub.unbind(...x);
         }
         delete this._listeners[id];
@@ -2945,7 +2973,7 @@ class DIODE_Project {
 
     static load(diode, project_name) {
         let pdata = DIODE_Project.getProjectData(project_name);
-        
+
         let ret = new DIODE_Project(diode, pdata.project_id);
 
 
@@ -2971,7 +2999,7 @@ class DIODE_Project {
 
     static getProjectData(project_name) {
         let pdata = localStorage.getItem("project_" + project_name);
-        if(pdata == null)
+        if (pdata == null)
             throw "Project must exist";
 
         return JSON.parse(pdata);
@@ -2979,7 +3007,7 @@ class DIODE_Project {
 
     static getSavedProjects() {
         let tmp = localStorage.getItem("saved_projects");
-        if(tmp == null)
+        if (tmp == null)
             return [];
         return JSON.parse(tmp);
     }
@@ -2992,7 +3020,7 @@ class DIODE_Project {
         */
 
         let snapshots = this.getTransformationSnapshots();
-        if(typeof(snapshots) == 'string')
+        if (typeof (snapshots) == 'string')
             snapshots = JSON.parse(snapshots);
         let y = {
             project_id: this._project_id,
@@ -3002,39 +3030,37 @@ class DIODE_Project {
             description: "<No description>"
         };
         let save_val = JSON.stringify(y);
-        
+
         // The sdfg is not sufficiently unique.
         let save_name = prompt("Enter project name");
 
         window.localStorage.setItem("project_" + save_name, save_val);
 
         let sp = window.localStorage.getItem("saved_projects");
-        if(sp == null) {
+        if (sp == null) {
             sp = [];
-        }
-        else {
+        } else {
             sp = JSON.parse(sp);
         }
 
         sp = [save_name, ...sp];
         window.localStorage.setItem("saved_projects", JSON.stringify(sp));
 
-            
 
     }
 
-    request(list, callback, options={}) {
+    request(list, callback, options = {}) {
         /*
             options:
                 timeout: Number                 ms to wait until on_timeout is called
                 on_timeout: [opt] Function      Function called on timeout
                 params: [opt] object            Parameters to pass with the request
         */
-       let tmp = new DIODE_Project(this._diode, this._project_id);
-       return tmp.__impl_request(list, callback, options);
+        let tmp = new DIODE_Project(this._diode, this._project_id);
+        return tmp.__impl_request(list, callback, options);
     }
 
-    __impl_request(list, callback, options={}) {
+    __impl_request(list, callback, options = {}) {
         /*
             options:
                 timeout: Number                 ms to wait until on_timeout is called
@@ -3043,11 +3069,11 @@ class DIODE_Project {
         */
         this._callback = callback;
         let params = options.params;
-        let reqid = "id"+this._diode.getPseudorandom();
+        let reqid = "id" + this._diode.getPseudorandom();
         // Clear potentially stale values
         this._rcvbuf[reqid] = {};
         this._listeners[reqid] = [];
-        for(let x of list) {
+        for (let x of list) {
             this.startListening(x, reqid);
             this._diode.goldenlayout.eventHub.emit(this.eventString("-req-" + x), params, this);
         }
@@ -3055,31 +3081,30 @@ class DIODE_Project {
         let transthis = this;
         const interval_step = 100;
         let timeout = options.timeout;
-        
+
         this._waiter[reqid] = setInterval(() => {
             let missing = false;
 
-            for(let x of list) {
-                if(!(x in transthis._rcvbuf[reqid])) {
+            for (let x of list) {
+                if (!(x in transthis._rcvbuf[reqid])) {
                     missing = true;
                     break;
                 }
             }
-            if(!missing) {
+            if (!missing) {
                 clearInterval(transthis._waiter[reqid]);
                 transthis.stopListening(reqid);
                 transthis._waiter[reqid] = null;
                 let tmp = transthis._rcvbuf[reqid];
                 delete transthis._rcvbuf[reqid];
                 return transthis._callback(tmp, options.timeout_id);
-            }
-            else if (timeout !== null) {
+            } else if (timeout !== null) {
                 timeout -= interval_step;
-                if(timeout <= 0) {
+                if (timeout <= 0) {
                     // Timed out - fail silently
                     clearInterval(transthis._waiter[reqid]);
                     transthis.stopListening(reqid);
-                    if(options.on_timeout != undefined) {
+                    if (options.on_timeout != undefined) {
                         options.on_timeout(transthis._rcvbuf[reqid]);
                     }
                     transthis._waiter[reqid] = null;
@@ -3107,7 +3132,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
             setTimeout(() => eh.emit(this.project().eventString("display-properties"), 'ok'), 1);
             this.getHTMLContainer().innerHTML = "";
             let p = msg.params;
-            if(typeof(p) == 'string') p = JSON.parse(p);
+            if (typeof (p) == 'string') p = JSON.parse(p);
             this.diode.renderProperties(msg.transthis, msg.node, p, this.getHTMLContainer(), msg.options);
         });
 
@@ -3137,23 +3162,25 @@ class DIODE_Context_PropWindow extends DIODE_Context {
     }
 
     removeDataSymbol(calling_context, data_name) {
-        this.project().request(["delete-data-symbol-" + calling_context], x => {}, {
+        this.project().request(["delete-data-symbol-" + calling_context], x => {
+        }, {
             params: data_name
         });
     }
 
     addDataSymbol(calling_context, data_type, data_name) {
-        this.project().request(["add-data-symbol-" + calling_context], x => {}, {
+        this.project().request(["add-data-symbol-" + calling_context], x => {
+        }, {
             params: {
                 name: data_name,
                 type: data_type
             }
         });
     }
-    
+
     renderDataSymbols(calling_context, data) {
         // #TODO: This creates the default state (as in same as render_free_symbols() in the old DIODE)
-        if(data == null) {
+        if (data == null) {
             console.warn("Data has not been set - creating empty window");
             return;
         }
@@ -3162,13 +3189,13 @@ class DIODE_Context_PropWindow extends DIODE_Context {
 
         // Go over the undefined symbols first, then over the arrays (SDFG::arrays)
         let all_symbols = [...data.undefined_symbols, "SwitchToArrays", ...Object.entries(data.attributes._arrays)];
-        
+
         let caller_id = calling_context;
-        console.assert(caller_id != undefined && typeof(caller_id) == 'string');
+        console.assert(caller_id != undefined && typeof (caller_id) == 'string');
 
-        for(let x of all_symbols) {
+        for (let x of all_symbols) {
 
-            if(x == "SwitchToArrays") {
+            if (x == "SwitchToArrays") {
                 // Add a delimiter
                 let col = free_symbol_table.addRow("Arrays");
                 col.childNodes.forEach(x => {
@@ -3177,7 +3204,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
                 });
                 continue;
             }
-            if(x[0] == "null" || x[1] == null) {
+            if (x[0] == "null" || x[1] == null) {
                 continue;
             }
             let edit_but = document.createElement('button');
@@ -3218,11 +3245,39 @@ class DIODE_Context_PropWindow extends DIODE_Context {
             let but_container = document.createElement("div");
             but_container.appendChild(add_scalar);
             but_container.appendChild(add_array);
-            
+
             free_symbol_table.addRow(input_name, but_container).childNodes.forEach(x => {
                 x.colSpan = 2;
                 x.style = "text-align:center;";
             });
+
+            let libnode_container = document.createElement("div");
+            let expand_all = document.createElement("button");
+            expand_all.addEventListener("click", () => {
+                // Expand all library nodes
+                REST_request("/dace/api/v1.0/expand/", {
+                        sdfg: data,
+                    }, (xhr) => {
+                        if (xhr.readyState === 4 && xhr.status === 200) {
+                            let resp = parse_sdfg(xhr.response);
+                            if (resp.error !== undefined) {
+                                // Propagate error
+                                this.diode.handleErrors(this, resp);
+                            }
+
+                            // Add to history
+                            this.project().request(["append-history"], x => {
+                            }, { params: {
+                                    new_sdfg: resp.sdfg,
+                                    item_name: "Expand library nodes"
+                                }
+                            });
+                        }
+                    });
+            });
+            expand_all.innerText = "Expand all library nodes";
+            libnode_container.appendChild(expand_all);
+            free_symbol_table.addRow(libnode_container);
         }
 
         this.getHTMLContainer().innerHTML = "";
@@ -3240,7 +3295,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         let p = this.getHTMLContainer();
         p.setAttribute("data-hint", '{"type": "DIODE", "name": "Property_Window"}');
         let state = this.getState();
-        if(state.params != undefined && state.params.params != null) {
+        if (state.params != undefined && state.params.params != null) {
             let p = state.params;
             this.diode.renderProperties(p.transthis, p.node, JSON.parse(p.params), this.getHTMLContainer());
         }
@@ -3249,11 +3304,10 @@ class DIODE_Context_PropWindow extends DIODE_Context {
 }
 
 
-
 class DIODE_Context_Runqueue extends DIODE_Context {
     constructor(diode, gl_container, state) {
         super(diode, gl_container, state);
-        
+
     }
 
     setupEvents(project) {
@@ -3264,7 +3318,7 @@ class DIODE_Context_Runqueue extends DIODE_Context {
         let eh = this.diode.goldenlayout.eventHub;
 
         this._autorefresher = null;
-        
+
     }
 
     destroy() {
@@ -3274,11 +3328,11 @@ class DIODE_Context_Runqueue extends DIODE_Context {
 
     refreshUI(data) {
 
-        if(typeof(data) == 'string') {
+        if (typeof (data) == 'string') {
             data = JSON.parse(data);
         }
 
-        if(data.elements == undefined) {
+        if (data.elements == undefined) {
             data.elements = [];
         }
         let base_element = $(this.container.getElement())[0];
@@ -3301,16 +3355,15 @@ class DIODE_Context_Runqueue extends DIODE_Context {
 
         header.appendChild(header_row);
         table.appendChild(header);
-        
+
         let tbody = document.createElement("tbody");
-        for(let x of data.elements) {
+        for (let x of data.elements) {
 
             let optparse = x.options;
-            if(typeof(optparse) == 'string') {
+            if (typeof (optparse) == 'string') {
 
-            }
-            else if(optparse == undefined) {
-                if(x.output != undefined && x.type == "orphan") {
+            } else if (optparse == undefined) {
+                if (x.output != undefined && x.type == "orphan") {
                     optparse = document.createElement("button");
                     optparse.onclick = click => {
                         this.diode.addContentItem({
@@ -3324,9 +3377,8 @@ class DIODE_Context_Runqueue extends DIODE_Context {
                     }
                     optparse.innerText = "Output";
                 }
-            }
-            else {
-                if(optparse.type == undefined) {
+            } else {
+                if (optparse.type == undefined) {
                     optparse = optparse.perfopts;
                 }
                 optparse = optparse.mode + ", coresets " + optparse.core_counts;
@@ -3340,7 +3392,7 @@ class DIODE_Context_Runqueue extends DIODE_Context {
             let row = document.createElement("tr");
             values.map(y => {
                 let c = document.createElement("td");
-                if(typeof(y) == 'string' || typeof(y) == 'number')
+                if (typeof (y) == 'string' || typeof (y) == 'number')
                     c.innerText = y;
                 else {
                     c.appendChild(y);
@@ -3352,7 +3404,7 @@ class DIODE_Context_Runqueue extends DIODE_Context {
 
         table.appendChild(tbody);
 
-        
+
         container.appendChild(table);
         base_element.appendChild(container);
         $(table).DataTable();
@@ -3407,7 +3459,7 @@ class DIODE {
 
         // Load a client_id
         this._client_id = localStorage.getItem("diode_client_id");
-        if(this._client_id == null) {
+        if (this._client_id == null) {
             this._client_id = this.getPseudorandom();
             localStorage.setItem("diode_client_id", this._client_id);
         }
@@ -3441,12 +3493,11 @@ class DIODE {
         });
     }
 
-    getRunConfigs(name=undefined) {
+    getRunConfigs(name = undefined) {
         let tmp = localStorage.getItem("diode_run_configs");
-        if(tmp != null) {
+        if (tmp != null) {
             tmp = JSON.parse(tmp);
-        }
-        else {
+        } else {
             // Create a default
             tmp = [{
                 "Configuration name": "default",
@@ -3459,13 +3510,12 @@ class DIODE {
             }];
         }
 
-        if(name != undefined) {
+        if (name != undefined) {
             let ret = tmp.filter(x => x['Configuration name'] == name);
-            if(ret.length == 0) {
+            if (ret.length == 0) {
                 // Error
                 console.error("Could not find a configuration with that name", name);
-            }
-            else {
+            } else {
                 return ret[0];
             }
         }
@@ -3477,15 +3527,15 @@ class DIODE {
         let existing = this.getRunConfigs();
 
         let i = 0;
-        for(let x of existing) {
-            if(x['Configuration name'] == config['Configuration name']) {
+        for (let x of existing) {
+            if (x['Configuration name'] == config['Configuration name']) {
                 // Replace
                 existing[i] = config;
                 break;
             }
             ++i;
         }
-        if(i >= existing.length) {
+        if (i >= existing.length) {
             existing.push(config);
         }
         existing.sort((a, b) => a['Configuration name'].localeCompare(b['Configuration name']));
@@ -3495,13 +3545,12 @@ class DIODE {
     setCurrentRunConfig(name) {
         sessionStorage.setItem("diode_current_run_config", name);
     }
-    
+
     getCurrentRunConfigName() {
         let tmp = sessionStorage.getItem("diode_current_run_config");
-        if(tmp == null) {
+        if (tmp == null) {
             return "default";
-        }
-        else {
+        } else {
             return tmp;
         }
     }
@@ -3516,29 +3565,32 @@ class DIODE {
 
         let new_settings = {};
 
-        new_settings = {...new_settings, ...{
-            "execution/general/host": config['Host']
-        }};
+        new_settings = {
+            ...new_settings, ...{
+                "execution/general/host": config['Host']
+            }
+        };
 
         // Apply the runconfig values to the dace config
-        if(config['Use SSH']) {
+        if (config['Use SSH']) {
 
 
             let keyfile_string = /\S/.test(config['SSH Key override']) ? (" -i " + config['SSH Key override'] + " ") : " ";
-            new_settings = {...new_settings, ...{
-                "execution/general/execcmd": ("ssh -oBatchMode=yes" + keyfile_string + "${host} ${command}"),
-                "execution/general/copycmd_r2l": ("scp -B" + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
-                "execution/general/copycmd_l2r": ("scp -B" + keyfile_string + " ${srcfile} ${host}:${dstfile}"),
-            }
+            new_settings = {
+                ...new_settings, ...{
+                    "execution/general/execcmd": ("ssh -oBatchMode=yes" + keyfile_string + "${host} ${command}"),
+                    "execution/general/copycmd_r2l": ("scp -B" + keyfile_string + " ${host}:${srcfile} ${dstfile}"),
+                    "execution/general/copycmd_l2r": ("scp -B" + keyfile_string + " ${srcfile} ${host}:${dstfile}"),
+                }
             };
-        }
-        else {
+        } else {
             // Use standard / local commands
-            new_settings = {...new_settings, ...{
-                "execution/general/execcmd": "${command}",
-                "execution/general/copycmd_r2l": "cp ${srcfile} ${dstfile}",
-                "execution/general/copycmd_l2r": "cp ${srcfile} ${dstfile}",
-            }
+            new_settings = {
+                ...new_settings, ...{
+                    "execution/general/execcmd": "${command}",
+                    "execution/general/copycmd_r2l": "cp ${srcfile} ${dstfile}",
+                    "execution/general/copycmd_l2r": "cp ${srcfile} ${dstfile}",
+                }
             };
         }
 
@@ -3552,8 +3604,7 @@ class DIODE {
             REST_request("/dace/api/v1.0/preferences/set", post_params, (xhr) => {
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     resolve(config);
-                }
-                else if(xhr.status !== 0 && !(xhr.status + "_").startsWith("2")) {
+                } else if (xhr.status !== 0 && !(xhr.status + "_").startsWith("2")) {
                     reject();
                 }
             });
@@ -3564,17 +3615,16 @@ class DIODE {
 
     pubSSH() {
         let cached = localStorage.getItem('diode_pubSSH');
-        if(cached != null) {
+        if (cached != null) {
             return cached;
         }
         REST_request("/dace/api/v1.0/getPubSSH/", undefined, xhr => {
             if (xhr.readyState === 4 && xhr.status === 200) {
                 let j = JSON.parse(xhr.response);
-                if(j.error == undefined) {
+                if (j.error == undefined) {
                     let t = j.pubkey;
                     localStorage.setItem('diode_pubSSH', t);
-                }
-                else {
+                } else {
                     alert(j.error);
                 }
             }
@@ -3583,7 +3633,7 @@ class DIODE {
 
     static getHostList() {
         let tmp = localStorage.getItem("diode_host_list");
-        if(tmp == null) return ['localhost'];
+        if (tmp == null) return ['localhost'];
         else return JSON.parse(tmp);
     }
 
@@ -3606,17 +3656,16 @@ class DIODE {
 
         let target = ev.target;
         let _h = target.getAttribute("data-hint");
-        if(_h == null) {
+        if (_h == null) {
             // Iterate chain
-            if(!ev.composed) return;
+            if (!ev.composed) return;
             let x = ev.composedPath();
-            for(let e of x) {
-                if(e.getAttribute != undefined) {
+            for (let e of x) {
+                if (e.getAttribute != undefined) {
                     _h = e.getAttribute("data-hint");
-                }
-                else _h = null;
+                } else _h = null;
 
-                if(_h != null) {
+                if (_h != null) {
                     create_overlay(_h, e);
                     ev.stopPropagation();
                     ev.preventDefault();
@@ -3624,8 +3673,7 @@ class DIODE {
                 }
             }
             return;
-        }
-        else {
+        } else {
             create_overlay(_h, target);
             ev.stopPropagation();
             ev.preventDefault();
@@ -3635,8 +3683,8 @@ class DIODE {
 
     }
 
-    openUploader(purpose="") {
-        
+    openUploader(purpose = "") {
+
         w2popup.open({
             title: "Upload a code file",
             body: `
@@ -3655,13 +3703,13 @@ class DIODE {
             showMax: true
         });
         let x = $('#upload_box');
-        if(x.length == 0) {
+        if (x.length == 0) {
             throw "Error: Element not available";
         }
         x = x[0];
 
         let file_handler = (data) => {
-            if(purpose == "code-python") {
+            if (purpose == "code-python") {
                 this.newFile(data);
             }
         };
@@ -3678,7 +3726,7 @@ class DIODE {
         });
 
         let fuploader = $('#file-select');
-        if(fuploader.length == 0) {
+        if (fuploader.length == 0) {
             throw "Error: Element not available";
         }
         fuploader = fuploader[0];
@@ -3719,13 +3767,13 @@ class DIODE {
         if (!this.goldenlayout.root)
             return;
         let comps = this.goldenlayout.root.getItemsByFilter(x => x.config.type == "component");
-        comps.forEach((comp) => comp.close() );
+        comps.forEach((comp) => comp.close());
         this.project().clearClosedWindowsList();
     }
 
     addContentItem(config) {
         // Remove all saved instances of this component type from the closed windows list
-        if(config.componentName) {
+        if (config.componentName) {
             let cw = this.project()._closed_windows;
             this.project().setClosedWindowsList(cw.filter(x => x[0] != config.componentName));
         }
@@ -3736,7 +3784,7 @@ class DIODE {
         if (!root)
             return;
 
-        if(root.contentItems.length === 0) {
+        if (root.contentItems.length === 0) {
             // Layout is completely missing, need to add one (row in this case)
             let layout_config = {
                 type: 'row',
@@ -3746,24 +3794,22 @@ class DIODE {
 
             // retry with recursion
             this.addContentItem(config);
-        }
-        else {
-            if(this.goldenlayout.isSubWindow) {
+        } else {
+            if (this.goldenlayout.isSubWindow) {
                 // Subwindows don't usually have layouts, so send a request that only the main window should answer
                 this.goldenlayout.eventHub.emit('create-window-in-main', JSON.stringify(config));
-            }
-            else {
-                for(let ci of root.contentItems) {
-                    if(ci.config.type != "stack") {
+            } else {
+                for (let ci of root.contentItems) {
+                    if (ci.config.type != "stack") {
                         ci.addChild(config);
                         return;
                     }
-                    
+
                 }
                 let copy = root.contentItems[0].contentItems.map(x => x.config);
                 root.contentItems[0].remove();
                 // retry with recursion
-                for(let ci of copy) {
+                for (let ci of copy) {
                     this.addContentItem(ci);
                 }
                 this.addContentItem(config);
@@ -3772,7 +3818,7 @@ class DIODE {
         }
     }
 
-    newFile(content="") {
+    newFile(content = "") {
         // Reset project state
         this.closeAll();
         this.createNewProject();
@@ -3791,7 +3837,7 @@ class DIODE {
             title: "Source Code",
             type: 'component',
             componentName: 'CodeInComponent',
-            componentState: { created: millis, code_content: content }
+            componentState: {created: millis, code_content: content}
         };
 
         this.addContentItem(config);
@@ -3807,7 +3853,7 @@ class DIODE {
             title: "Settings",
             type: 'component',
             componentName: 'SettingsComponent',
-            componentState: { created: millis }
+            componentState: {created: millis}
         };
 
         this.addContentItem(config);
@@ -3820,7 +3866,7 @@ class DIODE {
             title: "Run Queue",
             type: 'component',
             componentName: 'RunqueueComponent',
-            componentState: { created: millis }
+            componentState: {created: millis}
         };
 
         this.addContentItem(config);
@@ -3828,14 +3874,14 @@ class DIODE {
 
     getEnum(name) {
         let cached = localStorage.getItem('Enumeration:' + name);
-        if(cached == null || cached == undefined) {
+        if (cached == null || cached == undefined) {
             // Request the enumeration from the server
 
             REST_request("/dace/api/v1.0/getEnum/" + name, undefined, xhr => {
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     console.log(name, xhr.response);
                     let tmp = JSON.parse(xhr.response);
-                    if(name == "Language") {
+                    if (name == "Language") {
                         tmp.enum.push("NoCode");
                     }
                     localStorage.setItem('Enumeration:' + name, JSON.stringify(tmp));
@@ -3848,15 +3894,15 @@ class DIODE {
         return JSON.parse(cached)['enum'];
     }
 
-    renderProperties(transthis, node, params, parent, options=undefined) {
+    renderProperties(transthis, node, params, parent, options = undefined) {
         /*
             Creates property visualizations in a 2-column table.
         */
-        if(params == null) {
+        if (params == null) {
             console.warn("renderProperties as nothing to render");
             return;
         }
-        if(!Array.isArray(params)) {
+        if (!Array.isArray(params)) {
             let realparams = params;
 
             // Format is different (diode to_json with seperate meta / value - fix before passing to renderer)
@@ -3875,7 +3921,7 @@ class DIODE {
             params = _lst;
         }
 
-        if(typeof(transthis) == 'string') {
+        if (typeof (transthis) == 'string') {
             // Event-based
             let target_name = transthis;
             transthis = {
@@ -3896,7 +3942,7 @@ class DIODE {
                     // No need to refresh SDFG if transformation
                     if (options && options.type === 'transformation')
                         return;
-                    
+
                     this.refreshSDFG();
                 },
                 applyTransformation: () => {
@@ -3923,19 +3969,19 @@ class DIODE {
 
         let dtc = null;
         let categories = {};
-        for(let x of params) {
-            
+        for (let x of params) {
+
             let cat = x.category;
-            if(categories[cat] == undefined) {
+            if (categories[cat] == undefined) {
                 categories[cat] = [];
             }
             categories[cat].push(x);
         }
-        if(!DIODE.debugDevMode()) {
+        if (!DIODE.debugDevMode()) {
             delete categories["(Debug)"]
         }
-        for(let z of Object.entries(categories)) {
-            
+        for (let z of Object.entries(categories)) {
+
             // Sort within category
             let cat_name = z[0];
             let y = z[1].sort((a, b) => a.property.name.localeCompare(b.property.name));
@@ -3943,28 +3989,28 @@ class DIODE {
 
             // Add Category header
             cur_dt = dt;
-            let sp  = document.createElement('span');
+            let sp = document.createElement('span');
             sp.innerText = cat_name;
             let tr = cur_dt.addRow(sp);
             tr.childNodes[0].colSpan = "2";
 
             dtc = new DiodeTables.TableCategory(cur_dt, tr);
 
-            for(let propx of y) {
+            for (let propx of y) {
                 let title_part = document.createElement("span");
                 let x = propx.property;
                 title_part.innerText = x.name;
                 title_part.title = x.desc;
                 let value_part = diode.getMatchingInput(transthis, x, propx);
                 let cr = cur_dt.addRow(title_part, value_part);
-                if(dtc != null) {
+                if (dtc != null) {
                     dtc.addContentRow(cr);
                 }
             }
         }
         dt.setCSSClass("diode_property_table");
 
-        if(options && options.type == "transformation") {
+        if (options && options.type == "transformation") {
             // Append a title
             let title = document.createElement("span");
             title.classList = "";
@@ -3984,13 +4030,14 @@ class DIODE {
             parent.appendChild(locate_button);
         }
         dt.createIn(parent);
-        if(options && options.type == "transformation") {
+        if (options && options.type == "transformation") {
             // Append an 'apply-transformation' button
             let button = document.createElement('button');
             button.innerText = "Apply advanced transformation";
             button.addEventListener('click', _x => {
                 button.disabled = true;
-                this.project().request(['apply-adv-transformation-' + options.sdfg_name], _y => {}, {
+                this.project().request(['apply-adv-transformation-' + options.sdfg_name], _y => {
+                }, {
                     params: JSON.stringify(options.apply_params)
                 });
             });
@@ -4010,14 +4057,13 @@ class DIODE {
         __additional_defines['Min'] = "(...x) => Math.min(...x)";
         __additional_defines['int_ceil'] = "(a,b) => Math.ceil(a/b)";
 
-        for(let x of __user_input) {
+        for (let x of __user_input) {
             let _r = window.prompt("Enter a value for symbol " + x);
-            if(_r != null) {
+            if (_r != null) {
 
                 // Write the value 
                 __additional_defines[x] = _r;
-            }
-            else {
+            } else {
                 // Aborted
                 break;
             }
@@ -4025,7 +4071,7 @@ class DIODE {
 
         // Read the data object properties
         console.log("data", data);
-        if(data.type != "Array") {
+        if (data.type != "Array") {
             console.warn("Non-Array accessed", data);
             // #TODO: What to do here?
         }
@@ -4049,32 +4095,30 @@ class DIODE {
             __axis_x_info.style = "justify-content: space-between;";
 
 
-            for(let __i = 0; __i < 2; ++__i) {
+            for (let __i = 0; __i < 2; ++__i) {
                 let __tmp = document.createElement("div");
                 // Take the second dimension
                 try {
                     __tmp.innerText = (__i == 0) ? "0" : __mem_dims[1];
-                }
-                catch(__e) {
+                } catch (__e) {
                     __tmp.innerText = (__i == 0) ? "Start" : "End";
                 }
                 __axis_x_info.appendChild(__tmp);
             }
         }
-        
+
         let __axis_y_info = document.createElement("div");
         {
             __axis_y_info.classList = "flex_column";
             __axis_y_info.style = "justify-content: space-between;";
 
 
-            for(let __i = 0; __i < 2; ++__i) {
+            for (let __i = 0; __i < 2; ++__i) {
                 let __tmp = document.createElement("div");
                 // Take the first dimension
                 try {
                     __tmp.innerText = (__i == 0) ? "0" : __mem_dims[0];
-                }
-                catch(__e) {
+                } catch (__e) {
                     __tmp.innerText = (__i == 0) ? "Start" : "End";
                 }
                 __axis_y_info.appendChild(__tmp);
@@ -4083,15 +4127,15 @@ class DIODE {
 
         let __tbl_vert = document.createElement("div");
         __tbl_vert.classList = "flex_col";
-        if(data != null) {
+        if (data != null) {
             __tbl_vert.appendChild(__axis_x_info);
             __tbl_hor.appendChild(__axis_y_info);
         }
         // Now create a table with the according cells for this
         let __size = 10;
-        if(__mem_dims.some(x => x > 128)) __size = 5;
-        
-        if(__mem_dims.length < 2) __mem_dims.push(1); // Force at least 2 dimensions (2nd dim size is trivial: 1)
+        if (__mem_dims.some(x => x > 128)) __size = 5;
+
+        if (__mem_dims.length < 2) __mem_dims.push(1); // Force at least 2 dimensions (2nd dim size is trivial: 1)
 
         console.log("access indices", __access_indices);
         console.log("ranges", __ranges);
@@ -4104,12 +4148,12 @@ class DIODE {
         //        scan __all__ possible values, which is infeasible on a browser client.
         // 2) Visual Cluttering. Seeing too much at once is not helpful. Implementing an easy-to-use UI solving this problem
         //        is beyond the scope of the initial PoC.
-        
+
         // Obtain fixed ranges (all but smallest)
-        let __fixed_rngs = __ranges.map(x => x).sort((a,b) => a.depth - b.depth).slice(1).reverse();
+        let __fixed_rngs = __ranges.map(x => x).sort((a, b) => a.depth - b.depth).slice(1).reverse();
         // Get the variable range (smallest)
         let __var_rng = __ranges[0];
-        
+
         let __rng_inputs = [];
 
         let __create_func = () => null;
@@ -4119,7 +4163,7 @@ class DIODE {
         {
             let input_cont = document.createElement("div");
             let __defs = Object.keys(__additional_defines).map(x => "let " + x + " = " + __additional_defines[x]).join(";") + ";";
-            
+
             let __global_slider = document.createElement("input");
             {
                 __global_slider.type = "range";
@@ -4132,9 +4176,9 @@ class DIODE {
 
             let __total_rng_count = 1;
             let __locked_range = false;
-            
+
             input_cont.classList = "flex_column";
-            for(let __r of __fixed_rngs) {
+            for (let __r of __fixed_rngs) {
                 let _lbl = document.createElement("label");
                 let _in = document.createElement("input");
                 _in.type = "number";
@@ -4147,7 +4191,7 @@ class DIODE {
                     // Move the slider position
                     let __spos = 0;
                     let __base = 1;
-                    for(let __r of __rng_inputs.map(x => x).reverse()) {
+                    for (let __r of __rng_inputs.map(x => x).reverse()) {
                         let __s = parseInt(__r.max) - parseInt(__r.min) + 1;
 
                         let __v = __r.value;
@@ -4162,13 +4206,19 @@ class DIODE {
                 // Set limits
                 try {
                     _in.min = eval(__defs + __main(__r.val.start));
-                } catch(e) { console.warn("Got error when resolving expression"); }
+                } catch (e) {
+                    console.warn("Got error when resolving expression");
+                }
                 try {
                     _in.max = eval(__defs + __main(__r.val.end));
-                } catch(e) { console.warn("Got error when resolving expression"); }
+                } catch (e) {
+                    console.warn("Got error when resolving expression");
+                }
                 try {
                     _in.value = eval(__defs + __main(__r.val.start));
-                } catch(e) { console.warn("Got error when resolving expression"); }
+                } catch (e) {
+                    console.warn("Got error when resolving expression");
+                }
 
                 // Add the starting value as an expression to defs
                 __defs += "let " + __r.var + " = " + __main(__r.val.start) + ";";
@@ -4180,13 +4230,12 @@ class DIODE {
 
                 input_cont.appendChild(_lbl);
 
-                if(__total_rng_count == 0) __total_rng_count = 1;
+                if (__total_rng_count == 0) __total_rng_count = 1;
 
-                let __e_size = ((__x) => eval(__defs + "(" +__main(__x.val.end) + " - " + __main(__x.val.start) + "+1) / " + __main(__x.val.step)) )(__r);
-                if(__e_size == 0 || __locked_range) {
+                let __e_size = ((__x) => eval(__defs + "(" + __main(__x.val.end) + " - " + __main(__x.val.start) + "+1) / " + __main(__x.val.step)))(__r);
+                if (__e_size == 0 || __locked_range) {
                     __locked_range = true;
-                }
-                else {
+                } else {
                     __total_rng_count *= __e_size;
                 }
             }
@@ -4197,7 +4246,7 @@ class DIODE {
                 __global_slider.addEventListener("input", __ev => {
                     let __v = parseInt(__global_slider.value);
 
-                    for(let __r of __rng_inputs.map(x => x).reverse()) {
+                    for (let __r of __rng_inputs.map(x => x).reverse()) {
                         let __s = parseInt(__r.max) - parseInt(__r.min) + 1;
 
                         let __subval = __v % __s;
@@ -4215,16 +4264,16 @@ class DIODE {
                 __global_slider.addEventListener("input", _ev => {
                     __create_func();
                 });
-                
+
                 _in.innerText = "(whole range)";
                 _lbl.innerText = "Range iterator " + r.var + " over [" + __main(r.val.start) + ", " + __main(r.val.end) + "] in steps of " + __main(r.val.step);
                 _lbl.appendChild(_in);
 
                 input_cont.appendChild(_lbl);
             }
-            __tbl_container.appendChild(input_cont);    
+            __tbl_container.appendChild(input_cont);
         }
-        
+
         __create_func = () => {
             __tbl_vert.innerHTML = "";
             __tbl_vert.appendChild(__axis_x_info);
@@ -4232,7 +4281,7 @@ class DIODE {
             Object.assign(__all_fixed, __additional_defines);
             // Get the fixed values
             {
-                for(let i of __rng_inputs) {
+                for (let i of __rng_inputs) {
                     let rname = i.getAttribute("data-rname");
                     let val = i.value;
 
@@ -4258,27 +4307,27 @@ class DIODE {
                 let __r_step = __main(__var_rng.val.step);
 
                 // Remember: Inclusive ranges
-                for(let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
+                for (let __x = feval(__r_s); __x <= feval(__r_e); __x += feval(__r_step)) {
                     // Add this to the full evaluation
                     let __a_i = __access_indices.map((x, i) => [x, i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
-                    
+
 
                     __a_i = __a_i.map(__y => feval("let " + __it + " = " + __x + ";" + __y.var));
 
                     let __tmp = __mark_cells[__a_i[1]];
-                    if(__tmp == undefined) {
+                    if (__tmp == undefined) {
                         __mark_cells[__a_i[1]] = [];
                     }
                     __mark_cells[__a_i[1]].push(__a_i[0]);
                 }
             }
 
-            for(let __dim_2 = 0; __dim_2 < __mem_dims[0]; ++__dim_2) {
+            for (let __dim_2 = 0; __dim_2 < __mem_dims[0]; ++__dim_2) {
 
                 // Check ellision
-                if(__mem_dims[0] > __ellision_thresh_y && __dim_2 > __ellision_thresh_y / 2 && __dim_2 < __mem_dims[0] - __ellision_thresh_y / 2) {
+                if (__mem_dims[0] > __ellision_thresh_y && __dim_2 > __ellision_thresh_y / 2 && __dim_2 < __mem_dims[0] - __ellision_thresh_y / 2) {
                     // Elide
-                    if(__dim_2 - 1 == __ellision_thresh_y / 2) {
+                    if (__dim_2 - 1 == __ellision_thresh_y / 2) {
                         // Add ellision info _once_
                         let __row = document.createElement("div");
                         __row.classList = "flex_row";
@@ -4292,11 +4341,11 @@ class DIODE {
                 __row.classList = "flex_row";
                 __row.style = "justify-content: flex-start;flex-wrap: nowrap;"
 
-                for(let __i = 0; __i < __mem_dims[1]; ++__i) {
+                for (let __i = 0; __i < __mem_dims[1]; ++__i) {
                     // Check ellision
-                    if(__mem_dims[1] > __ellision_thresh_x && __i > __ellision_thresh_x / 2 && __i < __mem_dims[1] - __ellision_thresh_x / 2) {
+                    if (__mem_dims[1] > __ellision_thresh_x && __i > __ellision_thresh_x / 2 && __i < __mem_dims[1] - __ellision_thresh_x / 2) {
                         // Elide
-                        if(__i - 1 == __ellision_thresh_x / 2) {
+                        if (__i - 1 == __ellision_thresh_x / 2) {
                             // Add ellision info _once_
                             let __cell = document.createElement('div');
                             __cell.style = "line-height: 1px;";
@@ -4311,17 +4360,17 @@ class DIODE {
                     let __set_marking = false;
                     {
                         let __tmp = __mark_cells[__dim_2];
-                        if(__tmp != undefined) {
-                            if(__tmp.includes(__i)) __set_marking = true;
+                        if (__tmp != undefined) {
+                            if (__tmp.includes(__i)) __set_marking = true;
                         }
                     }
 
                     let __cell = document.createElement('div');
                     let __colorstr = "background: white;";
-                    if(__set_marking) {
+                    if (__set_marking) {
                         __colorstr = "background: red;";
                     }
-                    
+
                     __cell.style = "min-width: " + __size + "px; min-height: " + __size + "px;border: 1px solid darkgray;" + __colorstr;
                     __row.appendChild(__cell);
                 }
@@ -4337,7 +4386,7 @@ class DIODE {
         return __tbl_container;
     }
 
-    create_visual_range_representation(__starts, __ends, __steps, __tiles, __mayfail=true, __data=null) {
+    create_visual_range_representation(__starts, __ends, __steps, __tiles, __mayfail = true, __data = null) {
         let __obj_to_arr = x => (x instanceof Array) ? x : [x];
 
         __starts = __obj_to_arr(__starts);
@@ -4354,7 +4403,7 @@ class DIODE {
         let __e_tiles = [];
         let __e_sizes = [];
 
-        for(let __r_it = 0; __r_it < __starts.length; ++__r_it) {
+        for (let __r_it = 0; __r_it < __starts.length; ++__r_it) {
 
             let __start = __starts[__r_it];
             let __end = __ends[__r_it];
@@ -4367,9 +4416,9 @@ class DIODE {
             let __e_tile = null;
 
             let __mem_dims = [];
-            while(true) {
+            while (true) {
                 let __failed = false;
-                let __symbol_setter = Object.entries(__symbols).map(x => "let " + x[0] + "=" + x[1]+";").join("");
+                let __symbol_setter = Object.entries(__symbols).map(x => "let " + x[0] + "=" + x[1] + ";").join("");
                 try {
                     // Define a couple of dace-functions that are used here
                     let Min = (...x) => Math.min(...x);
@@ -4380,36 +4429,33 @@ class DIODE {
                     __e_step = eval(__symbol_setter + __step);
                     __e_tile = eval(__symbol_setter + __tile);
 
-                    if(__data != null) {
+                    if (__data != null) {
                         let __shapedims = __data.attributes.shape.length;
                         __mem_dims = [];
-                        for(let __s = 0; __s < __shapedims; ++__s) {
+                        for (let __s = 0; __s < __shapedims; ++__s) {
                             __mem_dims.push(eval(__symbol_setter + __data.attributes.shape[__s]));
                         }
                     }
-                }
-                catch(e) {
-                    if(e instanceof ReferenceError) {
+                } catch (e) {
+                    if (e instanceof ReferenceError) {
                         // Expected, let the user provide inputs
-                        if(__mayfail) {
+                        if (__mayfail) {
                             __failed = true;
                             break;
-                        }
-                        else {
+                        } else {
                             // Prompt the user and retry
                             let __sym_name = e.message.split(" ")[0];
                             let __ret = window.prompt("Enter a value for Symbol `" + __sym_name + "`");
-                            if(__ret == null) throw e;
+                            if (__ret == null) throw e;
                             __symbols[__sym_name] = parseInt(__ret);
                             __failed = true;
                         }
-                    }
-                    else {
+                    } else {
                         // Unexpected error, rethrow
                         throw e;
                     }
                 }
-                if(!__failed) {
+                if (!__failed) {
                     break;
                 }
             }
@@ -4422,7 +4468,7 @@ class DIODE {
             __e_tiles.push(__e_tile);
             __e_sizes.push(__e_size);
         }
-        
+
         let __tbl_container = document.createElement("div");
         let __tbl_hor = document.createElement("div");
         __tbl_hor.classList = "flex_row";
@@ -4433,39 +4479,37 @@ class DIODE {
             __axis_x_info.style = "justify-content: space-between;";
 
 
-            for(let __i = 0; __i < 2; ++__i) {
+            for (let __i = 0; __i < 2; ++__i) {
                 let __tmp = document.createElement("div");
                 // Take the second dimension
                 try {
                     __tmp.innerText = (__i == 0) ? "0" : __mem_dims[1];
-                }
-                catch(__e) {
+                } catch (__e) {
                     __tmp.innerText = (__i == 0) ? "Start" : "End";
                 }
                 __axis_x_info.appendChild(__tmp);
             }
         }
-        
+
         let __axis_y_info = document.createElement("div");
         {
             __axis_y_info.classList = "flex_column";
             __axis_y_info.style = "justify-content: space-between;";
 
 
-            for(let __i = 0; __i < 2; ++__i) {
+            for (let __i = 0; __i < 2; ++__i) {
                 let __tmp = document.createElement("div");
                 // Take the first dimension
                 try {
                     __tmp.innerText = (__i == 0) ? "0" : __mem_dims[0];
-                }
-                catch(__e) {
+                } catch (__e) {
                     __tmp.innerText = (__i == 0) ? "Start" : "End";
                 }
                 __axis_y_info.appendChild(__tmp);
             }
         }
 
-        if(__data != null) {
+        if (__data != null) {
             __tbl_container.appendChild(__axis_x_info);
             __tbl_hor.appendChild(__axis_y_info);
         }
@@ -4479,19 +4523,18 @@ class DIODE {
         let __e_size = __e_sizes[0]; // #TODO: Adapt for multi-dim ranges if those are requested
         let __e_step = __e_steps[0];
         let __e_tile = __e_tiles[0];
-    
-        if(__e_size > 512) __size = 5;
-        
-        for(let __i = 0; __i < __e_size; ++__i) {
+
+        if (__e_size > 512) __size = 5;
+
+        for (let __i = 0; __i < __e_size; ++__i) {
             let __cell = document.createElement('div');
             let __colorstr = "background: white;";
-            if(Math.floor(__i / __e_step) % 2 == 0) {
-                if(__i % __e_step < __e_tile) {
+            if (Math.floor(__i / __e_step) % 2 == 0) {
+                if (__i % __e_step < __e_tile) {
                     __colorstr = "background: SpringGreen;";
                 }
-            }
-            else {
-                if(__i % __e_step < __e_tile) {
+            } else {
+                if (__i % __e_step < __e_tile) {
                     __colorstr = "background: Darkorange;";
                 }
             }
@@ -4507,17 +4550,17 @@ class DIODE {
     getMatchingInput(transthis, x, node) {
 
         let create_language_input = (value, onchange) => {
-            if(value == undefined) {
+            if (value == undefined) {
                 value = x.value;
             }
-            if(onchange == undefined) {
+            if (onchange == undefined) {
                 onchange = (elem) => {
                     transthis.propertyChanged(node, x.name, elem.value);
                 };
             }
             let language_types = this.getEnum('Language');
             let qualified = value;
-            if(!language_types.includes(qualified)) {
+            if (!language_types.includes(qualified)) {
                 qualified = "Language." + qualified;
             }
             let elem = FormBuilder.createSelectInput("prop_" + x.name, onchange, language_types, qualified);
@@ -4535,74 +4578,85 @@ class DIODE {
             // Add a merger function
             let __merger = (a, b) => {
                 let acpy = a.map(x => x);
-                for(let y of b) {
-                    if(acpy.filter(x => (x == y) || (x.var != undefined && (JSON.stringify(x.var) == JSON.stringify(y.var)))).length > 0) {
+                for (let y of b) {
+                    if (acpy.filter(x => (x == y) || (x.var != undefined && (JSON.stringify(x.var) == JSON.stringify(y.var)))).length > 0) {
                         continue;
-                    }
-                    else {
+                    } else {
                         acpy.push(y);
                     }
                 }
                 return acpy;
             };
-            
+
             let __needed_defs = [];
             let __placeholder_defines = [];
             let __user_input_needed = [];
-            while(true) {
+            while (true) {
                 let __retry = false;
                 let __placeholder_def_str = __placeholder_defines.map(x => "let " + x + " = 1").join(";");
                 // Inject the known functions as well
                 __placeholder_def_str += ";let Min = (...e) => Math.min(...e); let int_ceil = (a, b) => Math.ceil(a/b);"
-                for(let __i of __initials) {
+                for (let __i of __initials) {
                     // For every initial, find the first defining element (element with the same name that assigns an expression)
                     try {
                         let __test = eval(__placeholder_def_str + __i.var);
-                    }
-                    catch(e) {
-                        if(e instanceof ReferenceError) {
+                    } catch (e) {
+                        if (e instanceof ReferenceError) {
                             let __sym_name = e.message.split(" ")[0];
                             let __defs = __syms.filter(x => x.var == __sym_name && x.val != null);
-                            if(__defs.length > 0) {
+                            if (__defs.length > 0) {
                                 // Found a matching definition
                                 __placeholder_defines.push(__sym_name);
                                 __needed_defs = __merger(__needed_defs, [__defs[0]]);
 
                                 let __j = 0;
-                                for(; __j < __syms.length; ++__j) {
-                                    if(JSON.stringify(__syms[__j]) == JSON.stringify(__defs[0])) {
+                                for (; __j < __syms.length; ++__j) {
+                                    if (JSON.stringify(__syms[__j]) == JSON.stringify(__defs[0])) {
                                         break;
                                     }
                                 }
                                 let __f = x => x.main != undefined ? x.main : x;
 
                                 // Recurse into range subelements (if applicable)
-                                if(__defs[0].val != null && __defs[0].val.start != undefined) {
+                                if (__defs[0].val != null && __defs[0].val.start != undefined) {
                                     // find the starting node
-                                    
-                                    let __tmp = __resolve_initials([{var: __f(__defs[0].val.start), val: null}], __syms.slice(__j));
+
+                                    let __tmp = __resolve_initials([{
+                                        var: __f(__defs[0].val.start),
+                                        val: null
+                                    }], __syms.slice(__j));
                                     __needed_defs = __merger(__needed_defs, __tmp[1]);
                                     __user_input_needed = __merger(__user_input_needed, __tmp[2]);
-                                    __tmp = __resolve_initials([{var: __f(__defs[0].val.end), val: null}], __syms.slice(__j));
+                                    __tmp = __resolve_initials([{
+                                        var: __f(__defs[0].val.end),
+                                        val: null
+                                    }], __syms.slice(__j));
                                     __needed_defs = __merger(__needed_defs, __tmp[1]);
                                     __user_input_needed = __merger(__user_input_needed, __tmp[2]);
-                                    __tmp = __resolve_initials([{var: __f(__defs[0].val.step), val: null}], __syms.slice(__j));
+                                    __tmp = __resolve_initials([{
+                                        var: __f(__defs[0].val.step),
+                                        val: null
+                                    }], __syms.slice(__j));
                                     __needed_defs = __merger(__needed_defs, __tmp[1]);
                                     __user_input_needed = __merger(__user_input_needed, __tmp[2]);
-                                    __tmp = __resolve_initials([{var: __f(__defs[0].val.tile), val: null}], __syms.slice(__j));
+                                    __tmp = __resolve_initials([{
+                                        var: __f(__defs[0].val.tile),
+                                        val: null
+                                    }], __syms.slice(__j));
                                     __needed_defs = __merger(__needed_defs, __tmp[1]);
                                     __user_input_needed = __merger(__user_input_needed, __tmp[2]);
-                                }
-                                else {
+                                } else {
                                     // Recurse into the found value.
-                                    let __tmp = __resolve_initials([{var: __f(__defs[0].val), val: null}], __syms.slice(__j));
+                                    let __tmp = __resolve_initials([{
+                                        var: __f(__defs[0].val),
+                                        val: null
+                                    }], __syms.slice(__j));
                                     console.log("rec", __tmp);
                                     // Add elements to lists
                                     __needed_defs = __merger(__needed_defs, __tmp[1]);
                                     __user_input_needed = __merger(__user_input_needed, __tmp[2]);
                                 }
-                            }
-                            else {
+                            } else {
                                 // Need user input for this Symbol (defer actually requesting that info from the user)
                                 __user_input_needed.push(__sym_name);
                                 // Also promise to define the symbol later
@@ -4610,15 +4664,14 @@ class DIODE {
                             }
                             __retry = true;
                             break;
-                        }
-                        else {
+                        } else {
                             // Rethrow unknown exceptions
                             throw e;
                         }
                     }
-                    if(__retry) break;
+                    if (__retry) break;
                 }
-                if(__retry) continue;
+                if (__retry) continue;
 
 
                 break;
@@ -4638,12 +4691,12 @@ class DIODE {
 
             let cont = document.createElement("div");
 
-            if(node.data === undefined)
+            if (node.data === undefined)
                 return $(cont);
-            
-            
+
+
             let indices = x.value.indices;
-            
+
             // Generate string from indices
             let preview = '[';
             for (let index of indices) {
@@ -4662,7 +4715,7 @@ class DIODE {
                 this.project().request(['sdfg_object'], resp => {
                     let tmp = resp['sdfg_object'];
                     let syms = [];
-                    for(let v of Object.values(tmp)) {
+                    for (let v of Object.values(tmp)) {
                         let tsyms = SDFG_Parser.lookup_symbols(v, node.state_id, node.node_id, null);
                         syms = [...syms, ...tsyms];
                         console.log("syms", syms);
@@ -4676,8 +4729,8 @@ class DIODE {
 
                     // Find the initial values
                     let initials = [];
-                    for(let x of syms) {
-                        if(x.val != null) break;
+                    for (let x of syms) {
+                        if (x.val != null) break;
                         initials.push(x);
                     }
                     // initials contains the indices used. Resolve all ranges defining those
@@ -4688,16 +4741,16 @@ class DIODE {
                     let data = node.data().props.filter(x => x.name == "data")[0];
 
                     let data_objs = [];
-                    for(let x of Object.values(tmp)) {
+                    for (let x of Object.values(tmp)) {
                         data_objs.push(x.attributes._arrays[data.value]);
                     }
                     data_objs = data_objs.filter(x => x != undefined);
-                    if(data_objs.length > 0) {
+                    if (data_objs.length > 0) {
                         data = data_objs[0];
                     }
 
                     let popup_div = document.createElement('div');
-                
+
                     let popup_div_body = document.createElement('div');
 
                     let value_input = document.createElement("input");
@@ -4705,7 +4758,7 @@ class DIODE {
                     value_input.value = JSON.stringify(x.value);
 
                     let e = this.create_visual_access_representation(
-                        newelems, data                    
+                        newelems, data
                     );
 
                     let apply_but = document.createElement("button");
@@ -4738,26 +4791,24 @@ class DIODE {
             // If it is, we can inform the design of visualizations with the shape of the data object (array)
             // #TODO: Always update this when changed (in the current implementation, it is possible that stale values are read for different properties)
             let data_obj = null;
-            if(node.data != undefined)
-            {
+            if (node.data != undefined) {
                 let tmp = node.data().props.filter(x => x.name == "data");
-                if(tmp.length > 0) {
+                if (tmp.length > 0) {
                     // Found data (name only, will resolve when rendering is actually requested)
                     data_obj = tmp[0];
                 }
             }
-            
-           
+
+
             let cont = document.createElement("div");
 
-            if(node.data === undefined)
+            if (node.data === undefined)
                 return $(cont);
-            
 
-            
+
             let ranges = x.value.ranges;
             let popup_div = document.createElement('div');
-            
+
             // Generate string from range
             let preview = '[';
             for (let range of ranges) {
@@ -4783,32 +4834,44 @@ class DIODE {
 
             let popup_div_body = document.createElement('div');
 
-            
+
             let range_elems = [];
-            for(let r of ranges) {
+            for (let r of ranges) {
                 // Add a row for every range
                 let r_row = document.createElement('div');
                 r_row.classList = "flex_row";
                 r_row.style = "flex-wrap: nowrap;";
-                if(typeof(r.start) != 'string') r.start = r.start.main;
-                if(typeof(r.end) != 'string') r.end = r.end.main;
-                if(typeof(r.step) != 'string') r.step = r.step.main;
-                if(typeof(r.tile) != 'string') r.tile = r.tile.main;
+                if (typeof (r.start) != 'string') r.start = r.start.main;
+                if (typeof (r.end) != 'string') r.end = r.end.main;
+                if (typeof (r.step) != 'string') r.step = r.step.main;
+                if (typeof (r.tile) != 'string') r.tile = r.tile.main;
 
                 {
                     let input_refs = [];
                     // Generate 4 text inputs and add them to the row
-                    for(let i = 0; i < 4; ++i) {
+                    for (let i = 0; i < 4; ++i) {
                         // Generate the label first
                         let lbl = document.createElement('label');
                         let ti = document.createElement('input');
                         ti.style = "width:100px;";
                         ti.type = "text";
-                        switch(i) {
-                            case 0: ti.value = r.start; lbl.textContent = "Start"; break;
-                            case 1: ti.value = r.end; lbl.textContent = "End"; break;
-                            case 2: ti.value = r.step; lbl.textContent = "Step"; break;
-                            case 3: ti.value = r.tile; lbl.textContent = "Tile"; break;
+                        switch (i) {
+                            case 0:
+                                ti.value = r.start;
+                                lbl.textContent = "Start";
+                                break;
+                            case 1:
+                                ti.value = r.end;
+                                lbl.textContent = "End";
+                                break;
+                            case 2:
+                                ti.value = r.step;
+                                lbl.textContent = "Step";
+                                break;
+                            case 3:
+                                ti.value = r.tile;
+                                lbl.textContent = "Tile";
+                                break;
                         }
                         input_refs.push(ti);
                         lbl.appendChild(ti);
@@ -4820,7 +4883,7 @@ class DIODE {
                     visbut.addEventListener('click', () => {
 
                         // Resolve the data name and set the object accordingly
-                        if(data_obj != null) {
+                        if (data_obj != null) {
 
                             this.project().request(['sdfg_object'], sdfg_obj => {
                                 if (typeof sdfg_obj.sdfg_object === 'object')
@@ -4831,35 +4894,34 @@ class DIODE {
                                 // Iterate over all SDFGs, checking arrays and returning matching data elements
 
                                 let data_objs = [];
-                                for(let x of Object.values(sdfg_obj)) {
+                                for (let x of Object.values(sdfg_obj)) {
                                     data_objs.push(x.attributes._arrays[data_obj.value]);
                                 }
                                 data_objs = data_objs.filter(x => x != undefined);
-                                if(data_objs.length > 0) {
+                                if (data_objs.length > 0) {
                                     data_obj = data_objs[0];
                                 }
 
                                 let vis_elem = this.create_visual_range_representation(...input_refs.map(x => x.value), false, data_obj);
-                                visbut.innerHTML ="";
+                                visbut.innerHTML = "";
                                 visbut.appendChild(vis_elem);
                             }, {});
-                            
-                        }
-                        else {
+
+                        } else {
                             let vis_elem = this.create_visual_range_representation(...input_refs.map(x => x.value), false, data_obj);
-                            visbut.innerHTML ="";
+                            visbut.innerHTML = "";
                             visbut.appendChild(vis_elem);
                         }
-                        
+
                     });
                     visbut.innerText = "Click here for visual representation";
                     r_row.appendChild(visbut);
                 }
-                
+
 
                 popup_div_body.appendChild(r_row);
             }
-            
+
             popup_div.appendChild(popup_div_body);
 
             let apply_but = document.createElement("button");
@@ -4869,7 +4931,7 @@ class DIODE {
                     ranges: [],
                     type: x.value.type,
                 }
-                for(let re of range_elems) {
+                for (let re of range_elems) {
                     ret.ranges.push({
                         start: re[0].value,
                         end: re[1].value,
@@ -4895,22 +4957,20 @@ class DIODE {
 
         // TODO: Handle enumeration types better
         let elem = document.createElement('div');
-        if(x.metatype == "bool") {
+        if (x.metatype == "bool") {
             let val = x.value;
-            if(typeof(val) == 'string') val = val == 'True';
+            if (typeof (val) == 'string') val = val == 'True';
             elem = FormBuilder.createToggleSwitch("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.checked);
 
             }, val);
-        }
-        else if(
+        } else if (
             x.metatype == "str" || x.metatype == "float" || x.metatype == "LambdaProperty"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
-        }
-        else if(
+        } else if (
             x.metatype == "tuple" || x.metatype == "dict" ||
             x.metatype == "list" || x.metatype == "set"
         ) {
@@ -4918,17 +4978,14 @@ class DIODE {
                 let tmp = elem.value;
                 try {
                     tmp = JSON.parse(elem.value);
-                }
-                catch(e) {
+                } catch (e) {
                     tmp = elem.value;
                 }
                 transthis.propertyChanged(node, x.name, tmp);
             }, JSON.stringify(x.value));
-        }
-        else if(x.metatype == "Range") {
+        } else if (x.metatype == "Range") {
             elem = create_range_input(transthis, x, node);
-        }
-        else if(x.metatype == "DataProperty") {
+        } else if (x.metatype == "DataProperty") {
             // The data list has to be fetched from the SDFG.
             // Therefore, there needs to be a placeholder until data is ready
             elem = document.createElement("span");
@@ -4952,9 +5009,58 @@ class DIODE {
                 on_timeout: cb,
                 timeout: 300
             });
-            
-        }
-        else if(x.metatype == "CodeProperty") {
+
+        } else if (x.metatype == "LibraryImplementationProperty") {
+            // The list of implementations has to be fetched from
+            // the server directly.
+            elem = document.createElement("span");
+            elem.innerText = x.value;
+
+            elem = $(elem);
+            $.getJSON("/dace/api/v1.0/getLibImpl/" + node.element.classpath, available_implementations => {
+                let cb = d => {
+                    let new_elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
+                        transthis.propertyChanged(node, x.name, elem.value);
+                    }, available_implementations, x.value);
+
+                    // Add Expand button to transform the node
+                    let button = FormBuilder.createButton("prop_" + x.name + "_expand",
+                        (elem) => {
+
+                            // Expand library node
+                            REST_request("/dace/api/v1.0/expand/", {
+                                    sdfg: node.sdfg,
+                                    nodeid: [0, node.element.parent_id, node.element.id]
+                                }, (xhr) => {
+                                    if (xhr.readyState === 4 && xhr.status === 200) {
+                                        let resp = parse_sdfg(xhr.response);
+                                        if (resp.error !== undefined) {
+                                            // Propagate error
+                                            this.handleErrors(this, resp);
+                                        }
+
+                                        // Add to history
+                                        this.project().request(["append-history"], x => {
+                                        }, { params: {
+                                                new_sdfg: resp.sdfg,
+                                                item_name: "Expand " + node.element.label
+                                            }
+                                        });
+                                    }
+                                });
+                        }, "Expand");
+
+
+                    // Replace the placeholder
+                    elem[0].parentNode.replaceChild(new_elem[0], elem[0]);
+                    new_elem[0].parentNode.appendChild(button[0]);
+                };
+                this.project().request(['sdfg_object'], cb, {
+                    on_timeout: cb,
+                    timeout: 300
+                });
+            });
+        } else if (x.metatype == "CodeProperty") {
             let codeelem = null;
             let langelem = null;
             let onchange = (elem) => {
@@ -4963,7 +5069,7 @@ class DIODE {
                     'language': langelem[0].value
                 });
             };
-            if(x.value == null) {
+            if (x.value == null) {
                 x.value = {};
                 x.value.language = "NoCode";
                 x.value.string_data = "";
@@ -4975,140 +5081,119 @@ class DIODE {
             elem.classList.add("flex_column");
 
             return elem;
-        }
-        else if(x.metatype == "int") {
+        } else if (x.metatype == "int") {
             elem = FormBuilder.createIntInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, parseInt(elem.value));
             }, x.value);
-        }
-        else if(x.metatype == 'ScheduleType') {
+        } else if (x.metatype == 'ScheduleType') {
             let schedule_types = this.getEnum('ScheduleType');
             let qualified = x.value;
-            if(!schedule_types.includes(qualified)) {
+            if (!schedule_types.includes(qualified)) {
                 qualified = "ScheduleType." + qualified;
             }
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, schedule_types, qualified);
-        }
-        else if(x.metatype == 'AccessType') {
+        } else if (x.metatype == 'AccessType') {
             let access_types = this.getEnum('AccessType');
             let qualified = x.value;
-            if(!access_types.includes(qualified)) {
+            if (!access_types.includes(qualified)) {
                 qualified = "AccessType." + qualified;
             }
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, access_types, qualified);
-        }
-        else if(x.metatype == 'Language') {
+        } else if (x.metatype == 'Language') {
             elem = create_language_input();
-        }
-        else if(x.metatype == 'None') {
+        } else if (x.metatype == 'None') {
             // Not sure why the user would want to see this
             console.log("Property with type 'None' ignored", x);
             return elem;
-        }
-        else if(x.metatype == 'object' && ['identity', 'wcr_identity'].includes(x.name)) {
+        } else if (x.metatype == 'object' && ['identity', 'wcr_identity'].includes(x.name)) {
             // This is an internal property - ignore
             return elem;
-        }
-        else if(x.metatype == 'OrderedDiGraph') {
+        } else if (x.metatype == 'OrderedDiGraph') {
             // #TODO: What should we do with this?
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
-        }
-        else if(x.metatype == 'DebugInfo') {
+        } else if (x.metatype == 'DebugInfo') {
             // Special case: The DebugInfo contains information where this element was defined
             // (in the original source).
             let info_obj = x.value;
-            if(typeof(info_obj) == 'string')
+            if (typeof (info_obj) == 'string')
                 info_obj = JSON.parse(info_obj);
             elem = FormBuilder.createCodeReference("prop_" + x.name, (elem) => {
                 // Clicked => highlight the corresponding code
-                transthis.project().request(['highlight-code'], msg => {}, {
+                transthis.project().request(['highlight-code'], msg => {
+                }, {
                     params: info_obj
                 });
             }, info_obj);
-        }
-        else if(x.metatype == 'ListProperty') {
+        } else if (x.metatype == 'ListProperty') {
             // #TODO: Find a better type for this
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 let tmp = elem.value;
                 try {
                     tmp = JSON.parse(elem.value);
-                }
-                catch(e) {
+                } catch (e) {
                     tmp = elem.value;
                 }
                 transthis.propertyChanged(node, x.name, tmp);
             }, JSON.stringify(x.value));
-        }
-        else if(x.metatype == "StorageType") {
+        } else if (x.metatype == "StorageType") {
             let storage_types = this.getEnum('StorageType');
             let qualified = x.value;
-            if(!storage_types.includes(qualified)) {
+            if (!storage_types.includes(qualified)) {
                 qualified = "StorageType." + qualified;
             }
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, storage_types, qualified);
-        }
-        else if(x.metatype == "InstrumentationType") {
+        } else if (x.metatype == "InstrumentationType") {
             let storage_types = this.getEnum('InstrumentationType');
             let qualified = x.value;
-            if(!storage_types.includes(qualified)) {
+            if (!storage_types.includes(qualified)) {
                 qualified = "InstrumentationType." + qualified;
             }
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, storage_types, qualified);
-        }
-        else if(x.metatype == "typeclass") {
+        } else if (x.metatype == "typeclass") {
             // #TODO: Type combobox
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.value);
-        }
-        else if(x.metatype == "hosttype") {
+        } else if (x.metatype == "hosttype") {
             elem = FormBuilder.createHostInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, DIODE.getHostList(), x.value);
-        }
-        else if(x.metatype == "selectinput") {
+        } else if (x.metatype == "selectinput") {
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.options, x.value);
-        }
-        else if(x.metatype == "combobox") {
+        } else if (x.metatype == "combobox") {
             elem = FormBuilder.createComboboxInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, x.options, x.value);
-        }
-        else if(x.metatype == "font") {
+        } else if (x.metatype == "font") {
             console.warn("Ignoring property type ", x.metatype);
             return elem;
-        }
-        else if(x.metatype == "SubsetProperty") {
-            if(x.value == null) {
+        } else if (x.metatype == "SubsetProperty") {
+            if (x.value == null) {
                 elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                     transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
                 }, JSON.stringify(x.value));
-            }
-            else if(x.value.type == "subsets.Indices") {
+            } else if (x.value.type == "subsets.Indices") {
                 elem = create_index_subset_input(transthis, x, node);
-            }
-            else {
+            } else {
                 elem = create_range_input(transthis, x, node);
             }
-        }
-        else if(x.metatype == "SymbolicProperty") {
+        } else if (x.metatype == "SymbolicProperty") {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, JSON.parse(elem.value));
             }, JSON.stringify(x.value));
-        }
-        else {
+        } else {
             console.log("Unimplemented property type: ", x);
             alert("Unimplemented property type: " + x.metatype);
 
@@ -5119,36 +5204,39 @@ class DIODE {
 
     renderPropertiesInWindow(transthis, node, params, options) {
         let dobj = {
-            transthis: typeof(transthis) == 'string' ? transthis : transthis.created,
+            transthis: typeof (transthis) == 'string' ? transthis : transthis.created,
             node: node,
             params: params,
             options: options
         };
         this.replaceOrCreate(['display-properties'], 'PropWinComponent', dobj,
-         () => {
-            let millis = this.getPseudorandom();
-            let config = {
-                type: 'component',
-                componentName: 'PropWinComponent',
-                componentState: {
-                    created: millis,
-                    params: dobj
-                }
-            };
+            () => {
+                let millis = this.getPseudorandom();
+                let config = {
+                    type: 'component',
+                    componentName: 'PropWinComponent',
+                    componentState: {
+                        created: millis,
+                        params: dobj
+                    }
+                };
 
-            this.addContentItem(config);
-        });
+                this.addContentItem(config);
+            });
     }
 
     showStaleDataButton() {
-        this.project().request(['show_stale_data_button'], x=>{}, {});
+        this.project().request(['show_stale_data_button'], x => {
+        }, {});
     }
+
     removeStaleDataButton() {
-        this.project().request(['remove_stale_data_button'], x=>{}, {});
+        this.project().request(['remove_stale_data_button'], x => {
+        }, {});
     }
 
     refreshSDFG() {
-        this.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true });
+        this.gatherProjectElementsAndCompile(diode, {}, {sdfg_over_code: true});
     }
 
     __impl_showStaleDataButton() {
@@ -5156,12 +5244,12 @@ class DIODE {
             Show a hard-to-miss button hinting to recompile.
         */
 
-        if(DIODE.recompileOnPropertyChange()) {
+        if (DIODE.recompileOnPropertyChange()) {
             // Don't show a warning, just recompile directly
-            this.gatherProjectElementsAndCompile(this, {}, { sdfg_over_code: true });
+            this.gatherProjectElementsAndCompile(this, {}, {sdfg_over_code: true});
             return;
         }
-        if(this._stale_data_button != null) {
+        if (this._stale_data_button != null) {
             return;
         }
         let stale_data_button = document.createElement("div");
@@ -5169,7 +5257,7 @@ class DIODE {
         stale_data_button.innerHTML = "Stale project data. Click here or press <span class='key_combo'>Alt-R</span> to synchronize";
 
         stale_data_button.addEventListener('click', x => {
-            this.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true });
+            this.gatherProjectElementsAndCompile(diode, {}, {sdfg_over_code: true});
         })
 
         document.body.appendChild(stale_data_button);
@@ -5178,7 +5266,7 @@ class DIODE {
     }
 
     __impl_removeStaleDataButton() {
-        if(this._stale_data_button != null) {
+        if (this._stale_data_button != null) {
             let p = this._stale_data_button.parentNode;
             p.removeChild(this._stale_data_button);
             this._stale_data_button = null;
@@ -5187,11 +5275,13 @@ class DIODE {
 
 
     showIndeterminateLoading() {
-        this.project().request(['show_loading'], x=>{}, {});
+        this.project().request(['show_loading'], x => {
+        }, {});
     }
 
     hideIndeterminateLoading() {
-        this.project().request(['hide_loading'], x=>{}, {});
+        this.project().request(['hide_loading'], x => {
+        }, {});
     }
 
     __impl_showIndeterminateLoading() {
@@ -5203,12 +5293,13 @@ class DIODE {
     }
 
     hideIndeterminateLoading() {
-        this.project().request(['hide_loading'], x=>{}, {});
+        this.project().request(['hide_loading'], x => {
+        }, {});
     }
 
     static filterComponentTree(base, filterfunc = x => x) {
         let ret = [];
-        for(let x of base.contentItems) {
+        for (let x of base.contentItems) {
 
             ret.push(...this.filterComponentTree(x, filterfunc));
         }
@@ -5218,7 +5309,7 @@ class DIODE {
 
     static filterComponentTreeByCname(base, componentName) {
         let filterfunc = x => x.config.type == "component" && x.componentName == componentName;
-        return base.getItemsByFilter(filterfunc);        
+        return base.getItemsByFilter(filterfunc);
     }
 
     groupSDFGs() {
@@ -5237,14 +5328,14 @@ class DIODE {
         let comps = this.goldenlayout.root.getItemsByFilter(x => x.config.type == "component" && x.componentName == 'SDFGComponent');
 
         let names = []
-        for(let x of comps) {
+        for (let x of comps) {
             names.push(x.config.componentState.sdfg_name);
         }
 
-        for(let n of names) {
-            this.generic_group(x => x.config.type == "component" && 
-            (x.componentName == "SDFGComponent" || x.componentName == "CodeOutComponent") &&
-            x.config.componentState.sdfg_name == n);
+        for (let n of names) {
+            this.generic_group(x => x.config.type == "component" &&
+                (x.componentName == "SDFGComponent" || x.componentName == "CodeOutComponent") &&
+                x.config.componentState.sdfg_name == n);
         }
 
         // Get the SDFG elements again to set them active
@@ -5265,8 +5356,8 @@ class DIODE {
         |         |          |                       |
         ----------------------------------------------
         */
-        
-       this.goldenlayout.eventHub.emit("enter-programmatic-destroy", "");
+
+        this.goldenlayout.eventHub.emit("enter-programmatic-destroy", "");
 
         // Collect the components to add to the layout later
         let code_ins = DIODE.filterComponentTreeByCname(this.goldenlayout.root, "CodeInComponent");
@@ -5279,7 +5370,7 @@ class DIODE {
         // Note that this only collects the _open_ elements and disregards closed or invalidated ones
         // Base goldenlayout stretches everything to use the full space available, this makes stuff look bad in some constellations
         // We compensate some easily replacable components here
-        if(property_renderers.length == 0) {
+        if (property_renderers.length == 0) {
             // Add an empty property window for spacing
 
             let c = this.getPseudorandom();
@@ -5296,9 +5387,9 @@ class DIODE {
 
         // Remove the contentItems already as a workaround for a goldenlayout bug(?) that calls destroy unpredictably
         let to_remove = [code_ins, code_outs, opttrees, opthists, sdfg_renderers, property_renderers];
-        for(let y of to_remove) {
-            for(let x of y) {
-                if(x.componentName != undefined) {
+        for (let y of to_remove) {
+            for (let x of y) {
+                if (x.componentName != undefined) {
                     x.remove();
                 }
                 // Otherwise: Might be a raw config
@@ -5307,7 +5398,7 @@ class DIODE {
 
         // Remove existing content
         let c = [...this.goldenlayout.root.contentItems];
-        for(let x of c) {
+        for (let x of c) {
             this.goldenlayout.root.removeChild(x);
         }
 
@@ -5333,7 +5424,7 @@ class DIODE {
             type: 'stack',
             content: [/*...property_renderers.map(x => x.config)*/]
         });
-        
+
         let top_row = this.goldenlayout.createContentItem({
             type: 'row',
             content: [/*code_in_stack, opttree_stack, sdfg_stack*/]
@@ -5343,7 +5434,7 @@ class DIODE {
             type: 'row',
             content: [/*code_out_stack, property_stack*/]
         });
-        
+
 
         let top_bottom = this.goldenlayout.createContentItem({
             type: 'column',
@@ -5372,8 +5463,8 @@ class DIODE {
 
         // Everything has been added, but maybe too much: There might be empty stacks.
         // They should be removed to keep a "clean" appearance
-        for(let x of [opttree_stack, code_in_stack, sdfg_stack, property_stack]) {
-            if(x.contentItems.length == 0) {
+        for (let x of [opttree_stack, code_in_stack, sdfg_stack, property_stack]) {
+            if (x.contentItems.length == 0) {
                 x.remove();
             }
         }
@@ -5388,9 +5479,9 @@ class DIODE {
 
         */
         this.goldenlayout.eventHub.emit("enter-programmatic-destroy", "");
-        let sdfg_components = this.goldenlayout.root.getItemsByFilter( predicate );
+        let sdfg_components = this.goldenlayout.root.getItemsByFilter(predicate);
 
-        if(sdfg_components.length == 0) {
+        if (sdfg_components.length == 0) {
             console.warn("Cannot group, no elements found");
         }
         let new_container = this.goldenlayout.createContentItem({
@@ -5398,14 +5489,14 @@ class DIODE {
             contents: []
         });
 
-        for(let x of sdfg_components) {
+        for (let x of sdfg_components) {
             let config = x.config;
             x.parent.removeChild(x);
             new_container.addChild(config);
         }
 
         this.addContentItem(new_container);
-        
+
         this.goldenlayout.eventHub.emit("leave-programmatic-destroy", "");
     }
 
@@ -5419,35 +5510,35 @@ class DIODE {
             'state': 0,
             'expect': keys.slice(1)
         };
-        if(this._shortcut_functions[keys[0]] === undefined) {
+        if (this._shortcut_functions[keys[0]] === undefined) {
             this._shortcut_functions[keys[0]] = [c];
-        }
-        else {
+        } else {
             this._shortcut_functions[keys[0]].push(c);
         }
     }
 
     onKeyUp(ev) {
-        if(ev.altKey == false && ev.key == 'Alt') {
-            for(let cs of Object.values(this._shortcut_functions)) {
-                for(let c of cs) {
+        if (ev.altKey == false && ev.key == 'Alt') {
+            for (let cs of Object.values(this._shortcut_functions)) {
+                for (let c of cs) {
                     c.state = 0;
                 }
             }
         }
     }
+
     onKeyDown(ev) {
-        for(let cs of Object.values(this._shortcut_functions)) {
-            for(let c of cs) {
-                if(ev.altKey == false) {
+        for (let cs of Object.values(this._shortcut_functions)) {
+            for (let c of cs) {
+                if (ev.altKey == false) {
                     c.state = 0;
                     continue;
                 }
-                if(c.state > 0) {
+                if (c.state > 0) {
                     // Currently in a combo-state
-                    if(c.expect[c.state-1] == ev.key) {
+                    if (c.expect[c.state - 1] == ev.key) {
                         c.state += 1;
-                        if(c.state > c.expect.length) {
+                        if (c.state > c.expect.length) {
                             // Found multi-key combo, activate
                             c.func();
                             ev.stopPropagation();
@@ -5462,13 +5553,13 @@ class DIODE {
             }
         }
         let cs = this._shortcut_functions[ev.key];
-        if(cs === undefined) return;
+        if (cs === undefined) return;
 
         let i = 0;
-        for(let c of cs) {
-            if(c.alt == ev.altKey && c.ctrl == ev.ctrlKey) {
+        for (let c of cs) {
+            if (c.alt == ev.altKey && c.ctrl == ev.ctrlKey) {
 
-                if(c.expect.length > 0) {
+                if (c.expect.length > 0) {
                     // Multi-key combo expected
                     c.state += 1;
                     console.log("dict value: ", this._shortcut_functions[ev.key][i]);
@@ -5497,7 +5588,7 @@ class DIODE {
     getProject() {
         let proj_id = window.sessionStorage.getItem("diode_project");
         this._current_project = new DIODE_Project(this, proj_id);
-        if(proj_id == null || proj_id == undefined) {
+        if (proj_id == null || proj_id == undefined) {
             // There was a new project ID assigned, which is stored again in the session storage
             window.sessionStorage.setItem("diode_project", this.getCurrentProject()._project_id);
             this.setupEvents();
@@ -5531,12 +5622,12 @@ class DIODE {
 
         return millis;
     }
-    
+
     multiple_SDFGs_available(sdfgs) {
 
-        let sdfgs_obj = (typeof(sdfgs) == 'string') ? parse_sdfg(sdfgs) : sdfgs;
+        let sdfgs_obj = (typeof (sdfgs) == 'string') ? parse_sdfg(sdfgs) : sdfgs;
 
-        for(let x of Object.keys(sdfgs_obj.compounds)) {
+        for (let x of Object.keys(sdfgs_obj.compounds)) {
             // New sdfg
             let value = sdfgs_obj.compounds[x];
             this.SDFG_available(value, x);
@@ -5556,7 +5647,7 @@ class DIODE {
                 title: name,
                 type: 'component',
                 componentName: 'SDFGComponent',
-                componentState: { created: millis(), sdfg_data: sdfg, sdfg_name: name }
+                componentState: {created: millis(), sdfg_data: sdfg, sdfg_name: name}
             };
             this.addContentItem(new_sdfg_config);
         };
@@ -5567,11 +5658,11 @@ class DIODE {
                 title: "Generated Code",
                 type: 'component',
                 componentName: 'CodeOutComponent',
-                componentState: { created: millis(), code: sdfg, sdfg_name: name }
+                componentState: {created: millis(), code: sdfg, sdfg_name: name}
             };
             this.addContentItem(new_codeout_config);
         }
-        if(sdfg.generated_code != undefined) {
+        if (sdfg.generated_code != undefined) {
             console.log("requesting using ID", this.project());
             this.replaceOrCreate(['new-codeout'], 'CodeOutComponent', sdfg, create_codeout_func);
         }
@@ -5580,19 +5671,19 @@ class DIODE {
     Error_available(error) {
         let create_error_func = () => {
             let new_error_config = {
-                    title: "Error",
-                    type: 'component',
-                    componentName: 'ErrorComponent',
-                    componentState: { error: error }
+                title: "Error",
+                type: 'component',
+                componentName: 'ErrorComponent',
+                componentState: {error: error}
             };
             this.addContentItem(new_error_config);
         };
         this.replaceOrCreate(['new-error'], 'ErrorComponent', error, create_error_func);
     }
 
-    OptGraph_available(optgraph, name="") {
-        
-        if(typeof optgraph != "string") {
+    OptGraph_available(optgraph, name = "") {
+
+        if (typeof optgraph != "string") {
             optgraph = JSON.stringify(optgraph);
         }
 
@@ -5606,7 +5697,7 @@ class DIODE {
                     title: name == "" ? "Transformations" : "Transformations for `" + name + "`",
                     type: 'component',
                     componentName: 'AvailableTransformationsComponent',
-                    componentState: { created: millis, for_sdfg: name, optgraph_data: optgraph }
+                    componentState: {created: millis, for_sdfg: name, optgraph_data: optgraph}
                 }]
             };
             this.addContentItem(new_optgraph_config);
@@ -5621,7 +5712,7 @@ class DIODE {
                     title: "History",
                     type: 'component',
                     componentName: 'TransformationHistoryComponent',
-                    componentState: { created: millis, for_sdfg: name }
+                    componentState: {created: millis, for_sdfg: name}
                 }]
             };
             this.addContentItem(new_optgraph_config);
@@ -5633,11 +5724,11 @@ class DIODE {
 
     OptGraphs_available(optgraph) {
         let o = optgraph;
-        if(typeof(o) == "string") {
+        if (typeof (o) == "string") {
             o = JSON.parse(optgraph);
         }
-        
-        for(let x of Object.keys(o)) {
+
+        for (let x of Object.keys(o)) {
             let elem = o[x];
             this.OptGraph_available(elem, x);
         }
@@ -5666,29 +5757,29 @@ class DIODE {
         let optpath = direct_passing.optpath;
 
         let reqlist = [];
-        if(code === undefined) {
-            if(options.sdfg_over_code) {
+        if (code === undefined) {
+            if (options.sdfg_over_code) {
                 reqlist.push('sdfg_object');
             }
             reqlist.push('input_code');
         }
 
-        if(optpath === undefined) reqlist.push('optpath');
+        if (optpath === undefined) reqlist.push('optpath');
         /*if(optpath != undefined) {
             optpath = undefined;
             reqlist.push('optpath');
         }*/
-        
+
 
         let on_collected = (values) => {
-            if(code != undefined) values['input_code'] = code;
-            if(sdfg_props != undefined) values['sdfg_props'] = sdfg_props;
-            if(optpath != undefined) values['optpath'] = optpath;
+            if (code != undefined) values['input_code'] = code;
+            if (sdfg_props != undefined) values['sdfg_props'] = sdfg_props;
+            if (optpath != undefined) values['optpath'] = optpath;
 
-            if(options.collect_cb != undefined) 
+            if (options.collect_cb != undefined)
                 options.collect_cb(values);
 
-            if(options.dry_run === true)
+            if (options.dry_run === true)
                 return;
 
             let cis = values['sdfg_object'] != undefined;
@@ -5699,46 +5790,48 @@ class DIODE {
                 let sd = parse_sdfg(cval);
                 values['sdfg_object'] = {};
                 values['sdfg_object'][sd.attributes.name] = cval;
-                
+
                 cis = true;
             }
 
-            if(cis) {
+            if (cis) {
                 cval = values['sdfg_object'];
-                if(typeof(cval) == 'string')
+                if (typeof (cval) == 'string')
                     cval = parse_sdfg(cval);
             }
 
-            calling_context.project().request(["clear-errors"], () => {});
+            calling_context.project().request(["clear-errors"], () => {
+            });
 
-            if(options.run === true) {
+            if (options.run === true) {
                 let runopts = {};
-                if(options['perfmodes']) {
+                if (options['perfmodes']) {
                     runopts['perfmodes'] = options['perfmodes'];
                 }
                 runopts['repetitions'] = 5; // TODO(later): Allow users to configure number
                 runopts['code_is_sdfg'] = cis;
                 runopts['runnercode'] = values['input_code'];
                 this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts);
-            }
-            else {
+            } else {
                 let cb = (resp) => {
-                    this.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => { this.OptGraphs_available(resp);});
+                    this.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => {
+                        this.OptGraphs_available(resp);
+                    });
                 };
-                if(options['no_optgraph'] === true) {
+                if (options['no_optgraph'] === true) {
                     cb = undefined;
                 }
-                
+
                 this.compile(calling_context, cval, values['optpath'], values['sdfg_props'],
-                {
-                    optpath_cb: cb,
-                    code_is_sdfg: cis,
-                });
+                    {
+                        optpath_cb: cb,
+                        code_is_sdfg: cis,
+                    });
 
             }
         }
 
-        calling_context.project().request(reqlist, on_collected, { timeout: 500, on_timeout: on_collected });
+        calling_context.project().request(reqlist, on_collected, {timeout: 500, on_timeout: on_collected});
     }
 
     compile(calling_context, code, optpath = undefined, sdfg_node_properties = undefined, options = {}) {
@@ -5748,19 +5841,18 @@ class DIODE {
                 .runnercode: [opt] Provides the python code used to invoke the SDFG program if needed
         */
         let post_params = {};
-        if(options.code_is_sdfg === true) {
-            post_params = { "sdfg": stringify_sdfg(code) };
+        if (options.code_is_sdfg === true) {
+            post_params = {"sdfg": stringify_sdfg(code)};
 
             post_params['code'] = options.runnercode;
-        }
-        else {
-            post_params = { "code": code };
+        } else {
+            post_params = {"code": code};
         }
 
-        if(optpath != undefined) {
+        if (optpath != undefined) {
             post_params['optpath'] = optpath;
         }
-        if(sdfg_node_properties != undefined) {
+        if (sdfg_node_properties != undefined) {
             post_params['sdfg_props'] = sdfg_node_properties;
         }
         post_params['client_id'] = this.getClientID();
@@ -5769,20 +5861,18 @@ class DIODE {
             if (xhr.readyState === 4 && xhr.status === 200) {
 
                 let peek = parse_sdfg(xhr.response);
-                if(peek['error'] != undefined) {
+                if (peek['error'] != undefined) {
                     // There was at least one error - handle all of them
                     this.handleErrors(calling_context, peek);
-                }
-                else {
+                } else {
                     // Data is no longer stale
                     this.removeStaleDataButton();
 
                     let o = parse_sdfg(xhr.response);
                     this.multiple_SDFGs_available(xhr.response);
-                    if(options.optpath_cb === undefined) {
+                    if (options.optpath_cb === undefined) {
                         this.OptGraphs_available(o['compounds']);
-                    }
-                    else {
+                    } else {
                         options.optpath_cb(o['compounds']);
                     }
                 }
@@ -5797,23 +5887,23 @@ class DIODE {
 
         this.Error_available(errors);
 
-        if(typeof(errors) == "string") {
+        if (typeof (errors) == "string") {
             console.warn("Error: ", errors);
             //alert(JSON.stringify(errors));
             return;
         }
-        for(let error of errors) {
+        for (let error of errors) {
 
-            if(error.type === "SyntaxError") {
+            if (error.type === "SyntaxError") {
                 // This error is most likely caused exclusively by input code
-                
-                calling_context.project().request(['new_error'], msg => {},
-                {
-                    params: error,
-                    timeout: 100,
-                });
-            }
-            else {
+
+                calling_context.project().request(['new_error'], msg => {
+                    },
+                    {
+                        params: error,
+                        timeout: 100,
+                    });
+            } else {
                 console.warn("Error: ", error);
                 //alert(JSON.stringify(error));
             }
@@ -5831,12 +5921,12 @@ class DIODE {
             title: "Terminal",
             type: 'component',
             componentName: 'TerminalComponent',
-            componentState: { created: millis }
+            componentState: {created: millis}
         };
         this.addContentItem(terminal_config);
 
 
-        this.gatherProjectElementsAndCompile(this, {}, { run: true, term_id: terminal_identifier, sdfg_over_code: true });
+        this.gatherProjectElementsAndCompile(this, {}, {run: true, term_id: terminal_identifier, sdfg_over_code: true});
     }
 
     load_perfdata() {
@@ -5876,7 +5966,7 @@ class DIODE {
 
         this.addContentItem(config);
     }
-    
+
     show_run_options(calling_context) {
         let newconf = {
             type: "component",
@@ -5907,43 +5997,39 @@ class DIODE {
         this.addContentItem(newconf);
     }
 
-    compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options={}) {
+    compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options = {}) {
         /*
             .runnercode: [opt] Code provided with SDFG to invoke the SDFG program. 
         */
         let post_params = {};
-        if(options.code_is_sdfg === true) {
-            post_params = { "sdfg": stringify_sdfg(code) };
+        if (options.code_is_sdfg === true) {
+            post_params = {"sdfg": stringify_sdfg(code)};
             post_params['code'] = options.runnercode;
+        } else {
+            post_params = {"code": code};
         }
-        else {
-            post_params = { "code": code };
-        }
-        if(optpath != undefined) {
+        if (optpath != undefined) {
             post_params['optpath'] = optpath;
         }
-        if(sdfg_node_properties != undefined) {
+        if (sdfg_node_properties != undefined) {
             post_params['sdfg_props'] = sdfg_node_properties;
         }
         this.applyCurrentRunConfig().then((remaining_settings) => {
             let client_id = this.getClientID();
             post_params['client_id'] = client_id;
-            if(remaining_settings['Instrumentation'] == 'off') {
+            if (remaining_settings['Instrumentation'] == 'off') {
                 post_params['perfmodes'] = undefined;
-            }
-            else if(remaining_settings['Instrumentation'] == 'minimal') {
+            } else if (remaining_settings['Instrumentation'] == 'minimal') {
                 post_params['perfmodes'] = ["default"];
-            }
-            else if(remaining_settings['Instrumentation'] == 'full') {
+            } else if (remaining_settings['Instrumentation'] == 'full') {
                 post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
-            }
-            else {
+            } else {
                 alert("Error! Check console");
                 console.error("Unknown instrumentation mode", remaining_settings['Instrumentation']);
             }
             //post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
             let not = remaining_settings['Number of threads'];
-            if(typeof(not) == "string") {
+            if (typeof (not) == "string") {
                 not = JSON.parse(not);
             }
             post_params['corecounts'] = not.map(x => parseInt(x));
@@ -5954,8 +6040,8 @@ class DIODE {
                 if (xhr.readyState === 4 && xhr.status === 200) {
 
                     let tmp = xhr.response;
-                    if(typeof(tmp) == 'string') tmp = JSON.parse(tmp);
-                    if(tmp['error']) {
+                    if (typeof (tmp) == 'string') tmp = JSON.parse(tmp);
+                    if (tmp['error']) {
                         // Normal, users should poll on a different channel now.
                         this.display_current_execution_status(calling_context, terminal_identifier, client_id);
                     }
@@ -5964,7 +6050,7 @@ class DIODE {
         });
     }
 
-    display_current_execution_status(calling_context, terminal_identifier, client_id, perf_mode=undefined) {
+    display_current_execution_status(calling_context, terminal_identifier, client_id, perf_mode = undefined) {
         let post_params = {};
         post_params['client_id'] = client_id;
         post_params['perf_mode'] = perf_mode;
@@ -5990,7 +6076,7 @@ class DIODE {
         });
     }
 
-    toast(title, text, type='info', timeout=10000, icon=undefined, callback=undefined) {
+    toast(title, text, type = 'info', timeout = 10000, icon = undefined, callback = undefined) {
         let toast = VanillaToasts.create({
             title: title,
             text: text,
@@ -6002,32 +6088,33 @@ class DIODE {
 
         VanillaToasts.setTimeout(toast.id, timeout * 1.1);
     }
-    
+
     optimize(calling_context, optpath) {
         // The calling_context might be necessary when multiple, different programs are allowed
 
-        if(optpath === undefined) {
+        if (optpath === undefined) {
             optpath = [];
         }
         let transthis = this;
 
         let on_data_available = (code_data, sdfgprop_data, from_code) => {
             let code = null;
-            if(from_code) {
+            if (from_code) {
+                code = code_data;
+            } else {
                 code = code_data;
             }
-            else {
-                code = code_data;
-            }
-            
+
             let props = null;
-            if(sdfgprop_data != undefined)
+            if (sdfgprop_data != undefined)
                 props = sdfgprop_data.sdfg_props;
             else
                 props = undefined;
 
             let cb = (resp) => {
-                transthis.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => {transthis.OptGraphs_available(resp);});
+                transthis.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => {
+                    transthis.OptGraphs_available(resp);
+                });
             };
 
             transthis.compile(calling_context, code, optpath, props, {
@@ -6041,16 +6128,15 @@ class DIODE {
         calling_context.project().request(['input_code', 'sdfg_object'], (data) => {
 
             let from_code = true;
-            if(data['sdfg_object'] != undefined) {
+            if (data['sdfg_object'] != undefined) {
                 from_code = false;
                 data = data['sdfg_object'];
                 data = JSON.parse(data);
-            }
-            else {
+            } else {
                 data = data['input_code'];
             }
             on_data_available(data, undefined, from_code);
-            
+
         });
     }
 
@@ -6062,10 +6148,11 @@ class DIODE {
         let open_windows = null;
         if (this.goldenlayout.root)
             open_windows = this.goldenlayout.root.getItemsByFilter(x => (x.config.type == "component" &&
-                                                                         x.componentName == window_name));
+                x.componentName == window_name));
 
         if (open_windows && open_windows.length > 0) {  // Replace
-            this.getCurrentProject().request(replace_request, (resp, tid) => {},
+            this.getCurrentProject().request(replace_request, (resp, tid) => {
+                },
                 {
                     timeout: null,
                     params: replace_params,
@@ -6075,20 +6162,20 @@ class DIODE {
             recreate_func(replace_params);
         }
     }
-    
+
     /*
         This function is used for debouncing, i.e. holding a task for a small amount of time
         such that it can be replaced with a newer function call which would otherwise get queued.
     */
     debounce(group, func, timeout) {
 
-        if(this._debouncing === undefined) {
+        if (this._debouncing === undefined) {
             // The diode parent object was not created. The function cannot be debounced in this case.
             return func;
         }
         let transthis = this;
         let debounced = function () {
-            if(transthis._debouncing[group] !== undefined) {
+            if (transthis._debouncing[group] !== undefined) {
                 clearTimeout(transthis._debouncing[group]);
             }
             transthis._debouncing[group] = setTimeout(func, timeout);
@@ -6099,7 +6186,7 @@ class DIODE {
 
     static editorTheme() {
         let theme = localStorage.getItem('diode_ace_editor_theme');
-        if(theme === null) {
+        if (theme === null) {
             return "github";
         }
         return theme;
@@ -6123,22 +6210,21 @@ class DIODE {
     }
 
     static setRecompileOnPropertyChange(boolean_value) {
-        if(boolean_value) {
+        if (boolean_value) {
             localStorage.setItem('diode_recompile_on_prop_change', "true");
-        }
-        else {
+        } else {
             localStorage.setItem('diode_recompile_on_prop_change', "false");
         }
     }
 
     static setDebugDevMode(boolean_value) {
-        if(boolean_value) {
+        if (boolean_value) {
             localStorage.setItem('diode_DebugDevMode', "true");
-        }
-        else {
+        } else {
             localStorage.setItem('diode_DebugDevMode', "false");
         }
     }
+
     static debugDevMode() {
         /*
             The DebugDev mode determines if internal, not-crucial-for-user properties are shown.
@@ -6149,6 +6235,23 @@ class DIODE {
 }
 
 
-export {DIODE, DIODE_Context_SDFG, DIODE_Context_CodeIn, DIODE_Context_CodeOut, DIODE_Context_Settings, DIODE_Context_Terminal, DIODE_Context_DIODESettings,
-    DIODE_Context_PropWindow, DIODE_Context, DIODE_Context_Runqueue, DIODE_Context_StartPage, DIODE_Context_TransformationHistory, DIODE_Context_AvailableTransformations,
-    DIODE_Context_Error, DIODE_Context_RunConfig, DIODE_Context_PerfTimes, DIODE_Context_InstrumentationControl, DIODE_Context_Roofline}
+export {
+    DIODE,
+    DIODE_Context_SDFG,
+    DIODE_Context_CodeIn,
+    DIODE_Context_CodeOut,
+    DIODE_Context_Settings,
+    DIODE_Context_Terminal,
+    DIODE_Context_DIODESettings,
+    DIODE_Context_PropWindow,
+    DIODE_Context,
+    DIODE_Context_Runqueue,
+    DIODE_Context_StartPage,
+    DIODE_Context_TransformationHistory,
+    DIODE_Context_AvailableTransformations,
+    DIODE_Context_Error,
+    DIODE_Context_RunConfig,
+    DIODE_Context_PerfTimes,
+    DIODE_Context_InstrumentationControl,
+    DIODE_Context_Roofline
+}

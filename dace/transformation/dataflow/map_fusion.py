@@ -2,7 +2,7 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import dtypes, symbolic
+from dace import dtypes, registry, symbolic
 from dace.graph import nodes, nxutil
 from dace.sdfg import replace
 from dace.transformation import pattern_matching
@@ -10,6 +10,7 @@ from typing import List, Union
 import networkx as nx
 
 
+@registry.autoregister_params(singlestate=True)
 class MapFusion(pattern_matching.Transformation):
     """ Implements the MapFusion transformation.
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
@@ -427,6 +428,3 @@ class MapFusion(pattern_matching.Transformation):
         # Add edge that leads to the second node
         graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
                        dcpy(edge.data))
-
-
-pattern_matching.Transformation.register_pattern(MapFusion)

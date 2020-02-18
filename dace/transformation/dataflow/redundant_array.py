@@ -1,16 +1,13 @@
 """ Contains classes that implement a redundant array removal transformation.
 """
 
-import copy
-from dace import data as dt, dtypes, subsets, symbolic
-from dace.memlet import Memlet
+from dace import registry
 from dace.graph import nodes, nxutil
-from dace.sdfg import SDFGState
 from dace.transformation import pattern_matching as pm
-from dace.properties import ShapeProperty
 from dace.config import Config
 
 
+@registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArray(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
@@ -55,12 +52,19 @@ class RedundantArray(pm.Transformation):
         if len(occurrences) > 1:
             return False
 
-        # Only apply if arrays are of same shape (no need to modify memlet subset)
+        # Only apply if arrays are of same shape (no need to modify subset)
         if len(in_array.desc(sdfg).shape) != len(
                 out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
                     in_array.desc(sdfg).shape,
                     out_array.desc(sdfg).shape)):
             return False
+
+        if strict:
+            # In strict mode, make sure the memlet covers the removed array
+            edge = graph.edges_between(in_array, out_array)[0]
+            if any(m != a for m, a in zip(edge.data.subset.size(),
+                                          in_array.desc(sdfg).shape)):
+                return False
 
         return True
 
@@ -95,6 +99,3 @@ class RedundantArray(pm.Transformation):
         # del sdfg.arrays[in_array]
         if Config.get_bool("debugprint"):
             RedundantArray._arrays_removed += 1
-
-
-pm.Transformation.register_pattern(RedundantArray)

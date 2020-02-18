@@ -1,13 +1,8 @@
 """ Contains classes that implement a redundant array removal transformation.
 """
 
-import copy
-from dace import data as dt, dtypes, subsets, symbolic
-from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
-from dace.sdfg import SDFGState
 from dace.transformation import pattern_matching as pm
-from dace.properties import ShapeProperty
 from dace.config import Config
 
 
@@ -45,7 +40,7 @@ class TensorflowRedundantArray(pm.Transformation):
         if in_array.desc(sdfg).storage != out_array.desc(sdfg).storage:
             return False
 
-        # Only apply if arrays are of same shape (no need to modify memlet subset)
+        # Only apply if arrays are of same shape (no need to modify subset)
         if len(in_array.desc(sdfg).shape) != len(
                 out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
                     in_array.desc(sdfg).shape,
@@ -76,7 +71,8 @@ class TensorflowRedundantArray(pm.Transformation):
                 if pe.data.data == out_array.data:
                     pe.data.data = in_array.data
 
-            # Pre-emptively add edge from in_array to out_array's adjacent nodes.
+            # Preemptively add edge from in_array to out_array's adjacent
+            # nodes.
             new_memlet = e.data
             new_memlet.data = in_array.data
             graph.add_edge(in_array, e.src_conn, e.dst, e.dst_conn, new_memlet)
@@ -84,25 +80,12 @@ class TensorflowRedundantArray(pm.Transformation):
 
         try:
             assert len(graph.in_edges(out_array)) == 1
-        except (AssertionError):
+        except AssertionError:
             print("Multiple in-edges for ", str(out_array))
         e = graph.in_edges(out_array)[0]
         graph.remove_edge(e)
 
         # Finally, remove out_array node
-        #print("Removed ", str(out_array.data))
         graph.remove_node(out_array)
         if Config.get_bool("debugprint"):
             TensorflowRedundantArray._arrays_removed += 1
-
-    def modifies_graph(self):
-        return True
-
-    @staticmethod
-    def print_debuginfo():
-        print(
-            "Automatically removed {} tensorflow redundant arrays using TensorflowRedundantArray transform."
-            .format(TensorflowRedundantArray._arrays_removed))
-
-
-pm.Transformation.register_pattern(TensorflowRedundantArray)

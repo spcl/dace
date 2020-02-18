@@ -1,6 +1,29 @@
+from dace.dtypes import InstrumentationType
+from dace.registry import make_registry
+from typing import Dict, Type
+
+
+@make_registry
 class InstrumentationProvider(object):
     """ Instrumentation provider for SDFGs, states, scopes, and memlets. Emits
         code on event. """
+
+    @staticmethod
+    def get_provider_mapping(
+    ) -> Dict[InstrumentationType, Type['InstrumentationProvider']]:
+        """
+        Returns a dictionary that maps instrumentation types to provider
+        class types, given the currently-registered extensions of this class.
+        """
+        # Special case for no instrumentation
+        result = {InstrumentationType.No_Instrumentation: None}
+
+        # Create providers for extensions
+        for provider, params in InstrumentationProvider.extensions().items():
+            if params.get('type'):
+                result[params['type']] = provider
+
+        return result
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
         """ Event called at the beginning of SDFG code generation.

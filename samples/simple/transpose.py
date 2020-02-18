@@ -38,9 +38,10 @@ if __name__ == "__main__":
     transpose(A, B)
 
     if dace.Config.get_bool('profiling'):
-        dace.timethis('transpose', 'numpy', dace.eval(H * W), np.transpose, A)
+        dace.timethis('transpose', 'numpy', (H.get() * W.get()), np.transpose,
+                      A)
 
-    diff = np.linalg.norm(np.transpose(A) - B) / float(dace.eval(H * W))
+    diff = np.linalg.norm(np.transpose(A) - B) / (H.get() * W.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
