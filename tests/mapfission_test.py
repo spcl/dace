@@ -12,7 +12,6 @@ sdfg.add_array('B', [2], dace.float64)
 sdfg.add_scalar('scal', dace.float64, transient=True)
 sdfg.add_scalar('s1', dace.float64, transient=True)
 sdfg.add_transient('s2', [2], dace.float64)
-sdfg.add_transient('s3in', [2], dace.float64)
 sdfg.add_transient('s3out', [1], dace.float64)
 state = sdfg.add_state()
 
@@ -23,7 +22,6 @@ t1 = state.add_tasklet('one', {'a'}, {'b'}, 'b = a[0] + a[1]')
 ime2, imx2 = state.add_map('inner', dict(j='0:2'))
 t2 = state.add_tasklet('two', {'a'}, {'b'}, 'b = a * 2')
 s24node = state.add_access('s2')
-s3node = state.add_access('s3in')
 s34node = state.add_access('s3out')
 ime3, imx3 = state.add_map('inner', dict(j='0:2'))
 t3 = state.add_tasklet('three', {'a'}, {'b'}, 'b = a[0] * 3')
@@ -46,9 +44,12 @@ state.add_memlet_path(
 state.add_memlet_path(
     t2, imx2, s24node, memlet=dace.Memlet.simple('s2', 'j'), src_conn='b')
 state.add_memlet_path(
-    rnode, ome, s3node, memlet=dace.Memlet.simple('A', '2*i:2*i+2'))
-state.add_memlet_path(
-    s3node, ime3, t3, memlet=dace.Memlet.simple('s3in', '0:2'), dst_conn='a')
+    rnode,
+    ome,
+    ime3,
+    t3,
+    memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
+    dst_conn='a')
 state.add_memlet_path(
     t3, imx3, s34node, memlet=dace.Memlet.simple('s3out', '0'), src_conn='b')
 
