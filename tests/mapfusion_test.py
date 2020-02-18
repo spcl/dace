@@ -71,7 +71,7 @@ if __name__ == '__main__':
     sdfg = fusion.to_sdfg()
     sdfg.save(os.path.join('_dotgraphs', 'before1.sdfg'))
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations([MapFusion])
+    sdfg.apply_transformations_repeated(MapFusion)
     sdfg.save(os.path.join('_dotgraphs', 'after1.sdfg'))
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
     sdfg.save(os.path.join('_dotgraphs', 'before2.sdfg'))
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations([MapFusion])
+    sdfg.apply_transformations_repeated(MapFusion)
     sdfg.save(os.path.join('_dotgraphs', 'after2.sdfg'))
 
     num_nodes_after = len(
@@ -123,11 +123,11 @@ if __name__ == '__main__':
     sdfg = fusion_chain.to_sdfg()
     sdfg.save(os.path.join('_dotgraphs', 'before3.sdfg'))
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations([MapFusion], apply_once=True)
+    sdfg.apply_transformations(MapFusion)
     num_nodes_before = len(
         [node for state in sdfg.nodes() for node in state.nodes()])
-    sdfg.apply_transformations([MapFusion], apply_once=True)
-    sdfg.apply_transformations([MapFusion], apply_once=True)
+    sdfg.apply_transformations(MapFusion)
+    sdfg.apply_transformations(MapFusion)
     sdfg.save(os.path.join('_dotgraphs', 'after3.sdfg'))
 
     num_nodes_after = len(

@@ -23,7 +23,7 @@ if __name__ == '__main__':
     diff = np.linalg.norm(A - expected)
     print('Difference (before transformation):', diff)
 
-    sdfg.apply_transformations([MapExpansion], apply_once=True)
+    sdfg.apply_transformations(MapExpansion)
 
     sdfg(A=A, rng=b)
     expected[:, 5:10, :] *= 2

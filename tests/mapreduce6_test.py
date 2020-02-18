@@ -66,7 +66,7 @@ def onetest(program):
 
     sdfg = program.to_sdfg()
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations([MapFusion, MapWCRFusion], apply_once=True)
+    sdfg.apply_transformations([MapFusion, MapWCRFusion])
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
     diff = np.linalg.norm(C_regression - C) / (M.get() * N.get())

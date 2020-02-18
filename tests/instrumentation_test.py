@@ -40,7 +40,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
             state.instrument = instrumentation
 
     if instrumentation == dace.InstrumentationType.CUDA_Events:
-        sdfg.apply_transformations(GPUTransformSDFG, apply_once=True)
+        sdfg.apply_transformations(GPUTransformSDFG)
 
     sdfg(A=A, B=B, C=C, N=N)
 
