@@ -1102,7 +1102,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return "{}[{}]".format(expr, offset_cppstr)
 
         elif def_type in [
-                DefinedType.Scalar, DefinedType.Stream, DefinedType.StreamView
+                DefinedType.Scalar, DefinedType.Stream, DefinedType.StreamView, DefinedType.RemoteStream
         ]:
 
             if add_offset:

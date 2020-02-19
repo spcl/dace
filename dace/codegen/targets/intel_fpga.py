@@ -145,7 +145,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                    CHECK_MPI(MPI_Init(NULL, NULL));
                    CHECK_MPI(MPI_Comm_size(MPI_COMM_WORLD, &__dace_comm_size));
                    CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
-                   
+
                    hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});                   
                    return 0;
                }}
@@ -171,7 +171,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
         return 0;
     }}
-    
+
     {host_code}""".format(signature=self._global_sdfg.signature(),
                           emulation_flag=emulation_flag,
                           kernel_file_name=kernel_file_name,
@@ -301,12 +301,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                   index,
                   src_node_desc=None):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            if isinstance(
-                    src_node_desc, dace.data.Stream
-            ) is False or src_node_desc.storage is not dace.dtypes.StorageType.FPGA_Remote:
-                return "read_channel_intel({})".format(expr)
-            else:  # Read from remote stream is done in make_write
-                return "{}".format(expr)
+            return "read_channel_intel({})".format(expr)
+        elif defined_type == DefinedType.RemoteStream:
+            return "{}".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
             expr = expr.replace("[0]", "")
@@ -339,12 +336,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             redtype = operations.detect_reduction_type(wcr)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            if data_desc is not None and data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
-                # remote stream push
-                return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
-            else:
-                return "write_channel_intel({}, {});".format(
-                    write_expr, read_expr)
+            return "write_channel_intel({}, {});".format(write_expr, read_expr)
+        elif defined_type == DefinedType.RemoteStream:
+            return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             if index != "0":
                 return "write_channel_intel({}[{}], {});".format(
@@ -524,7 +518,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             function_stream, callsite_stream)
 
         # Generate SMI init if needed
-        #TODO: we should sinchronize across different programs in the case of separate SDFGs (needed if we have one
+        # TODO: we should sinchronize across different programs in the case of separate SDFGs (needed if we have one
         # program per SDFG)
         if self.enable_smi:
             host_code_body_stream.write(
@@ -999,10 +993,12 @@ __kernel void \\
                         raise dace.codegen.codegen.CodegenError(
                             "Port for remote stream {} must be a constant or a number"
                             .format(dst_node.label))
-                    #TODO handle dynamic number of accesses in SMI
+                    # TODO handle dynamic number of accesses in SMI
                     result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port)
+                    self._dispatcher.defined_vars.add(connector,
+                                                      DefinedType.RemoteStream)
                 elif not is_output and isinstance(
                         src_node.desc(sdfg), dace.data.Stream
                 ) and src_node.desc(
@@ -1015,20 +1011,37 @@ __kernel void \\
                         raise dace.codegen.codegen.CodegenError(
                             "Sender rank for remote stream {} must be a constant, a symbol or a number"
                             .format(src_node.label))
-                    if port not in sdfg.constants and not port.isdigit():
+
+                    if not isinstance(port, int) and (
+                            port not in sdfg.constants and not port.isdigit()):
                         raise dace.codegen.codegen.CodegenError(
                             "Port for remote stream {} must be a constant or a number"
                             .format(src_node.label))
-
                     result += "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], snd_rank, port)
+                    self._dispatcher.defined_vars.add(connector,
+                                                      DefinedType.RemoteStream)
                 else:
                     # Desperate times call for desperate measures
                     result += "#define {} {} // God save us".format(
                         connector, data_name)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Stream)
+                    self._dispatcher.defined_vars.add(connector,
+                                                      DefinedType.Stream)
+        elif def_type == DefinedType.RemoteStream:
+            if memlet.num_accesses == 1:
+                if is_output:
+                    result += "{} {};".format(memlet_type, connector)
+                else:
+                    result += "{} {};\n".format(memlet_type, connector)
+                    result += "SMI_Pop(&{}, &{});".format(data_name, connector)
+            else:
+                # Here we are referring to an already opened remote stream, we don't need to re-open it
+                # Desperate times call for desperate measures
+                result += "#define {} {} // God save us".format(
+                    connector, data_name)
+            self._dispatcher.defined_vars.add(connector,
+                                              DefinedType.RemoteStream)
         elif def_type == DefinedType.StreamArray:
             if memlet.num_accesses == 1:
                 if is_output:
@@ -1324,6 +1337,11 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
             else:  # target has no subscript
+                # TODO: understand how to deal with reads from remote stream in Tasklet code
+                # # If the value is a Name, we should check whether it is a remote stream
+                # if isinstance(node.value, ast.Name) and self.sdfg.data(self.memlets[node.value.id][0].data).storage == dace.dtypes.StorageType.FPGA_Remote:
+                #     updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(unparse(value), target))
+                # else:
                 updated = ast.Name(
                     id="{} = {};".format(target, unparse(value)))
 
@@ -1356,7 +1374,6 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
 
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
                 and memlet.num_accesses != 1:
-            # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)
         elif defined_type == DefinedType.Pointer and memlet.num_accesses != 1:

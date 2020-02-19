@@ -180,6 +180,7 @@ class DefinedType(aenum.AutoNumberEnum):
     Stream = ()
     StreamArray = ()
     StreamView = ()
+    RemoteStream = ()
 
 
 class DefinedMemlets:
