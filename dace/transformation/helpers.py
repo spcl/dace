@@ -120,6 +120,8 @@ def nest_state_subgraph(sdfg: SDFG,
     input_names = []
     output_names = []
     for edge in inputs:
+        if edge.data.data is None:  # Skip edges with an empty memlet
+            continue
         name = '__in_' + edge.data.data
         datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
         datadesc.transient = False
@@ -128,6 +130,8 @@ def nest_state_subgraph(sdfg: SDFG,
         input_names.append(
             nsdfg.add_datadesc(name, datadesc, find_new_name=True))
     for edge in outputs:
+        if edge.data.data is None:  # Skip edges with an empty memlet
+            continue
         name = '__out_' + edge.data.data
         datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
         datadesc.transient = False
