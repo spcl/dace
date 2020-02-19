@@ -561,9 +561,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
             state_dfg = sdfg.nodes()[state_id]
 
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node,
-                self._packed_types)
+            copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
+                memlet_copy_to_absolute_strides(
+                    self._dispatcher, sdfg, memlet, src_node, dst_node,
+                    self._packed_types)
 
             # Which numbers to include in the variable argument part
             dynshape, dynsrc, dyndst = 1, 1, 1
@@ -1052,6 +1053,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         state_dfg = sdfg.nodes()[state_id]
 
+        # Prepare preamble and code for after memlets
+        after_memlets_stream = CodeIOStream()
+        self.generate_tasklet_preamble(sdfg, dfg, state_id, node,
+                                       function_stream, callsite_stream,
+                                       after_memlets_stream)
+
         self._dispatcher.defined_vars.enter_scope(node)
 
         arrays = set()
@@ -1186,6 +1193,9 @@ class CPUCodeGen(TargetCodeGenerator):
                                     sdfg.arrays[memlet.data].dtype.ctype)
                 locals_defined = True
 
+        # Emit post-memlet tasklet preamble code
+        callsite_stream.write(after_memlets_stream.getvalue())
+
         # Instrumentation: Pre-tasklet
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
@@ -1199,6 +1209,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         self._toplevel_schedule)
 
         inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
+
+        # Generate pre-memlet tasklet postamble
+        after_memlets_stream = CodeIOStream()
+        self.generate_tasklet_postamble(sdfg, dfg, state_id, node,
+                                        function_stream, callsite_stream,
+                                        after_memlets_stream)
 
         # Process outgoing memlets
         self.process_out_memlets(
@@ -1226,6 +1242,8 @@ class CPUCodeGen(TargetCodeGenerator):
                               node)
 
         self._dispatcher.defined_vars.exit_scope(node)
+
+        callsite_stream.write(after_memlets_stream.getvalue())
 
     def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node,
                                function_stream, callsite_stream):
@@ -1356,14 +1374,18 @@ class CPUCodeGen(TargetCodeGenerator):
                 self.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
                 state_id, node)
 
+        inner_stream = CodeIOStream()
+        self.generate_scope_preamble(sdfg, dfg, state_id, function_stream,
+                                     callsite_stream, inner_stream)
+
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
-        inner_stream = None
         if instr is not None:
-            inner_stream = CodeIOStream()
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
                                  inner_stream, function_stream)
 
+        # TODO: Refactor to generate_scope_preamble once a general code
+        #  generator (that CPU inherits from) is implemented
         if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             map_header += "#pragma omp parallel for"
             # Loop over outputs, add OpenMP reduction clauses to detected cases
@@ -1480,8 +1502,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                     node,
                 )
 
-        if instr is not None:
-            callsite_stream.write(inner_stream.getvalue())
+        callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, dfg, node)
@@ -1522,24 +1543,25 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
                                                  None, result)
 
+        outer_stream = CodeIOStream()
+
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None and not is_devicelevel(sdfg, state_dfg, node):
-            outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
                                 callsite_stream, function_stream)
-        else:
-            outer_stream = None
+
+        self.generate_scope_postamble(sdfg, dfg, state_id, function_stream,
+                                      outer_stream, callsite_stream)
 
         # Map flattening
         if map_node.map.flatten:
             result.write("}", sdfg, state_id, node)
         else:
-            for i, r in enumerate(map_node.map.range):
+            for _ in map_node.map.range:
                 result.write("}", sdfg, state_id, node)
 
-        if outer_stream is not None:
-            result.write(outer_stream.getvalue())
+        result.write(outer_stream.getvalue())
 
         callsite_stream.write('}', sdfg, state_id, node)
 
@@ -1593,11 +1615,14 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         else:
             condition_string = ""
 
+        inner_stream = CodeIOStream()
+
+        self.generate_scope_preamble(sdfg, dfg, state_id, function_stream,
+                                     callsite_stream, inner_stream)
+
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.consume.instrument]
-        inner_stream = None
         if instr is not None:
-            inner_stream = CodeIOStream()
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
                                  inner_stream, function_stream)
 
@@ -1658,9 +1683,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             e.data.data = ce_node.data
         # END of SDFG-rewriting code
 
-        # Internal instrumentation code
-        if instr is not None:
-            result.write(inner_stream.getvalue())
+        result.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, dfg, node)
@@ -1718,18 +1741,20 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
                                                  None, result)
 
+        outer_stream = CodeIOStream()
+
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.consume.instrument]
-        outer_stream = None
         if instr is not None:
-            outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
                                 callsite_stream, function_stream)
 
+        self.generate_scope_postamble(sdfg, dfg, state_id, function_stream,
+                                      outer_stream, callsite_stream)
+
         result.write("});", sdfg, state_id, node)
 
-        if instr is not None:
-            result.write(outer_stream.getvalue())
+        result.write(outer_stream.getvalue())
 
     def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
@@ -2015,3 +2040,86 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
             False,
             function_stream,
         )
+
+    # Methods for subclasses to override
+
+    def generate_scope_preamble(self, sdfg, dfg_scope, state_id,
+                                function_stream, outer_stream, inner_stream):
+        """
+        Generates code for the beginning of an SDFG scope, outputting it to
+        the given code streams.
+        :param sdfg: The SDFG to generate code from.
+        :param dfg_scope: The `ScopeSubgraphView` to generate code from.
+        :param state_id: The node ID of the state in the given SDFG.
+        :param function_stream: A `CodeIOStream` object that will be
+                                generated outside the calling code, for
+                                use when generating global functions.
+        :param outer_stream: A `CodeIOStream` object that points
+                             to the code before the scope generation (e.g.,
+                             before for-loops or kernel invocations).
+        :param inner_stream: A `CodeIOStream` object that points
+                             to the beginning of the scope code (e.g.,
+                             inside for-loops or beginning of kernel).
+        """
+        pass
+
+    def generate_scope_postamble(self, sdfg, dfg_scope, state_id,
+                                 function_stream, outer_stream, inner_stream):
+        """
+        Generates code for the end of an SDFG scope, outputting it to
+        the given code streams.
+        :param sdfg: The SDFG to generate code from.
+        :param dfg_scope: The `ScopeSubgraphView` to generate code from.
+        :param state_id: The node ID of the state in the given SDFG.
+        :param function_stream: A `CodeIOStream` object that will be
+                                generated outside the calling code, for
+                                use when generating global functions.
+        :param outer_stream: A `CodeIOStream` object that points
+                             to the code after the scope (e.g., after
+                             for-loop closing braces or kernel invocations).
+        :param inner_stream: A `CodeIOStream` object that points
+                             to the end of the inner scope code (e.g.,
+                             before for-loop closing braces or end of
+                             kernel).
+        """
+        pass
+
+    def generate_tasklet_preamble(self, sdfg, dfg_scope, state_id, node,
+                                  function_stream, before_memlets_stream,
+                                  after_memlets_stream):
+        """
+        Generates code for the beginning of a tasklet. This method is
+        intended to be overloaded by subclasses.
+        :param sdfg: The SDFG to generate code from.
+        :param dfg_scope: The `ScopeSubgraphView` to generate code from.
+        :param state_id: The node ID of the state in the given SDFG.
+        :param node: The tasklet node in the state.
+        :param function_stream: A `CodeIOStream` object that will be
+                                generated outside the calling code, for
+                                use when generating global functions.
+        :param before_memlets_stream: A `CodeIOStream` object that will emit
+                                      code before input memlets are generated.
+        :param after_memlets_stream: A `CodeIOStream` object that will emit code
+                                     after input memlets are generated.
+        """
+        pass
+
+    def generate_tasklet_postamble(self, sdfg, dfg_scope, state_id, node,
+                                   function_stream, before_memlets_stream,
+                                   after_memlets_stream):
+        """
+        Generates code for the end of a tasklet. This method is intended to be
+        overloaded by subclasses.
+        :param sdfg: The SDFG to generate code from.
+        :param dfg_scope: The `ScopeSubgraphView` to generate code from.
+        :param state_id: The node ID of the state in the given SDFG.
+        :param node: The tasklet node in the state.
+        :param function_stream: A `CodeIOStream` object that will be
+                                generated outside the calling code, for
+                                use when generating global functions.
+        :param before_memlets_stream: A `CodeIOStream` object that will emit
+                                      code before output memlets are generated.
+        :param after_memlets_stream: A `CodeIOStream` object that will emit code
+                                     after output memlets are generated.
+        """
+        pass
