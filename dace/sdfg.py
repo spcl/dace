@@ -3674,7 +3674,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 # Find uninitialized transients
                 arr = sdfg.arrays[node.data]
                 if (arr.transient and self.in_degree(node) == 0
-                        and self.out_degree(node) > 0):
+                        and self.out_degree(node) > 0
+                        # Streams do not need to be initialized
+                        and not isinstance(arr, dt.Stream)):
                     # Find other instances of node in predecessor states
                     states = sdfg.predecessor_states(self)
                     input_found = False
