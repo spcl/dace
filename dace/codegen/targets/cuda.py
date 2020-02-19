@@ -19,7 +19,8 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       cpp_array_expr, synchronize_streams,
                                       memlet_copy_to_absolute_strides)
-from dace.codegen.targets.framecode import _set_default_schedule_and_storage_types
+from dace.codegen.targets.framecode import \
+    set_default_schedule_and_storage_types
 
 from dace.codegen import cppunparse
 
@@ -1221,8 +1222,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Append thread-block maps from nested SDFGs
         for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
             if isinstance(node, nodes.NestedSDFG):
-                _set_default_schedule_and_storage_types(
-                    node.sdfg, node.schedule)
+                set_default_schedule_and_storage_types(node.sdfg,
+                                                       node.schedule)
 
                 tb_maps.extend([
                     n.map for state in node.sdfg.nodes()
