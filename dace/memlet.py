@@ -329,3 +329,9 @@ class MemletTree(object):
                 yield from traverse(child)
 
         yield from traverse(self)
+
+    def root(self) -> 'MemletTree':
+        node = self
+        while node.parent is not None:
+            node = node.parent
+        return node

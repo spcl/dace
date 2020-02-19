@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     sdfg = histogram.to_sdfg()
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations(MapReduceFusion, apply_once=True)
+    sdfg.apply_transformations(MapReduceFusion)
     sdfg(A=A, hist=hist, H=H, W=W)
 
     diff = np.linalg.norm(

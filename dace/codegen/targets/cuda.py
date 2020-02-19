@@ -531,6 +531,14 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         for node, graph in sdfg.all_nodes_recursive():
             if isinstance(graph, SDFGState):
                 cur_sdfg = graph.parent
+
+                if (isinstance(node, (nodes.EntryNode, nodes.ExitNode))
+                        and node.schedule in dtypes.GPU_SCHEDULES):
+                    # Node must have GPU stream, remove childpath and continue
+                    if hasattr(node, '_cs_childpath'):
+                        delattr(node, '_cs_childpath')
+                    continue
+
                 for e in graph.all_edges(node):
                     path = graph.memlet_path(e)
                     # If leading from/to a GPU memory node, keep stream
