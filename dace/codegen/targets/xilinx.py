@@ -9,7 +9,7 @@ from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
-from dace.codegen.targets import cpu, fpga
+from dace.codegen.targets import cpp, fpga
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "hlslib::op::Min",
@@ -148,22 +148,22 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     @staticmethod
     def define_stream(dtype, vector_length, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
-        if cpu.sym2cpp(array_size) == "1":
+        if cpp.sym2cpp(array_size) == "1":
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}(\"{}\");".format(
                 dtype.ctype, vector_length, buffer_size, var_name, var_name))
         else:
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}[{}];\n".format(
                 dtype.ctype, vector_length, buffer_size, var_name,
-                cpu.sym2cpp(array_size)))
+                cpp.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
-                var_name, var_name, cpu.sym2cpp(array_size)))
+                var_name, var_name, cpp.sym2cpp(array_size)))
 
     @staticmethod
     def define_local_array(dtype, vector_length, var_name, array_size, storage,
                            shape, function_stream, kernel_stream, sdfg,
                            state_id, node):
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
-            dtype.ctype, vector_length, var_name, cpu.sym2cpp(array_size)))
+            dtype.ctype, vector_length, var_name, cpp.sym2cpp(array_size)))
         if storage == dace.dtypes.StorageType.FPGA_Registers:
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "complete\n".format(var_name))
@@ -710,7 +710,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
         callsite_stream.write("\n////////////////////\n", sdfg, state_id, node)
 
-        cpu.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+        cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                             callsite_stream, self._cpu_codegen._locals,
                             self._cpu_codegen._ldepth,
                             self._cpu_codegen._toplevel_schedule)
@@ -718,9 +718,9 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
         # Process outgoing memlets
-        self._cpu_codegen.process_out_memlets(
+        cpp.process_out_memlets(
             sdfg, state_id, node, state_dfg, self._dispatcher, callsite_stream,
-            True, function_stream)
+            True, function_stream, self._cpu_codegen._toplevel_schedule)
 
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]

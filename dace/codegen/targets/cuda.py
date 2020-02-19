@@ -16,8 +16,9 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
-from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, unparse_cr_split,
-                                      cpp_array_expr, synchronize_streams)
+from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
+                                      cpp_array_expr, synchronize_streams,
+                                      memlet_copy_to_absolute_strides)
 from dace.codegen.targets.framecode import _set_default_schedule_and_storage_types
 
 from dace.codegen import cppunparse
@@ -682,8 +683,9 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
-                self._cpu_codegen.memlet_copy_to_absolute_strides(
-                    sdfg, memlet, src_node, dst_node))
+                memlet_copy_to_absolute_strides(
+                    self._dispatcher, sdfg, memlet, src_node, dst_node,
+                    self._cpu_codegen._packed_types))
             dims = len(copy_shape)
 
             # Handle unsupported copy types
@@ -790,8 +792,9 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
-                    self._cpu_codegen.memlet_copy_to_absolute_strides(
-                        sdfg, memlet, src_node, dst_node))
+                    memlet_copy_to_absolute_strides(
+                        self._dispatcher, sdfg, memlet, src_node, dst_node,
+                        self._cpu_codegen._packed_types))
 
                 dims = len(copy_shape)
 
