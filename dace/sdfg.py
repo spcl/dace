@@ -263,12 +263,19 @@ class SDFG(OrderedDiGraph):
         tmp = super().to_json()
 
         # Inject the undefined symbols
-        tmp['undefined_symbols'] = [
-            (k, v.to_json())
-            for k, v in sorted(self.undefined_symbols(True).items())
-        ]
-        tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
-            self.scalar_parameters(True), key=lambda x: x[0])]
+        try:
+            tmp['undefined_symbols'] = [
+                (k, v.to_json())
+                for k, v in sorted(self.undefined_symbols(True).items())
+            ]
+        except RuntimeError:
+            tmp['undefined_symbols'] = []
+
+        try:
+            tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
+                self.scalar_parameters(True), key=lambda x: x[0])]
+        except RuntimeError:
+            tmp['scalar_parameters'] = []
 
         tmp['attributes']['name'] = self.name
 
@@ -1866,7 +1873,7 @@ subgraph cluster_state_{state} {{
             return False
         return True
 
-    def apply_strict_transformations(self, validate=True):
+    def apply_strict_transformations(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -1882,80 +1889,185 @@ subgraph cluster_state_{state} {{
             k for k, v in Transformation.extensions().items()
             if v.get('strict', False)
         ]
-        self.apply_transformations(
-            strict_transformations, validate=validate, strict=True)
+        self.apply_transformations_repeated(
+            strict_transformations,
+            validate=validate,
+            strict=True,
+            validate_all=validate_all)
 
     def apply_transformations(self,
-                              patterns: Union[Type, List[Type]],
+                              xforms: Union[Type, List[Type]],
+                              options: Optional[Union[Dict[str, Any], List[
+                                  Dict[str, Any]]]] = None,
                               validate: bool = True,
+                              validate_all: bool = False,
                               strict: bool = False,
-                              states: Optional[List[Any]] = None,
-                              apply_once: bool = False,
-                              properties: Dict[str, Any] = None):
-        """ This function applies transformations as given in the argument
-            patterns. Operates in-place.
-            :param patterns: A Transformation class or a list thereof to apply.
-            :param validate: If True, validates after every transformation.
+                              states: Optional[List[Any]] = None) -> int:
+        """ This function applies a transformation or a sequence thereof
+            consecutively. Operates in-place.
+            :param xforms: A Transformation class or a sequence.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
-            :param apply_once: If True, applies the first found transformation
-                               and returns. Otherwise, applies until no further
-                               transformations are found.
-            :param properties: Properties to set when applying transformations.
+            :return: Number of transformations applied.
+
+            Examples::
+
+                      # Applies MapTiling, then MapFusion, followed by
+                      # GPUTransformSDFG, specifying parameters only for the
+                      # first transformation.
+                      sdfg.apply_transformations(
+                        [MapTiling, MapFusion, GPUTransformSDFG],
+                        options=[{'tile_size': 16}, {}, {}])
         """
         # Avoiding import loops
         from dace.transformation import optimizer
         from dace.transformation.pattern_matching import Transformation
 
-        if isinstance(patterns, type) and issubclass(patterns, Transformation):
-            patterns = [patterns]
-
-        # Apply strict state fusions greedily.
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        applied = True
         applied_transformations = collections.defaultdict(int)
-        while applied:
-            applied = False
-            # Find and apply immediately
-            for match in opt.get_pattern_matches(
-                    strict=strict, patterns=patterns, states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
-                if properties is not None:
-                    for prop_name, prop_val in properties.items():
-                        setattr(match, prop_name, prop_val)
-                match.apply(sdfg)
-                applied_transformations[type(match).__name__] += 1
-                if validate:
-                    self.fill_scope_connectors()
-                    self.validate()
-                applied = True
-                break
-            if apply_once and applied:
-                break
+
+        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+            xforms = [xforms]
+
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+
+        for xform, opts in zip(xforms, options):
+            # Find only the first match
+            try:
+                match = next(
+                    m for m in opt.get_pattern_matches(
+                        strict=strict, patterns=[xform], states=states))
+            except StopIteration:
+                continue
+            sdfg = self.sdfg_list[match.sdfg_id]
+
+            # Set transformation properties
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                self.validate()
+
+        if validate:
+            self.validate()
 
         if Config.get_bool('debugprint') and len(applied_transformations) > 0:
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
 
+        return sum(applied_transformations.values())
+
+    def apply_transformations_repeated(
+            self,
+            xforms: Union[Type, List[Type]],
+            options: Optional[Union[Dict[str, Any], List[Dict[str,
+                                                              Any]]]] = None,
+            validate: bool = True,
+            validate_all: bool = False,
+            strict: bool = False,
+            states: Optional[List[Any]] = None) -> int:
+        """ This function repeatedly applies a transformation or a set of
+            (unique) transformations until none can be found. Operates in-place.
+            :param xforms: A Transformation class or a set thereof.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
+            :param strict: If True, operates in strict transformation mode.
+            :param states: If not None, specifies a subset of states to
+                           apply transformations on.
+            :return: Number of transformations applied.
+
+            Examples::
+
+                    # Applies InlineSDFG until no more subgraphs can be inlined
+                    sdfg.apply_transformations_repeated(InlineSDFG)
+        """
+        # Avoiding import loops
+        from dace.transformation import optimizer
+        from dace.transformation.pattern_matching import Transformation
+
+        applied_transformations = collections.defaultdict(int)
+
+        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+            xforms = [xforms]
+
+        # Ensure transformations are unique
+        if len(xforms) != len(set(xforms)):
+            raise ValueError('Transformation set must be unique')
+
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        opt = optimizer.SDFGOptimizer(self, inplace=True)
+
+        applied = True
+        while applied:
+            applied = False
+            # Find and apply one of
+            for match in opt.get_pattern_matches(
+                    strict=strict, patterns=xforms, states=states):
+                sdfg = self.sdfg_list[match.sdfg_id]
+
+                # Set transformation properties
+                opts = next(
+                    o for x, o in zip(xforms, options) if type(match) is x)
+                for prop_name, prop_val in opts.items():
+                    setattr(match, prop_name, prop_val)
+
+                match.apply(sdfg)
+                applied_transformations[type(match).__name__] += 1
+                if validate_all:
+                    self.validate()
+                applied = True
+                break
+
+        if validate:
+            self.validate()
+
+        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+            print('Applied {}.'.format(', '.join([
+                '%d %s' % (v, k) for k, v in applied_transformations.items()
+            ])))
+
+        return sum(applied_transformations.values())
+
     def apply_gpu_transformations(self,
                                   states=None,
                                   validate=True,
+                                  validate_all=False,
                                   strict=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
-            @note: It is recommended to apply redundant array removal
+            :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
             you can apply_strict_transformations() after this transformation.
-            @note: This is an in-place operation on the SDFG.
+            :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
-        from dace.transformation.dataflow import GPUTransformLocalStorage
+        from dace.transformation.interstate import GPUTransformSDFG
 
-        patterns = [GPUTransformLocalStorage]
         self.apply_transformations(
-            patterns, validate=validate, strict=strict, states=states)
+            GPUTransformSDFG,
+            validate=validate,
+            validate_all=validate_all,
+            strict=strict,
+            states=states)
 
     def expand_library_nodes(self):
         """ Recursively expand all unexpanded library nodes in the SDFG,
@@ -2449,6 +2561,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return dot.draw_node(graph, self, shape="Msquare")
 
     def to_json(self, parent=None):
+        # Create scope dictionary with a failsafe
+        try:
+            scope_dict = {
+                k: sorted(v)
+                for k, v in sorted(
+                    self.scope_dict(node_to_children=True, return_ids=True)
+                    .items())
+            }
+        except RuntimeError:
+            scope_dict = {}
+
         ret = {
             'type':
             type(self).__name__,
@@ -2458,12 +2581,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent.node_id(self) if parent is not None else None,
             'collapsed':
             self.is_collapsed,
-            'scope_dict': {
-                k: sorted(v)
-                for k, v in sorted(
-                    self.scope_dict(node_to_children=True, return_ids=True)
-                    .items())
-            },
+            'scope_dict':
+            scope_dict,
             'nodes': [n.to_json(self) for n in self.nodes()],
             'edges': [
                 e.to_json(self) for e in sorted(
@@ -2810,7 +2929,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_map(
             self,
             name,
-            ndrange: Dict[str, str],
+            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
             schedule=dtypes.ScheduleType.Default,
             unroll=False,
             debuginfo=None,
@@ -3557,7 +3676,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 # Find uninitialized transients
                 arr = sdfg.arrays[node.data]
                 if (arr.transient and self.in_degree(node) == 0
-                        and self.out_degree(node) > 0):
+                        and self.out_degree(node) > 0
+                        # Streams do not need to be initialized
+                        and not isinstance(arr, dt.Stream)):
                     # Find other instances of node in predecessor states
                     states = sdfg.predecessor_states(self)
                     input_found = False
@@ -3892,8 +4013,8 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
     if include_exit:
         children_nodes = set(node_to_children[entry_node])
     else:
-        # Assume the last node in the scope list is the exit node
-        children_nodes = set(node_to_children[entry_node][:-1])
+        children_nodes = set(n for n in node_to_children[entry_node]
+                             if not isinstance(n, nd.ExitNode))
     map_nodes = [
         node for node in children_nodes if isinstance(node, nd.EntryNode)
     ]

@@ -369,6 +369,10 @@ function calculateNodeSize(sdfg_state, node, ctx) {
         size.width = 0.0;
         size.height = 0.0;
     }
+    else if (node.type === "LibraryNode") {
+        size.width += 2.0 * (size.height / 3.0);
+        size.height /= 1.75;
+    }
     else if (node.type === "Reduce") {
         size.height -= 4*LINEHEIGHT;
         size.width *= 2;
@@ -478,6 +482,8 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
     // Process nodes hierarchically
     let toplevel_nodes = sdfg_state.scope_dict[-1];
+    if (toplevel_nodes === undefined)
+        toplevel_nodes = Object.keys(sdfg_state.nodes);
     let drawn_nodes = new Set();
 
     function layout_node(node) {
