@@ -718,9 +718,9 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
         # Process outgoing memlets
-        cpp.process_out_memlets(
+        self._cpu_codegen.process_out_memlets(
             sdfg, state_id, node, state_dfg, self._dispatcher, callsite_stream,
-            True, function_stream, self._cpu_codegen._toplevel_schedule)
+            True, function_stream)
 
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
