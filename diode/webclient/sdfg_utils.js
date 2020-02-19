@@ -98,6 +98,17 @@ function sdfg_property_to_string(prop) {
     } else if (prop.constructor == Object) {
         // General dictionary
         return JSON.stringify(prop);
+    } else if (prop.constructor == Array) {
+        // General array
+        let result = '[ ';
+        let first = true;
+        for (let subprop of prop) {
+            if (!first)
+                result += ', ';
+            result += sdfg_property_to_string(subprop);
+            first = false;
+        }
+        return result + ' ]';
     } else {
         return prop;
     }
