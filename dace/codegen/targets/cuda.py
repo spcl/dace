@@ -1852,6 +1852,7 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
 
         # Block-wide reduction
         elif node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            input_dims = input_memlet.subset.dims()
             # Checks
             if not self._in_device_code:
                 raise ValueError('Block-wide GPU reduction must occur within'

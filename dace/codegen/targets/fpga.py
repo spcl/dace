@@ -180,24 +180,6 @@ class FPGACodeGen(TargetCodeGenerator):
                             seen[node.data] = sg
         return shared
 
-    @staticmethod
-    def global_transient_nodes(subgraphs):
-        """Generator that returns all transient global arrays nested in the
-           passed subgraphs on the form (is_output, AccessNode)"""
-        seen = set()
-        for subgraph in subgraphs:
-            for n, scope in subgraph.all_nodes_recursive():
-                if (isinstance(n, dace.graph.nodes.AccessNode)
-                        and n.desc(sdfg).transient and n.desc(sdfg).storage ==
-                        dace.dtypes.StorageType.FPGA_Global):
-                    if n.data in seen:
-                        continue
-                    seen.add(n.data)
-                    if scope.out_degree(n) > 0:
-                        yield (False, n)
-                    if scope.in_degree(n) > 0:
-                        yield (True, n)
-
     @classmethod
     def make_parameters(cls, sdfg, state, subgraphs):
         """Determines the parameters that must be passed to the passed list of
@@ -1182,6 +1164,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._memory_widths = type(self).detect_memory_widths(subgraphs)
 
         if self._in_device_code:
+            from dace.codegen.codegen import CodegenError
             raise CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
         self._cpu_codegen._packed_types = True

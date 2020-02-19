@@ -200,7 +200,7 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             kernel_stream.write("#pragma HLS UNROLL", sdfg, state_id, node)
         else:
             kernel_stream.write("#pragma HLS UNROLL factor={}".format(factor),
-                                sdfg_state_id, node)
+                                sdfg, state_id, node)
 
     @staticmethod
     def generate_pipeline_loop_pre(kernel_stream, sdfg, state_id, node):

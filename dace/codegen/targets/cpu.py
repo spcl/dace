@@ -854,7 +854,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if def_type not in [
                             DefinedType.Pointer, DefinedType.ArrayView
                     ]:
-                        raise dace.codegen.codegen.CodegenError(
+                        from dace.codegen.codegen import CodegenError
+                        raise CodegenError(
                             "Cannot offset address of connector {} of type {}".
                             format(memlet_name, def_type))
                     memlet_params.append(memlet_expr + " + " + offset)
@@ -1594,6 +1595,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
+        inner_stream = None
         if instr is not None:
             inner_stream = CodeIOStream()
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
@@ -1830,6 +1832,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.consume.instrument]
+        inner_stream = None
         if instr is not None:
             inner_stream = CodeIOStream()
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream,
@@ -1890,7 +1893,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         )
         for e in out_memlet_path[1:]:
             e.data.data = ce_node.data
-        ## END of SDFG-rewriting code
+        # END of SDFG-rewriting code
 
         # Internal instrumentation code
         if instr is not None:
@@ -1954,6 +1957,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.consume.instrument]
+        outer_stream = None
         if instr is not None:
             outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
@@ -2050,6 +2054,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.instrument]
+        inner_stream = None
         if instr is not None:
             inner_stream = CodeIOStream()
             instr.on_node_begin(sdfg, state_dfg, node, callsite_stream,
@@ -2163,6 +2168,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
         #############################################################
         # Generate closing braces
+        outer_stream = None
         for i in range(end_braces):
             if i == len(axes):
                 # Instrumentation: post-scope

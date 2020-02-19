@@ -852,7 +852,7 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.StreamArray)
         else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+            raise TypeError("Unknown variable type: {}".format(def_type))
 
         callsite_stream.write(result, sdfg, state_id, tasklet)
 
@@ -914,7 +914,7 @@ __kernel void \\
                         # Must happen directly in the code
                         pass
             else:
-                raise TypeError("Unknown variable type: {}".format(var_type))
+                raise TypeError("Unknown variable type: {}".format(data_desc))
 
             callsite_stream.write(result, sdfg, state_id, node)
 
