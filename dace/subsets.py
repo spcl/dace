@@ -251,7 +251,10 @@ class Range(Subset):
 
     def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
-            other = Indices([other for _ in self.ranges])
+            if isinstance(other, (list, tuple)):
+                other = Indices(other)
+            else:
+                other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if not indices:
             indices = set(range(len(self.ranges)))
