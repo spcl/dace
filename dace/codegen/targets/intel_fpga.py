@@ -78,8 +78,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         kernel_flags = Config.get("compiler", "intel_fpga", "kernel_flags")
         mode = Config.get("compiler", "intel_fpga", "mode")
         target_board = Config.get("compiler", "intel_fpga", "board")
-        enable_debugging = ("ON" if Config.get_bool(
-            "compiler", "intel_fpga", "enable_debugging") else "OFF")
+        enable_debugging = ("ON"
+                            if Config.get_bool("compiler", "intel_fpga",
+                                               "enable_debugging") else "OFF")
         options = [
             "-DINTELFPGAOCL_ROOT_DIR={}".format(
                 os.path.dirname(os.path.dirname(compiler))),
@@ -156,9 +157,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 kernel_file_name=kernel_file_name,
                 host_code="".join([
                     "{separator}\n// Kernel: {kernel_name}"
-                    "\n{separator}\n\n{code}\n\n".format(separator="/" * 79,
-                                                         kernel_name=name,
-                                                         code=code)
+                    "\n{separator}\n\n{code}\n\n".format(
+                        separator="/" * 79, kernel_name=name, code=code)
                     for (name, code) in self._host_codes
                 ])))
             host_code.write("""DACE_EXPORTED void __dace_exit_intel_fpga() {{
@@ -172,17 +172,16 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         return 0;
     }}
 
-    {host_code}""".format(signature=self._global_sdfg.signature(),
-                          emulation_flag=emulation_flag,
-                          kernel_file_name=kernel_file_name,
-                          host_code="".join([
-                              "{separator}\n// Kernel: {kernel_name}"
-                              "\n{separator}\n\n{code}\n\n".format(
-                                  separator="/" * 79,
-                                  kernel_name=name,
-                                  code=code)
-                              for (name, code) in self._host_codes
-                          ])))
+    {host_code}""".format(
+                signature=self._global_sdfg.signature(),
+                emulation_flag=emulation_flag,
+                kernel_file_name=kernel_file_name,
+                host_code="".join([
+                    "{separator}\n// Kernel: {kernel_name}"
+                    "\n{separator}\n\n{code}\n\n".format(
+                        separator="/" * 79, kernel_name=name, code=code)
+                    for (name, code) in self._host_codes
+                ])))
         # Since CodeObject defines target_name, I have to explicitely indicate intel_fpga_smi if remote streams are used
         host_code_obj = CodeObject(
             self._program_name,
@@ -194,16 +193,18 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             target_type="host")
 
         kernel_code_objs = [
-            CodeObject(kernel_name,
-                       code,
-                       "cl",
-                       IntelFPGACodeGen,
-                       "Intel FPGA",
-                       target_name="intel_fpga_smi"
-                       if self.enable_smi else "intel_fpga",
-                       target_type="device",
-                       additional_compiler_kwargs={"smi": self.enable_smi})
-            for (kernel_name, code) in self._kernel_codes
+            CodeObject(
+                kernel_name,
+                code,
+                "cl",
+                IntelFPGACodeGen,
+                "Intel FPGA",
+                target_name="intel_fpga_smi"
+                if self.enable_smi else "intel_fpga",
+                target_type="device",
+                additional_compiler_kwargs={
+                    "smi": self.enable_smi
+                }) for (kernel_name, code) in self._kernel_codes
         ]
 
         return [host_code_obj] + kernel_code_objs
@@ -244,9 +245,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
-        return "{}{}{}".format(
-            "const " if is_const else "", dtype.ctype,
-            vector_length if str(vector_length) != "1" else "")
+        return "{}{}{}".format("const "
+                               if is_const else "", dtype.ctype, vector_length
+                               if str(vector_length) != "1" else "")
 
     def make_kernel_argument(self, data, var_name, vector_length, is_output,
                              with_vectorization):
@@ -424,43 +425,38 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             # If this is the first iteration, set the previous value to be
             # identity, otherwise read the value from the output location
             prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
-                                                     is_first_iteration,
-                                                     identity, out_var), sdfg,
-                state_id, node)
+            callsite_stream.write("{} {} = ({}) ? ({}) : ({});".format(
+                output_type, prev_var, is_first_iteration, identity, out_var),
+                                  sdfg, state_id, node)
             if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = {} {} {};".format(
-                        out_var, prev_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
+                callsite_stream.write("{} = {} {} {};".format(
+                    out_var, prev_var,
+                    REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var), sdfg,
+                                      state_id, node)
             else:
                 # use max/min opencl builtins
-                callsite_stream.write(
-                    "{} = {}{}({}, {});".format(
-                        out_var, ("f" if output_type == "float"
-                                  or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var,
-                        in_var), sdfg, state_id, node)
+                callsite_stream.write("{} = {}{}({}, {});".format(
+                    out_var, ("f" if output_type == "float"
+                              or output_type == "double" else ""),
+                    REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var,
+                    in_var), sdfg, state_id, node)
 
         else:
             # If this is the first iteration, assign the value read from the
             # input directly to the output
             if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {} {} {};".format(
-                        out_var, is_first_iteration, in_var, out_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
+                callsite_stream.write("{} = ({}) ? ({}) : {} {} {};".format(
+                    out_var, is_first_iteration, in_var, out_var,
+                    REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var), sdfg,
+                                      state_id, node)
             else:
                 callsite_stream.write(
                     "{} = ({}) ? ({}) : {}{}({}, {});".format(
                         out_var, is_first_iteration, in_var,
-                        ("f" if output_type == "float"
-                         or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], out_var,
-                        in_var), sdfg, state_id, node)
+                        ("f"
+                         if output_type == "float" or output_type == "double"
+                         else ""), REDUCTION_TYPE_TO_HLSLIB[reduction_type],
+                        out_var, in_var), sdfg, state_id, node)
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
@@ -538,8 +534,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if self.enable_smi:
             kernel_stream_header.write("#include <smi.h>\n")
 
-        kernel_stream.write(kernel_stream_header.getvalue() +
-                            kernel_stream_body.getvalue())
+        kernel_stream.write(
+            kernel_stream_header.getvalue() + kernel_stream_body.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state,
                                              host_code_body_stream)
@@ -557,8 +553,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def generate_host_function_epilogue(sdfg, state, host_stream):
-        host_stream.write(
-            """\
+        host_stream.write("""\
   const auto start = std::chrono::high_resolution_clock::now();
   std::vector<std::future<std::pair<double, double>>> futures;
   for (auto &k : kernels) {
@@ -598,9 +593,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 continue
             added.add(pname)
             if isinstance(p, dace.data.Array):
-                arg = self.make_kernel_argument(p, pname,
-                                                self._memory_widths[pname],
-                                                is_output, True)
+                arg = self.make_kernel_argument(
+                    p, pname, self._memory_widths[pname], is_output, True)
             elif isinstance(
                     p, dace.data.Stream
             ) and p.storage == dace.dtypes.StorageType.FPGA_Remote and not smi_args:
@@ -666,10 +660,10 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                     # already written in stone in the OpenCL generated code
                     host_body_stream.write(
                         "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
-                        .format(
-                            module_function_name, p,
-                            ", ".join([""] + kernel_args_call[:-1]) if
-                            len(kernel_args_call) > 1 else ""), sdfg, state_id)
+                        .format(module_function_name, p,
+                                ", ".join([""] + kernel_args_call[:-1])
+                                if len(kernel_args_call) > 1 else
+                                ""), sdfg, state_id)
 
         # ----------------------------------------------------------------------
         # Generate kernel code
@@ -679,21 +673,18 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         module_body_stream = CodeIOStream()
 
         if unrolled_loops == 0:
-            module_body_stream.write(
-                "__kernel void {}({}) {{".format(
-                    module_function_name, ", ".join(kernel_args_opencl)), sdfg,
-                state_id)
+            module_body_stream.write("__kernel void {}({}) {{".format(
+                module_function_name, ", ".join(kernel_args_opencl)), sdfg,
+                                     state_id)
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
-            module_body_stream.write(
-                "inline void {}_func({}) {{".format(
-                    name, ", ".join(kernel_args_opencl)), sdfg, state_id)
+            module_body_stream.write("inline void {}_func({}) {{".format(
+                name, ", ".join(kernel_args_opencl)), sdfg, state_id)
 
         # Allocate local transients
-        data_to_allocate = (set(subgraph.top_level_transients()) -
-                            set(sdfg.shared_transients()) -
-                            set([p[1] for p in parameters]))
+        data_to_allocate = (set(subgraph.top_level_transients()) - set(
+            sdfg.shared_transients()) - set([p[1] for p in parameters]))
         # TODO: stream should be in both top level transient and parameters
         allocated = set()
         for node in subgraph.nodes():
@@ -702,19 +693,18 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
             allocated.add(node.data)
-            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
-                                               module_body_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 module_stream,
-                                                 module_body_stream)
+            self._dispatcher.dispatch_allocate(
+                sdfg, state, state_id, node, module_stream, module_body_stream)
+            self._dispatcher.dispatch_initialize(
+                sdfg, state, state_id, node, module_stream, module_body_stream)
 
-        self._dispatcher.dispatch_subgraph(sdfg,
-                                           subgraph,
-                                           state_id,
-                                           module_stream,
-                                           module_body_stream,
-                                           skip_entry_node=False)
+        self._dispatcher.dispatch_subgraph(
+            sdfg,
+            subgraph,
+            state_id,
+            module_stream,
+            module_body_stream,
+            skip_entry_node=False)
 
         module_stream.write(module_body_stream.getvalue(), sdfg, state_id)
         module_stream.write("}\n\n")
@@ -730,12 +720,12 @@ __kernel void \\
 {}_##PE_ID({}) \\
 {{ \\
   {}_func({}{}PE_ID); \\
-}}\\\n\n""".format(module_function_name,
-                   ", " if len(kernel_args_call) > 1 else "",
-                   ",".join(kernel_args_call[:-1]), module_function_name,
-                   ", ".join(kernel_args_opencl[:-1]), name,
-                   ", ".join(kernel_args_call[:-1]),
-                   ", " if len(kernel_args_call) > 1 else ""))
+}}\\\n\n""".format(module_function_name, ", "
+                   if len(kernel_args_call) > 1 else "", ",".join(
+                       kernel_args_call[:-1]), module_function_name, ", ".join(
+                           kernel_args_opencl[:-1]), name, ", ".join(
+                               kernel_args_call[:-1]), ", "
+                   if len(kernel_args_call) > 1 else ""))
 
         for ul in self._unrolled_pes:
             # create PE kernels by using the previously defined macro
@@ -746,9 +736,9 @@ __kernel void \\
             # First macro argument is the processing element id
             for p in range(start_idx, stop_idx + 1, skip_idx):
                 module_stream.write("_DACE_FPGA_KERNEL_{}({}{}{})\n".format(
-                    module_function_name, p,
-                    ", " if len(kernel_args_call) > 1 else "",
-                    ", ".join(kernel_args_call[:-1])))
+                    module_function_name, p, ", "
+                    if len(kernel_args_call) > 1 else "", ", ".join(
+                        kernel_args_call[:-1])))
             module_stream.write(
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
@@ -779,10 +769,9 @@ __kernel void \\
 
                 else:
                     src_node = find_input_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
+                    self._dispatcher.dispatch_copy(
+                        src_node, node, edge, sdfg, state_dfg, state_id,
+                        function_stream, callsite_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._cpu_codegen._locals.define(edge.dst_conn, -1,
@@ -808,10 +797,9 @@ __kernel void \\
 
                 else:
                     dst_node = find_output_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
+                    self._dispatcher.dispatch_copy(
+                        node, dst_node, edge, sdfg, state_dfg, state_id,
+                        function_stream, callsite_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._cpu_codegen._locals.define(edge.src_conn, -1,
@@ -838,9 +826,8 @@ __kernel void \\
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
                  or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and not cpu.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn,
-                                                 callsite_stream, sdfg,
-                                                 state_id, node)
+                self.generate_no_dependence_post(
+                    edge.src_conn, callsite_stream, sdfg, state_id, node)
 
         callsite_stream.write('}\n', sdfg, state_id, node)
         self._dispatcher.defined_vars.exit_scope(node)
@@ -913,9 +900,8 @@ __kernel void \\
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
 
-        memlet_type = self.make_vector_type(data_desc.dtype,
-                                            self._memory_widths[data_name],
-                                            False)
+        memlet_type = self.make_vector_type(
+            data_desc.dtype, self._memory_widths[data_name], False)
         offset = cpu.cpp_offset_expr(data_desc, memlet.subset, None,
                                      memlet.veclen)
 
@@ -956,9 +942,8 @@ __kernel void \\
                     qualifiers = "__global volatile "
                 else:
                     qualifiers = ""
-                result += "{}{} *{} = &{}[{}];".format(qualifiers, memlet_type,
-                                                       connector, data_name,
-                                                       offset)
+                result += "{}{} *{} = &{}[{}];".format(
+                    qualifiers, memlet_type, connector, data_name, offset)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Pointer)
         elif def_type == DefinedType.Stream:
@@ -977,11 +962,11 @@ __kernel void \\
                                                   DefinedType.Scalar)
             else:
 
-                # remote output stream, open the corresponding transient channel
                 if is_output and isinstance(
                         dst_node.desc(sdfg), dace.data.Stream
                 ) and dst_node.desc(
                         sdfg).storage == dace.dtypes.StorageType.FPGA_Remote:
+                    # remote output stream: it is the first time that it appears, open the corresponding transient channel
                     rcv_rank = dst_node.desc(sdfg).location["rcv_rank"]
                     port = dst_node.desc(sdfg).location["port"]
                     if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdigit(
@@ -1083,9 +1068,8 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
             data_desc = sdfg.arrays[data_name]
-            memlet_type = self.make_vector_type(data_desc.dtype,
-                                                self._memory_widths[data_name],
-                                                False)
+            memlet_type = self.make_vector_type(
+                data_desc.dtype, self._memory_widths[data_name], False)
             offset = cpu.cpp_offset_expr(data_desc, memlet.subset, None,
                                          memlet.veclen)
 
@@ -1207,8 +1191,8 @@ __kernel void \\
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
-        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()
-                                                 [node]].defined_vars
+        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()[
+            node]].defined_vars
 
         # Dtypes is a dictionary containing associations name -> type (ctypes)
         # Add defined variables
@@ -1218,8 +1202,10 @@ __kernel void \\
 
         for connector, (memlet, _, _) in memlets.items():
             if connector is not None:
-                defined_symbols.update(
-                    {connector: sdfg.arrays[memlet.data].dtype})
+                defined_symbols.update({
+                    connector:
+                    sdfg.arrays[memlet.data].dtype
+                })
 
         used_streams = []
         for stmt in body:  # for each statement in tasklet body
@@ -1235,12 +1221,13 @@ __kernel void \\
             used_streams.extend(ocl_visitor.used_streams)
             if rk is not None:
                 result = StringIO()
-                cppunparse.CPPUnparser(rk,
-                                       ldepth + 1,
-                                       locals,
-                                       result,
-                                       defined_symbols=defined_symbols,
-                                       type_inference=True)
+                cppunparse.CPPUnparser(
+                    rk,
+                    ldepth + 1,
+                    locals,
+                    result,
+                    defined_symbols=defined_symbols,
+                    type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
         # In Intel OpenCL is not possible to have multiple access points to the same channel
