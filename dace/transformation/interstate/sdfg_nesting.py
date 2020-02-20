@@ -88,7 +88,8 @@ class InlineSDFG(pattern_matching.Transformation):
     def match_to_str(graph, candidate):
         return graph.label
 
-    def _modify_memlet(self, nsdfg: SDFG, internal_memlet: Memlet, external_memlet: Memlet):
+    def _modify_memlet(self, nsdfg: SDFG, internal_memlet: Memlet,
+                       external_memlet: Memlet):
         """ Unsqueezes and offsets a memlet, as per the semantics of nested
             SDFGs.
             :param nsdfg: Nested SDFG to be inlined.
@@ -99,6 +100,10 @@ class InlineSDFG(pattern_matching.Transformation):
         """
         result = dc(internal_memlet)
         result.data = external_memlet.data
+
+        # Offset the new memlet according to the internal offset of the array
+        internal_offset = nsdfg.arrays[internal_memlet.data].offset
+        result.subset.offset(internal_offset, False)
 
         shape = external_memlet.subset.size()
         if len(internal_memlet.subset) < len(external_memlet.subset):
@@ -121,10 +126,6 @@ class InlineSDFG(pattern_matching.Transformation):
                 'Unexpected extra dimensions in internal memlet '
                 'while inlining SDFG.\nExternal memlet: %s\n'
                 'Internal memlet: %s' % (external_memlet, internal_memlet))
-
-        # Offset the new memlet according to the internal offset of the array
-        internal_offset = nsdfg.arrays[internal_memlet.data].offset
-        result.subset.offset(internal_offset, False)
 
         result.subset.offset(external_memlet.subset, False)
 
@@ -308,7 +309,7 @@ class InlineSDFG(pattern_matching.Transformation):
         modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate,
                                                    state, False)
 
-        # After modifying the memlet subsets, we modify their names to the 
+        # After modifying the memlet subsets, we modify their names to the
         # outer arrays
         for edge in subgraph.edges():
             if edge.data.data in repldict:
