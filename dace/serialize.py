@@ -201,7 +201,7 @@ def set_properties_from_json(object_with_properties,
                 print("WARNING: failed to parse object {}"
                       " for property {} of type {}. Error was: {}".format(
                           val, prop_name, prop, err))
-                pass
+                raise
 
         setattr(object_with_properties, prop_name, val)
 
