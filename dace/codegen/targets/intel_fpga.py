@@ -974,7 +974,8 @@ __kernel void \\
                         raise dace.codegen.codegen.CodegenError(
                             "Receiver rank for remote stream {} must be a constant, a symbol or a number"
                             .format(dst_node.label))
-                    if port not in sdfg.constants and not port.isdigit():
+                    if not isinstance(port, int) and (
+                            port not in sdfg.constants and not port.isdigit()):
                         raise dace.codegen.codegen.CodegenError(
                             "Port for remote stream {} must be a constant or a number"
                             .format(dst_node.label))
@@ -1324,13 +1325,12 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
             else:  # target has no subscript
-                # TODO: understand how to deal with reads from remote stream in Tasklet code
-                # # If the value is a Name, we should check whether it is a remote stream
-                # if isinstance(node.value, ast.Name) and self.sdfg.data(self.memlets[node.value.id][0].data).storage == dace.dtypes.StorageType.FPGA_Remote:
-                #     updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(unparse(value), target))
-                # else:
-                updated = ast.Name(
-                    id="{} = {};".format(target, unparse(value)))
+                # If the value is a Name, we should check whether it is a remote stream
+                if isinstance(node.value, ast.Name) and  self.defined_vars.get(node.value.id) == DefinedType.RemoteStream:
+                    updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(unparse(value), target))
+                else:
+                    updated = ast.Name(
+                        id="{} = {};".format(target, unparse(value)))
 
         elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
             if memlet.num_accesses != 1:
@@ -1345,8 +1345,13 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     target, cppunparse.cppunparse(value,
                                                   expr_semicolon=False)))
         elif memlet is not None and memlet.num_accesses != 1:
-            newnode = ast.Name(id="*{} = {}; ".format(
-                target, cppunparse.cppunparse(value, expr_semicolon=False)))
+            # if the target is a Remote Stream, perform a push
+            if self.defined_vars.get(target) == DefinedType.RemoteStream:
+                newnode = ast.Name(id="SMI_Push(&{}, &{}); ".format(
+                    target, cppunparse.cppunparse(value, expr_semicolon=False)))
+            else:
+                newnode = ast.Name(id="*{} = {}; ".format(
+                    target, cppunparse.cppunparse(value, expr_semicolon=False)))
             return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)
