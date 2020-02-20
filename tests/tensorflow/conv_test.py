@@ -6,10 +6,11 @@ except ImportError:
 
 from tensorflow.python.ops import gen_nn_ops
 import numpy as np
-import dace
+import sys
 from dace.frontend.tensorflow import TFSession
 
 if __name__ == '__main__':
+    gpu = len(sys.argv) == 2 and sys.argv[1] == 'gpu'
     inp_shape = [10, 10, 10, 10]
     filter_shape = [3, 3, 10, 3]
     strides = [1, 3, 3, 1]
@@ -30,7 +31,7 @@ if __name__ == '__main__':
         outp, feed_dict={
             inp: test_in,
             filter: test_filter
-        })
+        },gpu=gpu)
     output_tf = sess_tf.run(
         outp, feed_dict={
             inp: test_in,
@@ -74,7 +75,7 @@ if __name__ == '__main__':
                     feed_dict={
                         filter: test_filter,
                         out_backprop: test_grads
-                    })
+                    },gpu=gpu)
 
                 try:
                     assert tf.norm(output_dace -
@@ -121,7 +122,7 @@ if __name__ == '__main__':
                     feed_dict={
                         input_placeholder: test_input,
                         out_backprop: test_grads
-                    })
+                    },gpu=gpu)
 
                 try:
                     assert tf.norm(output_dace -
