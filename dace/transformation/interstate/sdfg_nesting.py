@@ -456,19 +456,19 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[arrname + '_in'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_in'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            inputs[arrname] = arrname + '_in'
-                        node_data_name = arrname + '_in'
+                            inputs[arrname] = '__' + arrname + '_in'
+                        node_data_name = '__' + arrname + '_in'
                     if (state.in_degree(node) > 0):  # output node
                         arrname = node.data
                         if arrname not in outputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[arrname + '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
-                            outputs[arrname] = arrname + '_out'
-                        node_data_name = arrname + '_out'
+                            outputs[arrname] = '__' + arrname + '_out'
+                        node_data_name = '__' + arrname + '_out'
                     node.data = node_data_name
 
             if self.promote_global_trans:
@@ -480,10 +480,10 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[arrname + '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            transients[arrname] = arrname + '_out'
-                        node.data = arrname + '_out'
+                            transients[arrname] = '__' + arrname + '_out'
+                        node.data = '__' + arrname + '_out'
 
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
