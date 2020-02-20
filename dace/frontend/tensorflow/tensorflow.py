@@ -2180,7 +2180,6 @@ class TFSession:
                 cudnnDestroyTensorDescriptor(yDesc_{i});
                 cudnnDestroyFilterDescriptor(fDesc_{i});
                 cudnnDestroyConvolutionDescriptor(convDesc_{i});
-                cudnnDestroyAlgorithmDescriptor(algo_{i});
                 cudaFree(workSpace_{i});
             '''.format(i=local_count)
             if len(self.graph.exit_code) == 0:
@@ -3094,7 +3093,6 @@ class TFSession:
                 cudnnDestroyTensorDescriptor(yDesc_{i});
                 cudnnDestroyFilterDescriptor(fDesc_{i});
                 cudnnDestroyConvolutionDescriptor(convDesc_{i});
-                cudnnDestroyAlgorithmDescriptor(algo_{i});
                 cudaFree(workSpace_{i});
             '''.format(i=local_count)
             if len(self.graph.exit_code) == 0:
@@ -3504,7 +3502,6 @@ class TFSession:
                 cudnnDestroyTensorDescriptor(yDesc_{i});
                 cudnnDestroyFilterDescriptor(fDesc_{i});
                 cudnnDestroyConvolutionDescriptor(convDesc_{i});
-                cudnnDestroyAlgorithmDescriptor(algo_{i});
                 cudaFree(workSpace_{i});
             '''.format(i=local_count)
             if len(self.graph.exit_code) == 0:
