@@ -336,7 +336,9 @@ class TFSession:
         gpu = gpu and tf.test.is_gpu_available()
         self.cudnn = gpu and cudnn
         if gpu:
-            self.graph.apply_gpu_transformations()
+            from dace.transformation.interstate import GPUTransformSDFG
+            self.graph.apply_transformations([GPUTransformSDFG],
+                                             {'exclude_tasklets': "Conv2D,Conv2DBackpropInput,Conv2DBackpropFilter"})
 
         # Compile and call the SDFG
         self.graph.draw_to_file()
@@ -514,7 +516,9 @@ class TFSession:
             gpu = gpu and tf.test.is_gpu_available()
             self.cudnn = gpu and cudnn
             if gpu:
-                self.graph.apply_gpu_transformations()
+                from dace.transformation.interstate import GPUTransformSDFG
+                self.graph.apply_transformations([GPUTransformSDFG],
+                                                 {'exclude_tasklets':"Conv2D,Conv2DBackpropInput,Conv2DBackpropFilter"})
 
                 #for aname, array in self.graph.arrays.items():
                 #    if array is None:
