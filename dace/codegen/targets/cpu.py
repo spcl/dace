@@ -202,8 +202,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     callsite_stream,
                 )
 
-                array_expr = copy_expr(self._dispatcher, sdfg, nodedesc.sink,
-                                       edges[0].data, self._packed_types)
+                array_expr = copy_expr(
+                    self._dispatcher,
+                    sdfg,
+                    nodedesc.sink,
+                    edges[0].data,
+                    packed_types=self._packed_types)
                 threadlocal = ""
                 threadlocal_stores = [
                     dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
