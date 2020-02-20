@@ -152,8 +152,6 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
 #include <cuda_runtime.h>
 #include <dace/dace.h>
 
-{file_header}
-
 DACE_EXPORTED int __dace_init_cuda({params});
 DACE_EXPORTED void __dace_exit_cuda({params});
 
