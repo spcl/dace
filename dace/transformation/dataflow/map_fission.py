@@ -142,7 +142,7 @@ class MapFission(pattern_matching.Transformation):
             sources = sg.source_nodes()
             sinks = sg.sink_nodes()
             # Test that the subgraphs have more than one computational component
-            if len(snodes) > 0 and len(components) <= 1:
+            if expr_index == 0 and len(snodes) > 0 and len(components) <= 1:
                 return False
 
             # Test that the components are connected by transients that are not
