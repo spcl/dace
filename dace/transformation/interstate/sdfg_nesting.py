@@ -88,9 +88,10 @@ class InlineSDFG(pattern_matching.Transformation):
     def match_to_str(graph, candidate):
         return graph.label
 
-    def _modify_memlet(self, internal_memlet: Memlet, external_memlet: Memlet):
+    def _modify_memlet(self, nsdfg: SDFG, internal_memlet: Memlet, external_memlet: Memlet):
         """ Unsqueezes and offsets a memlet, as per the semantics of nested
             SDFGs.
+            :param nsdfg: Nested SDFG to be inlined.
             :param internal_memlet: The internal memlet (inside nested SDFG)
                                     before modification.
             :param internal_memlet: The external memlet before modification.
@@ -120,6 +121,10 @@ class InlineSDFG(pattern_matching.Transformation):
                 'Unexpected extra dimensions in internal memlet '
                 'while inlining SDFG.\nExternal memlet: %s\n'
                 'Internal memlet: %s' % (external_memlet, internal_memlet))
+
+        # Offset the new memlet according to the internal offset of the array
+        internal_offset = nsdfg.arrays[internal_memlet.data].offset
+        result.subset.offset(internal_offset, False)
 
         result.subset.offset(external_memlet.subset, False)
 
@@ -291,9 +296,6 @@ class InlineSDFG(pattern_matching.Transformation):
         for node in subgraph.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
                 node.data = repldict[node.data]
-        for edge in subgraph.edges():
-            if edge.data.data in repldict:
-                edge.data.data = repldict[edge.data.data]
 
         #######################################################
         # Reconnect inlined SDFG
@@ -305,6 +307,12 @@ class InlineSDFG(pattern_matching.Transformation):
                                                    state, True)
         modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate,
                                                    state, False)
+
+        # After modifying the memlet subsets, we modify their names to the 
+        # outer arrays
+        for edge in subgraph.edges():
+            if edge.data.data in repldict:
+                edge.data.data = repldict[edge.data.data]
 
         # Modify all other internal edges pertaining to input/output nodes
         for node in subgraph.nodes():
@@ -321,7 +329,7 @@ class InlineSDFG(pattern_matching.Transformation):
                             for e in state.memlet_tree(edge):
                                 if e.data.data == node.data:
                                     e._data = self._modify_memlet(
-                                        e.data, outer_edge.data)
+                                        nsdfg, e.data, outer_edge.data)
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
@@ -376,11 +384,12 @@ class InlineSDFG(pattern_matching.Transformation):
             edges.
         """
         result = set()
+        nsdfg = nstate.parent
         for node, top_edge in new_edges.items():
             inner_edges = (nstate.out_edges(node)
                            if inputs else nstate.in_edges(node))
             for inner_edge in inner_edges:
-                new_memlet = self._modify_memlet(inner_edge.data,
+                new_memlet = self._modify_memlet(nsdfg, inner_edge.data,
                                                  top_edge.data)
                 if inputs:
                     new_edge = state.add_edge(top_edge.src, top_edge.src_conn,
@@ -397,7 +406,7 @@ class InlineSDFG(pattern_matching.Transformation):
                 def traverse(mtree_node):
                     result.add(mtree_node.edge)
                     mtree_node.edge._data = self._modify_memlet(
-                        mtree_node.edge.data, top_edge.data)
+                        nsdfg, mtree_node.edge.data, top_edge.data)
                     for child in mtree_node.children:
                         traverse(child)
 
