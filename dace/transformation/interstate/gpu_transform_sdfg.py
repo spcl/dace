@@ -42,13 +42,19 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         default=True)
 
     exclude_copyin = Property(
-        desc="Exclude these arrays from being copied into the device"
+        desc="Exclude these arrays from being copied into the device "
+        "(comma-separated)",
+        dtype=str,
+        default='')
+
+    exclude_tasklets = Property(
+        desc="Exclude these tasklets from being processed as CPU tasklets "
         "(comma-separated)",
         dtype=str,
         default='')
 
     exclude_copyout = Property(
-        desc="Exclude these arrays from being copied out of the device"
+        desc="Exclude these arrays from being copied out of the device "
         "(comma-separated)",
         dtype=str,
         default='')
@@ -246,8 +252,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         for state, gcodes in zip(sdfg.nodes(), global_code_nodes):
             for gcode in gcodes:
-                # Exception for cuDNN
-                if gcode.label in ['Conv2D','Conv2DBackpropInput','Conv2DBackpropFilter']:
+                if gcode.label in self.exclude_tasklets.split(','):
                     continue
                 # Create map and connectors
                 me, mx = state.add_map(
