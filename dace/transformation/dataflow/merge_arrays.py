@@ -64,8 +64,8 @@ class MergeArrays(pattern_matching.Transformation):
         # Ensure arr1 and arr2 are the first two incoming nodes (avoid further
         # duplicates)
         all_source_nodes = set(
-            graph.node_id(e.src) for e in graph.in_edges(map)
-            if e.src != arr1 and e.src != arr2 and e.dst_conn
+            graph.node_id(e.src) for e in graph.in_edges(map) if e.src != arr1
+            and e.src != arr2 and e.src.data == arr1.data and e.dst_conn
             and e.dst_conn.startswith('IN_') and graph.in_degree(e.src) == 0)
         if any(nid < arr1_id or nid < arr2_id for nid in all_source_nodes):
             return False
