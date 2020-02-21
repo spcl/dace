@@ -2,6 +2,7 @@ from dace.transformation import pattern_matching
 from dace import memlet, registry
 from dace.graph import nodes
 from dace.sdfg import SDFGState
+from dace.graph.labeling import propagate_memlet
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -110,3 +111,10 @@ class MergeArrays(pattern_matching.Transformation):
         # Remove connectors from scope entry
         map.in_connectors -= set('IN_' + c for c in connectors_to_remove)
         map.out_connectors -= set('OUT_' + c for c in connectors_to_remove)
+
+        # Re-propagate memlets
+        map_edge._data = propagate_memlet(
+            dfg_state=graph,
+            memlet=map_edge.data,
+            scope_node=map,
+            union_inner_edges=True)
