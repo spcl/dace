@@ -185,7 +185,7 @@ runall() {
     
     runtestargs instrumentation_test.py gpu
 	
-	runtestargs tensorflow/conv_test.py gpu
+    runtestargs tensorflow/conv_test.py gpu
 }
 
 
