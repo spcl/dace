@@ -4433,8 +4433,15 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             if isinstance(propclass, properties.RangeProperty):
                 setattr(node, pname, replsym(propval))
             if isinstance(propclass, properties.CodeProperty):
-                for stmt in propval['code_or_block']:
-                    ASTFindReplace({name: new_name}).visit(stmt)
+                if isinstance(propval['code_or_block'], str):
+                    # TODO: C++ AST parsing for replacement?
+                    if name != str(new_name):
+                        warnings.warn(
+                            'Replacement of %s with %s was not made '
+                            'for string tasklet code' % (name, new_name))
+                else:
+                    for stmt in propval['code_or_block']:
+                        ASTFindReplace({name: new_name}).visit(stmt)
 
     # Replace in memlets
     for edge in subgraph.edges():
