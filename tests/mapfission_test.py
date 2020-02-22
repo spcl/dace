@@ -89,7 +89,7 @@ class MapFissionTest(unittest.TestCase):
         B = np.random.rand(2)
 
         graph = mapfission_sdfg()
-        graph.apply_transformations(MapFission)
+        self.assertGreater(graph.apply_transformations(MapFission), 0)
         graph(A=A, B=B)
 
         self.assertTrue(np.allclose(B, expected))
@@ -107,7 +107,7 @@ class MapFissionTest(unittest.TestCase):
         subgraph = state.scope_subgraph(
             topmap, include_entry=False, include_exit=False)
         nest_state_subgraph(graph, state, subgraph)
-        graph.apply_transformations(MapFission)
+        self.assertGreater(graph.apply_transformations(MapFission), 0)
         graph(A=A, B=B)
         self.assertTrue(np.allclose(B, expected))
 
@@ -164,7 +164,7 @@ class MapFissionTest(unittest.TestCase):
             src_conn='b',
             memlet=dace.Memlet.simple('A', 'i'))
 
-        sdfg.apply_transformations(MapFission)
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
         # Test
         A = np.random.rand(2)
@@ -211,7 +211,7 @@ class MapFissionTest(unittest.TestCase):
             src_conn='o2',
             memlet=dace.Memlet.simple('out2', 'i'))
 
-        sdfg.apply_transformations(MapFission)
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
         # Test
         A, B, C, D = tuple(np.random.rand(2) for _ in range(4))
