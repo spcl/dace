@@ -71,8 +71,8 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
-    data_in_subgraph = set(
-        n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
+    data_in_subgraph = set(n.data for n in subgraph.nodes()
+                           if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
     other_nodes = set(
         n.data for s in sdfg.nodes() for n in s.nodes()
@@ -260,10 +260,10 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
 
         result.subset.unsqueeze(to_unsqueeze)
     elif len(internal_memlet.subset) > len(external_memlet.subset):
-        raise ValueError(
-            'Unexpected extra dimensions in internal memlet '
-            'while inlining SDFG.\nExternal memlet: %s\n'
-            'Internal memlet: %s' % (external_memlet, internal_memlet))
+        raise ValueError('Unexpected extra dimensions in internal memlet '
+                         'while un-squeezing memlet.\nExternal memlet: %s\n'
+                         'Internal memlet: %s' %
+                         (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
 
