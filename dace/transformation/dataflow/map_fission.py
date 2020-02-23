@@ -459,6 +459,7 @@ class MapFission(pattern_matching.Transformation):
                 # Modify edge coming into nested SDFG to include entire array
                 desc = sdfg.arrays[edge.data.data]
                 edge.data.subset = subsets.Range.from_array(desc)
+                edge.data.num_accesses = edge.data.subset.num_elements()
 
                 # Find matching edge inside map
                 inner_edge = next(
