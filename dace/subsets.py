@@ -286,10 +286,10 @@ class Range(Subset):
 
     @property
     def free_symbols(self):
-        result = set()
+        result = {}
         for dim in self.ranges:
             for d in dim:
-                result.update(set(symbolic.symlist(d)))
+                result.update(symbolic.symlist(d))
         return result
 
     def reorder(self, order):
@@ -653,9 +653,9 @@ class Indices(Subset):
 
     @property
     def free_symbols(self):
-        result = set()
+        result = {}
         for dim in self.indices:
-            result.update(set(symbolic.symlist(dim)))
+            result.update(symbolic.symlist(dim))
         return result
 
     @staticmethod
