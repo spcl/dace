@@ -5,7 +5,7 @@ from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedDiGraph
-from dace.transformation import pattern_matching
+from dace.transformation import pattern_matching, helpers
 from typing import List, Optional, Tuple
 
 
@@ -214,6 +214,21 @@ class MapFission(pattern_matching.Transformation):
         outer_map: nodes.Map = map_entry.map
         mapsize = outer_map.range.size()
 
+        # Add new symbols from outer map to nested SDFG
+        if self.expr_index == 1:
+            map_syms = outer_map.range.free_symbols
+            for edge in graph.out_edges(map_entry):
+                if edge.data.data:
+                    map_syms.update(edge.data.subset.free_symbols)
+            for edge in graph.in_edges(map_exit):
+                if edge.data.data:
+                    map_syms.update(edge.data.subset.free_symbols)
+            for symname, sym in map_syms.items():
+                if symname in outer_map.params:
+                    continue
+                if symname not in nsdfg_node.symbol_mapping.keys():
+                    nsdfg_node.symbol_mapping[symname] = sym
+
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
             sources = subgraph.source_nodes()
@@ -401,7 +416,6 @@ class MapFission(pattern_matching.Transformation):
 
                         outer_edge = edge_to_outer[edge]
                         desc = parent.arrays[node.data]
-                        old_subset = outer_edge.data.subset
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
@@ -414,7 +428,13 @@ class MapFission(pattern_matching.Transformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
-                                e.data.subset.offset(old_subset, False)
+                                e.data.subset.offset(desc.offset, False)
+                                e.data.subset = helpers.unsqueeze_memlet(
+                                    e.data, outer_edge.data).subset
+
+                        # Only after offsetting memlets we can modify the
+                        # overall offset
+                        desc.offset = outer_desc.offset
 
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
