@@ -2,7 +2,7 @@
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import registry, sdfg as sd, memlet as mm, subsets
+from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedDiGraph
 from dace.transformation import pattern_matching, helpers
@@ -419,9 +419,11 @@ class MapFission(pattern_matching.Transformation):
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
-                        desc.shape = outer_desc.shape
-                        desc.strides = outer_desc.strides
-                        desc.total_size = outer_desc.total_size
+                        if not isinstance(desc, dt.Scalar):
+                            desc.shape = outer_desc.shape
+                        if isinstance(desc, dt.Array):
+                            desc.strides = outer_desc.strides
+                            desc.total_size = outer_desc.total_size
 
                         # Inside the nested SDFG, offset all memlets to include
                         # the offsets from within the map.
@@ -434,7 +436,8 @@ class MapFission(pattern_matching.Transformation):
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
-                        desc.offset = outer_desc.offset
+                        if isinstance(desc, dt.Array):
+                            desc.offset = outer_desc.offset
 
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
