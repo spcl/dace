@@ -221,6 +221,36 @@ class MapFissionTest(unittest.TestCase):
         self.assertTrue(np.allclose(C, expected_C))
         self.assertTrue(np.allclose(D, expected_D))
 
+    def test_multidim(self):
+        sdfg = dace.SDFG('mapfission_multidim')
+        sdfg.add_array('A', [2, 3], dace.float64)
+        state = sdfg.add_state()
+        me, mx = state.add_map('outer', dict(i='0:2', j='0:3'))
+
+        nsdfg = dace.SDFG('nested')
+        nsdfg.add_array('a', [1], dace.float64)
+        nstate = nsdfg.add_state()
+        t = nstate.add_tasklet('reset', {}, {'out'}, 'out = 0')
+        a = nstate.add_write('a')
+        nstate.add_edge(t, 'out', a, None, dace.Memlet.simple('a', '0'))
+        nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'})
+
+        state.add_edge(me, None, nsdfg_node, None, dace.EmptyMemlet())
+        anode = state.add_write('A')
+        state.add_memlet_path(
+            nsdfg_node,
+            mx,
+            anode,
+            src_conn='a',
+            memlet=dace.Memlet.simple('A', 'i,j'))
+
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+
+        # Test
+        A = np.random.rand(2, 3)
+        sdfg(A=A)
+        self.assertTrue(np.allclose(A, np.zeros_like(A)))
+
 
 if __name__ == '__main__':
     unittest.main()
