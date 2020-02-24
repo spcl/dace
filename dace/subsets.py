@@ -251,7 +251,10 @@ class Range(Subset):
 
     def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
-            other = Indices([other for _ in self.ranges])
+            if isinstance(other, (list, tuple)):
+                other = Indices(other)
+            else:
+                other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if not indices:
             indices = set(range(len(self.ranges)))
@@ -286,10 +289,10 @@ class Range(Subset):
 
     @property
     def free_symbols(self):
-        result = set()
+        result = {}
         for dim in self.ranges:
             for d in dim:
-                result.update(set(symbolic.symlist(d)))
+                result.update(symbolic.symlist(d))
         return result
 
     def reorder(self, order):
@@ -610,9 +613,12 @@ class Indices(Subset):
     def absolute_strides(self, global_shape):
         return [1] * len(self.indices)
 
-    def offset(self, other, negative):
+    def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
-            other = Indices([other for _ in self.indices])
+            if isinstance(other, (list, tuple)):
+                other = Indices(other)
+            else:
+                other = Indices([other for _ in self.indices])
         mult = -1 if negative else 1
         for i, off in enumerate(other.min_element()):
             self.indices[i] += mult * off
@@ -653,9 +659,9 @@ class Indices(Subset):
 
     @property
     def free_symbols(self):
-        result = set()
+        result = {}
         for dim in self.indices:
-            result.update(set(symbolic.symlist(dim)))
+            result.update(symbolic.symlist(dim))
         return result
 
     @staticmethod
