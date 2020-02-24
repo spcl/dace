@@ -17,8 +17,8 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator, DefinedType
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
-from dace.codegen.targets.cpu import cpp_offset_expr, cpp_array_expr
-from dace.codegen.targets import cpu
+from dace.codegen.targets.cpp import (cpp_offset_expr, cpp_array_expr, sym2cpp,
+                                      memlet_copy_to_absolute_strides)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
@@ -179,24 +179,6 @@ class FPGACodeGen(TargetCodeGenerator):
                         else:
                             seen[node.data] = sg
         return shared
-
-    @staticmethod
-    def global_transient_nodes(subgraphs):
-        """Generator that returns all transient global arrays nested in the
-           passed subgraphs on the form (is_output, AccessNode)"""
-        seen = set()
-        for subgraph in subgraphs:
-            for n, scope in subgraph.all_nodes_recursive():
-                if (isinstance(n, dace.graph.nodes.AccessNode)
-                        and n.desc(sdfg).transient and n.desc(sdfg).storage ==
-                        dace.dtypes.StorageType.FPGA_Global):
-                    if n.data in seen:
-                        continue
-                    seen.add(n.data)
-                    if scope.out_degree(n) > 0:
-                        yield (False, n)
-                    if scope.in_degree(n) > 0:
-                        yield (True, n)
 
     @classmethod
     def make_parameters(cls, sdfg, state, subgraphs):
@@ -413,7 +395,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise dace.codegen.codegen.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
-            if cpu.sym2cpp(arrsize) != "1":
+            if sym2cpp(arrsize) != "1":
                 # Is a stream array
                 self._dispatcher.defined_vars.add(dataname,
                                                   DefinedType.StreamArray)
@@ -448,7 +430,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             "auto {} = hlslib::ocl::GlobalContext()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({});".format(dataname, nodedesc.dtype.ctype,
-                                           cpu.sym2cpp(arrsize)))
+                                           sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
@@ -471,7 +453,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     arrsize_symbolic = nodedesc.total_size
                     arrsize_eval = evaluate(arrsize_symbolic / veclen,
                                             sdfg.constants)
-                    if cpu.sym2cpp(arrsize_eval) == "1":
+                    if sym2cpp(arrsize_eval) == "1":
                         generate_scalar = True
                     arrsize_vec = "({}) / {}".format(arrsize, veclen)
                 else:
@@ -626,8 +608,13 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Try to turn into degenerate/strided ND copies
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
-                self._cpu_codegen.memlet_copy_to_absolute_strides(
-                    sdfg, memlet, src_node, dst_node, packed_types=True))
+                memlet_copy_to_absolute_strides(
+                    self._dispatcher,
+                    sdfg,
+                    memlet,
+                    src_node,
+                    dst_node,
+                    packed_types=True))
 
             ctype = src_node.desc(sdfg).dtype.ctype
 
@@ -688,11 +675,11 @@ class FPGACodeGen(TargetCodeGenerator):
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
             src_index = " + ".join([
-                "__dace_copy{} * {}".format(i, cpu.sym2cpp(stride))
+                "__dace_copy{} * {}".format(i, sym2cpp(stride))
                 for i, stride in enumerate(src_strides) if copy_shape[i] != 1
             ])
             dst_index = " + ".join([
-                "__dace_copy{} * {}".format(i, cpu.sym2cpp(stride))
+                "__dace_copy{} * {}".format(i, sym2cpp(stride))
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
 
@@ -921,9 +908,9 @@ class FPGACodeGen(TargetCodeGenerator):
 
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
-                            loop_var_type, var, cpu.sym2cpp(begin), var,
-                            cpu.sym2cpp(end + 1), var, cpu.sym2cpp(skip)),
-                        sdfg, state_id, node)
+                            loop_var_type, var, sym2cpp(begin), var,
+                            sym2cpp(end + 1), var, sym2cpp(skip)), sdfg,
+                        state_id, node)
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -934,11 +921,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 if pipeline.init_size > 0:
                     result.write("const bool {} = {} < {};\n".format(
                         node.pipeline.init_condition(), flat_it,
-                        cpu.sym2cpp(pipeline.init_size)))
+                        sym2cpp(pipeline.init_size)))
                 if pipeline.drain_size > 0:
                     result.write("const bool {} = {} >= {};\n".format(
                         node.pipeline.drain_condition(), flat_it,
-                        bound + (" - " + cpu.sym2cpp(pipeline.drain_size)
+                        bound + (" - " + sym2cpp(pipeline.drain_size)
                                  if pipeline.drain_size != 0 else "")))
 
             if node.map.unroll:
@@ -1052,7 +1039,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 pipeline_dim = i
 
         if node.identity is not None:
-            identity = cpu.sym2cpp(node.identity)
+            identity = sym2cpp(node.identity)
         else:
             identity = None
 
@@ -1182,6 +1169,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._memory_widths = type(self).detect_memory_widths(subgraphs)
 
         if self._in_device_code:
+            from dace.codegen.codegen import CodegenError
             raise CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
         self._cpu_codegen._packed_types = True
@@ -1380,11 +1368,11 @@ class Pipeline(dace.graph.nodes.Map):
         for begin, end, step in self.range:
             bound *= (step + end - begin) // step
         # Add init and drain phases when relevant
-        add_str = (" + " + cpu.sym2cpp(self.init_size)
+        add_str = (" + " + sym2cpp(self.init_size)
                    if self.init_size != 0 and not self.init_overlap else "")
-        add_str += (" + " + cpu.sym2cpp(self.drain_size)
+        add_str += (" + " + sym2cpp(self.drain_size)
                     if self.drain_size != 0 and not self.drain_overlap else "")
-        return cpu.sym2cpp(bound) + add_str
+        return sym2cpp(bound) + add_str
 
     def init_condition(self):
         """Variable that can be checked to see if pipeline is currently in

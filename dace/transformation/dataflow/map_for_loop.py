@@ -73,7 +73,7 @@ class MapToForLoop(pattern_matching.Transformation):
                 loop_step = loop_step.subs(repldict)
 
         # Avoiding import loop
-        from dace.codegen.targets.cpu import cpp_array_expr
+        from dace.codegen.targets.cpp import cpp_array_expr
 
         def replace_param(param):
             param = symbolic.symstr(param)

@@ -3007,6 +3007,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
+            input_nodes: Optional[Dict[str, nd.AccessNode]] = None,
+            output_nodes: Optional[Dict[str, nd.AccessNode]] = None,
             propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -3022,12 +3024,23 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :param unroll_map: True if map should be unrolled in code
                                generation
             :param code_global: (optional) Global code (outside functions)
+            :param code_init:  Initialization code (in __dace_init_* functions)
+            :param code_exit:  Finalization code (in __dace_exit_* functions)
+            :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
             :param debuginfo:  Debugging information (mostly for DIODE)
             :param external_edges: Create external access nodes and connect
                                    them with memlets automatically
-
+            :param input_nodes: Mapping between data names and corresponding
+                                input nodes to link to, if external_edges is
+                                True.
+            :param output_nodes: Mapping between data names and corresponding
+                                 output nodes to link to, if external_edges is
+                                 True.
+            :param propagate: If True, computes outer memlets via propagation.
+                              False will run faster but the SDFG may not be
+                              semantically correct.
             :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
@@ -3054,12 +3067,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if external_edges:
             input_data = set(memlet.data for memlet in inputs.values())
             output_data = set(memlet.data for memlet in outputs.values())
-            inpdict = {}
-            outdict = {}
-            for inp in input_data:
-                inpdict[inp] = self.add_read(inp)
-            for out in output_data:
-                outdict[out] = self.add_write(out)
+            inpdict = input_nodes or {}
+            outdict = output_nodes or {}
+            if not input_nodes:
+                for inp in input_data:
+                    inpdict[inp] = self.add_read(inp)
+            if not output_nodes:
+                for out in output_data:
+                    outdict[out] = self.add_write(out)
 
         # Connect inputs from map to tasklet
         tomemlet = {}
@@ -4433,8 +4448,15 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             if isinstance(propclass, properties.RangeProperty):
                 setattr(node, pname, replsym(propval))
             if isinstance(propclass, properties.CodeProperty):
-                for stmt in propval['code_or_block']:
-                    ASTFindReplace({name: new_name}).visit(stmt)
+                if isinstance(propval['code_or_block'], str):
+                    # TODO: C++ AST parsing for replacement?
+                    if name != str(new_name):
+                        warnings.warn(
+                            'Replacement of %s with %s was not made '
+                            'for string tasklet code' % (name, new_name))
+                else:
+                    for stmt in propval['code_or_block']:
+                        ASTFindReplace({name: new_name}).visit(stmt)
 
     # Replace in memlets
     for edge in subgraph.edges():
