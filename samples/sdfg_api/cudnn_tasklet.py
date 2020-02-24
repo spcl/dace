@@ -45,44 +45,8 @@ tasklet = state.add_tasklet(
     # Custom code (on invocation)
     code='''
     // Set the current stream to match DaCe (for correct synchronization)
-    cudnnSetStream(handle, __dace_current_stream);          
+    cudnnSetStream(handle, __dace_current_stream);
 
-    
-
-
-    
-    float alpha = 1.0, beta = 0.0;
-    cudnnConvolutionForward(handle, &alpha, xDesc, x,
-                            fDesc, f,
-                            convDesc, algo,
-                            workSpace, workSpaceSizeInBytes,
-                            &beta,
-                            yDesc, y);
-                            
-    ''',
-    # Global code (top of file, can be used for includes and global variables)
-    code_global='''
-    #include <cudnn.h>
-    cudnnHandle_t handle;
-    cudnnTensorDescriptor_t xDesc;
-    cudnnTensorDescriptor_t yDesc;
-    cudnnFilterDescriptor_t fDesc;
-    cudnnConvolutionDescriptor_t convDesc;
-    cudnnConvolutionFwdAlgo_t algo;
-    size_t workSpaceSizeInBytes = 0;
-    void* workSpace{nullptr};
-    
-    #define checkCUDNN(expression)                            \\
-    {{                                                        \\
-      cudnnStatus_t status = (expression);                    \\
-      if (status != CUDNN_STATUS_SUCCESS) {{                  \\
-        printf(\"%s \\n\", cudnnGetErrorString(status));      \\
-      }}                                                      \\
-    }}    
-    ''',
-    # Initialization code (called in __dace_init())
-    code_init='''
-    cudnnCreate(&handle);
     checkCUDNN(cudnnCreateTensorDescriptor(&xDesc));
     checkCUDNN(cudnnSetTensor4dDescriptor(xDesc,
                                /*format=*/CUDNN_TENSOR_NCHW,
@@ -140,6 +104,39 @@ tasklet = state.add_tasklet(
                                             &workSpaceSizeInBytes));
     
     cudaMalloc(&workSpace, workSpaceSizeInBytes);
+    
+    float alpha = 1.0, beta = 0.0;
+    cudnnConvolutionForward(handle, &alpha, xDesc, x,
+                            fDesc, f,
+                            convDesc, algo,
+                            workSpace, workSpaceSizeInBytes,
+                            &beta,
+                            yDesc, y);
+                            
+    ''',
+    # Global code (top of file, can be used for includes and global variables)
+    code_global='''
+    #include <cudnn.h>
+    cudnnHandle_t handle;
+    cudnnTensorDescriptor_t xDesc;
+    cudnnTensorDescriptor_t yDesc;
+    cudnnFilterDescriptor_t fDesc;
+    cudnnConvolutionDescriptor_t convDesc;
+    cudnnConvolutionFwdAlgo_t algo;
+    size_t workSpaceSizeInBytes = 0;
+    void* workSpace{nullptr};
+    
+    #define checkCUDNN(expression)                            \\
+    {{                                                        \\
+      cudnnStatus_t status = (expression);                    \\
+      if (status != CUDNN_STATUS_SUCCESS) {{                  \\
+        printf(\"%s \\n\", cudnnGetErrorString(status));      \\
+      }}                                                      \\
+    }}    
+    ''',
+    # Initialization code (called in __dace_init())
+    code_init='''
+    cudnnCreate(&handle);
     ''',
     # Teardown code (called in __dace_exit())
     code_exit='''
@@ -148,8 +145,7 @@ tasklet = state.add_tasklet(
     cudnnDestroyTensorDescriptor(yDesc);
     cudnnDestroyFilterDescriptor(fDesc);
     cudnnDestroyConvolutionDescriptor(convDesc);
-    cudnnDestroyAlgorithmDescriptor(algo);
-    cudaFree(workSpace)
+    cudaFree(workSpace);
     ''',
     # Language (C++ in this case)
     language=dp.Language.CPP)
