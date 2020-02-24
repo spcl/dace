@@ -575,8 +575,8 @@ if(DACE_ENABLE_INTELFPGA)
         add_dependencies(${ROUTING_TARGET} ${TARGET})
     endforeach()
 
-    # generate host code in the src directory
-    set(HOST_GENERATED_TARGET intelfpga_smi_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE}_codegen_host)
+    # generate host code in the src directory (note: we assume here one host code per program)
+    set(HOST_GENERATED_TARGET intelfpga_smi_${DACE_PROGRAM_NAME}_codegen_host)
     set(SMI_HOST_GENERATED_PATH ${DACE_SRC_DIR}/intel_fpga_smi/host/smi_generated_host.c)
     add_custom_target(${HOST_GENERATED_TARGET}
             COMMAND python3
