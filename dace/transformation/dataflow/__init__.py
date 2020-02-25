@@ -7,6 +7,7 @@ from .map_collapse import MapCollapse
 from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_fusion import MapFusion
+from .map_fission import MapFission
 
 # Data movement
 from .strip_mining import StripMining

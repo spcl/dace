@@ -263,12 +263,19 @@ class SDFG(OrderedDiGraph):
         tmp = super().to_json()
 
         # Inject the undefined symbols
-        tmp['undefined_symbols'] = [
-            (k, v.to_json())
-            for k, v in sorted(self.undefined_symbols(True).items())
-        ]
-        tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
-            self.scalar_parameters(True), key=lambda x: x[0])]
+        try:
+            tmp['undefined_symbols'] = [
+                (k, v.to_json())
+                for k, v in sorted(self.undefined_symbols(True).items())
+            ]
+        except RuntimeError:
+            tmp['undefined_symbols'] = []
+
+        try:
+            tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
+                self.scalar_parameters(True), key=lambda x: x[0])]
+        except RuntimeError:
+            tmp['scalar_parameters'] = []
 
         tmp['attributes']['name'] = self.name
 
@@ -2552,6 +2559,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return dot.draw_node(graph, self, shape="Msquare")
 
     def to_json(self, parent=None):
+        # Create scope dictionary with a failsafe
+        try:
+            scope_dict = {
+                k: sorted(v)
+                for k, v in sorted(
+                    self.scope_dict(node_to_children=True, return_ids=True)
+                    .items())
+            }
+        except RuntimeError:
+            scope_dict = {}
+
         ret = {
             'type':
             type(self).__name__,
@@ -2561,12 +2579,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             parent.node_id(self) if parent is not None else None,
             'collapsed':
             self.is_collapsed,
-            'scope_dict': {
-                k: sorted(v)
-                for k, v in sorted(
-                    self.scope_dict(node_to_children=True, return_ids=True)
-                    .items())
-            },
+            'scope_dict':
+            scope_dict,
             'nodes': [n.to_json(self) for n in self.nodes()],
             'edges': [
                 e.to_json(self) for e in sorted(
@@ -2913,7 +2927,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def add_map(
             self,
             name,
-            ndrange: Dict[str, str],
+            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
             schedule=dtypes.ScheduleType.Default,
             unroll=False,
             debuginfo=None,
@@ -2993,6 +3007,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
+            input_nodes: Optional[Dict[str, nd.AccessNode]] = None,
+            output_nodes: Optional[Dict[str, nd.AccessNode]] = None,
             propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -3008,12 +3024,23 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :param unroll_map: True if map should be unrolled in code
                                generation
             :param code_global: (optional) Global code (outside functions)
+            :param code_init:  Initialization code (in __dace_init_* functions)
+            :param code_exit:  Finalization code (in __dace_exit_* functions)
+            :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
             :param debuginfo:  Debugging information (mostly for DIODE)
             :param external_edges: Create external access nodes and connect
                                    them with memlets automatically
-
+            :param input_nodes: Mapping between data names and corresponding
+                                input nodes to link to, if external_edges is
+                                True.
+            :param output_nodes: Mapping between data names and corresponding
+                                 output nodes to link to, if external_edges is
+                                 True.
+            :param propagate: If True, computes outer memlets via propagation.
+                              False will run faster but the SDFG may not be
+                              semantically correct.
             :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
@@ -3040,12 +3067,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         if external_edges:
             input_data = set(memlet.data for memlet in inputs.values())
             output_data = set(memlet.data for memlet in outputs.values())
-            inpdict = {}
-            outdict = {}
-            for inp in input_data:
-                inpdict[inp] = self.add_read(inp)
-            for out in output_data:
-                outdict[out] = self.add_write(out)
+            inpdict = input_nodes or {}
+            outdict = output_nodes or {}
+            if not input_nodes:
+                for inp in input_data:
+                    inpdict[inp] = self.add_read(inp)
+            if not output_nodes:
+                for out in output_data:
+                    outdict[out] = self.add_write(out)
 
         # Connect inputs from map to tasklet
         tomemlet = {}
@@ -3660,7 +3689,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 # Find uninitialized transients
                 arr = sdfg.arrays[node.data]
                 if (arr.transient and self.in_degree(node) == 0
-                        and self.out_degree(node) > 0):
+                        and self.out_degree(node) > 0
+                        # Streams do not need to be initialized
+                        and not isinstance(arr, dt.Stream)):
                     # Find other instances of node in predecessor states
                     states = sdfg.predecessor_states(self)
                     input_found = False
@@ -3995,8 +4026,8 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
     if include_exit:
         children_nodes = set(node_to_children[entry_node])
     else:
-        # Assume the last node in the scope list is the exit node
-        children_nodes = set(node_to_children[entry_node][:-1])
+        children_nodes = set(n for n in node_to_children[entry_node]
+                             if not isinstance(n, nd.ExitNode))
     map_nodes = [
         node for node in children_nodes if isinstance(node, nd.EntryNode)
     ]
@@ -4417,8 +4448,15 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             if isinstance(propclass, properties.RangeProperty):
                 setattr(node, pname, replsym(propval))
             if isinstance(propclass, properties.CodeProperty):
-                for stmt in propval['code_or_block']:
-                    ASTFindReplace({name: new_name}).visit(stmt)
+                if isinstance(propval['code_or_block'], str):
+                    # TODO: C++ AST parsing for replacement?
+                    if name != str(new_name):
+                        warnings.warn(
+                            'Replacement of %s with %s was not made '
+                            'for string tasklet code' % (name, new_name))
+                else:
+                    for stmt in propval['code_or_block']:
+                        ASTFindReplace({name: new_name}).visit(stmt)
 
     # Replace in memlets
     for edge in subgraph.edges():

@@ -49,7 +49,7 @@ class TargetCodeGenerator(object):
                                     to the current location (call-site)
                                     in the code.
         """
-        raise NotImplementedError('Abstract class')
+        pass
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
                        callsite_stream):
