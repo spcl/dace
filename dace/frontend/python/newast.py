@@ -1812,6 +1812,13 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
+        # Try to replace transients with their python-assigned names
+        for pyname, arrname in self.variables.items():
+            if arrname in self.sdfg.arrays:
+                if self.sdfg.arrays[arrname].transient:
+                    if pyname not in self.sdfg.arrays:
+                        self.sdfg.replace(arrname, pyname)
+
         return self.sdfg, self.inputs, self.outputs
 
     @property
