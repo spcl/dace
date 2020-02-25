@@ -1279,6 +1279,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         seen = set(nested_transient_set)
         kernel_args_call_host = []
+
         for is_output, argname, arg in parameters:
             # Only pass each array once from the host code
             if arg in seen:
@@ -1301,7 +1302,6 @@ class FPGACodeGen(TargetCodeGenerator):
                               symbol_sigs)
 
         host_function_name = "__dace_runkernel_{}".format(kernel_name)
-
         # Write OpenCL host function
         host_code_stream.write(
             """\
@@ -1312,6 +1312,7 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         header_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
             host_function_name, ", ".join(kernel_args_opencl)))
 
+        # callsite represents the main CPU program for Intel FPGA
         callsite_stream.write("{}({});".format(
             host_function_name, ", ".join(kernel_args_call_host)))
 

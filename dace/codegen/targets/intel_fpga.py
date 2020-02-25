@@ -1141,6 +1141,9 @@ __kernel void \\
                     if not data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
                         callsite_stream.write("#undef {}".format(memlet_name),
                                               sdfg, sdfg.node_id(dfg), node)
+                    elif defined_type == DefinedType.RemoteStream:
+                        callsite_stream.write("#undef {}".format(memlet_name),
+                                              sdfg, sdfg.node_id(dfg), node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):
