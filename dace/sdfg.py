@@ -3310,8 +3310,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise TypeError("Expected Memlet, got: {}".format(
                 type(memlet).__name__))
 
-        sdict = self.scope_dict(validate=False)
-        if scope_contains_scope(sdict, src_node, dst_node):
+        if any(isinstance(n, nd.EntryNode) for n in path_nodes):
             propagate_forward = False
         else:  # dst node's scope is higher than src node, propagate out
             propagate_forward = True
