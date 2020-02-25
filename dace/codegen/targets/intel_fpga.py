@@ -99,10 +99,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # TODO: SMI names the produced binary according to the kernel name, that we don't have here
         # This could be useful when different programs will be generated from the same SDFG
         # For the moment being, emulation binary will have the same name of the program (handled in CMake).
-        # We use the one produced for rank_0
-
+        # The sdfg symbols smi_rank and smi_num_ranks, will be used to load the proper bitstream
         if self.enable_smi:
-            kernel_file_name = "DACE_BINARY_DIR \"/emulator_0/{}".format(
+            kernel_file_name = "std::string kernel_path = DACE_BINARY_DIR \"/emulator_\"+std::to_string(smi_rank)+\"/{}".format(
                 self._program_name)
         else:
             kernel_file_name = "DACE_BINARY_DIR \"/{}".format(
@@ -146,8 +145,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                    CHECK_MPI(MPI_Init(NULL, NULL));
                    CHECK_MPI(MPI_Comm_size(MPI_COMM_WORLD, &__dace_comm_size));
                    CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
-
-                   hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});                   
+                   {kernel_file_name};
+                   hlslib::ocl::GlobalContext().MakeProgram(kernel_path);                   
                    return 0;
                }}
 
@@ -483,20 +482,22 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         kernel_stream_header.write("\n", sdfg)
 
+
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
          nested_global_transients) = self.make_parameters(
              sdfg, state, subgraphs)
 
-        # Scalar parameters are never output
-        sc_parameters = [(False, pname, param)
-                         for pname, param in scalar_parameters]
+
+
+
+
 
         host_code_header_stream = CodeIOStream()
         host_code_body_stream = CodeIOStream()
 
         # Emit allocations of inter-kernel memories
-        # TODO: handle remote stream here
+        # Remote stream are handled here
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                callsite_stream,
@@ -507,6 +508,28 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         kernel_stream_body.write("\n")
 
+        # TODO: fin a more stable solution for this. Currently it is an hack
+        # If SMI is used, for the sake of easy emulation we add two additional parameters for indicating
+        # the rank number that we want to execute and the total number of ranks. This will allow us to load
+        # the correct bitstream and routing tables
+
+        # One solution would be to add this to the SDFG symbols, but this is will cause all the kernels to have additional
+        # parameters
+        # if self.enable_smi:
+        # NOTE: we know only after the dispatch of inter-kernel memories that this program uses SMI
+        #     sdfg.add_symbol("smi_rank", int)
+        #     sdfg.add_symbol("smi_num_ranks", int)
+        #     (global_data_parameters, top_level_local_data, subgraph_parameters,
+        #     scalar_parameters, symbol_parameters,
+        #     nested_global_transients) = self.make_parameters(
+        #            sdfg, state, subgraphs)
+
+        # Another option could be to impose specializationm where we define the two used variables smi_rank and smi_num_ranks
+
+        # Scalar parameters are never output
+        sc_parameters = [(False, pname, param)
+                         for pname, param in scalar_parameters]
+
         # Generate host code
         self.generate_host_function_boilerplate(
             sdfg, state, kernel_name, global_data_parameters + sc_parameters,
@@ -514,12 +537,13 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             function_stream, callsite_stream)
 
         # Generate SMI init if needed
-        # TODO: we should sinchronize across different programs in the case of separate SDFGs (needed if we have one
+        # TODO: we should synchronize across different programs in the case of separate SDFGs (needed if we have one
         # program per SDFG)
         if self.enable_smi:
+            host_code_body_stream.write("std::vector < hlslib::ocl::Buffer < char, hlslib::ocl::Access::read >> buffers;")
             host_code_body_stream.write(
-                "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
-                "hlslib::ocl::GlobalContext(), program);".format(kernel_name))
+                "SMI_Comm smi_comm = SmiInit_{}(smi_rank, smi_num_ranks, ROUTING_DIR, "
+                "hlslib::ocl::GlobalContext(), program, buffers);".format(kernel_name))
 
         self.generate_host_function_prologue(sdfg, state,
                                              host_code_body_stream)
@@ -611,7 +635,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.signature(True, name=pname))
                 kernel_args_call.append(pname)
-
         kernel_args_opencl += symbol_sigs
         kernel_args_host += symbol_sigs
         kernel_args_call += symbol_names
@@ -983,6 +1006,8 @@ __kernel void \\
                     result += "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], rcv_rank, port)
+
+                    # add this as defined vars of type Remote Stream, so that we will no further open it in the following
                     self._dispatcher.defined_vars.add(connector,
                                                       DefinedType.RemoteStream)
                 elif not is_output and isinstance(
@@ -1006,6 +1031,7 @@ __kernel void \\
                     result += "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);".format(
                         connector, memlet.num_accesses,
                         TYPE_TO_SMI_TYPE[memlet_type], snd_rank, port)
+                    # add this as defined vars of type Remote Stream, so that we will no further open it in the following
                     self._dispatcher.defined_vars.add(connector,
                                                       DefinedType.RemoteStream)
                 else:
@@ -1128,7 +1154,7 @@ __kernel void \\
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
             memlet = edge.data
             data_name = memlet.data
-
+            defined_type = self._dispatcher.defined_vars.get(memlet.data)
             if edge.src == node:
                 memlet_name = edge.src_conn
             elif edge.dst == node:
