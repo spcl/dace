@@ -71,8 +71,8 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
-    data_in_subgraph = set(
-        n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
+    data_in_subgraph = set(n.data for n in subgraph.nodes()
+                           if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
     other_nodes = set(
         n.data for s in sdfg.nodes() for n in s.nodes()
@@ -230,3 +230,51 @@ def nest_state_subgraph(sdfg: SDFG,
         del sdfg.arrays[transient]
 
     return nested_sdfg
+
+
+def unsqueeze_memlet(nsdfg: SDFG, internal_memlet: Memlet,
+                     external_memlet: Memlet):
+    """ Unsqueezes and offsets a memlet, as per the semantics of nested
+        SDFGs.
+        :param nsdfg: Nested SDFG.
+        :param internal_memlet: The internal memlet (inside nested SDFG)
+                                before modification.
+        :param external_memlet: The external memlet before modification.
+        :return: Offset Memlet to set on the resulting graph.
+    """
+    result = copy.deepcopy(internal_memlet)
+    result.data = external_memlet.data
+
+    # Offset the new memlet according to the internal offset of the array
+    internal_offset = nsdfg.arrays[internal_memlet.data].offset
+    result.subset.offset(internal_offset, False)
+
+    shape = external_memlet.subset.size()
+    if len(internal_memlet.subset) < len(external_memlet.subset):
+        ones = [i for i, d in enumerate(shape) if d == 1]
+
+        # Special case: If internal memlet is one element and the top
+        # memlet uses all its dimensions, ignore the internal element
+        # TODO: There must be a better solution
+        if (len(internal_memlet.subset) == 1
+                and ones == list(range(len(shape)))
+                and (internal_memlet.subset[0] == (0, 0, 1)
+                     or internal_memlet.subset[0] == 0)):
+            to_unsqueeze = ones[1:]
+        else:
+            to_unsqueeze = ones
+
+        result.subset.unsqueeze(to_unsqueeze)
+    elif len(internal_memlet.subset) > len(external_memlet.subset):
+        raise ValueError('Unexpected extra dimensions in internal memlet '
+                         'while un-squeezing memlet.\nExternal memlet: %s\n'
+                         'Internal memlet: %s' %
+                         (external_memlet, internal_memlet))
+
+    result.subset.offset(external_memlet.subset, False)
+
+    # TODO: Offset rest of memlet according to other_subset
+    if external_memlet.other_subset is not None:
+        raise NotImplementedError
+
+    return result
