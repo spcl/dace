@@ -42,7 +42,7 @@ class MergeArrays(pattern_matching.Transformation):
             return False
 
         # Ensure only arr1's node ID contains incoming edges
-        if graph.in_degree(arr1) == 0 and graph.in_degree(arr2) > 0:
+        if graph.in_degree(arr2) > 0:
             return False
 
         # Ensure arr1 and arr2's node IDs are ordered (avoid duplicates)
@@ -53,9 +53,8 @@ class MergeArrays(pattern_matching.Transformation):
         map = graph.node(candidate[MergeArrays._map_entry])
 
         # If arr1's connector leads directly to map, skip it
-        if all(
-                e.dst_conn and not e.dst_conn.startswith('IN_')
-                for e in graph.edges_between(arr1, map)):
+        if all(e.dst_conn and not e.dst_conn.startswith('IN_')
+               for e in graph.edges_between(arr1, map)):
             return False
 
         if (any(e.dst != map for e in graph.out_edges(arr1))
@@ -113,8 +112,7 @@ class MergeArrays(pattern_matching.Transformation):
         map.out_connectors -= set('OUT_' + c for c in connectors_to_remove)
 
         # Re-propagate memlets
-        map_edge._data = propagate_memlet(
-            dfg_state=graph,
-            memlet=map_edge.data,
-            scope_node=map,
-            union_inner_edges=True)
+        map_edge._data = propagate_memlet(dfg_state=graph,
+                                          memlet=map_edge.data,
+                                          scope_node=map,
+                                          union_inner_edges=True)
