@@ -115,24 +115,26 @@ class StateFusion(pattern_matching.Transformation):
             ]
 
             check_strict = len(first_cc)
-            for cc_output in first_cc_output:
-                for node in cc_output:
-                    if (next((x for x in second_input
-                              if x.label == node.label), None) is not None):
-                        check_strict -= 1
-                        break
+            # for cc_output in first_cc_output:
+            #     for node in cc_output:
+            #         if (next((x for x in second_input
+            #                   if x.label == node.label), None) is not None):
+            #             check_strict -= 1
+            #             break
 
             if check_strict > 0:
                 # Check strict conditions
                 # RW dependency
                 for node in first_input:
-                    if (next((x for x in second_output
-                              if x.label == node.label), None) is not None):
+                    if (next(
+                        (x for x in second_output if x.label == node.label),
+                            None) is not None):
                         return False
                 # WW dependency
                 for node in first_output:
-                    if (next((x for x in second_output
-                              if x.label == node.label), None) is not None):
+                    if (next(
+                        (x for x in second_output if x.label == node.label),
+                            None) is not None):
                         return False
 
         return True
@@ -142,8 +144,8 @@ class StateFusion(pattern_matching.Transformation):
         first_state = graph.nodes()[candidate[StateFusion._first_state]]
         second_state = graph.nodes()[candidate[StateFusion._second_state]]
 
-        return " -> ".join(
-            state.label for state in [first_state, second_state])
+        return " -> ".join(state.label
+                           for state in [first_state, second_state])
 
     def apply(self, sdfg):
         first_state = sdfg.nodes()[self.subgraph[StateFusion._first_state]]
@@ -207,8 +209,8 @@ class StateFusion(pattern_matching.Transformation):
         # Merge common (data) nodes
         for node in first_input:
             try:
-                old_node = next(
-                    x for x in second_input if x.label == node.label)
+                old_node = next(x for x in second_input
+                                if x.label == node.label)
             except StopIteration:
                 continue
             nxutil.change_edge_src(first_state, old_node, node)
@@ -217,8 +219,8 @@ class StateFusion(pattern_matching.Transformation):
             node.access = dtypes.AccessType.ReadWrite
         for node in first_output:
             try:
-                new_node = next(
-                    x for x in second_input if x.label == node.label)
+                new_node = next(x for x in second_input
+                                if x.label == node.label)
             except StopIteration:
                 continue
             nxutil.change_edge_dest(first_state, node, new_node)
