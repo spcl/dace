@@ -977,7 +977,7 @@ def _parse_memlet_subset(array: data.Data,
 
 # Parses a memlet statement
 def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
-                node: MemletType):
+                node: MemletType, subset: subsets.Subset=None):
     das = defined_arrays_and_symbols
     arrname = rname(node)
     if arrname not in das:
@@ -1009,7 +1009,8 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
-    subset = _parse_memlet_subset(array, node, das)
+    if subset is None:
+        subset = _parse_memlet_subset(array, node, das)
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
@@ -1059,7 +1060,7 @@ def _subset_has_indirection(subset):
         if not isinstance(dim, tuple):
             dim = [dim]
         for r in dim:
-            if symbolic.contains_sympy_functions(r):
+            if symbolic.issymbolic(r) and symbolic.contains_sympy_functions(r):
                 return True
     return False
 
@@ -2918,7 +2919,11 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.accesses[(name, rng, 'w')][0]
         elif (name, rng, 'r') in self.accesses:
             return self.accesses[(name, rng, 'r')][0]
-        elif name in self.variables:
+        for k, v in self.accesses.items():
+            n, r, _ = k
+            if name == n and r.covers(rng):
+                return (v[0], v[1], r)
+        if name in self.variables:
             return self.variables[name]
         elif name in self.scope_vars:
             return self._add_access(name, rng, 'r', target, new_name, arr_type)
@@ -3731,6 +3736,9 @@ class ProgramVisitor(ExtNodeVisitor):
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript):
 
+        array = None
+        subset = None
+
         if self.nested:
 
             defined_vars = {**self.variables, **self.scope_vars}
@@ -3749,10 +3757,29 @@ class ProgramVisitor(ExtNodeVisitor):
                 rng = dace.subsets.Range(
                     astutils.subscript_to_slice(true_node, defined_arrays)[1])
 
-                return self._add_read_access(name, rng, node)
+                access =  self._add_read_access(name, rng, node)
+                if isinstance(access, tuple):
+                    # Above range covered by existing access
+                    array = access[0]
+                    arrtype = type(self.sdfg.arrays[array]).__name__
+                    accshape = access[2].size()
+                    accsqzshape = access[1].size()
+                    accidx = 0
+                    covered_range = []
+                    for i, s in enumerate(accshape):
+                        if s == accsqzshape[accidx]:
+                            covered_range.append(rng[i])
+                            accidx += 1
+                            if accidx >= len(accsqzshape):
+                                break
+                    assert(accidx == len(accsqzshape))
+                    subset = subsets.Range(covered_range)
+                else:
+                    return access
 
         # Obtain array
-        array, arrtype = self._gettype(node.value)
+        if array is None:
+            array, arrtype = self._gettype(node.value)
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node,
                                   'Type "%s" cannot be sliced' % arrtype)
@@ -3761,7 +3788,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # expr: MemletExpr = ParseMemlet(self, self.defined, node)
         # TODO: This needs to be formalized better
         node.value = ast.Name(id=array)
-        expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
+        expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node, subset=subset)
         arrobj = self.sdfg.arrays[array]
 
         # TODO: Check dimensionality of access and extend as necessary
