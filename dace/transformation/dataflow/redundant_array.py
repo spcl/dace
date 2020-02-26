@@ -97,10 +97,10 @@ class RedundantArray(pm.Transformation):
             RedundantArray._arrays_removed += 1
 
 
-class RedundantArrayInverse(pm.Transformation):
+class RedundantSecondArray(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied from and to (from another array),
-        but never used anywhere else. This transformation remove the second
+        but never used anywhere else. This transformation removes the second
         array. """
 
     _arrays_removed = 0
@@ -110,14 +110,14 @@ class RedundantArrayInverse(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArray._in_array,
-                                   RedundantArray._out_array)
+            nxutil.node_path_graph(RedundantSecondArray._in_array,
+                                   RedundantSecondArray._out_array)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        in_array = graph.nodes()[candidate[RedundantArray._in_array]]
-        out_array = graph.nodes()[candidate[RedundantArray._out_array]]
+        in_array = graph.nodes()[candidate[RedundantSecondArray._in_array]]
+        out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
 
         # Ensure in degree is one (only one source, which is in_array)
         if graph.in_degree(out_array) != 1:
@@ -153,7 +153,7 @@ class RedundantArrayInverse(pm.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantArray._out_array]]
+        out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
 
         return "Remove " + str(out_array)
 
@@ -162,8 +162,8 @@ class RedundantArrayInverse(pm.Transformation):
             return graph.nodes()[self.subgraph[nname]]
 
         graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantArray._in_array)
-        out_array = gnode(RedundantArray._out_array)
+        in_array = gnode(RedundantSecondArray._in_array)
+        out_array = gnode(RedundantSecondArray._out_array)
         memlet = graph.edges_between(in_array, out_array)[0].data
         if memlet.data == in_array.data:
             subset = memlet.subset
@@ -191,13 +191,13 @@ class RedundantArrayInverse(pm.Transformation):
             graph.remove_edge(e)
             graph.add_edge(in_array, e.src_conn, e.dst, e.dst_conn, e.data)
 
-        # Finally, remove in_array node
+        # Finally, remove out_array node
         graph.remove_node(out_array)
         # TODO: Should the array be removed from the SDFG?
-        # del sdfg.arrays[in_array]
+        # del sdfg.arrays[out_array]
         if Config.get_bool("debugprint"):
-            RedundantArray._arrays_removed += 1
+            RedundantSecondArray._arrays_removed += 1
 
 
 pm.Transformation.register_pattern(RedundantArray)
-pm.Transformation.register_pattern(RedundantArrayInverse)
+pm.Transformation.register_pattern(RedundantSecondArray)
