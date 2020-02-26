@@ -9,8 +9,7 @@ def oneret(A: dace.float64[20]):
 
 def test_oneret():
     A = np.random.rand(20)
-    result = np.random.rand(20)
-    oneret(A, __return=result)
+    result = oneret(A)
     assert np.allclose(result, A*2)
 
 
@@ -21,9 +20,7 @@ def multiret(A: dace.float64[20]):
 
 def test_multiret():
     A = np.random.rand(20)
-    result = [np.random.rand(20) for i in range(3)]
-    multiret(A, __return_0=result[0], __return_1=result[1],
-             __return_2=result[2])
+    result = multiret(A)
     assert np.allclose(result[0], A * 3)
     assert np.allclose(result[1], A * 4)
     assert np.allclose(result[2], A)
@@ -36,12 +33,20 @@ def nested_ret(A: dace.float64[20]):
 
 def test_nested_ret():
     A = np.random.rand(20)
-    result = np.random.rand(20)
-    nested_ret(A, __return=result)
+    result = nested_ret(A)
     assert np.allclose(result, A*2 + 1)
+
+
+def test_return_override():
+    A = np.random.rand(20)
+    result = np.random.rand(20)
+    result2 = oneret(A, __return=result)
+    assert np.allclose(result, A * 2)
+    assert not np.allclose(result2, A * 2)
 
 
 if __name__ == '__main__':
     test_oneret()
     test_multiret()
     test_nested_ret()
+    test_return_override()
