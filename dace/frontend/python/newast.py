@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Tuple, Union, Callable
 import warnings
 
 import dace
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_impl
 from dace.frontend.common import op_repository as oprepo
@@ -3440,9 +3440,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 if arrname.startswith('__return'):
                     # Add a transient to the current SDFG
                     new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
-                    new_arrname = self.sdfg.add_datadesc(new_arrname, arr,
+                    newarr = copy.deepcopy(arr)
+                    newarr.transient = True
+
+                    # Substitute symbol mapping to get actual shape/strides
+                    if mapping is not None:
+                        for sym, newsym in mapping.items():
+                            sd.replace_properties(newarr, sym, newsym)
+
+                    new_arrname = self.sdfg.add_datadesc(new_arrname, newarr,
                                                          find_new_name=True)
-                    self.sdfg.arrays[new_arrname].transient = True
 
                     # Create an output entry for the connectors
                     outputs[arrname] = dace.Memlet.from_array(new_arrname, arr)
