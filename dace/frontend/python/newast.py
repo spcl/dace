@@ -1820,6 +1820,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
 
+        # Return values become non-transient (accessible by the outside)
+        for arrname, arr in self.sdfg.arrays.items():
+            if arrname.startswith('__return'):
+                arr.transient = False
+                self.outputs[arrname] = Memlet.from_array(arrname, arr)
+
         return self.sdfg, self.inputs, self.outputs
 
     @property
@@ -2958,7 +2964,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Get targets (elts) and results
         elts = None
         results = None
-        if not isinstance(node_target, ast.Tuple):
+        if not isinstance(node_target, (ast.Tuple, ast.List)):
             elts = [node_target]
             if isinstance(node.value, ast.Num):
                 results = [self._convert_num_to_array(node.value)]
@@ -3531,14 +3537,18 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
-        if isinstance(node, (ast.Tuple, ast.List)):
-            for elt in node.elts:
-                # arrays['return'] = this
-                pass
+        # Modify node value to become an expression
+        new_node = ast.copy_location(ast.Expr(value=node.value), node)
+
+        # Return values can either be tuples or a single object
+        if isinstance(node.value, (ast.Tuple, ast.List)):
+            ast_tuple = ast.copy_location(ast.parse('(%s,)' % ','.join(
+                '__return_%d' % i for i in range(
+                    len(node.value.elts)))).body[0].value, node)
+            self._visit_assign(new_node, ast_tuple, None)
         else:
-            pass
-            # arrays['return'] = this
-        pass
+            ast_name = ast.copy_location(ast.Name(id='__return'), node)
+            self._visit_assign(new_node, ast_name, None)
 
     def visit_With(self, node, is_async=False):
         # "with dace.tasklet" syntax
