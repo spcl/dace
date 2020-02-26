@@ -41,8 +41,8 @@ if __name__ == "__main__":
     histogram(A, hist)
 
     if dace.Config.get_bool('profiling'):
-        dace.timethis('histogram', 'numpy', dace.eval(H * W), np.histogram, A,
-                      BINS)
+        dace.timethis('histogram', 'numpy', (H.get() * W.get()), np.histogram,
+                      A, BINS)
 
     diff = np.linalg.norm(
         np.histogram(A, bins=BINS, range=(0.0, 1.0))[0][1:-1] - hist[1:-1])

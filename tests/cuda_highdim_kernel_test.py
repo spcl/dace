@@ -29,7 +29,7 @@ def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U],
 def makendrange(*args):
     result = []
     for i in range(0, len(args), 2):
-        result.append((dace.eval(args[i]), dace.eval(args[i + 1] - 1), 1))
+        result.append((args[i], args[i + 1] - 1, 1))
     return result
 
 
@@ -56,13 +56,17 @@ if __name__ == '__main__':
 
     # Equivalent python code
     for i, j, k, l in dace.ndrange(
-            makendrange(5, N - 5, 0, M, 7, K - 1, 0, L)):
+            makendrange(5,
+                        N.get() - 5, 0, M.get(), 7,
+                        K.get() - 1, 0, L.get())):
         for a, b, c, d, e in dace.ndrange(
-                makendrange(0, X, 0, Y, 1, Z, 2, W - 2, 0, U)):
+                makendrange(0, X.get(), 0, Y.get(), 1, Z.get(), 2,
+                            W.get() - 2, 0, U.get())):
             B_regression[i, j, k, l] += A[i, j, k, l, a, b, c, d, e]
 
     highdim(A, B)
 
-    diff = np.linalg.norm(B_regression - B) / dace.eval(N * M * K * L)
+    diff = np.linalg.norm(B_regression - B) / (
+        N.get() * M.get() * K.get() * L.get())
     print('Difference:', diff)
     exit(0 if diff <= 1e-5 else 1)

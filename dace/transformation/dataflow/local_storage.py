@@ -5,7 +5,7 @@ import copy
 import warnings
 from abc import ABC
 
-from dace import symbolic, subsets, sdfg as sd
+from dace import registry, symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
@@ -112,6 +112,7 @@ class LocalStorage(pattern_matching.Transformation, ABC):
             edge.data.data = new_data
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class InLocalStorage(LocalStorage):
     """ Implements the InLocalStorage transformation, which adds a transient
@@ -126,6 +127,7 @@ class InLocalStorage(LocalStorage):
                 and isinstance(node_b, nodes.EntryNode))
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class OutLocalStorage(LocalStorage):
     """ Implements the OutLocalStorage transformation, which adds a transient
@@ -145,7 +147,3 @@ class OutLocalStorage(LocalStorage):
 
         return (isinstance(node_a, nodes.ExitNode)
                 and isinstance(node_b, nodes.ExitNode))
-
-
-pattern_matching.Transformation.register_pattern(InLocalStorage)
-pattern_matching.Transformation.register_pattern(OutLocalStorage)

@@ -31,7 +31,6 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     C = np.zeros([size, size], dtype=np.float64)
 
     sdfg: dace.SDFG = slowmm.to_sdfg()
-    sdfg._name = 'slowmm_%s' % instrumentation.name
     sdfg.apply_strict_transformations()
 
     # Set instrumentation both on the state and the map
@@ -41,7 +40,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
             state.instrument = instrumentation
 
     if instrumentation == dace.InstrumentationType.CUDA_Events:
-        sdfg.apply_transformations(GPUTransformSDFG, apply_once=True)
+        sdfg.apply_transformations(GPUTransformSDFG)
 
     sdfg(A=A, B=B, C=C, N=N)
 

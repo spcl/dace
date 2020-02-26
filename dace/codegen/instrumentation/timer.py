@@ -1,8 +1,9 @@
-from dace import dtypes
+from dace import dtypes, registry
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 
 
+@registry.autoregister_params(type=dtypes.InstrumentationType.Timer)
 class TimerProvider(InstrumentationProvider):
     """ Timing instrumentation that reports wall-clock time directly after
         timed execution is complete. """

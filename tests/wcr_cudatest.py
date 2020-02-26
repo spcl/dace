@@ -175,7 +175,7 @@ def create_test_sdfg():
 if __name__ == '__main__':
     my_max_sdfg = create_test_sdfg()
     my_max_sdfg.validate()
-    my_max_sdfg.apply_transformations(GPUTransformSDFG, apply_once=True)
+    my_max_sdfg.apply_transformations(GPUTransformSDFG)
 
     BETA = np.random.rand(10).astype(np.float32)
     BETA_MAX = np.zeros(1).astype(np.float32)

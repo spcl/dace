@@ -15,6 +15,8 @@ from dace import SDFG, SDFGState
 from dace.graph import labeling
 from dace.graph.nodes import Tasklet, NestedSDFG
 from dace.frontend.tensorflow.winograd import winograd_convolution
+from dace.frontend.tensorflow.transformations.redundant_array import (
+    TensorflowRedundantArray)
 
 try:
     import tensorflow as tf
@@ -518,9 +520,8 @@ class TFSession:
                 #        sdfg_args[aname][:] = arg
 
             if patterns and len(patterns) > 0:
-                for _pattern in patterns:
-                    self.graph.apply_transformations(_pattern, validate,
-                                                     strict)
+                self.graph.apply_transformations(
+                    patterns, validate=validate, strict=strict)
             self.graph.draw_to_file()
             compiled_sdfg = self.graph.compile(optimizer=False)
             sdfg_args.update(self.callbackFunctionDict)

@@ -49,7 +49,7 @@ if __name__ == "__main__":
         s_exp += x
     print(s)
     print(s_exp)
-    diff = np.linalg.norm(s_exp - s) / float(dace.eval(N.get()))
+    diff = np.linalg.norm(s_exp - s) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

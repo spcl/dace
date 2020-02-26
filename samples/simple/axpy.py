@@ -48,12 +48,12 @@ if __name__ == "__main__":
     c_axpy = sp.linalg.blas.get_blas_funcs(
         'axpy', arrays=(X_regression, Y_regression))
     if dace.Config.get_bool('profiling'):
-        dace.timethis('axpy', 'BLAS', dace.eval(2 * N), c_axpy, X_regression,
+        dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
                       Y_regression, N.get(), A_regression)
     else:
         c_axpy(X_regression, Y_regression, N.get(), A_regression)
 
-    diff = np.linalg.norm(Y_regression - Y) / float(dace.eval(N))
+    diff = np.linalg.norm(Y_regression - Y) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

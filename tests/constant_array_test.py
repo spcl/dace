@@ -36,7 +36,7 @@ if __name__ == "__main__":
     A[:] = dace.float32(0)
     B[:] = dace.float32(0)
     A[1:N.get() - 1, 1:N.get() - 1] = np.random.rand(
-        dace.eval(N - 2), dace.eval(N - 2)).astype(dace.float32.type)
+        (N.get() - 2), (N.get() - 2)).astype(dace.float32.type)
     regression = np.ndarray([N.get() - 2, N.get() - 2], dtype=np.float32)
     regression[:] = A[1:N.get() - 1, 1:N.get() - 1]
 
@@ -53,8 +53,8 @@ if __name__ == "__main__":
     regression = ndimage.convolve(
         regression, KERNEL, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(B[1:N.get() - 1, 1:N.get() - 1] -
-                              regression) / dace.eval((N - 2) * (N - 2))
+    residual = np.linalg.norm(B[1:N.get() - 1, 1:N.get() - 1] - regression) / (
+        (N.get() - 2)**2)
     print("Residual:", residual)
 
     #print(A.view(type=np.ndarray))

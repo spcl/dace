@@ -1,18 +1,12 @@
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
-import copy
-import itertools
-
-from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, symbolic
-from dace.config import Config
+from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.graph import nodes, nxutil, edges as ed
-from dace.transformation import pattern_matching, optimizer
+from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 
-from dace.transformation.dataflow import RedundantArray
-from dace.transformation.interstate import StateFusion
 
-
+@registry.autoregister
 @make_properties
 class GPUTransformSDFG(pattern_matching.Transformation):
     """ Implements the GPUTransformSDFG transformation.
@@ -48,13 +42,19 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         default=True)
 
     exclude_copyin = Property(
-        desc="Exclude these arrays from being copied into the device"
+        desc="Exclude these arrays from being copied into the device "
+        "(comma-separated)",
+        dtype=str,
+        default='')
+
+    exclude_tasklets = Property(
+        desc="Exclude these tasklets from being processed as CPU tasklets "
         "(comma-separated)",
         dtype=str,
         default='')
 
     exclude_copyout = Property(
-        desc="Exclude these arrays from being copied out of the device"
+        desc="Exclude these arrays from being copied out of the device "
         "(comma-separated)",
         dtype=str,
         default='')
@@ -252,6 +252,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         for state, gcodes in zip(sdfg.nodes(), global_code_nodes):
             for gcode in gcodes:
+                if gcode.label in self.exclude_tasklets.split(','):
+                    continue
                 # Create map and connectors
                 me, mx = state.add_map(
                     gcode.label + '_gmap', {gcode.label + '__gmapi': '0:1'},
@@ -337,6 +339,3 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         # Apply strict state fusions greedily.
         sdfg.apply_strict_transformations()
-
-
-pattern_matching.Transformation.register_stateflow_pattern(GPUTransformSDFG)

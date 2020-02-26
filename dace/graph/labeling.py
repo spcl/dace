@@ -7,34 +7,16 @@ import functools
 import sympy
 import warnings
 
-from dace import data, subsets, symbolic, dtypes
+from dace import registry, subsets, symbolic, dtypes
 from dace.memlet import EmptyMemlet, Memlet
 from dace.graph import nodes
 
 
+@registry.make_registry
 class MemletPattern(object):
-    """ A pattern match on a memlet subset that can be used for propagation. 
     """
-    s_patterns = []
-    s_dependencies = {}
-
-    @staticmethod
-    def patterns():
-        return [p() for p in MemletPattern.s_patterns]
-
-    @staticmethod
-    def register_pattern(clazz, depends=None):
-        if not issubclass(clazz, MemletPattern):
-            raise TypeError
-        MemletPattern.s_patterns.append(clazz)
-
-    @staticmethod
-    def unregister_pattern(clazz):
-        if not issubclass(clazz, MemletPattern):
-            raise TypeError
-        MemletPattern.s_patterns.remove(clazz)
-
-    ####################################################
+    A pattern match on a memlet subset that can be used for propagation.
+    """
 
     def match(self, expressions, variable_context, node_range, orig_edges):
         raise NotImplementedError
@@ -43,21 +25,10 @@ class MemletPattern(object):
         raise NotImplementedError
 
 
+@registry.make_registry
 class SeparableMemletPattern(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
-
-    s_smpatterns = []
-
-    @staticmethod
-    def register_pattern(cls):
-        if not issubclass(cls, SeparableMemletPattern): raise TypeError
-        if cls not in SeparableMemletPattern.s_smpatterns:
-            SeparableMemletPattern.s_smpatterns.append(cls)
-
-    @staticmethod
-    def unregister_pattern(cls):
-        SeparableMemletPattern.s_smpatterns.remove(cls)
 
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
@@ -67,6 +38,7 @@ class SeparableMemletPattern(object):
         raise NotImplementedError
 
 
+@registry.autoregister
 class SeparableMemlet(MemletPattern):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
 
@@ -99,7 +71,7 @@ class SeparableMemlet(MemletPattern):
                 else:
                     dexprs.append(expr[dim])
 
-            for pattern_class in SeparableMemletPattern.s_smpatterns:
+            for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
                 if smpattern.match(dexprs, variable_context, overapprox_range,
                                    orig_edges, dim, data_dims):
@@ -140,9 +112,7 @@ class SeparableMemlet(MemletPattern):
         return subsets.Range(result)
 
 
-MemletPattern.register_pattern(SeparableMemlet)
-
-
+@registry.autoregister
 class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
         of the form `a * {index} + b`.
@@ -330,9 +300,7 @@ class AffineSMemlet(SeparableMemletPattern):
         return (result_begin, result_end, result_skip, result_tile)
 
 
-SeparableMemletPattern.register_pattern(AffineSMemlet)
-
-
+@registry.autoregister
 class ModuloSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches modulo expressions, i.e.,
         of the form `f(x) % N`.
@@ -389,9 +357,7 @@ class ModuloSMemlet(SeparableMemletPattern):
         return se_range
 
 
-SeparableMemletPattern.register_pattern(ModuloSMemlet)
-
-
+@registry.autoregister
 class ConstantSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
@@ -437,9 +403,7 @@ class ConstantSMemlet(SeparableMemletPattern):
         return (dim_exprs[0], dim_exprs[0], 1)
 
 
-SeparableMemletPattern.register_pattern(ConstantSMemlet)
-
-
+@registry.autoregister
 class GenericSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that detects any expression, and propagates 
         interval bounds. Used as a last resort. """
@@ -530,9 +494,6 @@ class GenericSMemlet(SeparableMemletPattern):
         return (result_begin, result_end, result_skip, result_tile)
 
 
-SeparableMemletPattern.register_pattern(GenericSMemlet)
-
-
 def _subexpr(dexpr, repldict):
     if isinstance(dexpr, tuple):
         return tuple(_subexpr(d, repldict) for d in dexpr)
@@ -542,6 +503,7 @@ def _subexpr(dexpr, repldict):
         return dexpr.subs(repldict)
 
 
+@registry.autoregister
 class ConstantRangeMemlet(MemletPattern):
     """ Memlet pattern that matches arbitrary expressions with constant range.
     """
@@ -582,10 +544,6 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-# ConstantRangeMemlet is slow, so it should be evaluated last
-MemletPattern.register_pattern(ConstantRangeMemlet)
-
-
 def propagate_labels_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         @note: This is an in-place operation on the SDFG.
@@ -600,8 +558,6 @@ def _propagate_labels(g, sdfg):
         :param sdfg: The SDFG in which the state is situated.
         @note: This is an in-place operation on the SDFG state.
     """
-    patterns = MemletPattern.patterns()
-
     # Algorithm:
     # 1. Start propagating information from tasklets outwards (their edges
     #    are hardcoded).
@@ -750,7 +706,8 @@ def propagate_memlet(dfg_state,
         new_subset = None
         for md in aggdata:
             tmp_subset = None
-            for pattern in MemletPattern.patterns():
+            for pclass in MemletPattern.extensions():
+                pattern = pclass()
                 if pattern.match([md.subset], variable_context, mapnode.range,
                                  [md]):
                     tmp_subset = pattern.propagate(arr, [md.subset],

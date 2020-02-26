@@ -1,9 +1,10 @@
 import ast
 import sympy
 import pickle
+from typing import Dict, Optional, Union
+import warnings
+import numpy
 
-from sympy import Sum, Product, log, floor, ceiling
-import sympy as functions
 from sympy.abc import _clash
 from sympy.printing.str import StrPrinter
 
@@ -17,28 +18,6 @@ class symbol(sympy.Symbol):
         information. """
 
     s_currentsymbol = 0
-    s_values = {}
-    s_types = {}
-    s_constraints = {}
-
-    @staticmethod
-    def erase_symbols(symlist):
-        for sym in symlist:
-            symbol.erase(sym)
-
-    @staticmethod
-    def erase(sym):
-        del symbol.s_values[sym]
-        del symbol.s_types[sym]
-        del symbol.s_constraints[sym]
-
-    @staticmethod
-    def erase_all():
-        """ Reset symbol state. """
-        symbol.s_currentsymbol = 0
-        symbol.s_values = {}
-        symbol.s_types = {}
-        symbol.s_constraints = {}
 
     def __new__(cls,
                 name=None,
@@ -56,61 +35,52 @@ class symbol(sympy.Symbol):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
         if 'integer' in assumptions or 'int' not in str(dtype):
-            self = sympy.Symbol.__new__(cls, name, **assumptions)
+            # Using __xnew__ as the regular __new__ is cached, which leads
+            # to modifying different references of symbols with the same name.
+            self = sympy.Symbol.__xnew__(cls, name, **assumptions)
         else:
-            self = sympy.Symbol.__new__(cls, name, integer=True, **assumptions)
+            self = sympy.Symbol.__xnew__(
+                cls, name, integer=True, **assumptions)
 
-        if name not in symbol.s_types:
-            symbol.s_values[name] = None
-            symbol.s_constraints[name] = []
-            symbol.s_types[name] = dtype
-        else:
-            if override_dtype:
-                symbol.s_types[name] = dtype
-            elif dtype != DEFAULT_SYMBOL_TYPE and dtype != symbol.s_types[name]:
-                raise TypeError('Type mismatch for existing symbol "%s" (%s) '
-                                'and new type %s' %
-                                (name, str(symbol.s_types[name]), str(dtype)))
-
-        # Arrays to update when value is set
-        self._arrays_to_update = []
-
+        self.dtype = dtype
+        self._constraints = []
+        self.value = None
         return self
 
-    @staticmethod
-    def from_name(name, **kwargs):
-        if name in symbol.s_types:
-            return symbol(name, symbol.s_types[name], **kwargs)
-        return symbol(name, **kwargs)
-
     def set(self, value):
+        warnings.warn('symbol.set is deprecated, use keyword arguments',
+                      DeprecationWarning)
         if value is not None:
             # First, check constraints
             self.check_constraints(value)
 
-        symbol.s_values[self.name] = symbol.s_types[self.name](value)
+        self.value = self.dtype(value)
 
-        for arr in self._arrays_to_update:
-            arr.update_resolved_symbol(self)
-
-    def reset(self):
-        self.set(None)
+    def __getstate__(self):
+        return dict(
+            super().__getstate__(), **{
+                'value': self.value,
+                'dtype': self.dtype,
+                '_constraints': self._constraints
+            })
 
     def is_initialized(self):
-        return symbol.s_values[self.name] is not None
+        return self.value is not None
 
     def get(self):
-        if symbol.s_values[self.name] is None:
+        warnings.warn('symbol.get is deprecated, use keyword arguments',
+                      DeprecationWarning)
+        if self.value is None:
             raise UnboundLocalError('Uninitialized symbol value for \'' +
                                     self.name + '\'')
-        return symbol.s_values[self.name]
+        return self.value
 
     def set_constraints(self, constraint_list):
         try:
             iter(constraint_list)
-            symbol.s_constraints[self.name] = constraint_list
+            self._constraints = constraint_list
         except TypeError:  # constraint_list is not iterable
-            symbol.s_constraints[self.name] = [constraint_list]
+            self._constraints = [constraint_list]
 
         # Check for the new constraints and reset symbol value if necessary
         if symbol.s_values[self.name] is not None:
@@ -137,15 +107,11 @@ class symbol(sympy.Symbol):
 
     @property
     def constraints(self):
-        return symbol.s_constraints[self.name]
-
-    @property
-    def dtype(self):
-        return symbol.s_types[self.name]
+        return self._constraints
 
     def check_constraints(self, value):
         fail = None
-        for constraint in symbol.s_constraints[self.name]:
+        for constraint in self.constraints:
             try:
                 eval_cons = constraint.subs({self: value})
                 if not eval_cons:
@@ -161,16 +127,16 @@ class symbol(sympy.Symbol):
                 (str(value), str(fail), self.name))
 
     def get_or_return(self, uninitialized_ret):
-        if symbol.s_values[self.name] is None:
-            return uninitialized_ret
-        return symbol.s_values[self.name]
+        return self.value or uninitialized_ret
 
 
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
 
-    def __init__(self, main_expr: str, approx_expr: str = None):
+    def __init__(self,
+                 main_expr: Union[str, 'SymExpr'],
+                 approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
             self._approx_expr = self._main_expr
@@ -281,49 +247,6 @@ def symtype(expr):
                 [str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
 
 
-def eval(expr,
-         uninitialized_value=None,
-         keep_uninitialized=False,
-         constants=None):
-    """ Evaluates a complex expression with symbols, replacing all
-        symbols with their values. """
-    constants = constants or {}
-    if isinstance(expr, SymExpr):
-        return eval(expr.expr, uninitialized_value, keep_uninitialized)
-    if not isinstance(expr, sympy.Expr):
-        return expr
-
-    result = expr
-    if uninitialized_value is None:
-        for atom in expr.atoms():
-            if isinstance(atom, symbol):
-                if atom.name in constants:
-                    result = result.replace(atom, constants[atom.name])
-                else:
-                    try:
-                        result = result.replace(atom, atom.get())
-                    except (AttributeError, TypeError, ValueError):
-                        if keep_uninitialized: pass
-                        else: raise
-    else:
-        for atom in expr.atoms():
-            if isinstance(atom, symbol):
-                if atom.name in constants:
-                    result = result.replace(atom, constants[atom.name])
-                else:
-                    result = result.replace(
-                        atom, atom.get_or_return(uninitialized_value))
-
-    # TODO: Use symbol dtype here
-
-    if isinstance(result, sympy.Integer):
-        return int(sympy.N(result))
-    elif isinstance(result, sympy.Float):
-        return float(sympy.N(result))
-
-    return sympy.N(result)
-
-
 def symlist(values):
     """ Finds symbol dependencies of expressions. """
     result = {}
@@ -345,14 +268,29 @@ def symlist(values):
     return result
 
 
-# TODO: Merge with symlist
-def symbols_in_sympy_expr(expr):
-    """ Returns a list of free symbols in a SymPy Expression. """
-    if not isinstance(expr, sympy.Expr):
-        raise TypeError("Expected sympy.Expr, got: {}".format(
-            type(expr).__name__))
-    symbols = expr.free_symbols
-    return map(str, symbols)
+def evaluate(expr: Union[sympy.Basic, int, float],
+             symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
+        Union[int, float, numpy.number]:
+    """
+    Evaluates an expression to a constant based on a mapping from symbols
+    to values.
+    :param expr: The expression to evaluate.
+    :param symbols: A mapping of symbols to their values.
+    :return: A constant value based on ``expr`` and ``symbols``.
+    """
+    if isinstance(expr, SymExpr):
+        return evaluate(expr.expr, symbols)
+    if issymbolic(expr, set(map(str, symbols.keys()))):
+        raise TypeError('Expression cannot be evaluated to a constant')
+    if isinstance(expr, (int, float, numpy.number)):
+        return expr
+
+    # Evaluate all symbols
+    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
+            sval.get() if isinstance(sval, symbol) else sval
+            for sname, sval in symbols.items()}
+
+    return expr.subs(syms)
 
 
 def issymbolic(value, constants=None):
@@ -426,32 +364,6 @@ def symbols_in_ast(tree):
     return dtypes.deduplicate(symbols)
 
 
-def getsymbols(compilation_args):
-    """ Helper function to get symbols from a list of decorator arguments
-        ('@dace.program(...)/sdfg.compile'). """
-    from dace import data
-
-    result = {}
-    for arg in compilation_args:
-        if issymbolic(arg):
-            # If argument is a symbol, we will resolve it on call.
-            # No need for it to be a dependency
-            pass
-        elif isinstance(arg, data.Array):
-            for d in arg.shape:
-                if issymbolic(d):
-                    result.update(symlist(d))
-        else:
-            try:
-                result.update(getattr(
-                    arg,
-                    '_symlist'))  # Add all (not yet added) symbols to result
-            except AttributeError:
-                pass
-
-    return result
-
-
 def symbol_name_or_value(val):
     """ Returns the symbol name if symbol, otherwise the value as a string. """
     if isinstance(val, symbol):
@@ -467,7 +379,7 @@ def sympy_to_dace(exprs, symbol_map=None):
 
     oneelem = False
     try:
-        exprs_iter = iter(exprs)
+        iter(exprs)
     except TypeError:
         oneelem = True
         exprs = [exprs]
@@ -482,8 +394,7 @@ def sympy_to_dace(exprs, symbol_map=None):
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
                         # Symbol is not in map, create a DaCe symbol with same assumptions
-                        repl[atom] = symbol.from_name(atom.name,
-                                                      **atom.assumptions0)
+                        repl[atom] = symbol(atom.name, **atom.assumptions0)
             exprs[i] = expr.subs(repl)
     if oneelem:
         return exprs[0]

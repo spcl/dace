@@ -206,10 +206,10 @@ if __name__ == "__main__":
         H.set(args["H"])
         W.set(args["W"])
         histogram = make_sdfg(True)
-        histogram.specialize()
+        histogram.specialize(dict(H=H, W=W, num_bins=num_bins))
     else:
         histogram = make_sdfg(False)
-        histogram.specialize()
+        histogram.specialize(dict(num_bins=num_bins))
         H.set(args["H"])
         W.set(args["W"])
 
@@ -230,8 +230,8 @@ if __name__ == "__main__":
         histogram(A=A, H=H, W=W, hist=hist)
 
     if dace.Config.get_bool('profiling'):
-        dace.timethis('histogram', 'numpy', dace.eval(H * W), np.histogram, A,
-                      num_bins)
+        dace.timethis('histogram', 'numpy', (H.get() * W.get()), np.histogram,
+                      A, num_bins)
 
     diff = np.linalg.norm(
         np.histogram(A, bins=num_bins.get(), range=(0.0, 1.0))[0][1:-1] -

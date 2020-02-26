@@ -1,8 +1,9 @@
-from dace import dtypes
+from dace import dtypes, registry
 from dace.graph import nodes
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 
 
+@registry.autoregister_params(type=dtypes.InstrumentationType.CUDA_Events)
 class CUDAEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA events. """
 

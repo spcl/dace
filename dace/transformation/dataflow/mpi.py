@@ -1,12 +1,13 @@
 """ Contains the MPITransformMap transformation. """
 
-from dace import dtypes
+from dace import dtypes, registry
 from dace.sdfg import has_dynamic_map_inputs
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class MPITransformMap(pattern_matching.Transformation):
     """ Implements the MPI parallelization pattern.
@@ -165,6 +166,3 @@ class MPITransformMap(pattern_matching.Transformation):
                                            self.expr_index)
             outlocalstorage.array = name
             outlocalstorage.apply(sdfg)
-
-
-pattern_matching.Transformation.register_pattern(MPITransformMap)
