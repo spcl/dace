@@ -1881,12 +1881,12 @@ subgraph cluster_state_{state} {{
             B{Note:} This is an in-place operation on the SDFG.
         """
         from dace.transformation.dataflow import (RedundantArray,
-                                                  RedundantArrayInverse,
+                                                  RedundantSecondArray,
                                                   MergeArrays)
         from dace.transformation.interstate import StateFusion, InlineSDFG
 
         strict_transformations = [
-            StateFusion, RedundantArray, RedundantArrayInverse,
+            StateFusion, RedundantArray, RedundantSecondArray,
             MergeArrays, InlineSDFG
         ]
 
