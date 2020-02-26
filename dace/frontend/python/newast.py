@@ -3640,7 +3640,10 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Returns an operand and its type as a 2-tuple of strings. """
         operand = self.visit(opnode)
         if isinstance(operand, (list, tuple)):
-            if len(operand) != 1:
+            if len(operand) == 0:
+                raise DaceSyntaxError(self, opnode,
+                                      'Operand has no return value')
+            if len(operand) > 1:
                 raise DaceSyntaxError(self, opnode,
                                       'Operand cannot be a tuple')
             operand = operand[0]
