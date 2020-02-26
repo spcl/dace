@@ -29,6 +29,19 @@ def test_multiret():
     assert np.allclose(result[2], A)
 
 
+@dace.program
+def nested_ret(A: dace.float64[20]):
+    return oneret(A) + 1
+
+
+def test_nested_ret():
+    A = np.random.rand(20)
+    result = np.random.rand(20)
+    nested_ret(A, __return=result)
+    assert np.allclose(result, A*2 + 1)
+
+
 if __name__ == '__main__':
     test_oneret()
     test_multiret()
+    test_nested_ret()

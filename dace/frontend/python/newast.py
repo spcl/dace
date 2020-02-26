@@ -3434,11 +3434,30 @@ class ProgramVisitor(ExtNodeVisitor):
                             slice_state.remove_node(n)
                             break
 
+            # Add return values as additional outputs
+            rets = []
+            for arrname, arr in sdfg.arrays.items():
+                if arrname.startswith('__return'):
+                    # Add a transient to the current SDFG
+                    new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
+                    new_arrname = self.sdfg.add_datadesc(new_arrname, arr,
+                                                         find_new_name=True)
+                    self.sdfg.arrays[new_arrname].transient = True
+
+                    # Create an output entry for the connectors
+                    outputs[arrname] = dace.Memlet.from_array(new_arrname, arr)
+                    rets.append(new_arrname)
+
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys(), mapping)
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
             if output_slices:
+                if len(rets) > 0:
+                    raise DaceSyntaxError(
+                        self, node, 'Both return values and output slices '
+                                    'unsupported')
+
                 assign_node = ast.Assign()
                 targets = []
                 value = []
@@ -3453,8 +3472,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 return self._visit_assign(assign_node, assign_node.targets,
                                           None)
 
-            # No return values from SDFGs
-            return []
+            # Return SDFG return values, if exist
+            return rets
 
         # TODO: If the function is a callback, implement it as a tasklet
 
