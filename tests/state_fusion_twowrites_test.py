@@ -57,6 +57,12 @@ def sftw(A: dace.float64[20]):
 if __name__ == '__main__':
     A = np.random.rand(20)
     expected = 2 * A + 7
-    sftw(A)
+    sdfg = sftw.to_sdfg()
+    sdfg.apply_strict_transformations()
+
+    # Ensure almost all states were fused
+    assert len(sdfg.nodes()) == 2
+
+    sdfg(A=A)
 
     assert np.allclose(A, expected)

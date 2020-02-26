@@ -114,13 +114,27 @@ class StateFusion(pattern_matching.Transformation):
                 cc.intersection(second_output) for cc in second_cc
             ]
 
+            # Apply transformation in case all paths to the second state's
+            # nodes go through the same access node, which implies sequential
+            # behavior in SDFG semantics.
             check_strict = len(first_cc)
-            # for cc_output in first_cc_output:
-            #     for node in cc_output:
-            #         if (next((x for x in second_input
-            #                   if x.label == node.label), None) is not None):
-            #             check_strict -= 1
-            #             break
+            for cc_output in first_cc_output:
+                out_nodes = [
+                    n for n in first_state.sink_nodes() if n in cc_output
+                ]
+                # Branching exists, multiple paths may involve same access node
+                # potentially causing data races
+                if len(out_nodes) > 1:
+                    continue
+
+                # Otherwise, check if any of the second state's connected
+                # components for matching input
+                for node in cc_output:
+                    if (next(
+                        (x for x in second_input if x.label == node.label),
+                            None) is not None):
+                        check_strict -= 1
+                        break
 
             if check_strict > 0:
                 # Check strict conditions
