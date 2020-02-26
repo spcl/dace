@@ -8,6 +8,7 @@ import os
 import pickle
 import re
 import math
+import warnings
 
 import dace
 from dace.memlet import Memlet, EmptyMemlet
@@ -376,13 +377,17 @@ class TFSession:
         """
         self.cudnn = cudnn and gpu
         from dace.config import Config
-
+        
         # Set libraries for cudnn
         if os.name == 'nt' and not 'cudnn.lib' in Config.get('compiler', 'cpu', 'libs') and self.cudnn:
             Config.append('compiler', 'cpu', 'libs', value='cudnn.lib;')
             Config.append('compiler', 'cpu', 'libs', value='cuda.lib')
         elif os.name != 'nt' and not ' libcudnn.so' in Config.get('compiler', 'cpu', 'libs') and self.cudnn:
             Config.append('compiler', 'cpu', 'libs', value=' libcudnn.so')
+            if 'CUDA_PATH' in os.environ:
+                Config.append('compiler', 'cpu', 'args', value=' -I%s/include ' % os.environ['CUDA_PATH'])
+            else:
+                warnings.warn('CUDA_PATH environment variable not set, compilation may fail.')
 
         # Create a unique name for this session
         if name is None:
