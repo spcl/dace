@@ -20,7 +20,7 @@ from .reduce_expansion import ReduceExpansion
 from .double_buffering import DoubleBuffering
 
 # Complexity reduction
-from .redundant_array import RedundantArray, RedundantArrayInverse
+from .redundant_array import RedundantArray, RedundantSecondArray
 from .redundant_array_copying import (
     RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
 from .merge_arrays import MergeArrays
