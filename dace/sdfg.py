@@ -4447,6 +4447,8 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             if isinstance(propclass, properties.RangeProperty):
                 setattr(node, pname, replsym(propval))
             if isinstance(propclass, properties.CodeProperty):
+                if propval is None:
+                    continue
                 if isinstance(propval['code_or_block'], str):
                     # TODO: C++ AST parsing for replacement?
                     if name != str(new_name):
