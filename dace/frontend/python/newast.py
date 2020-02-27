@@ -496,6 +496,16 @@ def _makeunop(op, opcode):
         return _unop(sdfg, state, op1, opcode, op)
 
 
+@oprepo.replaces_operator('int', 'USub', None)
+@oprepo.replaces_operator('float', 'USub', None)
+def _neg(visitor: ProgramVisitor,
+         sdfg: SDFG,
+         state: SDFGState,
+         op1: Union[int, float],
+         op2=None):
+    return -op1
+
+
 def _is_scalar(sdfg: SDFG, arrname: str):
     """ Checks whether array is pseudo-scalar (shape=(1,)). """
     shape = sdfg.arrays[arrname].shape
