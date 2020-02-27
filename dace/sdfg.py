@@ -730,10 +730,6 @@ class SDFG(OrderedDiGraph):
                     raise TypeError("Unexpected type: {}".format(type(expr)))
             for s in edge_data.condition_symbols():
                 used[s] = dt.Scalar(symbolic.symbol(s).dtype)
-        for state in self.nodes():
-            a, u = state.interstate_symbols()
-            assigned.update(a)
-            used.update(u)
 
         assigned = collections.OrderedDict([(k, v)
                                             for k, v in assigned.items()
@@ -2544,11 +2540,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """ Returns all symbols defined by scopes within this state. """
         return scope_symbols(self)
 
-    def interstate_symbols(self):
-        """ Returns all symbols assigned/used in interstate edges in nested
-           SDFGs within this state. """
-        return interstate_symbols(self)
-
     def undefined_symbols(self, sdfg, include_scalar_data):
         return undefined_symbols(sdfg, self, include_scalar_data)
 
@@ -4285,27 +4276,6 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
         (key, value) for key, value in symbols.items()
         if key not in defined and not key.startswith('__dace'))
     return symbols
-
-
-def interstate_symbols(dfg):
-    """ Returns all symbols used in interstate edges in nested SDFGs within
-        this state. """
-    assigned = collections.OrderedDict()
-    used = collections.OrderedDict()
-    for node in dfg.nodes():
-        if isinstance(node, dace.graph.nodes.NestedSDFG):
-            a, u = node.sdfg.interstate_symbols()
-            assigned.update(a)
-
-            # Filter used symbols if they belong to SDFG input/output connectors
-            u = {
-                k: v
-                for k, v in u.items()
-                if k not in (node.in_connectors | node.out_connectors)
-            }
-            used.update(u)
-
-    return assigned, used
 
 
 def top_level_transients(dfg):
