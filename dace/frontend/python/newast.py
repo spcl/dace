@@ -3268,12 +3268,12 @@ class ProgramVisitor(ExtNodeVisitor):
                          for arg in node.keywords]
                 required_args = func.argnames
 
-                sdfg = func.to_sdfg(*({
+                sdfg = copy.deepcopy(func.to_sdfg(*({
                     **self.defined,
                     **self.sdfg.arrays,
                     **self.sdfg.symbols
                 }[arg] if isinstance(arg, str) else arg
-                                      for aname, arg in args))
+                                      for aname, arg in args)))
 
             else:
                 raise DaceSyntaxError(
