@@ -1822,6 +1822,19 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
+        # Handle return values
+        # Assignments to return values become __return* arrays
+        for vname, arrname in self.variables.items():
+            if vname.startswith('__return'):
+                self.sdfg.replace(arrname, vname)
+
+        # Return values become non-transient (accessible by the outside)
+        for arrname, arr in self.sdfg.arrays.items():
+            if arrname.startswith('__return'):
+                arr.transient = False
+                self.outputs[arrname] = Memlet.from_array(arrname, arr)
+        ####
+
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays:
@@ -1829,12 +1842,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     if (pyname and data.validate_name(pyname)
                             and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
-
-        # Return values become non-transient (accessible by the outside)
-        for arrname, arr in self.sdfg.arrays.items():
-            if arrname.startswith('__return'):
-                arr.transient = False
-                self.outputs[arrname] = Memlet.from_array(arrname, arr)
 
         return self.sdfg, self.inputs, self.outputs
 
