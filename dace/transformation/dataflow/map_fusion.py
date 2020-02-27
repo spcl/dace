@@ -403,10 +403,15 @@ class MapFusion(pattern_matching.Transformation):
             edge.data.subset = "0"
             local_node = edge.src
             src_connector = edge.src_conn
+
+            # Add edge that leads to the second node
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                           dcpy(edge.data))
         else:
             sdfg.add_transient(local_name,
                                edge.data.subset.size(),
                                dtype=access_node.desc(graph).dtype)
+            old_edge = dcpy(edge)
             local_node = graph.add_access(local_name)
             src_connector = None
             edge.data.data = local_name
@@ -420,7 +425,13 @@ class MapFusion(pattern_matching.Transformation):
                 None,
                 dcpy(edge.data),
             )
-        ########
-        # Add edge that leads to the second node
-        graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
-                       dcpy(edge.data))
+
+            # Add edge that leads to the second node
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                           dcpy(edge.data))
+
+            # Modify data and memlets on all surrounding edges to match array
+            for neighbor in graph.all_edges(local_node):
+                for e in graph.memlet_tree(neighbor):
+                    e.data.data = local_name
+                    e.data.subset.offset(old_edge.data.subset, negative=True)
