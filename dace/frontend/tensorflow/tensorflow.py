@@ -384,10 +384,10 @@ class TFSession:
             Config.append('compiler', 'cpu', 'libs', value='cuda.lib')
         elif os.name != 'nt' and not ' libcudnn.so' in Config.get('compiler', 'cpu', 'libs') and self.cudnn:
             Config.append('compiler', 'cpu', 'libs', value=' libcudnn.so')
-            if 'CUDA_PATH' in os.environ:
-                Config.append('compiler', 'cpu', 'args', value=' -I%s/include ' % os.environ['CUDA_PATH'])
+            if 'CUDA_ROOT' in os.environ:
+                Config.append('compiler', 'cpu', 'args', value=' -I%s/include ' % os.environ['CUDA_ROOT'])
             else:
-                warnings.warn('CUDA_PATH environment variable not set, compilation may fail.')
+                warnings.warn('CUDA_ROOT environment variable not set, compilation may fail.')
 
         # Create a unique name for this session
         if name is None:
