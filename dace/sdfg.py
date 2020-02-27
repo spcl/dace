@@ -4435,9 +4435,11 @@ def replace_properties(node: Any, name: str, new_name: str):
     }
 
     for propclass, propval in node.properties():
+        if propval is None:
+            continue
         pname = propclass.attr_name
         if isinstance(propclass, properties.SymbolicProperty):
-            setattr(node, pname, propval.subs({name: new_name}))
+            setattr(node, pname, propval.subs(symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval == name:
                 setattr(node, pname, new_name)
@@ -4445,8 +4447,6 @@ def replace_properties(node: Any, name: str, new_name: str):
                                     properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
-            if propval is None:
-                continue
             if isinstance(propval['code_or_block'], str):
                 # TODO: C++ AST parsing for replacement?
                 if name != str(new_name):
