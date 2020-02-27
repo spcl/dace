@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Tuple, Union, Callable
 import warnings
 
 import dace
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_impl
 from dace.frontend.common import op_repository as oprepo
@@ -494,6 +494,16 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         return _unop(sdfg, state, op1, opcode, op)
+
+
+@oprepo.replaces_operator('int', 'USub', None)
+@oprepo.replaces_operator('float', 'USub', None)
+def _neg(visitor: ProgramVisitor,
+         sdfg: SDFG,
+         state: SDFGState,
+         op1: Union[int, float],
+         op2=None):
+    return -op1
 
 
 def _is_scalar(sdfg: SDFG, arrname: str):
@@ -1812,6 +1822,20 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
+        # Try to replace transients with their python-assigned names
+        for pyname, arrname in self.variables.items():
+            if arrname in self.sdfg.arrays:
+                if self.sdfg.arrays[arrname].transient:
+                    if (pyname and data.validate_name(pyname)
+                            and pyname not in self.sdfg.arrays):
+                        self.sdfg.replace(arrname, pyname)
+
+        # Return values become non-transient (accessible by the outside)
+        for arrname, arr in self.sdfg.arrays.items():
+            if arrname.startswith('__return'):
+                arr.transient = False
+                self.outputs[arrname] = Memlet.from_array(arrname, arr)
+
         return self.sdfg, self.inputs, self.outputs
 
     @property
@@ -2950,7 +2974,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Get targets (elts) and results
         elts = None
         results = None
-        if not isinstance(node_target, ast.Tuple):
+        if not isinstance(node_target, (ast.Tuple, ast.List)):
             elts = [node_target]
             if isinstance(node.value, ast.Num):
                 results = [self._convert_num_to_array(node.value)]
@@ -3254,12 +3278,12 @@ class ProgramVisitor(ExtNodeVisitor):
                          for arg in node.keywords]
                 required_args = func.argnames
 
-                sdfg = func.to_sdfg(*({
+                sdfg = copy.deepcopy(func.to_sdfg(*({
                     **self.defined,
                     **self.sdfg.arrays,
                     **self.sdfg.symbols
                 }[arg] if isinstance(arg, str) else arg
-                                      for aname, arg in args))
+                                      for aname, arg in args)))
 
             else:
                 raise DaceSyntaxError(
@@ -3420,11 +3444,37 @@ class ProgramVisitor(ExtNodeVisitor):
                             slice_state.remove_node(n)
                             break
 
+            # Add return values as additional outputs
+            rets = []
+            for arrname, arr in sdfg.arrays.items():
+                if arrname.startswith('__return'):
+                    # Add a transient to the current SDFG
+                    new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
+                    newarr = copy.deepcopy(arr)
+                    newarr.transient = True
+
+                    # Substitute symbol mapping to get actual shape/strides
+                    if mapping is not None:
+                        for sym, newsym in mapping.items():
+                            sd.replace_properties(newarr, sym, newsym)
+
+                    new_arrname = self.sdfg.add_datadesc(new_arrname, newarr,
+                                                         find_new_name=True)
+
+                    # Create an output entry for the connectors
+                    outputs[arrname] = dace.Memlet.from_array(new_arrname, arr)
+                    rets.append(new_arrname)
+
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys(), mapping)
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
             if output_slices:
+                if len(rets) > 0:
+                    raise DaceSyntaxError(
+                        self, node, 'Both return values and output slices '
+                                    'unsupported')
+
                 assign_node = ast.Assign()
                 targets = []
                 value = []
@@ -3439,8 +3489,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 return self._visit_assign(assign_node, assign_node.targets,
                                           None)
 
-            # No return values from SDFGs
-            return []
+            # Return SDFG return values, if exist
+            return rets
 
         # TODO: If the function is a callback, implement it as a tasklet
 
@@ -3523,14 +3573,18 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
-        if isinstance(node, (ast.Tuple, ast.List)):
-            for elt in node.elts:
-                # arrays['return'] = this
-                pass
+        # Modify node value to become an expression
+        new_node = ast.copy_location(ast.Expr(value=node.value), node)
+
+        # Return values can either be tuples or a single object
+        if isinstance(node.value, (ast.Tuple, ast.List)):
+            ast_tuple = ast.copy_location(ast.parse('(%s,)' % ','.join(
+                '__return_%d' % i for i in range(
+                    len(node.value.elts)))).body[0].value, node)
+            self._visit_assign(new_node, ast_tuple, None)
         else:
-            pass
-            # arrays['return'] = this
-        pass
+            ast_name = ast.copy_location(ast.Name(id='__return'), node)
+            self._visit_assign(new_node, ast_name, None)
 
     def visit_With(self, node, is_async=False):
         # "with dace.tasklet" syntax
@@ -3622,7 +3676,10 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Returns an operand and its type as a 2-tuple of strings. """
         operand = self.visit(opnode)
         if isinstance(operand, (list, tuple)):
-            if len(operand) != 1:
+            if len(operand) == 0:
+                raise DaceSyntaxError(self, opnode,
+                                      'Operand has no return value')
+            if len(operand) > 1:
                 raise DaceSyntaxError(self, opnode,
                                       'Operand cannot be a tuple')
             operand = operand[0]
