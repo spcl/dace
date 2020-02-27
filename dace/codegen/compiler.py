@@ -44,7 +44,6 @@ class CompilationError(Exception):
 class ReloadableDLL(object):
     """ A reloadable shared object (or dynamically linked library), which
         bypasses Python's dynamic library reloading issues. """
-
     def __init__(self, library_filename, program_name):
         """ Creates a new reloadable shared object.
             :param library_filename: Path to library file.
@@ -118,8 +117,8 @@ class ReloadableDLL(object):
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
 
         if self._lib.value is None:
-            raise RuntimeError('Could not load library %s' % os.path.basename(
-                self._library_filename))
+            raise RuntimeError('Could not load library %s' %
+                               os.path.basename(self._library_filename))
 
     def unload(self):
         """ Unloads the internal library using the stub. """
@@ -142,7 +141,6 @@ class ReloadableDLL(object):
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
-
     def __init__(self, sdfg, lib: ReloadableDLL):
         self._sdfg = sdfg
         self._lib = lib
@@ -242,10 +240,10 @@ class CompiledSDFG(object):
             for arg, actype, atype in callparams)
 
         # Replace arrays with their base host/device pointers
-        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)),
-                         actype, atype) if _is_array(arg) else (arg, actype,
-                                                                atype)
-                        for arg, actype, atype in callparams)
+        newargs = tuple(
+            (ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
+             atype) if _is_array(arg) else (arg, actype, atype)
+            for arg, actype, atype in callparams)
 
         newargs = tuple(
             actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
@@ -557,11 +555,10 @@ def configure_and_compile(program_folder,
     ##############################################
     # Configure
     try:
-        _run_liveoutput(
-            cmake_command,
-            shell=True,
-            cwd=build_folder,
-            output_stream=output_stream)
+        _run_liveoutput(cmake_command,
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -569,11 +566,10 @@ def configure_and_compile(program_folder,
         shutil.rmtree(build_folder)
         os.makedirs(build_folder)
         try:
-            _run_liveoutput(
-                cmake_command,
-                shell=True,
-                cwd=build_folder,
-                output_stream=output_stream)
+            _run_liveoutput(cmake_command,
+                            shell=True,
+                            cwd=build_folder,
+                            output_stream=output_stream)
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
@@ -587,12 +583,11 @@ def configure_and_compile(program_folder,
 
     # Compile and link
     try:
-        _run_liveoutput(
-            "cmake --build . --config %s" % (Config.get(
-                'compiler', 'build_type')),
-            shell=True,
-            cwd=build_folder,
-            output_stream=output_stream)
+        _run_liveoutput("cmake --build . --config %s" %
+                        (Config.get('compiler', 'build_type')),
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
@@ -601,8 +596,9 @@ def configure_and_compile(program_folder,
             raise CompilationError('Compiler failure:\n' + ex.output)
 
     shared_library_path = os.path.join(
-        build_folder, "lib{}.{}".format(
-            program_name, Config.get('compiler', 'library_extension')))
+        build_folder,
+        "lib{}.{}".format(program_name,
+                          Config.get('compiler', 'library_extension')))
 
     return shared_library_path
 
@@ -639,8 +635,10 @@ def get_binary_name(object_name,
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(
-        command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+    process = subprocess.Popen(command,
+                               stderr=subprocess.STDOUT,
+                               stdout=subprocess.PIPE,
+                               **kwargs)
     output = six.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
@@ -668,14 +666,15 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
 
 def _is_array(obj: Any) -> bool:
     """
-    Returns True if an object implements the ``__array_interface__`` or
-    ``__cuda_array_interface__`` standards (supported by NumPy, Numba, CuPy,
-    PyTorch, etc.). If the interface is supported, pointers can be directly
-    obtained using the ``_array_interface_ptr`` function.
+    Returns True if an object implements the ``data_ptr()``,
+    ``__array_interface__`` or ``__cuda_array_interface__`` standards
+    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
+    supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
     :param obj: The given object.
     :return: True iff the object implements the array interface.
     """
-    if (hasattr(obj, '__array_interface__')
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
             or hasattr(obj, '__cuda_array_interface__')):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False
@@ -691,6 +690,8 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
                        pointer).
     :return: A pointer to the base location of the allocated buffer.
     """
+    if hasattr(array, 'data_ptr'):
+        return array.data_ptr()
     if array_type.storage == dace.StorageType.GPU_Global:
         return array.__cuda_array_interface__['data'][0]
     return array.__array_interface__['data'][0]

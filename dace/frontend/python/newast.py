@@ -496,6 +496,16 @@ def _makeunop(op, opcode):
         return _unop(sdfg, state, op1, opcode, op)
 
 
+@oprepo.replaces_operator('int', 'USub', None)
+@oprepo.replaces_operator('float', 'USub', None)
+def _neg(visitor: ProgramVisitor,
+         sdfg: SDFG,
+         state: SDFGState,
+         op1: Union[int, float],
+         op2=None):
+    return -op1
+
+
 def _is_scalar(sdfg: SDFG, arrname: str):
     """ Checks whether array is pseudo-scalar (shape=(1,)). """
     shape = sdfg.arrays[arrname].shape
@@ -1811,6 +1821,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.visit_TopLevel(stmt)
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
+
+        # Try to replace transients with their python-assigned names
+        for pyname, arrname in self.variables.items():
+            if arrname in self.sdfg.arrays:
+                if self.sdfg.arrays[arrname].transient:
+                    if (pyname and data.validate_name(pyname)
+                            and pyname not in self.sdfg.arrays):
+                        self.sdfg.replace(arrname, pyname)
 
         return self.sdfg, self.inputs, self.outputs
 
