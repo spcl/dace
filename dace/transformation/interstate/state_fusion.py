@@ -1,13 +1,14 @@
-"""State fusion transformation"""
+""" State fusion transformation """
 
 import networkx as nx
 
-from dace import dtypes, sdfg
+from dace import dtypes, registry, sdfg
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.config import Config
 
 
+@registry.autoregister_params(strict=True)
 class StateFusion(pattern_matching.Transformation):
     """ Implements the state-fusion transformation.
         
@@ -239,11 +240,3 @@ class StateFusion(pattern_matching.Transformation):
         sdfg.remove_node(second_state)
         if Config.get_bool("debugprint"):
             StateFusion._states_fused += 1
-
-    @staticmethod
-    def print_debuginfo():
-        print("Automatically fused {} states using StateFusion transform.".
-              format(StateFusion._states_fused))
-
-
-pattern_matching.Transformation.register_stateflow_pattern(StateFusion)

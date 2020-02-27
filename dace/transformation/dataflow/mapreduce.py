@@ -1,18 +1,16 @@
 """ Contains classes and functions that implement the map-reduce-fusion 
     transformation. """
 
-import copy
-from dace import subsets, symbolic
+from dace import registry
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching as pm
-from dace.properties import ShapeProperty
-from typing import List
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion import MapFusion
 
 
+@registry.autoregister_params(singlestate=True)
 class MapReduceFusion(pm.Transformation):
     """ Implements the map-reduce-fusion transformation.
         Fuses a map with an immediately following reduction, where the array
@@ -137,6 +135,7 @@ class MapReduceFusion(pm.Transformation):
                    reduce_node.wcr, reduce_node.identity))
 
 
+@registry.autoregister_params(singlestate=True)
 class MapWCRFusion(pm.Transformation):
     """ Implements the map expanded-reduce fusion transformation.
         Fuses a map with an immediately following reduction, where the array
@@ -234,7 +233,3 @@ class MapWCRFusion(pm.Transformation):
                 MapFusion._second_map_entry: graph.node_id(map_entry)
             }, 0)
         map_fusion.apply(sdfg)
-
-
-pm.Transformation.register_pattern(MapReduceFusion)
-pm.Transformation.register_pattern(MapWCRFusion)

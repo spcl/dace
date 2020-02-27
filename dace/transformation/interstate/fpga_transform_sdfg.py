@@ -1,15 +1,12 @@
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
-import copy
-import itertools
 import networkx as nx
 
-import dace
-from dace import data, memlet, dtypes, sdfg as sd, subsets, symbolic
-from dace.graph import edges, nodes, nxutil
+from dace import registry
 from dace.transformation import pattern_matching
 
 
+@registry.autoregister
 class FPGATransformSDFG(pattern_matching.Transformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
@@ -54,6 +51,3 @@ class FPGATransformSDFG(pattern_matching.Transformation):
         fpga_transform = FPGATransformState(
             sdfg_id, -1, {FPGATransformState._state: 0}, self.expr_index)
         fpga_transform.apply(sdfg)
-
-
-pattern_matching.Transformation.register_stateflow_pattern(FPGATransformSDFG)

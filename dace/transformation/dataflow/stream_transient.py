@@ -3,7 +3,7 @@
 
 import copy
 import warnings
-from dace import data, dtypes, symbolic, subsets
+from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import make_properties, Property
 from dace.graph import nodes, nxutil
@@ -42,6 +42,7 @@ def calc_set_image(map_idx, map_set, array_set):
         return calc_set_image_index(map_idx, map_set, array_set)
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class StreamTransient(pattern_matching.Transformation):
     """ Implements the StreamTransient transformation, which adds a transient
@@ -134,9 +135,7 @@ class StreamTransient(pattern_matching.Transformation):
         return True
 
 
-pattern_matching.Transformation.register_pattern(StreamTransient)
-
-
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class AccumulateTransient(pattern_matching.Transformation):
     """ Implements the AccumulateTransient transformation, which adds
@@ -209,6 +208,3 @@ class AccumulateTransient(pattern_matching.Transformation):
         else:
             warnings.warn('AccumulateTransient did not properly initialize'
                           'newly-created transient!')
-
-
-pattern_matching.Transformation.register_pattern(AccumulateTransient)

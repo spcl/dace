@@ -1,3 +1,4 @@
+import aenum
 import os
 import shutil  # which
 from typing import Dict
@@ -6,8 +7,10 @@ import dace
 from dace import dtypes
 from dace.graph import nodes, nxutil
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.registry import extensible_enum, make_registry
 
 
+@make_registry
 class TargetCodeGenerator(object):
     """ Interface dictating functions that generate code for:
           * Array allocation/deallocation/initialization/copying
@@ -16,22 +19,23 @@ class TargetCodeGenerator(object):
 
     def get_generated_codeobjects(self):
         """ Returns a list of generated `CodeObject` classes corresponding
-            to files with generated code.
+            to files with generated code. If an empty list is returned
+            (default) then this code generator does not create new files.
             @see: CodeObject
         """
-        raise NotImplementedError('Abstract class')
+        return []
 
     @property
     def has_initializer(self):
         """ Returns True if the target generates a `__dace_init_<TARGET>`
             function that should be called on initialization. """
-        raise NotImplementedError('Abstract class')
+        return False
 
     @property
     def has_finalizer(self):
         """ Returns True if the target generates a `__dace_exit_<TARGET>`
             function that should be called on finalization. """
-        raise NotImplementedError('Abstract class')
+        return False
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         """ Generates code for an SDFG state, outputting it to the given
@@ -45,7 +49,7 @@ class TargetCodeGenerator(object):
                                     to the current location (call-site)
                                     in the code.
         """
-        raise NotImplementedError('Abstract class')
+        pass
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
                        callsite_stream):
@@ -165,7 +169,8 @@ class IllegalCopy(TargetCodeGenerator):
                         str(dst_node) + ')')
 
 
-class DefinedType(dace.dtypes.AutoNumber):
+@extensible_enum
+class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
         @see: DefinedMemlets
     """
@@ -231,6 +236,7 @@ class TargetDispatcher(object):
 
     def __init__(self):
         self._used_targets = set()
+        self._used_environments = set()
 
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
@@ -266,6 +272,12 @@ class TargetDispatcher(object):
         """ Returns a list of targets (code generators) that were triggered
             during generation. """
         return self._used_targets
+
+    @property
+    def used_environments(self):
+        """ Returns a list of environments required to build and run the code.
+        """
+        return self._used_environments
 
     def register_state_dispatcher(self, dispatcher, predicate=None):
         """ Registers a code generator that processes a single state, calling
@@ -465,6 +477,11 @@ class TargetDispatcher(object):
     def dispatch_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
         """ Dispatches a code generator for a single node. """
+
+        # If this node depends on any environments, register this for
+        # generating header code later
+        if hasattr(node, "environments"):
+            self._used_environments |= node.environments
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator

@@ -50,6 +50,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
     psize = sizes[_SIZE_TO_IND[FLAGS.size]]
     for k, v in psize.items():
         k.set(v)
+    psize = {str(k): v for k, v in psize.items()}
 
     # Construct arrays from tuple arguments
     for i, arg in enumerate(args):
@@ -67,9 +68,8 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
                     if isinstance(node, dace.graph.nodes.MapEntry):
                         node.map.schedule = dace.ScheduleType.Sequential
         if FLAGS.specialize:
-            compiled_sdfg = sdfg.compile(specialize=True)
-        else:
-            compiled_sdfg = sdfg.compile()
+            sdfg.specialize(psize)
+        compiled_sdfg = sdfg.compile()
 
     print('Initializing arrays...')
     init_array(*args)
@@ -79,9 +79,10 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
         dace.simulate(func, *args)
     else:
         if isinstance(func, dace.SDFG):
-            compiled_sdfg(**keywords)
+            compiled_sdfg(**keywords, **psize)
         else:
-            compiled_sdfg(**{n: arg for n, arg in zip(func.argnames, args)})
+            compiled_sdfg(**{n: arg
+                             for n, arg in zip(func.argnames, args)}, **psize)
 
     if FLAGS.save:
         if not isinstance(output_args, list):

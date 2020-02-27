@@ -1,9 +1,11 @@
 from dace.transformation import pattern_matching
-from dace import memlet
+from dace import memlet, registry
 from dace.graph import nodes
 from dace.sdfg import SDFGState
+from dace.graph.labeling import propagate_memlet
 
 
+@registry.autoregister_params(singlestate=True, strict=True)
 class MergeArrays(pattern_matching.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
@@ -40,7 +42,7 @@ class MergeArrays(pattern_matching.Transformation):
             return False
 
         # Ensure only arr1's node ID contains incoming edges
-        if graph.in_degree(arr1) == 0 and graph.in_degree(arr2) > 0:
+        if graph.in_degree(arr2) > 0:
             return False
 
         # Ensure arr1 and arr2's node IDs are ordered (avoid duplicates)
@@ -51,9 +53,8 @@ class MergeArrays(pattern_matching.Transformation):
         map = graph.node(candidate[MergeArrays._map_entry])
 
         # If arr1's connector leads directly to map, skip it
-        if all(
-                e.dst_conn and not e.dst_conn.startswith('IN_')
-                for e in graph.edges_between(arr1, map)):
+        if all(e.dst_conn and not e.dst_conn.startswith('IN_')
+               for e in graph.edges_between(arr1, map)):
             return False
 
         if (any(e.dst != map for e in graph.out_edges(arr1))
@@ -63,8 +64,8 @@ class MergeArrays(pattern_matching.Transformation):
         # Ensure arr1 and arr2 are the first two incoming nodes (avoid further
         # duplicates)
         all_source_nodes = set(
-            graph.node_id(e.src) for e in graph.in_edges(map)
-            if e.src != arr1 and e.src != arr2 and e.dst_conn
+            graph.node_id(e.src) for e in graph.in_edges(map) if e.src != arr1
+            and e.src != arr2 and e.src.data == arr1.data and e.dst_conn
             and e.dst_conn.startswith('IN_') and graph.in_degree(e.src) == 0)
         if any(nid < arr1_id or nid < arr2_id for nid in all_source_nodes):
             return False
@@ -110,5 +111,8 @@ class MergeArrays(pattern_matching.Transformation):
         map.in_connectors -= set('IN_' + c for c in connectors_to_remove)
         map.out_connectors -= set('OUT_' + c for c in connectors_to_remove)
 
-
-pattern_matching.Transformation.register_pattern(MergeArrays)
+        # Re-propagate memlets
+        map_edge._data = propagate_memlet(dfg_state=graph,
+                                          memlet=map_edge.data,
+                                          scope_node=map,
+                                          union_inner_edges=True)

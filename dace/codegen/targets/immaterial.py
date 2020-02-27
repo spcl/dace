@@ -1,14 +1,14 @@
 import functools
 
-from dace import data, subsets, symbolic, dtypes
-from dace.codegen.codeobject import CodeObject
+from dace import data, registry, subsets, symbolic, dtypes
 from dace.codegen.targets.target import TargetCodeGenerator
-from dace.codegen.targets.cpu import cpp_array_expr, sym2cpp
+from dace.codegen.targets.cpp import cpp_array_expr, sym2cpp
 from dace.graph import nodes
 
 from dace.codegen import cppunparse
 
 
+@registry.autoregister_params(name='immaterial')
 class ImmaterialCodeGen(TargetCodeGenerator):
     """ Code generator for data nodes with immaterial (i.e., generated
         from a function) storage. """

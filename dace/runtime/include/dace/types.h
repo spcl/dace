@@ -57,16 +57,18 @@ namespace dace
     typedef uint16_t uint16;
     typedef uint32_t uint32;
     typedef uint64_t uint64;
-    //typedef half float16;
     typedef float float32;
     typedef double float64;
 
     #ifdef __CUDACC__
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
+    typedef half float16;
     #else
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
+    typedef short half;
+    typedef half float16;
     #endif
 
     enum NumAccesses
