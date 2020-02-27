@@ -31,8 +31,9 @@ class TransientReuse(pattern_matching.Transformation):
             for j, node in enumerate(state.nodes()):
                 if isinstance(node,
                               nodes.AccessNode) and node.desc(sdfg).transient:
-                    print(node, type(node))
+                    #print(node, type(node))
                     list.append(node)
+
 
         temp1 = list[0]
         temp2 = list[2]

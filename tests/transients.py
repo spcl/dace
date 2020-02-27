@@ -4,7 +4,7 @@ from __future__ import print_function
 import argparse
 import dace
 import numpy as np
-from dace.transformation.dataflow.transient_reuse import TransientReuse
+from dace.transformation.interstate.transient_reuse import TransientReuse
 
 M = dace.symbol('M')
 K = dace.symbol('K')
