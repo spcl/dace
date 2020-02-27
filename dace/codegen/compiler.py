@@ -175,9 +175,11 @@ class CompiledSDFG(object):
             by alphabetical order, then symbols by alphabetical order.
         """
         # Return value initialization (for values that have not been given)
-        kwargs.update({k: v
-                       for k, v in self._initialize_return_values().items()
-                       if k not in kwargs})
+        kwargs.update({
+            k: v
+            for k, v in self._initialize_return_values(kwargs).items()
+            if k not in kwargs
+        })
 
         # Argument construction
         sig = self._sdfg.signature_arglist(with_types=False)
@@ -258,9 +260,14 @@ class CompiledSDFG(object):
         self._lastargs = newargs
         return self._lastargs
 
-    def _initialize_return_values(self):
+    def _initialize_return_values(self, kwargs):
         if self._initialized:
             return self._return_kwarrays
+
+        # Obtain symbol values from arguments and constants
+        syms = dict()
+        syms.update(kwargs)
+        syms.update(self.sdfg.constants)
 
         # Initialize return values with numpy arrays
         self._return_arrays = []
@@ -269,18 +276,33 @@ class CompiledSDFG(object):
             if arrname.startswith('__return'):
                 if isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
-                if arr.storage in [dace.dtypes.StorageType.GPU_Global,
-                                   dace.dtypes.StorageType.FPGA_Global]:
+                if arr.storage in [
+                        dace.dtypes.StorageType.GPU_Global,
+                        dace.dtypes.StorageType.FPGA_Global
+                ]:
                     raise NotImplementedError('Non-host return values are '
                                               'unsupported')
 
                 # Create an array with the properties of the SDFG array
-                self._return_arrays.append(np.ndarray(
-                    arr.shape,
-                    arr.dtype.type,
-                    buffer=np.ndarray([arr.total_size], arr.dtype.type),
-                    strides=[s * arr.dtype.bytes for s in arr.strides]))
+                self._return_arrays.append(
+                    np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
+                               arr.dtype.type,
+                               buffer=np.ndarray(
+                                   [symbolic.evaluate(arr.total_size, syms)],
+                                   arr.dtype.type),
+                               strides=[
+                                   symbolic.evaluate(s, syms) * arr.dtype.bytes
+                                   for s in arr.strides
+                               ]))
                 self._return_kwarrays[arrname] = self._return_arrays[-1]
+
+        # Set up return_arrays field
+        if len(self._return_arrays) == 0:
+            self._return_arrays = None
+        elif len(self._return_arrays) == 1:
+            self._return_arrays = self._return_arrays[0]
+        else:
+            self._return_arrays = tuple(self._return_arrays)
 
         return self._return_kwarrays
 
@@ -311,7 +333,7 @@ class CompiledSDFG(object):
             else:
                 self._cfunc(*argtuple)
 
-            return self._return_arrays or None
+            return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
                 DuplicateDLLError, ReferenceError):
             self._lib.unload()
