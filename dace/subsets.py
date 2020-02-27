@@ -488,7 +488,7 @@ class Range(Subset):
     def compose(self, other):
         if not isinstance(other, Subset):
             raise TypeError("Cannot compose ranges with non-subsets")
-        if self.data_dims() != other.dims():
+        if self.data_dims() != other.dims() and self.dims() != other.dims():
             raise ValueError("Dimension mismatch in composition")
         new_subset = []
         idx = 0
