@@ -370,6 +370,10 @@ class SDFG(OrderedDiGraph):
         replace_dict(self._arrays, name, new_name)
         replace_dict(self._symbols, name, new_name)
 
+        # Replace inside data descriptors
+        for array in self.arrays.values():
+            replace_properties(array, name, new_name)
+
         # Replace in inter-state edges
         for edge in self.edges():
             replace_dict(edge.data.assignments, name, new_name)
@@ -4377,6 +4381,53 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
     return False
 
 
+def _replsym(symlist, symrepl):
+    """ Helper function to replace symbols in various symbolic expressions. """
+    if symlist is None:
+        return None
+    if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
+        return symlist.subs(symrepl)
+    for i, dim in enumerate(symlist):
+        try:
+            symlist[i] = tuple(
+                d.subs(symrepl) if symbolic.issymbolic(d) else d
+                for d in dim)
+        except TypeError:
+            symlist[i] = (dim.subs(symrepl)
+                          if symbolic.issymbolic(dim) else dim)
+    return symlist
+
+
+def replace_properties(node: Any, name: str, new_name: str):
+    symrepl = {
+        symbolic.symbol(name):
+        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+    }
+
+    for propclass, propval in node.properties():
+        if propval is None:
+            continue
+        pname = propclass.attr_name
+        if isinstance(propclass, properties.SymbolicProperty):
+            setattr(node, pname, propval.subs(symrepl))
+        elif isinstance(propclass, properties.DataProperty):
+            if propval == name:
+                setattr(node, pname, new_name)
+        elif isinstance(propclass, (properties.RangeProperty,
+                                    properties.ShapeProperty)):
+            setattr(node, pname, _replsym(list(propval), symrepl))
+        elif isinstance(propclass, properties.CodeProperty):
+            if isinstance(propval['code_or_block'], str):
+                # TODO: C++ AST parsing for replacement?
+                if name != str(new_name):
+                    warnings.warn(
+                        'Replacement of %s with %s was not made '
+                        'for string tasklet code' % (name, new_name))
+            else:
+                for stmt in propval['code_or_block']:
+                    ASTFindReplace({name: new_name}).visit(stmt)
+
+
 def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             name: str, new_name: str):
     """ Finds and replaces all occurrences of a symbol or array in the given
@@ -4390,51 +4441,16 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
         symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
     }
 
-    def replsym(symlist):
-        if symlist is None:
-            return None
-        if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
-            return symlist.subs(symrepl)
-        for i, dim in enumerate(symlist):
-            try:
-                symlist[i] = tuple(
-                    d.subs(symrepl) if symbolic.issymbolic(d) else d
-                    for d in dim)
-            except TypeError:
-                symlist[i] = (dim.subs(symrepl)
-                              if symbolic.issymbolic(dim) else dim)
-        return symlist
-
     # Replace in node properties
     for node in subgraph.nodes():
-        for propclass, propval in node.properties():
-            pname = propclass.attr_name
-            if isinstance(propclass, properties.SymbolicProperty):
-                setattr(node, pname, propval.subs({name: new_name}))
-            if isinstance(propclass, properties.DataProperty):
-                if propval == name:
-                    setattr(node, pname, new_name)
-            if isinstance(propclass, properties.RangeProperty):
-                setattr(node, pname, replsym(propval))
-            if isinstance(propclass, properties.CodeProperty):
-                if propval is None:
-                    continue
-                if isinstance(propval['code_or_block'], str):
-                    # TODO: C++ AST parsing for replacement?
-                    if name != str(new_name):
-                        warnings.warn(
-                            'Replacement of %s with %s was not made '
-                            'for string tasklet code' % (name, new_name))
-                else:
-                    for stmt in propval['code_or_block']:
-                        ASTFindReplace({name: new_name}).visit(stmt)
+        replace_properties(node, name, new_name)
 
     # Replace in memlets
     for edge in subgraph.edges():
         if edge.data.data == name:
             edge.data.data = new_name
-        edge.data.subset = replsym(edge.data.subset)
-        edge.data.other_subset = replsym(edge.data.other_subset)
+        edge.data.subset = _replsym(edge.data.subset, symrepl)
+        edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
 
 
 def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
