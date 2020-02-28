@@ -2977,24 +2977,26 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.targets[0], None)
 
     def _visit_assign(self, node, node_target, op):
-
         # Get targets (elts) and results
         elts = None
         results = None
-        if not isinstance(node_target, (ast.Tuple, ast.List)):
-            elts = [node_target]
-            if isinstance(node.value, ast.Num):
-                results = [self._convert_num_to_array(node.value)]
-            else:
-                results = [self._gettype(node.value)]
-        else:
+        if isinstance(node_target, (ast.Tuple, ast.List)):
             elts = node_target.elts
-            results = []
+        else:
+            elts = [node_target]
+
+        results = []
+        if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
                 if isinstance(n, ast.Num):
                     results.append(self._convert_num_to_array(n))
                 else:
-                    results.append(self._gettype(n))
+                    results.extend(self._gettype(n))
+        else:
+            if isinstance(node.value, ast.Num):
+                results.append(self._convert_num_to_array(node.value))
+            else:
+                results.extend(self._gettype(node.value))
 
         if len(results) != len(elts):
             raise DaceSyntaxError(
@@ -3497,6 +3499,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                           None)
 
             # Return SDFG return values, if exist
+            if len(rets) == 1:
+                return rets[0]
             return rets
 
         # TODO: If the function is a callback, implement it as a tasklet
@@ -3679,24 +3683,26 @@ class ProgramVisitor(ExtNodeVisitor):
 
     ############################################################
 
-    def _gettype(self, opnode: ast.AST):
+    def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
-        operand = self.visit(opnode)
-        if isinstance(operand, (list, tuple)):
-            if len(operand) == 0:
+        operands = self.visit(opnode)
+        if isinstance(operands, (list, tuple)):
+            if len(operands) == 0:
                 raise DaceSyntaxError(self, opnode,
                                       'Operand has no return value')
-            if len(operand) > 1:
-                raise DaceSyntaxError(self, opnode,
-                                      'Operand cannot be a tuple')
-            operand = operand[0]
-
-        if isinstance(operand, str) and operand in self.sdfg.arrays:
-            return operand, type(self.sdfg.arrays[operand]).__name__
-        elif isinstance(operand, str) and operand in self.scope_arrays:
-            return operand, type(self.scope_arrays[operand]).__name__
         else:
-            return operand, type(operand).__name__
+            operands = [operands]
+
+        result = []
+        for operand in operands:
+            if isinstance(operand, str) and operand in self.sdfg.arrays:
+                result.append((operand, type(self.sdfg.arrays[operand]).__name__))
+            elif isinstance(operand, str) and operand in self.scope_arrays:
+                result.append((operand, type(self.scope_arrays[operand]).__name__))
+            else:
+                result.append((operand, type(operand).__name__))
+
+        return result
 
     def _convert_num_to_array(self, node: ast.Num):
         name = None
@@ -3736,9 +3742,17 @@ class ProgramVisitor(ExtNodeVisitor):
             pass
 
         # Parse operands
-        operand1, op1type = self._gettype(op1)
+        op1_parsed = self._gettype(op1)
+        if len(op1_parsed) > 1:
+            raise DaceSyntaxError(self, op1,
+                                  'Operand cannot be a tuple')
+        operand1, op1type = op1_parsed[0]
         if op2 is not None:
-            operand2, op2type = self._gettype(op2)
+            op2_parsed = self._gettype(op2)
+            if len(op2_parsed) > 1:
+                raise DaceSyntaxError(self, op2,
+                                      'Operand cannot be a tuple')
+            operand2, op2type = op2_parsed[0]
         else:
             operand2, op2type = None, None
 
@@ -3816,7 +3830,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 return self._add_read_access(name, rng, node)
 
         # Obtain array
-        array, arrtype = self._gettype(node.value)
+        node_parsed = self._gettype(node.value)
+        if len(node_parsed) > 1:
+            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
+                                                    'be a tuple')
+        array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node,
                                   'Type "%s" cannot be sliced' % arrtype)
