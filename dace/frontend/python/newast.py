@@ -3304,11 +3304,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Map internal SDFG symbols by adding keyword arguments
             symbols = set(sdfg.undefined_symbols(False).keys())
-            mapping = infer_symbols_from_shapes(
-                sdfg, {
-                    k: self.sdfg.arrays[v]
-                    for k, v in args if v in self.sdfg.arrays
-                }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            try:
+                mapping = infer_symbols_from_shapes(
+                    sdfg, {
+                        k: self.sdfg.arrays[v]
+                        for k, v in args if v in self.sdfg.arrays
+                    }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            except ValueError as ex:
+                raise DaceSyntaxError(self, node, str(ex))
             if len(mapping) == 0:  # Default to same-symbol mapping
                 mapping = None
 
@@ -3779,7 +3782,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 (opname, op1type, op2type))
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
-        result = func(self, self.sdfg, self.last_state, operand1, operand2)
+        try:
+            result = func(self, self.sdfg, self.last_state, operand1, operand2)
+        except SyntaxError as ex:
+            raise DaceSyntaxError(self, node, str(ex))
+
         return result
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
