@@ -552,10 +552,11 @@ if(DACE_ENABLE_INTELFPGA)
       )
       add_dependencies(${FPGA_REPORT_TARGET} ${KERNEL_TARGET})
 
-      # build hardware
+      # build hardware. Note: the produced bitstream is renamed according to the dace program name
       set(FPGA_BUILD_TARGET intelfpga_smi_compile_${DACE_PROGRAM_NAME}_${DACE_KERNEL_NAME_WE}_hardware)
       add_custom_target(${FPGA_BUILD_TARGET}
           COMMAND ${IntelFPGAOpenCL_AOC} ${DACE_AOC_BUILD_FLAGS} ${FPGA_SRC_FILES}
+          COMMAND mv ${DACE_KERNEL_NAME_WE}.aocx ${DACE_PROGRAM_NAME}_hardware.aocx
           WORKING_DIRECTORY ${KERNEL_BIN_DIR}
       )
       add_dependencies(${FPGA_BUILD_TARGET} ${KERNEL_TARGET})
