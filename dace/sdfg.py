@@ -344,8 +344,8 @@ class SDFG(OrderedDiGraph):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
         if dataname in self._arrays:
             return self._arrays[dataname]
-        if dataname in self._symbols:
-            return self._symbols[dataname]
+        if str(dataname) in self._symbols:
+            return self._symbols[str(dataname)]
         raise KeyError(
             'Data descriptor with name "%s" not found in SDFG' % dataname)
 
@@ -4247,11 +4247,9 @@ def data_symbols(dfg):
         if not isinstance(d, nd.AccessNode):
             continue
         ddesc = d.desc(sdfg)
-        for s in itertools.chain(ddesc.shape, ddesc.strides, ddesc.offset):
-            if isinstance(s, sp.Expr):
-                result.update((k.name, dt.Scalar(k.dtype))
-                              for k in s.free_symbols
-                              if not k.name.startswith("__dace"))
+        result.update((s.name, dt.Scalar(s.dtype)) for s in ddesc.free_symbols
+                      if not s.name.startswith('__dace'))
+
     return result
 
 

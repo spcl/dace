@@ -1768,6 +1768,10 @@ class ProgramVisitor(ExtNodeVisitor):
         self.sdfg = SDFG(self.name)
         if not self.nested:
             self.sdfg.arrays.update(scope_arrays)
+            for arr in self.sdfg.arrays.values():
+                for sym in arr.free_symbols:
+                    if sym.name not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
         self.inputs = {}
