@@ -2595,7 +2595,7 @@ class ProgramVisitor(ExtNodeVisitor):
             params = [(k, ':'.join(v)) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs(
                 'map_%d' % node.lineno, params, node)
-            me, mx = state.add_map(name='Map', ndrange=params)
+            me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno), ndrange=params)
             # body = SDFG('MapBody')
             body, inputs, outputs = self._parse_subprogram('MapBody', node)
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
