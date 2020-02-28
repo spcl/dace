@@ -532,6 +532,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         # ----------------------------------------------------------------------
 
         self._dispatcher.defined_vars.enter_scope(subgraph)
+        kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
+        kernel_args_call = dtypes.deduplicate(kernel_args_call)
 
         module_body_stream = CodeIOStream()
 
