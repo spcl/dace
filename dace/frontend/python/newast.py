@@ -32,10 +32,6 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
 
-class ProgramVisitor:
-    pass
-
-
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
 
@@ -478,7 +474,7 @@ def _scalarbinop(sdfg: SDFG,
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor,
+    def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
@@ -488,7 +484,7 @@ def _makeassignop(op, opcode):
 
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor,
+    def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
@@ -498,7 +494,7 @@ def _makeunop(op, opcode):
 
 @oprepo.replaces_operator('int', 'USub', None)
 @oprepo.replaces_operator('float', 'USub', None)
-def _neg(visitor: ProgramVisitor,
+def _neg(visitor: 'ProgramVisitor',
          sdfg: SDFG,
          state: SDFGState,
          op1: Union[int, float],
@@ -528,7 +524,7 @@ def _is_op_boolean(op: str):
     return False
 
 
-def _array_x_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                    op1: str, op2: str, op: str, opcode: str):
 
     arr1 = sdfg.arrays[op1]
@@ -577,22 +573,22 @@ def _array_x_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
 
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op, otherclass='Array')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
