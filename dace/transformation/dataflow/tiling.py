@@ -35,7 +35,7 @@ class MapTiling(pattern_matching.Transformation):
 
     @staticmethod
     def annotates_memlets():
-        return False
+        return True
 
     @staticmethod
     def expressions():
