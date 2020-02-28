@@ -276,11 +276,11 @@ class CPPUnparser:
         if self.expr_semicolon:
             self.write(';', infer_type)
 
-    def _Import(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Import(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _ImportFrom(self, t):
-        raise SyntaxError('Invalid C++')
+    def _ImportFrom(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
     def dispatch_lhs_tuple(self, targets):
         # Decide whether to use the C++17 syntax for undefined variables or std::tie for defined variables
@@ -291,7 +291,7 @@ class CPPUnparser:
         elif any(
                 self.locals.is_defined(target.id, self._indent)
                 for target in targets):
-            raise SyntaxError(
+            raise NotImplementedError(
                 'Invalid C++ (some variables in tuple were already defined)')
         else:
             defined = False
@@ -421,10 +421,10 @@ class CPPUnparser:
     def _Continue(self, t, infer_type=False):
         self.fill("continue;", infer_type)
 
-    def _Delete(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Delete(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Assert(self, t):
+    def _Assert(self, t, infer_type=False):
         self.fill("assert(")
         self.dispatch(t.test)
         if t.msg:
@@ -432,10 +432,10 @@ class CPPUnparser:
             self.dispatch(t.msg)
         self.write(");")
 
-    def _Exec(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Exec(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Print(self, t):
+    def _Print(self, t, infer_type=False):
         do_comma = False
         if t.dest:
             self.fill("fprintf(")
@@ -455,19 +455,19 @@ class CPPUnparser:
 
         self.write(');')
 
-    def _Global(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Global(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Nonlocal(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Nonlocal(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Yield(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Yield(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _YieldFrom(self, t):
-        raise SyntaxError('Invalid C++')
+    def _YieldFrom(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Raise(self, t):
+    def _Raise(self, t, infer_type=False):
         self.fill("throw")
         if six.PY3:
             if not t.exc:
@@ -476,7 +476,7 @@ class CPPUnparser:
             self.write(" ")
             self.dispatch(t.exc)
             if t.cause:
-                raise SyntaxError('Invalid C++')
+                raise NotImplementedError('Invalid C++')
         else:
             self.write(" ")
             if t.type:
@@ -489,7 +489,7 @@ class CPPUnparser:
                 self.dispatch(t.tback)
         self.write(';')
 
-    def _Try(self, t):
+    def _Try(self, t, infer_type=False):
         self.fill("try")
         self.enter()
         self.dispatch(t.body)
@@ -497,14 +497,14 @@ class CPPUnparser:
         for ex in t.handlers:
             self.dispatch(ex)
         if t.orelse:
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
         if t.finalbody:
             self.fill("finally")
             self.enter()
             self.dispatch(t.finalbody)
             self.leave()
 
-    def _TryExcept(self, t):
+    def _TryExcept(self, t, infer_type=False):
         self.fill("try")
         self.enter()
         self.dispatch(t.body)
@@ -513,9 +513,9 @@ class CPPUnparser:
         for ex in t.handlers:
             self.dispatch(ex)
         if t.orelse:
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
 
-    def _TryFinally(self, t):
+    def _TryFinally(self, t, infer_type=False):
         if len(t.body) == 1 and isinstance(t.body[0], ast.TryExcept):
             # try-except-finally
             self.dispatch(t.body)
@@ -530,7 +530,7 @@ class CPPUnparser:
         self.dispatch(t.finalbody)
         self.leave()
 
-    def _ExceptHandler(self, t):
+    def _ExceptHandler(self, t, infer_type=False):
         self.fill("catch (")
         if t.type:
             self.dispatch(t.type)
@@ -568,7 +568,7 @@ class CPPUnparser:
         else:
             self._write_constant(t.value)
 
-    def _ClassDef(self, t):
+    def _ClassDef(self, t, infer_type=False):
         raise NotImplementedError('Classes are unsupported')
 
         # Original class definition from astunparse
@@ -644,7 +644,7 @@ class CPPUnparser:
     def _AsyncFunctionDef(self, t, infer_type=False):
         self._generic_FunctionDef(t, infer_type, is_async=True)
 
-    def _generic_For(self, t, is_async=False):
+    def _generic_For(self, t, is_async=False, infer_type=False):
         if is_async:
             self.fill("/* async */ for (")
         else:
@@ -676,13 +676,13 @@ class CPPUnparser:
         self.dispatch(t.body)
         self.leave()
         if t.orelse:
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
 
     def _For(self, t, infer_type=False):
-        self._generic_For(t)
+        self._generic_For(t, infer_type=infer_type)
 
-    def _AsyncFor(self, t):
-        self._generic_For(t, is_async=True)
+    def _AsyncFor(self, t, infer_type=False):
+        self._generic_For(t, is_async=True, infer_type=infer_type)
 
     def _If(self, t, infer_type=False):
         self.fill("if (", infer_type)
@@ -716,10 +716,10 @@ class CPPUnparser:
         self.dispatch(t.body)
         self.leave()
         if t.orelse:
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
 
     def _generic_With(self, t, is_async=False, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
 
     def _With(self, t, infer_type=False):
         self._generic_With(t, infer_type=infer_type)
@@ -797,7 +797,7 @@ class CPPUnparser:
             t.id)) if infer_type else None
 
     def _Repr(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
 
     def _Num(self, t, infer_type=False):
         repr_n = repr(t.n)
@@ -845,13 +845,13 @@ class CPPUnparser:
                 self.write(")")
 
     def _List(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # self.write("[")
         # interleave(lambda: self.write(", "), self.dispatch, t.elts)
         # self.write("]")
 
     def _ListComp(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # self.write("[")
         # self.dispatch(t.elt)
         # for gen in t.generators:
@@ -859,7 +859,7 @@ class CPPUnparser:
         # self.write("]")
 
     def _GeneratorExp(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # self.write("(")
         # self.dispatch(t.elt)
         # for gen in t.generators:
@@ -867,7 +867,7 @@ class CPPUnparser:
         # self.write(")")
 
     def _SetComp(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # self.write("{")
         # self.dispatch(t.elt)
         # for gen in t.generators:
@@ -875,7 +875,7 @@ class CPPUnparser:
         # self.write("}")
 
     def _DictComp(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # self.write("{")
         # self.dispatch(t.key)
         # self.write(": ")
@@ -885,7 +885,7 @@ class CPPUnparser:
         # self.write("}")
 
     def _comprehension(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # if getattr(t, 'is_async', False):
         #    self.write(" async")
         # self.write(" for ")
@@ -907,15 +907,15 @@ class CPPUnparser:
         return dace.dtypes._CTYPES_RULES[frozenset(
             (type_body, type_orelse))] if infer_type is True else None
 
-    def _Set(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Set(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
         # assert(t.elts) # should be at least one element
         # self.write("{")
         # interleave(lambda: self.write(", "), self.dispatch, t.elts)
         # self.write("}")
 
     def _Dict(self, t, infer_type=False):
-        raise SyntaxError('Invalid C++')
+        raise NotImplementedError('Invalid C++')
         # self.write("{")
         # def write_pair(pair):
         #    (k, v) = pair
@@ -1042,7 +1042,7 @@ class CPPUnparser:
         self.dispatch(t.left, infer_type)
         for o, e in zip(t.ops, t.comparators):
             if o.__class__.__name__ not in self.cmpops:
-                raise SyntaxError('Invalid C++')
+                raise NotImplementedError('Invalid C++')
 
             self.write(" " + self.cmpops[o.__class__.__name__] + " ",
                        infer_type)
@@ -1058,8 +1058,8 @@ class CPPUnparser:
         self.write(")", infer_type)
         return dace.dtypes.typeclass(np.bool) if infer_type else None
 
-    def _Attribute(self, t):
-        self.dispatch(t.value)
+    def _Attribute(self, t, infer_type=False):
+        self.dispatch(t.value, infer_type)
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
@@ -1086,9 +1086,9 @@ class CPPUnparser:
             self.dispatch(e, infer_type)
         if sys.version_info[:2] < (3, 5):
             if t.starargs:
-                raise SyntaxError('Invalid C++')
+                raise NotImplementedError('Invalid C++')
             if t.kwargs:
-                raise SyntaxError('Invalid C++')
+                raise NotImplementedError('Invalid C++')
 
         self.write(")", infer_type)
         return inf_type
@@ -1100,11 +1100,11 @@ class CPPUnparser:
         self.write("]", infer_type)
         return inferred_type
 
-    def _Starred(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Starred(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
     # slice
-    def _Ellipsis(self, t):
+    def _Ellipsis(self, t, infer_type=False):
         self.write("...")
 
     def _Index(self, t, infer_type=False):
@@ -1156,39 +1156,39 @@ class CPPUnparser:
 
         # varargs, or bare '*' if no varargs but keyword-only arguments present
         if t.vararg or getattr(t, "kwonlyargs", False):
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
 
         # keyword-only arguments
         if getattr(t, "kwonlyargs", False):
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
 
         # kwargs
         if t.kwarg:
-            raise SyntaxError('Invalid C++')
+            raise NotImplementedError('Invalid C++')
 
-    def _keyword(self, t):
-        raise SyntaxError('Invalid C++')
+    def _keyword(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Lambda(self, t):
+    def _Lambda(self, t, infer_type=False):
         self.write("(")
         self.write("[] (")
         self.dispatch(t.args)
         self.write(") { return ")
-        self.dispatch(t.body)
+        self.dispatch(t.body, infer_type)
         self.write("; } )")
 
-    def _alias(self, t):
+    def _alias(self, t, infer_type=False):
         self.write('using ')
         self.write(t.name)
         if t.asname:
             self.write(" = " + t.asname)
         self.write(';')
 
-    def _withitem(self, t):
-        raise SyntaxError('Invalid C++')
+    def _withitem(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
-    def _Await(self, t):
-        raise SyntaxError('Invalid C++')
+    def _Await(self, t, infer_type=False):
+        raise NotImplementedError('Invalid C++')
 
 
 def cppunparse(node, expr_semicolon=True, locals=None):
