@@ -491,6 +491,15 @@ def configure_and_compile(program_folder,
             k for k, v in TargetCodeGenerator.extensions().items()
             if v['name'] == target_name)
 
+    # Windows-only workaround: Override Visual C++'s linker to use
+    # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
+    # CMake fails to do so.
+    if os.name == 'nt':
+        if '_CL_' not in os.environ:
+            os.environ['_CL_'] = '/MT'
+        elif '/MT' not in os.environ['_CL_']:
+            os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
+
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cmake_command = [
