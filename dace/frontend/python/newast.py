@@ -3272,11 +3272,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
                 required_args = list(sdfg.arglist().keys())
-                # Validate argument types and sizes
-                sdfg.argument_typecheck(
-                    [], {k: self.sdfg.data(v)
-                         for k, v in args},
-                    types_only=True)
                 # Add keyword arguments to variables
                 for (k, v) in args:
                     self.variables[k] = v
