@@ -258,6 +258,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
+
             for is_output, dataname, data in candidates:
                 if (isinstance(data, dace.data.Array)
                         or isinstance(data, dace.data.Scalar)
@@ -285,14 +286,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             # passed to the allocator
                             top_level_local_data.append(dataname)
                     elif data.storage == dace.dtypes.StorageType.FPGA_Remote:
-                        # TODO: not sure about this. To detect SMI usage, we need to generate the code, where we can see
-                        # that a remote stream is used
-                        # Currently we generate separate SDFG for each program and therefore remote stream
-                        # will be not shared entities (a remote stream will have only one incoming/outgoing edge)
-                        if isinstance(data, dace.data.Stream):
-                            top_level_local_data.append(dataname)
-                            subgraph_parameters[subgraph].append(
-                                (is_output, dataname, data))
+                        continue
                     else:
                         raise ValueError("Unsupported storage type: {}".format(
                             data.storage))
@@ -319,13 +313,12 @@ class FPGACodeGen(TargetCodeGenerator):
                               function_stream, callsite_stream):
 
         for sg in subgraphs:
-            self._dispatcher.dispatch_subgraph(
-                sdfg,
-                sg,
-                sdfg.node_id(state),
-                function_stream,
-                callsite_stream,
-                skip_entry_node=False)
+            self._dispatcher.dispatch_subgraph(sdfg,
+                                               sg,
+                                               sdfg.node_id(state),
+                                               function_stream,
+                                               callsite_stream,
+                                               skip_entry_node=False)
 
     @staticmethod
     def detect_memory_widths(subgraphs):
@@ -384,13 +377,12 @@ class FPGACodeGen(TargetCodeGenerator):
                            dfg_scope.source_nodes()[0], function_stream,
                            callsite_stream)
 
-        self._dispatcher.dispatch_subgraph(
-            sdfg,
-            dfg_scope,
-            state_id,
-            function_stream,
-            callsite_stream,
-            skip_entry_node=True)
+        self._dispatcher.dispatch_subgraph(sdfg,
+                                           dfg_scope,
+                                           state_id,
+                                           function_stream,
+                                           callsite_stream,
+                                           skip_entry_node=True)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
@@ -428,13 +420,16 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.defined_vars.add(dataname,
                                                   DefinedType.StreamArray)
             else:
-                # Single stream
-                self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
+                # Single stream: add to defined vars if not remote
+                if nodedesc.storage is not dace.dtypes.StorageType.FPGA_Remote:
+                    self._dispatcher.defined_vars.add(dataname,
+                                                      DefinedType.Stream)
 
             # Language-specific implementation
             self.define_stream(nodedesc.dtype, nodedesc.veclen,
                                nodedesc.buffer_size, dataname, arrsize,
-                               function_stream, result, nodedesc.storage)
+                               function_stream, result, nodedesc.storage, sdfg,
+                               dfg, node)
 
         elif isinstance(nodedesc, dace.data.Array):
 
@@ -593,17 +588,16 @@ class FPGACodeGen(TargetCodeGenerator):
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
                         dst_node.data, (offset if not outgoing_memlet else 0),
-                        copysize,
-                        src_node.data + (" + {}".format(offset)
-                                         if outgoing_memlet else "")), sdfg,
-                    state_id, [src_node, dst_node])
+                        copysize, src_node.data +
+                        (" + {}".format(offset) if outgoing_memlet else "")),
+                    sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        src_node.data, (offset
-                                        if outgoing_memlet else 0), copysize,
+                        src_node.data, (offset if outgoing_memlet else 0),
+                        copysize,
                         dst_node.data + (" + {}".format(offset)
                                          if not outgoing_memlet else "")),
                     sdfg, state_id, [src_node, dst_node])
@@ -612,10 +606,10 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        src_node.data, (offset
-                                        if outgoing_memlet else 0), copysize,
-                        dst_node.data, (offset if not outgoing_memlet else 0)),
-                    sdfg, state_id, [src_node, dst_node])
+                        src_node.data, (offset if outgoing_memlet else 0),
+                        copysize, dst_node.data,
+                        (offset if not outgoing_memlet else 0)), sdfg,
+                    state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
@@ -682,8 +676,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         state_id, dst_node)
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_loop_post(
-                            callsite_stream, None, sdfg, state_id, dst_node)
+                        self.generate_unroll_loop_post(callsite_stream, None,
+                                                       sdfg, state_id,
+                                                       dst_node)
 
             # Pragmas
             if num_loops > 0:
@@ -757,8 +752,9 @@ class FPGACodeGen(TargetCodeGenerator):
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
-                    self.generate_no_dependence_post(
-                        node.data, callsite_stream, sdfg, state_id, dst_node)
+                    self.generate_no_dependence_post(node.data,
+                                                     callsite_stream, sdfg,
+                                                     state_id, dst_node)
 
             # Loop outtro
             for _ in range(num_loops):
@@ -1263,10 +1259,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 subgraph_parameters[subgraph] + scalar_parameters,
                 symbol_parameters, module_stream, entry_stream, host_stream)
 
-    def generate_host_function_boilerplate(
-            self, sdfg, state, kernel_name, parameters, symbol_parameters,
-            nested_global_transients, host_code_stream, header_stream,
-            callsite_stream):
+    def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
+                                           parameters, symbol_parameters,
+                                           nested_global_transients,
+                                           host_code_stream, header_stream,
+                                           callsite_stream):
 
         # Generates:
         # - Definition of wrapper function in caller code
@@ -1365,8 +1362,8 @@ class Pipeline(dace.graph.nodes.Map):
         initialization and drain phase (e.g., N*M + c iterations), which would
         otherwise need a flattened one-dimensional map.
     """
-    init_size = Property(
-        dtype=int, desc="Number of initialization iterations.")
+    init_size = Property(dtype=int,
+                         desc="Number of initialization iterations.")
     init_overlap = Property(
         dtype=int,
         desc="Whether to increment regular map indices during initialization.")

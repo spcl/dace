@@ -149,9 +149,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
     @staticmethod
     def define_stream(dtype, vector_length, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream, storage):
+                      function_stream, kernel_stream, storage, sdfg, dfg, node):
         """
-           Defines a stream. The last argument is a boolean value indicating whether this is a remote stream or not.
+           Defines a stream.
            For Xilinx, remote streams are not supported
         """
 

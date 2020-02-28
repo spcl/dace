@@ -206,6 +206,17 @@ class DefinedMemlets:
                 return scope[name]
         raise KeyError("Variable {} has not been defined".format(name))
 
+    def get_if_defined(self, name):
+        """
+        Return the type of a variable if defined, None otherwise
+        """
+        ret = None
+        for _, scope in reversed(self._scopes):
+            if name in scope:
+                ret = scope[name]
+                break
+        return ret
+
     def add(self,
             name,
             connector_type,
