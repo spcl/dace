@@ -1718,6 +1718,17 @@ subgraph cluster_state_{state} {{
             :raise NotImplementedError: Unsupported argument type.
         """
         expected_args = self.arglist()
+
+        # Omit return values from arguments
+        expected_args = collections.OrderedDict([
+            (k, v) for k, v in expected_args.items()
+            if not k.startswith('__return')
+        ])
+        kwargs = {
+            k: v
+            for k, v in kwargs.items() if not k.startswith('__return')
+        }
+
         num_args_passed = len(args) + len(kwargs)
         num_args_expected = len(expected_args)
         if num_args_passed < num_args_expected:
