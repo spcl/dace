@@ -8,6 +8,7 @@ import numpy as np
 
 import dace
 from dace import subsets
+from dace.dtypes import deduplicate
 from dace.config import Config
 from dace.frontend import operations
 from dace.graph import nodes
@@ -1271,6 +1272,9 @@ class FPGACodeGen(TargetCodeGenerator):
             sdfg, [p
                    for p in parameters if p[1] not in nested_transient_set]) +
                               symbol_sigs)
+
+        kernel_args_opencl = deduplicate(kernel_args_opencl)
+        kernel_args_call_host = deduplicate(kernel_args_call_host)
 
         host_function_name = "__dace_runkernel_{}".format(kernel_name)
 
