@@ -688,7 +688,7 @@ class FPGACodeGen(TargetCodeGenerator):
             src_def_type = self._dispatcher.defined_vars.get(src_node.data)
             dst_def_type = self._dispatcher.defined_vars.get(dst_node.data)
 
-            pattern = re.compile("([^\s]+)(\s*\+\s*)?(.*)")
+            pattern = re.compile(r"([^\s]+)(\s*\+\s*)?(.*)")
 
             def sanitize_index(expr, index):
                 var_name, _, expr_index = re.match(pattern, expr).groups()
