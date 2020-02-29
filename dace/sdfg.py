@@ -367,9 +367,10 @@ class SDFG(OrderedDiGraph):
         if name == new_name:
             return
 
-        # Replace in arrays and symbols
-        replace_dict(self._arrays, name, new_name)
-        replace_dict(self._symbols, name, new_name)
+        # Replace in arrays and symbols (if a variable name)
+        if dt.validate_name(new_name):
+            replace_dict(self._arrays, name, new_name)
+            replace_dict(self._symbols, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
