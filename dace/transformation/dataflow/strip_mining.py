@@ -7,6 +7,7 @@ from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
 from dace.graph import nodes, nxutil
+from dace.symbolic import overapproximate, SymExpr
 from dace.transformation import pattern_matching
 import sympy
 
@@ -17,10 +18,19 @@ def calc_set_image_index(map_idx, map_set, array_idx):
         new_range = [a_idx, a_idx, 1]
         for m_idx, m_range in zip(map_idx, map_set):
             symbol = symbolic.pystr_to_symbolic(m_idx)
-            new_range[0] = new_range[0].subs(
-                symbol, dace.symbolic.overapproximate(m_range[0]))
-            new_range[1] = new_range[1].subs(
-                symbol, dace.symbolic.overapproximate(m_range[1]))
+            exact = []
+            approx = []
+            for i in range(2):
+                if isinstance(m_range[i], SymExpr):
+                    exact.append(m_range[i].expr)
+                    approx.append(m_range[i].approx)
+                else:
+                    exact.append(m_range[i])
+                    approx.append(overapproximate(m_range[i]))
+            new_range[0] = SymExpr(new_range[0].subs(symbol, exact[0]),
+                                   new_range[0].subs(symbol, approx[0]))
+            new_range[1] = SymExpr(new_range[1].subs(symbol, exact[1]),
+                                   new_range[1].subs(symbol, approx[1]))
         image.append(new_range)
     return subsets.Range(image)
 
@@ -28,14 +38,24 @@ def calc_set_image_index(map_idx, map_set, array_idx):
 def calc_set_image_range(map_idx, map_set, array_range):
     image = []
     for a_range in array_range:
-        new_range = a_range
+        new_range = dcpy(a_range)
         for m_idx, m_range in zip(map_idx, map_set):
             symbol = symbolic.pystr_to_symbolic(m_idx)
+            exact = []
+            approx = []
+            for i in range(3):
+                if isinstance(m_range[i], SymExpr):
+                    exact.append(m_range[i].expr)
+                    approx.append(m_range[i].approx)
+                else:
+                    exact.append(m_range[i])
+                    approx.append(overapproximate(m_range[i]))
             new_range = [
-                new_range[i].subs(symbol,
-                                  dace.symbolic.overapproximate(m_range[i]))
-                if dace.symbolic.issymbolic(new_range[i]) else new_range[i]
-                for i in range(0, 3)
+                SymExpr(new_range[i].subs(symbol, exact[i]),
+                        new_range[i].subs(symbol, approx[i]))
+                if dace.symbolic.issymbolic(new_range[i])
+                else SymExpr(new_range[i], new_range[i])
+                for i in range(3)
             ]
         image.append(new_range)
     return subsets.Range(image)
