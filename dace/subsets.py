@@ -615,6 +615,9 @@ class Indices(Subset):
     def size(self):
         return [1] * len(self.indices)
 
+    def size_exact(self):
+        return self.size()
+
     def min_element(self):
         return self.indices
 
