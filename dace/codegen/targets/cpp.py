@@ -98,8 +98,6 @@ def memlet_copy_to_absolute_strides(dispatcher,
     # where the pointer type is changed to a vector type, and addresses
     # thus shouldn't take vectorization into account.
     copy_shape = memlet.subset.size_exact()
-    # copy_shape = memlet.subset.size()
-    # copy_shape = [symbolic.overapproximate(s) for s in copy_shape]
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
 
