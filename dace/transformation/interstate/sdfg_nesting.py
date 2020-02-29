@@ -238,10 +238,12 @@ class InlineSDFG(pattern_matching.Transformation):
 
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname in nsdfg_node.symbol_mapping.keys():
-            nsdfg.replace(symname, '__dacesym_' + symname)
         for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            nsdfg.replace('__dacesym_' + symname, symvalue)
+            if str(symname) != str(symvalue):
+                nsdfg.replace(symname, '__dacesym_' + symname)
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace('__dacesym_' + symname, symvalue)
 
         # Replace data names with their top-level counterparts
         repldict = {}

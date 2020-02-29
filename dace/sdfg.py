@@ -8,6 +8,7 @@ import os
 import pickle, json
 from pydoc import locate
 import random
+import re
 import shutil
 import sys
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
@@ -4429,11 +4430,21 @@ def replace_properties(node: Any, name: str, new_name: str):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
             if isinstance(propval['code_or_block'], str):
-                # TODO: Prepend variables for C++ replacement?
-                if name != str(new_name):
-                    warnings.warn(
-                        'Replacement of %s with %s was not made '
-                        'for string tasklet code' % (name, new_name))
+                if str(name) != str(new_name):
+                    lang = propval['language']
+                    newcode = propval['code_or_block']
+                    if not re.findall(r'[^\w]%s[^\w]' % name, newcode):
+                        continue
+
+                    if lang is dtypes.Language.CPP:  # Replace in C++ code
+                        # Use local variables and shadowing to replace
+                        replacement = 'auto %s = %s;\n' % (name, new_name)
+                        propval['code_or_block'] = replacement + newcode
+                    else:
+                        warnings.warn(
+                            'Replacement of %s with %s was not made '
+                            'for string tasklet code of language %s' % (
+                                name, new_name, lang))
             else:
                 for stmt in propval['code_or_block']:
                     ASTFindReplace({name: new_name}).visit(stmt)
