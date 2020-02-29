@@ -985,6 +985,7 @@ __kernel void \\
                                      memlet.veclen)
 
         result = ""
+
         def_type = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
             if memlet.num_accesses == 1:
@@ -996,7 +997,6 @@ __kernel void \\
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     init = ""
-
                     result += "{} {}{};".format(memlet_type, connector, init)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
@@ -1030,12 +1030,7 @@ __kernel void \\
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-                    if data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
-                        result += "{} {};\n".format(memlet_type, connector)
-                        result += "SMI_Pop(&{}, &{});".format(
-                            data_name, connector)
-                    else:
-                        result += "{} {} = read_channel_intel({});".format(
+                    result += "{} {} = read_channel_intel({});".format(
                             memlet_type, connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
@@ -1046,10 +1041,17 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Stream)
         elif def_type == DefinedType.RemoteStream:
-            # Here we are referring to an already opened remote stream, we don't need to re-open it
-            # Desperate times call for desperate measures
-            result += "#define {} {} // God save us".format(
-                connector, data_name)
+            if memlet.num_accesses == 1:
+                if is_output:
+                    result += "{} {};".format(memlet_type, connector)
+                else:
+                    result += "{} {};\n".format(memlet_type, connector)
+                    result += "SMI_Pop(&{}, &{});".format(data_name, connector)
+            else:
+                # Here we are referring to an already opened remote stream, we don't need to re-open it
+                # Desperate times call for desperate measures
+                result += "#define {} {} // God save us".format(
+                    connector, data_name)
             self._dispatcher.defined_vars.add(connector,
                                               DefinedType.RemoteStream)
         elif def_type == DefinedType.StreamArray:
@@ -1352,12 +1354,13 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
             else:  # target has no subscript
-                # If the value is a Name, we should check whether it is a remote stream
+                # If the value is a Name, we should check whether it is a remote stream and the number of accesses
                 if isinstance(node.value,
                               ast.Name) and self.defined_vars.get_if_defined(
-                                  node.value.id) == DefinedType.RemoteStream:
+                                  node.value.id) == DefinedType.RemoteStream and self.memlets[node.value.id][0].num_accesses != 1:
+                    # read from a remote stream in the right part of the assignment
                     updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(
-                        unparse(value), target))
+                         unparse(value), target))
                 else:
                     updated = ast.Name(
                         id="{} = {};".format(target, unparse(value)))
@@ -1395,7 +1398,6 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
         memlet, nc, wcr = self.memlets[node.id]
         defined_type = self.defined_vars.get(memlet.data)
         updated = node
-
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
                 and memlet.num_accesses != 1:
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
