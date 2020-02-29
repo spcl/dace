@@ -82,21 +82,22 @@ class StripMining(pattern_matching.Transformation):
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
     # Properties
-    dim_idx = Property(
-        dtype=int, default=-1, desc="Index of dimension to be strip-mined")
-    new_dim_prefix = Property(
-        dtype=str, default="tile", desc="Prefix for new dimension name")
-    tile_size = Property(
-        dtype=str, default="64", desc="Tile size of strip-mined dimension")
-    tile_stride = Property(
-        dtype=str,
-        default="",
-        desc="Stride between two tiles of the "
-        "strip-mined dimension")
-    divides_evenly = Property(
-        dtype=bool,
-        default=False,
-        desc="Tile size divides dimension range evenly?")
+    dim_idx = Property(dtype=int,
+                       default=-1,
+                       desc="Index of dimension to be strip-mined")
+    new_dim_prefix = Property(dtype=str,
+                              default="tile",
+                              desc="Prefix for new dimension name")
+    tile_size = Property(dtype=str,
+                         default="64",
+                         desc="Tile size of strip-mined dimension")
+    tile_stride = Property(dtype=str,
+                           default="",
+                           desc="Stride between two tiles of the "
+                           "strip-mined dimension")
+    divides_evenly = Property(dtype=bool,
+                              default=False,
+                              desc="Tile size divides dimension range evenly?")
     strided = Property(
         dtype=bool,
         default=False,
@@ -159,6 +160,8 @@ class StripMining(pattern_matching.Transformation):
                       entry: nodes.MapEntry, prefix: str, target_dim: str):
         """ Finds a variable that is not already defined in scope. """
         stree = state.scope_tree()
+        if len(prefix) == 0:
+            return target_dim
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
         while candidate in map(str, stree[entry].defined_vars):
@@ -187,13 +190,17 @@ class StripMining(pattern_matching.Transformation):
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
 
-        # Create new map. Replace by cloning???
+        # Create new map. Replace by cloning map object?
         new_dim = self._find_new_dim(sdfg, graph, map_entry, new_dim_prefix,
                                      target_dim)
         nd_from = 0
-        nd_to = symbolic.pystr_to_symbolic(
-            'int_ceil(%s + 1 - %s, %s) - 1' %
-            (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride))
+        if symbolic.pystr_to_symbolic(tile_stride) == 1:
+            nd_to = td_to
+        else:
+            nd_to = symbolic.pystr_to_symbolic(
+                'int_ceil(%s + 1 - %s, %s) - 1' %
+                (symbolic.symstr(td_to), symbolic.symstr(td_from),
+                 tile_stride))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
         new_map = nodes.Map(new_dim + '_' + map_entry.map.label, [new_dim],
@@ -209,22 +216,33 @@ class StripMining(pattern_matching.Transformation):
             td_step = symbolic.pystr_to_symbolic(tile_size)
         else:
             td_from_new = symbolic.pystr_to_symbolic(
-                '%s + %s * %s' % (symbolic.symstr(td_from), str(new_dim),
-                                  tile_stride))
+                '%s + %s * %s' %
+                (symbolic.symstr(td_from), str(new_dim), tile_stride))
             td_to_new_exact = symbolic.pystr_to_symbolic(
                 'min(%s + 1, %s + %s * %s + %s) - 1' %
                 (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride,
                  str(new_dim), tile_size))
             td_to_new_approx = symbolic.pystr_to_symbolic(
-                '%s + %s * %s + %s - 1' % (symbolic.symstr(td_from),
-                                           tile_stride, str(new_dim),
-                                           tile_size))
+                '%s + %s * %s + %s - 1' %
+                (symbolic.symstr(td_from), tile_stride, str(new_dim),
+                 tile_size))
         if divides_evenly or strided:
             td_to_new = td_to_new_approx
         else:
             td_to_new = dace.symbolic.SymExpr(td_to_new_exact,
                                               td_to_new_approx)
-        map_entry.map.range[dim_idx] = (td_from_new, td_to_new, td_step)
+        # Special case: If range is 1 and no prefix was specified, skip range
+        if td_from_new == td_to_new_approx and target_dim == new_dim:
+            map_entry.map.range = subsets.Range(
+                [r for i, r in enumerate(map_entry.map.range) if i != dim_idx])
+            map_entry.map.params = [
+                p for i, p in enumerate(map_entry.map.params) if i != dim_idx
+            ]
+            if len(map_entry.map.params) == 0:
+                raise ValueError('Strip-mining all dimensions of the map with '
+                                 'empty tiles is disallowed')
+        else:
+            map_entry.map.range[dim_idx] = (td_from_new, td_to_new, td_step)
 
         # Make internal map's schedule to "not parallel"
         new_map.schedule = map_entry.map.schedule

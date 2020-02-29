@@ -32,10 +32,6 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
 
-class ProgramVisitor:
-    pass
-
-
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
 
@@ -478,7 +474,7 @@ def _scalarbinop(sdfg: SDFG,
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor,
+    def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
@@ -488,7 +484,7 @@ def _makeassignop(op, opcode):
 
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: ProgramVisitor,
+    def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
             op1: str,
@@ -498,7 +494,7 @@ def _makeunop(op, opcode):
 
 @oprepo.replaces_operator('int', 'USub', None)
 @oprepo.replaces_operator('float', 'USub', None)
-def _neg(visitor: ProgramVisitor,
+def _neg(visitor: 'ProgramVisitor',
          sdfg: SDFG,
          state: SDFGState,
          op1: Union[int, float],
@@ -528,7 +524,7 @@ def _is_op_boolean(op: str):
     return False
 
 
-def _array_x_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                    op1: str, op2: str, op: str, opcode: str):
 
     arr1 = sdfg.arrays[op1]
@@ -577,22 +573,22 @@ def _array_x_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
 
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op, otherclass='Array')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
-    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str,
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
@@ -1772,6 +1768,10 @@ class ProgramVisitor(ExtNodeVisitor):
         self.sdfg = SDFG(self.name)
         if not self.nested:
             self.sdfg.arrays.update(scope_arrays)
+            for arr in self.sdfg.arrays.values():
+                for sym in arr.free_symbols:
+                    if sym.name not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
         self.inputs = {}
@@ -1822,6 +1822,19 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
+        # Handle return values
+        # Assignments to return values become __return* arrays
+        for vname, arrname in self.variables.items():
+            if vname.startswith('__return'):
+                self.sdfg.replace(arrname, vname)
+
+        # Return values become non-transient (accessible by the outside)
+        for arrname, arr in self.sdfg.arrays.items():
+            if arrname.startswith('__return'):
+                arr.transient = False
+                self.outputs[arrname] = Memlet.from_array(arrname, arr)
+        ####
+
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays:
@@ -1829,12 +1842,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     if (pyname and data.validate_name(pyname)
                             and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
-
-        # Return values become non-transient (accessible by the outside)
-        for arrname, arr in self.sdfg.arrays.items():
-            if arrname.startswith('__return'):
-                arr.transient = False
-                self.outputs[arrname] = Memlet.from_array(arrname, arr)
 
         return self.sdfg, self.inputs, self.outputs
 
@@ -2588,7 +2595,7 @@ class ProgramVisitor(ExtNodeVisitor):
             params = [(k, ':'.join(v)) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs(
                 'map_%d' % node.lineno, params, node)
-            me, mx = state.add_map(name='Map', ndrange=params)
+            me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno), ndrange=params)
             # body = SDFG('MapBody')
             body, inputs, outputs = self._parse_subprogram('MapBody', node)
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
@@ -2970,24 +2977,26 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.targets[0], None)
 
     def _visit_assign(self, node, node_target, op):
-
         # Get targets (elts) and results
         elts = None
         results = None
-        if not isinstance(node_target, (ast.Tuple, ast.List)):
-            elts = [node_target]
-            if isinstance(node.value, ast.Num):
-                results = [self._convert_num_to_array(node.value)]
-            else:
-                results = [self._gettype(node.value)]
-        else:
+        if isinstance(node_target, (ast.Tuple, ast.List)):
             elts = node_target.elts
-            results = []
+        else:
+            elts = [node_target]
+
+        results = []
+        if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
                 if isinstance(n, ast.Num):
                     results.append(self._convert_num_to_array(n))
                 else:
-                    results.append(self._gettype(n))
+                    results.extend(self._gettype(n))
+        else:
+            if isinstance(node.value, ast.Num):
+                results.append(self._convert_num_to_array(node.value))
+            else:
+                results.extend(self._gettype(node.value))
 
         if len(results) != len(elts):
             raise DaceSyntaxError(
@@ -3263,11 +3272,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
                 required_args = list(sdfg.arglist().keys())
-                # Validate argument types and sizes
-                sdfg.argument_typecheck(
-                    [], {k: self.sdfg.data(v)
-                         for k, v in args},
-                    types_only=True)
                 # Add keyword arguments to variables
                 for (k, v) in args:
                     self.variables[k] = v
@@ -3295,11 +3299,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Map internal SDFG symbols by adding keyword arguments
             symbols = set(sdfg.undefined_symbols(False).keys())
-            mapping = infer_symbols_from_shapes(
-                sdfg, {
-                    k: self.sdfg.arrays[v]
-                    for k, v in args if v in self.sdfg.arrays
-                }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            try:
+                mapping = infer_symbols_from_shapes(
+                    sdfg, {
+                        k: self.sdfg.arrays[v]
+                        for k, v in args if v in self.sdfg.arrays
+                    }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            except ValueError as ex:
+                raise DaceSyntaxError(self, node, str(ex))
             if len(mapping) == 0:  # Default to same-symbol mapping
                 mapping = None
 
@@ -3378,7 +3385,8 @@ class ProgramVisitor(ExtNodeVisitor):
             }
             # Handle scalar inputs to nested SDFG calls
             for conn, arg in args:
-                if arg not in self.sdfg.arrays:
+                if (arg not in self.sdfg.arrays
+                        and conn not in mapping.keys() | symbols):
                     argdict[conn] = state.add_tasklet('scalar', {}, {conn},
                                                       '%s = %s' % (conn, arg))
 
@@ -3455,8 +3463,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Substitute symbol mapping to get actual shape/strides
                     if mapping is not None:
-                        for sym, newsym in mapping.items():
-                            sd.replace_properties(newarr, sym, newsym)
+                        # Two-step replacement (N -> __dacesym_N --> mapping[N])
+                        # to avoid clashes
+                        for sym, symvalue in mapping.items():
+                            if str(sym) != str(symvalue):
+                                sd.replace_properties(newarr, sym,
+                                                      '__dacesym_' + sym)
+                        for sym, symvalue in mapping.items():
+                            if str(sym) != str(symvalue):
+                                sd.replace_properties(newarr,
+                                                      '__dacesym_' + sym,
+                                                      symvalue)
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname, newarr,
                                                          find_new_name=True)
@@ -3490,6 +3507,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                           None)
 
             # Return SDFG return values, if exist
+            if len(rets) == 1:
+                return rets[0]
             return rets
 
         # TODO: If the function is a callback, implement it as a tasklet
@@ -3672,24 +3691,26 @@ class ProgramVisitor(ExtNodeVisitor):
 
     ############################################################
 
-    def _gettype(self, opnode: ast.AST):
+    def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
-        operand = self.visit(opnode)
-        if isinstance(operand, (list, tuple)):
-            if len(operand) == 0:
+        operands = self.visit(opnode)
+        if isinstance(operands, (list, tuple)):
+            if len(operands) == 0:
                 raise DaceSyntaxError(self, opnode,
                                       'Operand has no return value')
-            if len(operand) > 1:
-                raise DaceSyntaxError(self, opnode,
-                                      'Operand cannot be a tuple')
-            operand = operand[0]
-
-        if isinstance(operand, str) and operand in self.sdfg.arrays:
-            return operand, type(self.sdfg.arrays[operand]).__name__
-        elif isinstance(operand, str) and operand in self.scope_arrays:
-            return operand, type(self.scope_arrays[operand]).__name__
         else:
-            return operand, type(operand).__name__
+            operands = [operands]
+
+        result = []
+        for operand in operands:
+            if isinstance(operand, str) and operand in self.sdfg.arrays:
+                result.append((operand, type(self.sdfg.arrays[operand]).__name__))
+            elif isinstance(operand, str) and operand in self.scope_arrays:
+                result.append((operand, type(self.scope_arrays[operand]).__name__))
+            else:
+                result.append((operand, type(operand).__name__))
+
+        return result
 
     def _convert_num_to_array(self, node: ast.Num):
         name = None
@@ -3729,9 +3750,17 @@ class ProgramVisitor(ExtNodeVisitor):
             pass
 
         # Parse operands
-        operand1, op1type = self._gettype(op1)
+        op1_parsed = self._gettype(op1)
+        if len(op1_parsed) > 1:
+            raise DaceSyntaxError(self, op1,
+                                  'Operand cannot be a tuple')
+        operand1, op1type = op1_parsed[0]
         if op2 is not None:
-            operand2, op2type = self._gettype(op2)
+            op2_parsed = self._gettype(op2)
+            if len(op2_parsed) > 1:
+                raise DaceSyntaxError(self, op2,
+                                      'Operand cannot be a tuple')
+            operand2, op2type = op2_parsed[0]
         else:
             operand2, op2type = None, None
 
@@ -3758,7 +3787,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 (opname, op1type, op2type))
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
-        result = func(self, self.sdfg, self.last_state, operand1, operand2)
+        try:
+            result = func(self, self.sdfg, self.last_state, operand1, operand2)
+        except SyntaxError as ex:
+            raise DaceSyntaxError(self, node, str(ex))
+
         return result
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
@@ -3809,7 +3842,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 return self._add_read_access(name, rng, node)
 
         # Obtain array
-        array, arrtype = self._gettype(node.value)
+        node_parsed = self._gettype(node.value)
+        if len(node_parsed) > 1:
+            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
+                                                    'be a tuple')
+        array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node,
                                   'Type "%s" cannot be sliced' % arrtype)
