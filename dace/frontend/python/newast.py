@@ -3385,7 +3385,8 @@ class ProgramVisitor(ExtNodeVisitor):
             }
             # Handle scalar inputs to nested SDFG calls
             for conn, arg in args:
-                if arg not in self.sdfg.arrays:
+                if (arg not in self.sdfg.arrays
+                        and conn not in mapping.keys() | symbols):
                     argdict[conn] = state.add_tasklet('scalar', {}, {conn},
                                                       '%s = %s' % (conn, arg))
 
@@ -3462,8 +3463,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Substitute symbol mapping to get actual shape/strides
                     if mapping is not None:
-                        for sym, newsym in mapping.items():
-                            sd.replace_properties(newarr, sym, newsym)
+                        # Two-step replacement (N -> __dacesym_N --> mapping[N])
+                        # to avoid clashes
+                        for sym, symvalue in mapping.items():
+                            if str(sym) != str(symvalue):
+                                sd.replace_properties(newarr, sym,
+                                                      '__dacesym_' + sym)
+                        for sym, symvalue in mapping.items():
+                            if str(sym) != str(symvalue):
+                                sd.replace_properties(newarr,
+                                                      '__dacesym_' + sym,
+                                                      symvalue)
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname, newarr,
                                                          find_new_name=True)
