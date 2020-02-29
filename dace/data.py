@@ -241,8 +241,8 @@ class Array(Data):
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
 
-    strides = ListProperty(
-        element_type=symbolic.pystr_to_symbolic,
+    strides = ShapeProperty(
+        # element_type=symbolic.pystr_to_symbolic,
         desc='For each dimension, the number of elements to '
         'skip in order to obtain the next element in '
         'that dimension.')

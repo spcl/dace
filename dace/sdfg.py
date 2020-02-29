@@ -4408,6 +4408,8 @@ def _replsym(symlist, symrepl):
 
 
 def replace_properties(node: Any, name: str, new_name: str):
+    if str(name) == str(new_name):
+        return
     symrepl = {
         symbolic.symbol(name):
         symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
@@ -4427,7 +4429,7 @@ def replace_properties(node: Any, name: str, new_name: str):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
             if isinstance(propval['code_or_block'], str):
-                # TODO: C++ AST parsing for replacement?
+                # TODO: Prepend variables for C++ replacement?
                 if name != str(new_name):
                     warnings.warn(
                         'Replacement of %s with %s was not made '
