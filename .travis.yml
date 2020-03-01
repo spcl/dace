@@ -10,11 +10,16 @@ env:
 # Dependencies
 before_install:
   - sudo apt-get install libyaml-dev cmake
+  # Instrumentation dependencies
+  - sudo apt-get install libpapi-dev papi-tools
 
 install:
   - pip install ".[test]" .
   - pip install coverage codecov
-  - pip install tensorflow==1.15.0
+  - if [ $DACE_optimizer_automatic_strict_transformations -eq 1 ]; then pip install tensorflow==1.15.0; fi
+
+before_script:
+  - papi_avail
 
 script:
   - export NOSTATUSBAR=1

@@ -565,30 +565,13 @@ required:
                 title: General
                 description: General DIODE Preferences
                 required:
- 
-                    show_transfed:
+                    library_autoexpand:
                         type: bool
-                        default: False
-                        title: (EXPERIMENTAL) Show Transformation Editor
+                        default: True
+                        title: Auto-Expand Library Nodes
                         description: >
-                            Show (or hide) the experimental transformation
-                            editor.
-    
-                    show_sdfged:
-                        type: bool
-                        default: False
-                        title: (EXPERIMENTAL) Show SDFG Editor
-                        description: >
-                            Show (or hide) the experimental SDFG Editor.
-
-                    show_optgraph:
-                        type: bool
-                        default: False
-                        title: Show Optimization Graph
-                        description: >
-                            Show available transformations as a graph. This is
-                            discouraged as the optimization graph may be too
-                            large to be useful.
+                            Automatically expand library nodes upon compilation, rather than
+                            expecting the nodes be expanded manually to the chosen implementation.
 
             fonts:
                 type: dict
@@ -612,102 +595,36 @@ required:
                         title: Transformation Editor
                         type: font
                         description: Font used to render pattern match code.
-        
+
     instrumentation:
         type: dict
         title: Instrumentation
         description: Instrumentation preferences
         required:
-            thread_nums:
-                type: str
-                title: PAPI thread test set
-                default: "[1,2,3,4]"
-                description: >
-                    Measures performance of all provided values for OMP_NUM_THREADS.
-            enable_overhead_compensation:
-                type: bool
-                title: Compensate Overhead
-                default: true
-                description: >
-                    Subtracts the minimum measured overhead from every measurement.
-            enable_vectorization_analysis:
-                type: bool
-                title: Enable vectorization check
-                default: false
-                description: >
-                    Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
-            enable_papi_counter_sanity_check:
-                type: bool
-                title: Counter sanity check
-                default: false
-                description: >
-                    Enables a pre-run sanity check to minimize runtime failures
-            default_papi_counters:
-                type: str
-                title: Default PAPI counters
-                default: "['PAPI_TOT_INS', 'PAPI_TOT_CYC', 'PAPI_L2_TCM', 'PAPI_L3_TCM']"
-                description: >
-                    Sets the default PAPI counter list, formatted as 
-                    a Python list of strings.
-            vec_papi_counters:
-                type: str
-                title: "Vector PAPI counters"
-                default: "['0x40000025', '0x40000026', '0x40000027', '0x40000028', '0x40000021', '0x40000022', '0x40000023', '0x40000024']"
-                description: "Sets the vector PAPI counter list. Provide in python list format."
-            mem_papi_counters:
-                type: str
-                title: "Memory PAPI counters"
-                default: "['PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS']"
-                description: "Sets the memory PAPI counter list. Provide in python list format."
-            cache_papi_counters:
-                type: str
-                title: "Cache PAPI counters"
-                default: "['PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV']"
-                description: "Sets the cache PAPI counter list. Provide in python list format."
-            max_scope_depth:
-                type: int
-                title: "Max scope depth"
-                default: 0
-                description: >
-                    Sets the maximum depth of instrumentations in
-                    map/consume scopes. Scopes that are deeper will not 
-                    be instrumented.
-            papi_mode:
-                type: str
-                title: "PAPI counter mode"
-                default: "default"
-                description: "[Internal] Allows switching between different counter modes. Users should ignore this"
-            multimode_run:
-                type: bool
-                title: "Multimode runs"
-                default: false
-                description: "Runs more runs with different counters for more information. See the '* PAPI counters' options"
-            sql_backend_enable:
-                type: bool
-                title: "Use SQL"
-                default: true
-                description: "Use the SQL backend to analyze values. Set to false to pass all performance data directly to the HTML5 renderer (deprecated)"
-            sql_database_file:
-                type: str
-                title: "Perfdata output database"
-                default: "perfdata.db"
-                description: "Output target sqlite3 file path"
-            
-    #############################################
-    # Frontend settings
-
-    frontend:
-        type: dict
-        title: Frontend
-        description: Python frontend preferences
-        required:
-            implementation:
-                type: str
-                default: "sdfg"
-                title: Default operator implementation
-                description: >
-                    Sets the default operator implementation when parsing Python code into
-                    subgraphs or tasklets (can be sdfg, mkl, cublas).
+            papi:
+                type: dict
+                title: PAPI
+                description: PAPI configuration
+                required:
+                    default_counters:
+                        type: str
+                        title: Default PAPI counters
+                        default: "['PAPI_TOT_INS', 'PAPI_TOT_CYC', 'PAPI_L2_TCM', 'PAPI_L3_TCM']"
+                        description: >
+                            Sets the default PAPI counter list, formatted as
+                            a Python list of strings.
+                    overhead_compensation:
+                        type: bool
+                        title: Compensate Overhead
+                        default: true
+                        description: >
+                            Subtracts the minimum measured overhead from every measurement.
+                    vectorization_analysis:
+                        type: bool
+                        title: Enable vectorization check
+                        default: false
+                        description: >
+                            Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
     #############################################
     # General settings
@@ -751,3 +668,37 @@ required:
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+
+            blas_implementation:
+                type: str
+                default: pure
+                title: Default BLAS Implementation
+                description: >
+                    Default library to use when implementing BLAS library nodes
+                    encountered in an SDFG, if no other implementation has been
+                    explicitly specified.
+
+    #############################################
+    # DaCe library settings 
+
+    library:
+        type: dict
+        title: Library
+        description: Settings for handling the use of DaCe libraries.
+        required:
+            blas:
+                type: dict
+                title: BLAS
+                description: Built-in BLAS DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: pure 
+                        description: Default implementation BLAS library nodes.  
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+

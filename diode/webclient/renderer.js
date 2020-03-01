@@ -7,6 +7,7 @@ class CanvasManager {
     }
     constructor(ctx, renderer, canvas) {
         this.ctx = ctx;
+        this.ctx.lod = true;
         this.canvas = canvas;
         this.anim_id = null;
         this.prev_time = null;
@@ -170,25 +171,25 @@ class CanvasManager {
         let scale = 1, tx = 0, ty = 0;
         if (rect.width > rect.height) {
             scale = canvas_w / rect.width;
-            tx = rect.x;
-            ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+            tx = -rect.x;
+            ty = -rect.y - (rect.height/2) + (canvas_h / scale / 2);
 
             // Now other dimension does not fit, scale it as well
             if (rect.height * scale > canvas_h) {
                 scale = canvas_h / rect.height;
-                tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
-                ty = rect.y;
+                tx = -rect.x - (rect.width/2) + (canvas_w / scale / 2);
+                ty = -rect.y;
             }
         } else {
             scale = canvas_h / rect.height;
-            tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
-            ty = rect.y;
+            tx = -rect.x - (rect.width/2) + (canvas_w / scale / 2);
+            ty = -rect.y;
         
             // Now other dimension does not fit, scale it as well
             if (rect.width * scale > canvas_w) {
                 scale = canvas_w / rect.width;
-                tx = rect.x;
-                ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+                tx = -rect.x;
+                ty = -rect.y - (rect.height/2) + (canvas_h / scale / 2);
             }
         }
 
@@ -368,6 +369,10 @@ function calculateNodeSize(sdfg_state, node, ctx) {
         size.width = 0.0;
         size.height = 0.0;
     }
+    else if (node.type === "LibraryNode") {
+        size.width += 2.0 * (size.height / 3.0);
+        size.height /= 1.75;
+    }
     else if (node.type === "Reduce") {
         size.height -= 4*LINEHEIGHT;
         size.width *= 2;
@@ -477,6 +482,8 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
     // Process nodes hierarchically
     let toplevel_nodes = sdfg_state.scope_dict[-1];
+    if (toplevel_nodes === undefined)
+        toplevel_nodes = Object.keys(sdfg_state.nodes);
     let drawn_nodes = new Set();
 
     function layout_node(node) {
@@ -545,11 +552,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     sdfg_state.edges.forEach((edge, id) => {
         edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
         if (!edge) return;
-
-        let label = edge.attributes.data.label;
-        console.assert(label != undefined);
-        let textmetrics = ctx.measureText(label);
-
         g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
     });
 
@@ -599,12 +601,14 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         let gedge = g.edge(edge.src, edge.dst, id);
 
         // Reposition first and last points according to connectors
+        let src_conn = null, dst_conn = null;
         if (edge.src_connector) {
             let src_node = g.node(edge.src);
             let cindex = src_node.data.node.attributes.layout.out_connectors.indexOf(edge.src_connector);
             if (cindex >= 0) {
                 gedge.points[0].x = src_node.out_connectors[cindex].x;
-                gedge.points[0].y += LINEHEIGHT / 2.0;
+                gedge.points[0].y = src_node.out_connectors[cindex].y;
+                src_conn = src_node.out_connectors[cindex];
             }
         }
         if (edge.dst_connector) {
@@ -612,9 +616,19 @@ function relayout_state(ctx, sdfg_state, sdfg) {
             let cindex = dst_node.data.node.attributes.layout.in_connectors.indexOf(edge.dst_connector);
             if (cindex >= 0) {
                 gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
-                gedge.points[gedge.points.length - 1].y -= LINEHEIGHT / 2.0;
+                gedge.points[gedge.points.length - 1].y = dst_node.in_connectors[cindex].y;
+                dst_conn = dst_node.in_connectors[cindex];
             }
         }
+
+        let n = gedge.points.length - 1;
+        if (src_conn !== null)
+            gedge.points[0] = dagre.util.intersectRect(src_conn, gedge.points[n]);
+        if (dst_conn !== null)
+            gedge.points[n] = dagre.util.intersectRect(dst_conn, gedge.points[0]);
+
+        if  (gedge.points.length == 3 && gedge.points[0].x == gedge.points[n].x)
+            gedge.points = [gedge.points[0], gedge.points[n]];
 
         let bb = calculateEdgeBoundingBox(gedge);
         // Convert from top-left to center
@@ -645,6 +659,7 @@ class SDFGRenderer {
         this.ctx = null;
         this.canvas = null;
         this.toolbar = null;
+        this.menu = null;
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
@@ -661,9 +676,15 @@ class SDFGRenderer {
     }
 
     destroy() {
-        this.canvas_manager.destroy();
-        this.container.removeChild(this.canvas);
-        this.container.removeChild(this.toolbar);
+        try {
+            if (this.menu)
+                this.menu.destroy();
+            this.canvas_manager.destroy();
+            this.container.removeChild(this.canvas);
+            this.container.removeChild(this.toolbar);
+        } catch (ex) {
+            // Do nothing
+        }
     }
 
     // Initializes the DOM
@@ -678,14 +699,24 @@ class SDFGRenderer {
         let d;
 
         // Menu bar
-        /*
-        let d = document.createElement('button');
-        d.innerHTML = '<i class="material-icons">menu</i>';
-        d.style = 'padding-bottom: 0px;';
-        d.onclick = () => {};
-        d.title = 'Menu';
-        this.toolbar.appendChild(d);
-        */
+        try {
+            ContextMenu;
+            d = document.createElement('button');
+            d.innerHTML = '<i class="material-icons">menu</i>';
+            d.style = 'padding-bottom: 0px;';
+            let that = this;
+            d.onclick = function () {
+                let rect = this.getBoundingClientRect();
+                let cmenu = new ContextMenu();
+                cmenu.addOption("Save view as PNG", x => that.save_as_png());
+                cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
+                cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                that.menu = cmenu;
+                cmenu.show(rect.left, rect.bottom);
+            };
+            d.title = 'Menu';
+            this.toolbar.appendChild(d);
+        } catch (ex) {}
 
         // Zoom to fit
         d = document.createElement('button');
@@ -814,6 +845,66 @@ class SDFGRenderer {
         this.draw_async();
     }
 
+    // Save functions
+    save(filename, contents) {
+        var link = document.createElement('a');
+        link.setAttribute('download', filename);
+        link.href = contents;
+        document.body.appendChild(link);
+
+        // wait for the link to be added to the document
+        window.requestAnimationFrame(function () {
+            var event = new MouseEvent('click');
+            link.dispatchEvent(event);
+            document.body.removeChild(link);
+        });
+    }
+
+    save_as_png() {
+        this.save('sdfg.png', this.canvas.toDataURL('image/png'));
+    }
+
+    save_as_pdf(save_all=false) {
+        let stream = blobStream();
+
+        // Compute document size
+        let curx = this.canvas_manager.mapPixelToCoordsX(0);
+        let cury = this.canvas_manager.mapPixelToCoordsY(0);
+        let size;
+        if (save_all) {
+            // Get size of entire graph
+            let elements = this.graph.nodes().map(x => this.graph.node(x));
+            let bb = boundingBox(elements);
+            size = [bb.width, bb.height];
+        } else {
+            // Get size of current view
+            let endx = this.canvas_manager.mapPixelToCoordsX(this.canvas.width);
+            let endy = this.canvas_manager.mapPixelToCoordsY(this.canvas.height);
+            let curw = endx - curx, curh = endy - cury;
+            size = [curw, curh];
+        }
+        //
+
+        let ctx = new canvas2pdf.PdfContext(stream, {
+            size: size
+        });
+        let oldctx = this.ctx;
+        this.ctx = ctx;
+        this.ctx.lod = !save_all;
+        this.ctx.pdf = true;
+        // Center on saved region
+        if (!save_all)
+            this.ctx.translate(-curx, -cury);
+
+        this.draw_async();
+
+        ctx.stream.on('finish', () => {
+            this.save('sdfg.pdf', ctx.stream.toBlobURL('application/pdf'));
+            this.ctx = oldctx;
+            this.draw_async();
+        });
+    }
+
     // Render SDFG
     draw(dt) {
         let ctx = this.ctx;
@@ -836,6 +927,10 @@ class SDFGRenderer {
     on_pre_draw() { }
 
     on_post_draw() {
+        try {
+            this.ctx.end();
+        } catch (ex) {}
+        
         if (this.tooltip) {
             let FONTSIZE = 18; // in pixels
             let br = this.canvas.getBoundingClientRect();

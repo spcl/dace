@@ -1,13 +1,14 @@
-"""State fusion transformation"""
+""" State fusion transformation """
 
 import networkx as nx
 
-from dace import sdfg, symbolic
+from dace import dtypes, registry, sdfg
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.config import Config
 
 
+@registry.autoregister_params(strict=True)
 class StateFusion(pattern_matching.Transformation):
     """ Implements the state-fusion transformation.
         
@@ -113,11 +114,25 @@ class StateFusion(pattern_matching.Transformation):
                 cc.intersection(second_output) for cc in second_cc
             ]
 
+            # Apply transformation in case all paths to the second state's
+            # nodes go through the same access node, which implies sequential
+            # behavior in SDFG semantics.
             check_strict = len(first_cc)
             for cc_output in first_cc_output:
+                out_nodes = [
+                    n for n in first_state.sink_nodes() if n in cc_output
+                ]
+                # Branching exists, multiple paths may involve same access node
+                # potentially causing data races
+                if len(out_nodes) > 1:
+                    continue
+
+                # Otherwise, check if any of the second state's connected
+                # components for matching input
                 for node in cc_output:
-                    if (next((x for x in second_input
-                              if x.label == node.label), None) is not None):
+                    if (next(
+                        (x for x in second_input if x.label == node.label),
+                            None) is not None):
                         check_strict -= 1
                         break
 
@@ -125,13 +140,15 @@ class StateFusion(pattern_matching.Transformation):
                 # Check strict conditions
                 # RW dependency
                 for node in first_input:
-                    if (next((x for x in second_output
-                              if x.label == node.label), None) is not None):
+                    if (next(
+                        (x for x in second_output if x.label == node.label),
+                            None) is not None):
                         return False
                 # WW dependency
                 for node in first_output:
-                    if (next((x for x in second_output
-                              if x.label == node.label), None) is not None):
+                    if (next(
+                        (x for x in second_output if x.label == node.label),
+                            None) is not None):
                         return False
 
         return True
@@ -141,8 +158,8 @@ class StateFusion(pattern_matching.Transformation):
         first_state = graph.nodes()[candidate[StateFusion._first_state]]
         second_state = graph.nodes()[candidate[StateFusion._second_state]]
 
-        return " -> ".join(
-            state.label for state in [first_state, second_state])
+        return " -> ".join(state.label
+                           for state in [first_state, second_state])
 
     def apply(self, sdfg):
         first_state = sdfg.nodes()[self.subgraph[StateFusion._first_state]]
@@ -206,22 +223,24 @@ class StateFusion(pattern_matching.Transformation):
         # Merge common (data) nodes
         for node in first_input:
             try:
-                old_node = next(
-                    x for x in second_input if x.label == node.label)
+                old_node = next(x for x in second_input
+                                if x.label == node.label)
             except StopIteration:
                 continue
             nxutil.change_edge_src(first_state, old_node, node)
             first_state.remove_node(old_node)
             second_input.remove(old_node)
+            node.access = dtypes.AccessType.ReadWrite
         for node in first_output:
             try:
-                new_node = next(
-                    x for x in second_input if x.label == node.label)
+                new_node = next(x for x in second_input
+                                if x.label == node.label)
             except StopIteration:
                 continue
             nxutil.change_edge_dest(first_state, node, new_node)
             first_state.remove_node(node)
             second_input.remove(new_node)
+            new_node.access = dtypes.AccessType.ReadWrite
         # Check if any input nodes of the second state have to be merged with
         # non-input/output nodes of the first state.
         for node in second_input:
@@ -230,17 +249,10 @@ class StateFusion(pattern_matching.Transformation):
                 if n:
                     nxutil.change_edge_src(first_state, node, n)
                     first_state.remove_node(node)
+                    n.access = dtypes.AccessType.ReadWrite
 
         # Redirect edges and remove second state
         nxutil.change_edge_src(sdfg, second_state, first_state)
         sdfg.remove_node(second_state)
         if Config.get_bool("debugprint"):
             StateFusion._states_fused += 1
-
-    @staticmethod
-    def print_debuginfo():
-        print("Automatically fused {} states using StateFusion transform.".
-              format(StateFusion._states_fused))
-
-
-pattern_matching.Transformation.register_stateflow_pattern(StateFusion)

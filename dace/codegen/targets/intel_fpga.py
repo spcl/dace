@@ -6,17 +6,18 @@ from six import StringIO
 import numpy as np
 
 import dace
-from dace import subsets, dtypes
+from dace import registry, subsets, dtypes
 from dace.codegen import cppunparse
 from dace.config import Config
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
-from dace.codegen.targets import cpu, fpga
+from dace.codegen.targets import cpp, fpga
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import SDFGState
+from dace.symbolic import evaluate
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "min",
@@ -43,6 +44,7 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
+@registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'
@@ -148,8 +150,8 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
         else:
             depth_attribute = ""
-        if cpu.sym2cpp(array_size) != "1":
-            size_str = "[" + cpu.sym2cpp(array_size) + "]"
+        if cpp.sym2cpp(array_size) != "1":
+            size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:
             size_str = ""
         kernel_stream.write("channel {} {}{}{};".format(
@@ -165,7 +167,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             attributes = ""
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes,
                                                     var_name,
-                                                    cpu.sym2cpp(array_size)))
+                                                    cpp.sym2cpp(array_size)))
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
@@ -496,6 +498,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 kernel_args_call += [p for p in scope.params]
                 unrolled_loops += 1
 
+        # Ensure no duplicate parameters are used
+        kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
+        kernel_args_call = dtypes.deduplicate(kernel_args_call)
+
         # Add kernel call host function
         if unrolled_loops == 0:
             host_body_stream.write(
@@ -506,9 +512,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             # We will generate a separate kernel for each PE. Adds host call
             for ul in self._unrolled_pes:
                 start, stop, skip = ul.range.ranges[0]
-                start_idx = dace.symbolic.eval(start)
-                stop_idx = dace.symbolic.eval(stop)
-                skip_idx = dace.symbolic.eval(skip)
+                start_idx = evaluate(start, sdfg.constants)
+                stop_idx = evaluate(stop, sdfg.constants)
+                skip_idx = evaluate(skip, sdfg.constants)
                 # Due to restrictions on channel indexing, PE IDs must start from zero
                 # and skip index must be 1
                 if start_idx != 0 or skip_idx != 1:
@@ -591,9 +597,9 @@ __kernel void \\
         for ul in self._unrolled_pes:
             # create PE kernels by using the previously defined macro
             start, stop, skip = ul.range.ranges[0]
-            start_idx = dace.symbolic.eval(start)
-            stop_idx = dace.symbolic.eval(stop)
-            skip_idx = dace.symbolic.eval(skip)
+            start_idx = evaluate(start, sdfg.constants)
+            stop_idx = evaluate(stop, sdfg.constants)
+            skip_idx = evaluate(skip, sdfg.constants)
             # First macro argument is the processing element id
             for p in range(start_idx, stop_idx + 1, skip_idx):
                 module_stream.write("_DACE_FPGA_KERNEL_{}({}{}{})\n".format(
@@ -685,7 +691,7 @@ __kernel void \\
             if (isinstance(datadesc, dace.data.Array) and
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
                  or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and not cpu.is_write_conflicted(dfg, edge)):
+                    and not cpp.is_write_conflicted(dfg, edge)):
                 self.generate_no_dependence_post(
                     edge.src_conn, callsite_stream, sdfg, state_id, node)
 
@@ -720,7 +726,7 @@ __kernel void \\
         sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
 
         # Generate code for internal SDFG
-        global_code, local_code, used_targets = \
+        global_code, local_code, used_targets, used_environments = \
             self._frame.generate_code(node.sdfg, node.schedule, sdfg_label)
 
         # Write generated code in the proper places (nested SDFG writes
@@ -761,7 +767,7 @@ __kernel void \\
         data_desc = sdfg.arrays[data_name]
         memlet_type = self.make_vector_type(
             data_desc.dtype, self._memory_widths[data_name], False)
-        offset = cpu.cpp_offset_expr(data_desc, memlet.subset, None,
+        offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
                                      memlet.veclen)
 
         result = ""
@@ -836,7 +842,7 @@ __kernel void \\
             else:
                 # Must happen directly in the code
                 # Here we create a macro which take the proper channel
-                channel_idx = cpu.cpp_offset_expr(sdfg.arrays[data_name],
+                channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                   memlet.subset)
 
                 if sdfg.parent is None:
@@ -850,7 +856,7 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.StreamArray)
         else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+            raise TypeError("Unknown variable type: {}".format(def_type))
 
         callsite_stream.write(result, sdfg, state_id, tasklet)
 
@@ -863,7 +869,7 @@ __kernel void \\
             data_desc = sdfg.arrays[data_name]
             memlet_type = self.make_vector_type(
                 data_desc.dtype, self._memory_widths[data_name], False)
-            offset = cpu.cpp_offset_expr(data_desc, memlet.subset, None,
+            offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
                                          memlet.veclen)
 
             result = ""
@@ -912,7 +918,7 @@ __kernel void \\
                         # Must happen directly in the code
                         pass
             else:
-                raise TypeError("Unknown variable type: {}".format(var_type))
+                raise TypeError("Unknown variable type: {}".format(data_desc))
 
             callsite_stream.write(result, sdfg, state_id, node)
 
@@ -1039,7 +1045,7 @@ __kernel void \\
         callsite_stream.write(constant_string, sdfg)
 
 
-class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
+class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     """
     Removes Dace Keywords and enforces OpenCL compliance
     """
@@ -1070,15 +1076,16 @@ class OpenCLDaceKeywordRemover(cpu.DaCeKeywordRemover):
             raise NotImplementedError('Range subscripting not implemented')
 
         if isinstance(slice.value, ast.Tuple):
-            subscript = cpu.unparse(slice)[1:-1]
+            subscript = cpp.unparse(slice)[1:-1]
         else:
-            subscript = cpu.unparse(slice)
+            subscript = cpp.unparse(slice)
 
         if target in self.constants:
             shape = self.constants[target].shape
         else:
             shape = self.sdfg.arrays[self.memlets[target][0].data].shape
-        slice_str = cpu.ndslice_cpp(subscript.split(', '), shape)
+        slice_str = cpp.DaCeKeywordRemover.ndslice_cpp(
+            subscript.split(', '), shape)
 
         newnode = ast.parse('%s[%s]' % (target, slice_str)).body[0].value
 

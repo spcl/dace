@@ -1,7 +1,7 @@
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import dace
-from dace import data, memlet, dtypes, sdfg as sd, subsets
+from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -27,6 +27,7 @@ def fpga_update(sdfg, state, depth):
                 fpga_update(node.sdfg, s, depth + 1)
 
 
+@registry.autoregister
 class FPGATransformState(pattern_matching.Transformation):
     """ Implements the FPGATransformState transformation. """
 
@@ -271,6 +272,3 @@ class FPGATransformState(pattern_matching.Transformation):
                 mem.veclen = veclen_
 
         fpga_update(sdfg, state, 0)
-
-
-pattern_matching.Transformation.register_stateflow_pattern(FPGATransformState)

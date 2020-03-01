@@ -1,16 +1,13 @@
 """ Contains the GPU Transform Map transformation. """
 
-import copy
-import itertools
-
-from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, sdfg as sd, registry
 from dace.graph import nodes, nxutil
 from dace.graph.graph import SubgraphView
 from dace.transformation import pattern_matching, helpers
 from dace.properties import Property, make_properties
-from dace.config import Config
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class GPUTransformMap(pattern_matching.Transformation):
     """ Implements the GPUTransformMap transformation.
@@ -129,6 +126,3 @@ class GPUTransformMap(pattern_matching.Transformation):
 
         # Inline back as necessary
         sdfg.apply_strict_transformations()
-
-
-pattern_matching.Transformation.register_pattern(GPUTransformMap)

@@ -29,7 +29,7 @@ def map(f, rng):
         concurrently.
         :param rng: The map's range.
     """
-    return None
+    pass
 
 
 @paramdec
@@ -42,14 +42,14 @@ def consume(f, stream, pes):
         :param stream: The stream to pop from.
         :param pes: The number of processing elements to use.
     """
-    return None
+    pass
 
 
 def tasklet(f):
     """ A general procedure that cannot access any memory apart from incoming
         and outgoing memlets. The DaCe framework cannot analyze these tasklets
         for optimization. """
-    return None
+    pass
 
 
 # Control-flow constructs
@@ -58,7 +58,7 @@ def iterate(f, rng):
     """ A decorator version of a for loop, with a range of `rng`.
         :param rng: The range of the for loop.
     """
-    return None
+    pass
 
 
 @paramdec
@@ -66,7 +66,7 @@ def loop(f, cond):
     """ A decorator version of a while loop, with a looping condition `cond`.
         :param cond: The condition of the while loop.
     """
-    return None
+    pass
 
 
 @paramdec
@@ -75,4 +75,4 @@ def conditional(f, cond):
         `cond`.
         :param cond: The condition of the branch.
     """
-    return None
+    pass

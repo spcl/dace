@@ -110,6 +110,14 @@ class Data(object):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
 
+    @property
+    def free_symbols(self):
+        result = set()
+        for s in self.shape:
+            if isinstance(s, sp.Expr):
+                result |= set(s.free_symbols)
+        return result
+
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
 
@@ -208,7 +216,7 @@ def set_materialize_func(obj, val):
         if (obj.storage != dace.dtypes.StorageType.Default
                 and obj.storage != dace.dtypes.StorageType.Immaterial):
             raise ValueError("Immaterial array must have immaterial storage, "
-                             "but has: {}".format(storage))
+                             "but has: {}".format(obj.storage))
         obj.storage = dace.dtypes.StorageType.Immaterial
     obj._materialize_func = val
 
@@ -233,8 +241,8 @@ class Array(Data):
     materialize_func = Property(
         dtype=str, allow_none=True, setter=set_materialize_func)
 
-    strides = ListProperty(
-        element_type=symbolic.pystr_to_symbolic,
+    strides = ShapeProperty(
+        # element_type=symbolic.pystr_to_symbolic,
         desc='For each dimension, the number of elements to '
         'skip in order to obtain the next element in '
         'that dimension.')
@@ -347,17 +355,17 @@ class Array(Data):
 
         for s, (rb, re, rs) in zip(self.shape, rng):
             # Shape has to be positive
-            if isinstance(s, sympy.Basic):
+            if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
-                    s = sympy.Symbol(str(s), **s.assumptions0)
+                    s = sp.Symbol(str(s), **s.assumptions0)
                 else:
-                    s = sympy.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sympy.Basic):
+                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
+                if isinstance(rb, sp.Basic):
                     rb = rb.subs({olds: s})
-                if isinstance(re, sympy.Basic):
+                if isinstance(re, sp.Basic):
                     re = re.subs({olds: s})
-                if isinstance(rs, sympy.Basic):
+                if isinstance(rs, sp.Basic):
                     rs = rs.subs({olds: s})
 
             try:
@@ -392,23 +400,9 @@ class Array(Data):
 
         # Test shape
         for dim, otherdim in zip(self.shape, other.shape):
-            # If both are symbols, ensure equality
-            if symbolic.issymbolic(dim) and symbolic.issymbolic(otherdim):
-                if dim != otherdim:
-                    return False
-
-            # If one is a symbol and the other is a constant
-            # make sure they are equivalent
-            elif symbolic.issymbolic(otherdim):
-                if symbolic.eval(otherdim) != dim:
-                    return False
-            elif symbolic.issymbolic(dim):
-                if symbolic.eval(dim) != otherdim:
-                    return False
-            else:
-                # Any other case (constant vs. constant), check for equality
-                if otherdim != dim:
-                    return False
+            # Any other case (constant vs. constant), check for equality
+            if otherdim != dim:
+                return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):
@@ -431,6 +425,20 @@ class Array(Data):
             d.name if isinstance(d, symbolic.symbol) else str(d)
             for d in self.shape
         ]
+
+    @property
+    def free_symbols(self):
+        result = super().free_symbols
+        for s in self.strides:
+            if isinstance(s, sp.Expr):
+                result |= set(s.free_symbols)
+        if isinstance(self.total_size, sp.Expr):
+            result |= set(self.total_size.free_symbols)
+        for o in self.offset:
+            if isinstance(o, sp.Expr):
+                result |= set(o.free_symbols)
+
+        return result
 
     # OPERATORS
     #def __add__(self, other):
@@ -526,23 +534,8 @@ class Stream(Data):
 
         # Test shape
         for dim, otherdim in zip(self.shape, other.shape):
-            # If both are symbols, ensure equality
-            if symbolic.issymbolic(dim) and symbolic.issymbolic(otherdim):
-                if dim != otherdim:
-                    return False
-
-            # If one is a symbol and the other is a constant
-            # make sure they are equivalent
-            elif symbolic.issymbolic(otherdim):
-                if symbolic.eval(otherdim) != dim:
-                    return False
-            elif symbolic.issymbolic(dim):
-                if symbolic.eval(dim) != otherdim:
-                    return False
-            else:
-                # Any other case (constant vs. constant), check for equality
-                if otherdim != dim:
-                    return False
+            if dim != otherdim:
+                return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):
@@ -578,17 +571,17 @@ class Stream(Data):
 
         for s, (rb, re, rs) in zip(self.shape, rng):
             # Shape has to be positive
-            if isinstance(s, sympy.Basic):
+            if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
-                    s = sympy.Symbol(str(s), **s.assumptions0)
+                    s = sp.Symbol(str(s), **s.assumptions0)
                 else:
-                    s = sympy.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sympy.Basic):
+                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
+                if isinstance(rb, sp.Basic):
                     rb = rb.subs({olds: s})
-                if isinstance(re, sympy.Basic):
+                if isinstance(re, sp.Basic):
                     re = re.subs({olds: s})
-                if isinstance(rs, sympy.Basic):
+                if isinstance(rs, sp.Basic):
                     rs = rs.subs({olds: s})
 
             try:
@@ -607,3 +600,14 @@ class Stream(Data):
                 #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
+
+    @property
+    def free_symbols(self):
+        result = super().free_symbols
+        if isinstance(self.buffer_size, sp.Expr):
+            result |= set(self.buffer_size.free_symbols)
+        for o in self.offset:
+            if isinstance(o, sp.Expr):
+                result |= set(o.free_symbols)
+
+        return result

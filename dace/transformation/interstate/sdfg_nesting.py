@@ -5,14 +5,15 @@ import itertools
 import networkx as nx
 from typing import Dict, List, Set
 
-from dace import data as dt, memlet, sdfg as sd, Memlet, EmptyMemlet
+from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
 from dace.graph import nodes, nxutil
 from dace.graph.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.transformation import pattern_matching
+from dace.transformation import pattern_matching, helpers
 from dace.properties import make_properties, Property
 
 
+@registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
 class InlineSDFG(pattern_matching.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
@@ -63,50 +64,29 @@ class InlineSDFG(pattern_matching.Transformation):
                 return False
             out_connectors.add(edge.src_conn)
 
+        # Ensure output connectors have no additional outputs (if in a scope),
+        # and ensure no two connectors are directly connected to each other
+        if graph.entry_node(nested_sdfg) is not None:
+            all_connectors = in_connectors | out_connectors
+            nstate = nested_sdfg.sdfg.node(0)
+            for node in nstate.nodes():
+                if isinstance(node, nodes.AccessNode):
+                    if (node.data in out_connectors
+                            and nstate.out_degree(node) > 0
+                            and (node.data not in in_connectors
+                                 or nstate.in_degree(node) > 0)):
+                        return False
+                    if (node.data in in_connectors and any(
+                            e.dst.data in all_connectors
+                            for e in nstate.out_edges(node)
+                            if isinstance(e.dst, nodes.AccessNode))):
+                        return False
+
         return True
 
     @staticmethod
     def match_to_str(graph, candidate):
         return graph.label
-
-    def _modify_memlet(self, internal_memlet: Memlet, external_memlet: Memlet):
-        """ Unsqueezes and offsets a memlet, as per the semantics of nested
-            SDFGs.
-            :param internal_memlet: The internal memlet (inside nested SDFG)
-                                    before modification.
-            :param internal_memlet: The external memlet before modification.
-            :return: Offset Memlet to set on the resulting graph.
-        """
-        result = dc(internal_memlet)
-        result.data = external_memlet.data
-
-        shape = external_memlet.subset.size()
-        if len(internal_memlet.subset) < len(external_memlet.subset):
-            ones = [i for i, d in enumerate(shape) if d == 1]
-
-            # Special case: If internal memlet is a range of size 1 with (0,0,1),
-            #               ignore it when unsqueezing
-            if (len(internal_memlet.subset) == 1
-                    and (internal_memlet.subset[0] == (0, 0, 1)
-                         or internal_memlet.subset[0] == 0)):
-                to_unsqueeze = ones[1:]
-            else:
-                to_unsqueeze = ones
-
-            result.subset.unsqueeze(to_unsqueeze)
-        elif len(internal_memlet.subset) > len(external_memlet.subset):
-            raise ValueError(
-                'Unexpected extra dimensions in internal memlet '
-                'while inlining SDFG.\nExternal memlet: %s\n'
-                'Internal memlet: %s' % (external_memlet, internal_memlet))
-
-        result.subset.offset(external_memlet.subset, False)
-
-        # TODO: Offset rest of memlet according to other_subset
-        if external_memlet.other_subset is not None:
-            raise NotImplementedError
-
-        return result
 
     def _remove_edge_path(self,
                           state: SDFGState,
@@ -175,6 +155,14 @@ class InlineSDFG(pattern_matching.Transformation):
 
         #######################################################
         # Collect and update top-level SDFG metadata
+
+        # Global/init/exit code
+        if nsdfg.global_code:
+            sdfg.set_global_code(sdfg.global_code + nsdfg.global_code)
+        if nsdfg.init_code:
+            sdfg.set_init_code(sdfg.init_code + nsdfg.init_code)
+        if nsdfg.exit_code:
+            sdfg.set_exit_code(sdfg.exit_code + nsdfg.exit_code)
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -248,6 +236,15 @@ class InlineSDFG(pattern_matching.Transformation):
         #######################################################
         # Replace data on inlined SDFG nodes/edges
 
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace(symname, '__dacesym_' + symname)
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace('__dacesym_' + symname, symvalue)
+
         # Replace data names with their top-level counterparts
         repldict = {}
         repldict.update(transients)
@@ -287,7 +284,7 @@ class InlineSDFG(pattern_matching.Transformation):
                                 and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e.data.data == node.data:
-                                    e._data = self._modify_memlet(
+                                    e._data = helpers.unsqueeze_memlet(
                                         e.data, outer_edge.data)
 
         # If source/sink node is not connected to a source/destination access
@@ -347,8 +344,8 @@ class InlineSDFG(pattern_matching.Transformation):
             inner_edges = (nstate.out_edges(node)
                            if inputs else nstate.in_edges(node))
             for inner_edge in inner_edges:
-                new_memlet = self._modify_memlet(inner_edge.data,
-                                                 top_edge.data)
+                new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                      top_edge.data)
                 if inputs:
                     new_edge = state.add_edge(top_edge.src, top_edge.src_conn,
                                               inner_edge.dst,
@@ -363,7 +360,7 @@ class InlineSDFG(pattern_matching.Transformation):
                 # Modify all memlets going forward/backward
                 def traverse(mtree_node):
                     result.add(mtree_node.edge)
-                    mtree_node.edge._data = self._modify_memlet(
+                    mtree_node.edge._data = helpers.unsqueeze_memlet(
                         mtree_node.edge.data, top_edge.data)
                     for child in mtree_node.children:
                         traverse(child)
@@ -374,6 +371,7 @@ class InlineSDFG(pattern_matching.Transformation):
         return result
 
 
+@registry.autoregister
 @make_properties
 class NestSDFG(pattern_matching.Transformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
@@ -422,19 +420,20 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[arrname + '_in'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_in'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            inputs[arrname] = arrname + '_in'
-                        node_data_name = arrname + '_in'
+                            inputs[arrname] = '__' + arrname + '_in'
+                        node_data_name = '__' + arrname + '_in'
                     if (state.in_degree(node) > 0):  # output node
                         arrname = node.data
                         if arrname not in outputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[arrname + '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname +
+                                               '_out'] = arrobj
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
-                            outputs[arrname] = arrname + '_out'
-                        node_data_name = arrname + '_out'
+                            outputs[arrname] = '__' + arrname + '_out'
+                        node_data_name = '__' + arrname + '_out'
                     node.data = node_data_name
 
             if self.promote_global_trans:
@@ -446,10 +445,11 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[arrname + '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname +
+                                               '_out'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            transients[arrname] = arrname + '_out'
-                        node.data = arrname + '_out'
+                            transients[arrname] = '__' + arrname + '_out'
+                        node.data = '__' + arrname + '_out'
 
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
@@ -493,7 +493,3 @@ class NestSDFG(pattern_matching.Transformation):
             outer_state.add_edge(
                 nested_node, val, arrnode, None,
                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
-
-
-pattern_matching.Transformation.register_stateflow_pattern(NestSDFG)
-pattern_matching.Transformation.register_pattern(InlineSDFG)

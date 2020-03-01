@@ -335,6 +335,15 @@ class FormBuilder {
         elem.id = id;
         return $(elem);
     }
+
+    static createButton(id, onclick, label) {
+        let elem = document.createElement("button");
+        elem.onclick = () => {
+            onclick(elem);
+        };
+        elem.innerHTML = label;
+        return $(elem);
+    }
 }
 
 function start_DIODE() {

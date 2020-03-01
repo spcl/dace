@@ -1,15 +1,12 @@
 """ Contains redundant array removal transformations. """
 
-import copy
-from dace import data as dt, dtypes, subsets, symbolic
-from dace.memlet import Memlet
+from dace import registry
 from dace.graph import nodes, nxutil
-from dace.sdfg import SDFGState
 from dace.transformation import pattern_matching as pm
-from dace.properties import ShapeProperty
 from dace.config import Config
 
 
+@registry.autoregister_params(singlestate=True)
 class RedundantArrayCopying(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes array B
         in pattern A -> B -> A.
@@ -113,19 +110,8 @@ class RedundantArrayCopying(pm.Transformation):
             if Config.get_bool("debugprint"):
                 RedundantArrayCopying._arrays_removed += 1
 
-    def modifies_graph(self):
-        return True
 
-    @staticmethod
-    def print_debuginfo():
-        print(
-            "Automatically removed {} redundant arrays using RedundantArrayCopying transform."
-            .format(RedundantArrayCopying._arrays_removed))
-
-
-pm.Transformation.register_pattern(RedundantArrayCopying)
-
-
+@registry.autoregister_params(singlestate=True)
 class RedundantArrayCopying2(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes 
         multiples of array B in pattern A -> B.
@@ -182,19 +168,8 @@ class RedundantArrayCopying2(pm.Transformation):
                 if Config.get_bool("debugprint"):
                     RedundantArrayCopying2._arrays_removed += 1
 
-    def modifies_graph(self):
-        return True
 
-    @staticmethod
-    def print_debuginfo():
-        print(
-            "Automatically removed {} redundant arrays using RedundantArrayCopying2 transform."
-            .format(RedundantArrayCopying2._arrays_removed))
-
-
-pm.Transformation.register_pattern(RedundantArrayCopying2)
-
-
+@registry.autoregister_params(singlestate=True)
 class RedundantArrayCopying3(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes multiples
         of array B in pattern MapEntry -> B.
@@ -251,15 +226,3 @@ class RedundantArrayCopying3(pm.Transformation):
                 graph.remove_node(dst)
                 if Config.get_bool("debugprint"):
                     RedundantArrayCopying3._arrays_removed += 1
-
-    def modifies_graph(self):
-        return True
-
-    @staticmethod
-    def print_debuginfo():
-        print(
-            "Automatically removed {} redundant arrays using RedundantArrayCopying3 transform."
-            .format(RedundantArrayCopying3._arrays_removed))
-
-
-pm.Transformation.register_pattern(RedundantArrayCopying3)

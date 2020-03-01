@@ -9,7 +9,7 @@ DACE_debugprint="${DACE_debugprint:-0}"
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0
-PYTHON_BINARY="${PYTHON_BINARY:python3}"
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 TEST_TIMEOUT=10
 
@@ -58,6 +58,7 @@ run_sample() {
 run_all() {
     # Args:
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
+    run_sample axpy_transformed axpy_fpga_24 0 24
     run_sample histogram_fpga_parallel histogram_fpga_parallel_16 0 128 128 16
     run_sample spmv_fpga_stream spmv_fpga_stream 0 64 64 640
     run_sample gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 

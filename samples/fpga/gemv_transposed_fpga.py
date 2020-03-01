@@ -244,11 +244,13 @@ if __name__ == "__main__":
         M.set(args["M"])
 
     gemv = make_sdfg(args["specialize"])
-    gemv.draw_to_file()
-    gemv.specialize()
+    gemv.specialize(dict(N=N))
 
     if not args["specialize"]:
         M.set(args["M"])
+    else:
+        gemv.specialize(dict(M=M))
+
 
     print("Running GEMV {}x{} ({}specialized)".format(
         N.get(), M.get(), ("" if args["specialize"] else "not ")))
@@ -276,7 +278,7 @@ if __name__ == "__main__":
     else:
         gemv(A=A, M=M, x=x, y=y)
 
-    residual = np.linalg.norm(y - regression) / dace.eval(N * M)
+    residual = np.linalg.norm(y - regression) / (N.get() * M.get())
     print("Residual:", residual)
     diff = np.abs(y - regression)
     wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
@@ -287,7 +289,7 @@ if __name__ == "__main__":
         print("Verification failed!")
         print("Residual: {}".format(residual))
         print("Incorrect elements: {} / {}".format(wrong_elements.shape[0],
-                                                   dace.eval(N * M)))
+                                                   (N.get() * M.get())))
         print("Highest difference: {}".format(highest_diff))
         print("** Result:\n", y)
         print("** Reference:\n", regression)

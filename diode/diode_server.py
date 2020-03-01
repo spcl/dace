@@ -1,10 +1,13 @@
 #!flask/bin/python
 
+import aenum
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
+from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
+from dace.graph.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -15,6 +18,7 @@ from diode.remote_execution import AsyncExecutor
 
 import traceback
 import os
+import pydoc
 import threading
 import queue
 import time
@@ -25,7 +29,7 @@ app = Flask(__name__)
 enum_list = [
     typename
     for typename, dtype in inspect.getmembers(dace.dtypes, inspect.isclass)
-    if issubclass(dtype, dace.dtypes.AutoNumber)
+    if issubclass(dtype, aenum.Enum)
 ]
 
 es_ref = []
@@ -113,8 +117,6 @@ class ExecutorServer:
         self._slot_available = True  # True if the target machine has a slot for running a program
 
         self._perfdata_available = {}  # Dict mapping client_id => .can-path
-        # (NOTE: We do not handle the raw data in DIODE, i.e. no perfdata.db)
-        # (this may change later)
 
         self._ticket_counter = 0
         self._command_results = {}  # Dict mapping ticket => command result
@@ -211,50 +213,11 @@ class ExecutorServer:
                     self._task_dict[cmd['index']]['state'] = 'running'
 
                 if cmd['operation'] == 'startgroup':
-                    from diode.db_scripts.db_setup import db_setup
-                    perf_tmp_dir = ExecutorServer.getPerfdataDir(cmd['cid'])
-                    perfdata_path = os.path.join(perf_tmp_dir, "perfdata.db")
-
-                    # Clean database and create tables
-                    db_setup(perf_tmp_dir)
-
+                    pass
                 elif cmd['operation'] == 'remove_group':
-                    perfdir = ExecutorServer.getPerfdataDir(cmd['cid'])
-                    perfdata_path = os.path.join(perfdir, "perfdata.db")
-                    os.remove(perfdata_path)
-                    os.rmdir(perfdir)
-
+                    pass
                 elif cmd['operation'] == 'endgroup':
-                    print("Ending group")
-                    from diode.db_scripts.sql_to_json import MergeRuns, Conserver
-                    from dace.config import Config
-
-                    config_path = cmd['config_path']
-
-                    with config_lock:
-                        Config.load(config_path)
-                        repetitions = Config.get("execution", "general",
-                                                 "repetitions")
-
-                    perf_tmp_dir = ExecutorServer.getPerfdataDir(cmd['cid'])
-                    perfdata_path = os.path.join(perf_tmp_dir, "perfdata.db")
-                    can_path = os.path.join(perf_tmp_dir, 'current.can')
-
-                    mr = MergeRuns()
-                    mr.mergev2(perfdata_path)
-                    print("Merged into " + perfdata_path)
-
-                    cons = Conserver()
-                    # TODO: Add sdfgs
-                    cons.conserveAll(
-                        perfdata_path,
-                        can_path,
-                        "",
-                        repetitions,
-                        clear_existing=False)
-
-                    print("Merged and Conserved!")
-                    self._perfdata_available[cmd['cid']] = can_path
+                    pass
 
                 with self._oplock:
                     del self._task_dict[cmd['index']]
@@ -272,61 +235,6 @@ class ExecutorServer:
             else:
                 command = cmd['cmd']
                 print("Got command " + command)
-                if command == "get_perfdata":
-                    import sqlite3
-
-                    try:
-                        conn = sqlite3.connect(
-                            self._perfdata_available[cmd['cid']])
-                    except:
-                        self._command_results[cmd[
-                            'ticket']] = "Error: Perfdata not available"
-                        print("Errored-out!")
-                        return
-
-                    querystring = "SELECT * FROM AnalysisResults "
-
-                    for_node = cmd['for_node']
-                    for_program = cmd['for_program']
-                    for_supersection = cmd['for_supersection']
-                    for_section = cmd['for_section']
-
-                    query_list = [('forUnifiedID', for_node), ('forProgram',
-                                                               for_program),
-                                  ('forSuperSection', for_supersection),
-                                  ('forSection', for_section)]
-
-                    query_values = []
-                    first = True
-                    for x in query_list:
-                        name, val = x
-                        if val is None:
-                            continue
-                        if first:
-                            querystring += " WHERE "
-                        else:
-                            querystring += " AND "
-                        first = False
-                        querystring += name + " = ?"
-                        query_values.append(val)
-
-                    querystring += ";"
-
-                    print("querystring: " + str(querystring))
-                    print("tuple: " + str(tuple(query_values)))
-
-                    c = conn.cursor()
-                    c.execute(querystring, tuple(query_values))
-
-                    result = c.fetchall()
-
-                    print("setting result for ticket " + str(cmd['ticket']))
-                    self._command_results[cmd['ticket']] = json.dumps(result)
-
-                    conn.close()
-
-                    print("Success reading database")
-
         except queue.Empty:
             return
 
@@ -445,8 +353,6 @@ class ExecutorServer:
         compilation_output_tuple = cot
         runindex = options['index']
         config_path = options['config_path']
-        client_id = options['client_id']
-        perfopts = options['perfopts']
         sdfgs, code_tuples, dace_state = compilation_output_tuple
 
         # Passes output through HTTP1.1 streaming (using yield)
@@ -455,42 +361,11 @@ class ExecutorServer:
             with self._run_cv:
                 yield "Run starting\n"
 
-                perfmode = perfopts['mode']
-                perfcores = perfopts['core_counts']
-
                 with config_lock:
                     from dace.config import Config
                     Config.load(config_path)
-                    if perfmode == "noperf":
-                        Config.set(
-                            "instrumentation", "enable_papi", value=False)
-                    else:
-                        Config.set(
-                            "instrumentation", "enable_papi", value=True)
-                        Config.set(
-                            "instrumentation", "papi_mode", value=perfmode)
-                        Config.set(
-                            "instrumentation",
-                            "sql_database_file",
-                            value=ExecutorServer.getPerfdataDir(client_id) +
-                            "/perfdata.db")
-                        Config.set(
-                            "instrumentation",
-                            "thread_nums",
-                            value=str(perfcores))
-
-                        # Check if perfcounters are available
-                        from dace.codegen.instrumentation.papi import PAPISettings, PerfPAPIInfo
-                        ppi = PerfPAPIInfo()
-                        ppi.load_info()
-                        if not ppi.check_counters(
-                            [PAPISettings.perf_default_papi_counters()]):
-                            yield '{"error": "PAPI Counter check failed. Either your machine does not provide the required counters or /proc/sys/kernel/perf_event_paranoid is not set correctly"}'
-                            del self._task_dict[runindex]
-                            self._slot_available = True
-                            return
-
-                    # Copy the config - this allows releasing the config lock without suffering from potential side effects
+                    # Copy the config - this allows releasing the config lock
+                    # without suffering from potential side effects
                     copied_config = ConfigCopy(Config._config)
 
                 self._slot_available = False
@@ -520,6 +395,12 @@ class ExecutorServer:
                 with self._oplock:
                     # Delete from the tasklist
                     del self._task_dict[runindex]
+
+                    # Output instrumentation report, if exists
+                    if (async_executor.running_proc.exitcode == 0
+                            and dace_state.sdfg.is_instrumented()):
+                        report = dace_state.sdfg.get_latest_report()
+                        yield '\nInstrumentation report:\n%s\n\n' % report
 
                     yield ('Run finished with exit code %d' %
                            async_executor.running_proc.exitcode)
@@ -578,6 +459,55 @@ def getEnum(name):
     return jsonify({
         'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]
     })
+
+
+@app.route('/dace/api/v1.0/getLibImpl/<string:name>', methods=['GET'])
+def get_library_implementations(name):
+    """
+        Helper function to enumerate available implementations for a given
+        library node.
+
+        Returns:
+            enum: List of string-representations of implementations
+    """
+
+    cls = pydoc.locate(name)
+    if cls is None:
+        return jsonify([])
+
+    return jsonify(list(cls.implementations.keys()))
+
+
+@app.route('/dace/api/v1.0/expand/', methods=['POST'])
+def expand_node_or_sdfg():
+    """
+        Performs expansion of a single library node or an entire SDFG.
+        Fields:
+        sdfg (required): SDFG as JSON
+        nodeid (not required): A list of: [SDFG ID, state ID, node ID]
+    """
+
+    try:
+        sdfg = dace.SDFG.from_json(request.json['sdfg'])
+    except KeyError:
+        return jsonify({'error': 'SDFG not given'})
+
+    try:
+        sdfg_id, state_id, node_id = request.json['nodeid']
+    except KeyError:
+        sdfg_id, state_id, node_id = None, None, None
+
+    if sdfg_id is None:
+        sdfg.expand_library_nodes()
+    else:
+        context_sdfg = sdfg.sdfg_list[sdfg_id]
+        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        if isinstance(node, LibraryNode):
+            node.expand(context_sdfg)
+        else:
+            return jsonify({'error': 'The given node is not a library node'})
+
+    return jsonify({'sdfg': sdfg.to_json()})
 
 
 def collect_all_SDFG_nodes(sdfg):
@@ -803,27 +733,6 @@ def compileProgram(request, language, perfopts=None):
         else:
             Config.load()
 
-        if perf_mode is not None:
-            tmp = perf_mode['mode']
-            if tmp != 'noperf':
-                Config.set(
-                    "instrumentation",
-                    "enable_papi",
-                    value=True,
-                    autosave=False)
-                Config.set(
-                    "instrumentation",
-                    "papi_mode",
-                    value=perf_mode['mode'],
-                    autosave=False)
-                print("Set perfmode to " + perf_mode['mode'])
-            else:
-                Config.set(
-                    "instrumentation",
-                    "enable_papi",
-                    value=False,
-                    autosave=False)
-
         dace_state = None
         in_sdfg = None
         if "sdfg" in request.json:
@@ -910,15 +819,25 @@ def compileProgram(request, language, perfopts=None):
         codegen_sdfgs = copy.deepcopy(sdfg_dict)
         codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
-            from dace.codegen import codegen
-            if sdfg_eval_order != []:
-                sdfg_eval_order.reverse()
-                for x in sdfg_eval_order:
-                    s = codegen_sdfgs[x]
-                    code_tuple_dict[x] = codegen.generate_code(s)
+            if sdfg_eval_order:
+                sdfg_eval = [(n, codegen_sdfgs[n])
+                             for n in reversed(sdfg_eval_order)]
             else:
-                for n, s in codegen_sdfgs.items():
+                sdfg_eval = codegen_sdfgs.items()
+
+            for n, s in sdfg_eval:
+                try:
+                    if Config.get_bool('diode', 'general',
+                                       'library_autoexpand'):
+                        s.expand_library_nodes()
+
                     code_tuple_dict[n] = codegen.generate_code(s)
+                except dace.sdfg.NodeNotExpandedError as ex:
+                    code_tuple_dict[n] = [str(ex)]
+                except Exception:  # Forward exception to output code
+                    code_tuple_dict[n] = [
+                        'Code generation failed:\n' + traceback.format_exc()
+                    ]
 
         if dace_state is None:
             if "code" in request.json:
@@ -974,140 +893,6 @@ def get_transformations(sdfgs):
 
         opt_per_sdfg[sdfg_name] = {'matching_opts': optimizations}
     return opt_per_sdfg
-
-
-@app.route(
-    "/dace/api/v1.0/<string:filegroup>/download/<string:client_id>/",
-    methods=['GET'])
-def perfdata_download(filegroup, client_id):
-    """
-        This function returns the perfdata as a download
-    """
-
-    filepath = ExecutorServer.getPerfdataDir(client_id) + (
-        "/perfdata.db" if filegroup == "perfdata" else "/current.can")
-    if not os.path.isfile(filepath):
-        print("File not existent, cannot download")
-        abort(400)
-
-    return send_file(
-        filepath,
-        "application/x-sqlite3",
-        as_attachment=True,
-        attachment_filename="perfdata.sqlite3"
-        if filegroup == "perfdata" else "current.can.sqlite3",
-        conditional=True)
-
-
-@app.route("/dace/api/v1.0/<string:filegroup>/reset/", methods=['POST'])
-def perfdata_delete(filegroup):
-    """
-        Resets (deletes) the currently accumulated perfdata.
-        POST-Parameters:
-            client_id: string. The client id
-    """
-    try:
-        client_id = request.json['client_id']
-    except:
-        print("Client id not specified, cannot continue")
-        abort(400)
-
-    filepath = ExecutorServer.getPerfdataDir(client_id) + (
-        "/perfdata.db" if filegroup == "perfdata" else "/current.can")
-    if os.path.isfile(filepath):
-        os.remove(filepath)
-
-    return Response("ok")
-
-
-@app.route("/dace/api/v1.0/perfdata/roofline/", methods=['POST'])
-def perfdata_roofline():
-    """
-        Returns data for roofline from the accumulated data.
-        POST-Parameters:
-            client_id: string. The client id
-
-    """
-    from dace.codegen.instrumentation.papi import PAPIInstrumentation
-
-    try:
-        client_id = request.json['client_id']
-    except:
-        print("Client id not specified, cannot continue")
-        abort(400)
-
-    filepath = ExecutorServer.getPerfdataDir(client_id) + "/current.can"
-    retdict = PAPIInstrumentation.get_roofline_data(filepath)
-    return jsonify(retdict)
-
-
-@app.route("/dace/api/v1.0/perfdata/get/", methods=['POST'])
-def perfdata_query():
-    """
-        This function returns the matching Analysis results from the latest CAN.
-        NOTE: It does _not_ return the full raw result list. This differs from DIODE1 behavior
-
-        POST-Parameters:
-            client_id: string. The client id
-            analysis_name: string. The name of the queried analysis
-            for_program: string or int. The number of the queried program
-            for_node: string or int. The id of the node
-            for_supersection: string or int. The number of the queried supersection
-            for_section: string or int. The number of the queried section.
-
-            The server returns a JSON-dict of all matching values.
-            Omitting a `for_`-Parameter is allowed and excludes this parameter from the filter (matches anything).
-            The client id is required.
-
-    """
-
-    try:
-        client_id = request.json['client_id']
-    except:
-        print("Client id not specified, cannot continue")
-        abort(400)
-
-    try:
-        analysis_name = request.json['analysis_name']
-    except:
-        analysis_name = None
-    try:
-        for_program = request.json['for_program']
-    except:
-        for_program = None
-    try:
-        for_node = request.json['for_node']
-    except:
-        for_node = None
-    try:
-        for_supersection = request.json['for_supersection']
-    except:
-        for_supersection = None
-    try:
-        for_section = request.json['for_section']
-    except:
-        for_section = None
-
-    es = es_ref[0]
-
-    ticket = es.addCommand({
-        'cmd': 'get_perfdata',
-        'cid': client_id,
-        'analysis_name': analysis_name,
-        'for_program': for_program,
-        'for_node': for_node,
-        'for_supersection': for_supersection,
-        'for_section': for_section
-    })
-
-    # This should not take too long, so for now, we wait here for the executor the serve the request instead of letting the client poll another address
-
-    print("Now waiting for ticket")
-    ret = es.waitForCommand(ticket)
-    print("Got the ticket, we're done!")
-
-    # jsonify creates a response directly, so we load string => obj first
-    return jsonify(json.loads(ret))
 
 
 @app.route("/dace/api/v1.0/dispatcher/<string:op>/", methods=['POST'])
@@ -1300,9 +1085,12 @@ def compile(language):
         compounds = {}
         for n, s in sdfgs.items():
             compounds[n] = {
-                "sdfg": s.to_json(),
-                "matching_opts": opts[n]['matching_opts'],
-                "generated_code": [*map(lambda x: x.code, code_tuples[n])]
+                "sdfg":
+                s.to_json(),
+                "matching_opts":
+                opts[n]['matching_opts'],
+                "generated_code":
+                [*map(lambda x: getattr(x, 'code', str(x)), code_tuples[n])]
             }
         return jsonify({"compounds": compounds})
 

@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     type_inference(X, Y)
 
-    diff = np.linalg.norm(Z - Y) / float(dace.eval(N.get()))
+    diff = np.linalg.norm(Z - Y) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

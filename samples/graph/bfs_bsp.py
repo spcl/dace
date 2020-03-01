@@ -312,7 +312,7 @@ if __name__ == "__main__":
         regression = True
 
     print('Data loaded')
-    print('Breadth-First Search E=%d, V=%d' % (dp.eval(E), dp.eval(V)))
+    print('Breadth-First Search E=%d, V=%d' % (E.get(), V.get()))
 
     # Allocate output arrays
     depth = dp.ndarray([V], vtype)
@@ -322,14 +322,14 @@ if __name__ == "__main__":
 
     if regression:
         print('Comparing results...')
-        diff = np.linalg.norm(depth - result) / float(dp.eval(V))
+        diff = np.linalg.norm(depth - result) / V.get()
         print("Difference:", diff)
         exit(1 if diff >= 1e-5 else 0)
 
     if args['outfile'] is not None:
         print('Saving results...')
-        output = np.ndarray([dp.eval(V), 2], vtype.type)
-        output[:, 0] = np.arange(0, dp.eval(V))
+        output = np.ndarray([V.get(), 2], vtype.type)
+        output[:, 0] = np.arange(0, V.get())
         output[:, 1] = depth[:]
         np.savetxt(outfile, output, fmt='%d')
         print('Results written to', outfile)

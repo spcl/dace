@@ -39,25 +39,24 @@ if __name__ == '__main__':
     state.add_edge(mx, None, B, None, Memlet.simple(B, fullrange))
     ##########################################################################
 
-    code_nonspec = spec_sdfg.generate_code(specialize=False)
+    code_nonspec = spec_sdfg.generate_code()
 
     if 'Dynamic' not in code_nonspec[0].code:
         print('ERROR: Constants were needlessly specialized')
         exit(1)
 
-    code_spec = spec_sdfg.generate_code(specialize=True)
+    spec_sdfg.specialize(dict(N=N, M=M))
+    code_spec = spec_sdfg.generate_code()
 
     if 'Dynamic' in code_spec[0].code:
         print('ERROR: Constants were not properly specialized')
         exit(2)
 
-    spec_sdfg.draw_to_file()
-    func = dp.compile(spec_sdfg, specialize=True)
+    func = dp.compile(spec_sdfg)
     func(A=input, B=output, N=N, M=M)
 
     diff = np.linalg.norm(
-        np.exp(input[1:dp.eval(N - 1), 0:dp.eval(M)]) -
-        output[1:-1, :]) / dp.eval(N)
+        np.exp(input[1:(N.get() - 1), 0:M.get()]) - output[1:-1, :]) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 3)

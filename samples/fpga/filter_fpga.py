@@ -82,11 +82,11 @@ def make_nested_sdfg(parent):
         dtype=dace.uint32,
         storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array(
-        "A_device", [N],
+        "A_nested", [N],
         dtype=dace.float32,
         storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array(
-        "B_device", [N],
+        "B_nested", [N],
         dtype=dace.float32,
         storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_scalar(
@@ -153,8 +153,8 @@ def make_loop_body(sdfg):
 
     state = sdfg.add_state("loop_body")
 
-    A = state.add_read("A_device")
-    B = state.add_write("B_device")
+    A = state.add_read("A_nested")
+    B = state.add_write("B_nested")
     ratio = state.add_read("ratio_nested")
 
     outsize_buffer_in = state.add_read("outsize_buffer")
@@ -260,7 +260,7 @@ if __name__ == "__main__":
     sdfg = make_sdfg(args["specialize"])
     sdfg.draw_to_file()
     if args["specialize"]:
-        sdfg.specialize()
+        sdfg.specialize(dict(N=N))
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio)
     else:
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio, N=N)

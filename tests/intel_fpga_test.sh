@@ -8,7 +8,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
-PYTHON_BINARY="${PYTHON_BINARY:python3}"
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 ERRORS=0
@@ -112,6 +112,7 @@ run_all() {
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
     run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
+    run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 "\n" 24
 }
 
 # Check if aoc is vailable

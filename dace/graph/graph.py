@@ -60,8 +60,9 @@ class Edge(object):
         if json_obj['type'] != "Edge":
             raise TypeError("Invalid data type")
 
-        ret = Edge(json_obj['src'], json_obj['dst'],
-                   json_obj['attributes']['data'])
+        ret = Edge(
+            json_obj['src'], json_obj['dst'],
+            dace.serialize.from_json(json_obj['attributes']['data'], context))
 
         return ret
 
@@ -107,7 +108,8 @@ class MultiConnectorEdge(MultiEdge):
         sdfg = context['sdfg_state']
         if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
-        data = json_obj['attributes']['data']
+        data = dace.serialize.from_json(json_obj['attributes']['data'],
+                                        context)
         src_nid = json_obj['src']
         dst_nid = json_obj['dst']
 
@@ -372,16 +374,6 @@ class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
         self._graph = graph
         self._subgraph_nodes = subgraph_nodes
-        self._parallel_parent = None
-
-    def is_parallel(self):
-        return self._parallel_parent is not None
-
-    def set_parallel_parent(self, parallel_parent):
-        self._parallel_parent = parallel_parent
-
-    def get_parallel_parent(self):
-        return self._parallel_parent
 
     def nodes(self):
         return self._subgraph_nodes
