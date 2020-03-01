@@ -200,7 +200,8 @@ class SplitStripMining(pattern_matching.Transformation):
         #     nd_to = td_to
         # else:
         nd_to = symbolic.pystr_to_symbolic(
-            '(%s + 1 - %s) // (%s) - 1' %
+            # '(%s + 1 - %s) // (%s) - 1' %
+            'int_floor(%s + 1 - %s, %s) - 1' %
             (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_size))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
@@ -220,7 +221,8 @@ class SplitStripMining(pattern_matching.Transformation):
             '%s + %s * %s' %
             (symbolic.symstr(td_from), str(new_dim), tile_size))
         td_from_imperfect = symbolic.pystr_to_symbolic(
-            '%s + ((%s + 1 - %s) // (%s)) * %s' %
+            # '%s + ((%s + 1 - %s) // (%s)) * %s' %
+            '%s + int_floor(%s + 1 - %s, %s) * %s' %
             (symbolic.symstr(td_from), symbolic.symstr(td_to),
              symbolic.symstr(td_from), tile_size, tile_size))
         td_to_perfect = symbolic.pystr_to_symbolic(
