@@ -108,6 +108,7 @@ echo "====== Target: INTEL FPGA ======"
 
 DACE_compiler_use_cache=0
 DACE_compiler_fpga_vendor="intel_fpga"
+DACE_compiler_intel_fpga_board="p520_max_sg280l"
 
 TEST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 cd $TEST_DIR
