@@ -8,6 +8,7 @@ from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_fusion import MapFusion
 from .map_fission import MapFission
+from .outer_map_duplication import OuterMapDuplication
 
 # Data movement
 from .split_strip_mining import SplitStripMining
