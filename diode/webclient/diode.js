@@ -595,7 +595,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             o = JSON.parse(o);
         }
         while (typeof o.sdfg == 'string') {
-            o.sdfg = JSON.parse(o.sdfg);
+            o.sdfg = parse_sdfg(o.sdfg);
         }
         return o;
     }
@@ -708,10 +708,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
             into the state.
         */
         let nref = node.element;
-        let sdfg = node.sdfg;
 
         nref.attributes[name] = value;
 
+        let sdfg = this.renderer_pane.sdfg;
         let old = this.getState();
         if (old.type == "SDFG")
             old = sdfg;
