@@ -390,11 +390,11 @@ class SplitStripMining(pattern_matching.Transformation):
                     break
         # Add map range symbol edges and connectors
         new_conn = set()
-        for src, src_conn, _, dst_conn, mem in graph.in_edges(new_map_entry):
-            if dst_conn[:3] != 'IN_':
-                new_conn.add(dst_conn)
-                graph.add_edge(src, src_conn, imperfect_map_entry,
-                               dst_conn, dcpy(mem))
+        for src, src_conn, _, dst_conn, mem in dace.sdfg.dynamic_map_inputs(
+                graph, new_map_entry):
+            new_conn.add(dst_conn)
+            graph.add_edge(src, src_conn, imperfect_map_entry,
+                           dst_conn, dcpy(mem))
         imperfect_map_entry.in_connectors = imperfect_map_entry.in_connectors.union(new_conn)
 
         # Create new exit edges
