@@ -5801,7 +5801,7 @@ class DIODE {
             let cval = values['input_code'];
 
             // Assuming SDFG files start with {
-            if (cval[0] == '{') {
+            if (!cis && cval[0] == '{') {
                 let sd = parse_sdfg(cval);
                 values['sdfg_object'] = {};
                 values['sdfg_object'][sd.attributes.name] = cval;
