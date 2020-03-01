@@ -128,8 +128,8 @@ class SplitStripMining(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         # Strip-mine selected dimension.
-        _, _, new_map = self._stripmine(sdfg, graph, self.subgraph)
-        return new_map
+        _, _, new_map, imperfect_map = self._stripmine(sdfg, graph, self.subgraph)
+        return new_map, imperfect_map
 
     # def __init__(self, tag=True):
     def __init__(self, *args, **kwargs):
@@ -487,4 +487,4 @@ class SplitStripMining(pattern_matching.Transformation):
                     break
 
         # Return strip-mined dimension.
-        return target_dim, new_dim, new_map
+        return target_dim, new_dim, new_map, imperfect_map
