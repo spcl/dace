@@ -481,12 +481,22 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     graph = this.renderer_pane.sdfg_list[sdfg_id];
                 else
                     graph = this.renderer_pane.graph;
+
+                // If graph is hidden, skip
+                if (graph === undefined)
+                    continue;
                     
                 if (sid == -1)
                     elem = graph.node(nid);
-                else
-                    elem = graph.node(sid).data.graph.node(nid);
-                this.highlighted_elements.push(elem);
+                else {
+                    let state = graph.node(sid);
+                    // If state is hidden, skip
+                    if (state === undefined)
+                        continue;
+                    elem = state.data.graph.node(nid);
+                }
+                if (elem !== undefined)
+                    this.highlighted_elements.push(elem);
             }
             this.highlighted_elements.forEach(e => {
                 if (e) e.stroke_color = "#D35400";
