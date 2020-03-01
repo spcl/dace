@@ -261,10 +261,11 @@ class SplitStripMining(pattern_matching.Transformation):
         nxutil.change_edge_src(graph, map_exit, new_map_exit)
 
         # Create map for last imperfect tile
-        imperfect_range = (td_from_imperfect, td_to_imperfect, td_step)
+        imperfect_range = dcpy(map_entry.map.range.ranges)
+        imperfect_range[dim_idx] = (td_from_imperfect, td_to_imperfect, td_step)
         imperfect_map = nodes.Map(
-            str(target_dim) + '_' + map_entry.map.label + '_imperfect',
-            [target_dim], subsets.Range([imperfect_range]))
+            map_entry.map.label + '_imperfect', dcpy(map_entry.map.params),
+            subsets.Range(imperfect_range))
         imperfect_map_entry = nodes.MapEntry(imperfect_map)
         imperfect_map_exit = nodes.MapExit(imperfect_map)
         imperfect_map_entry.in_connectors = dcpy(map_entry.in_connectors)
@@ -274,6 +275,7 @@ class SplitStripMining(pattern_matching.Transformation):
         graph.add_nodes_from([imperfect_map_entry, imperfect_map_exit])
 
         # Copy perfect map scope
+
         scope_dict = dict()
         scope_dict[map_entry] = imperfect_map_entry
         scope_dict[map_exit] = imperfect_map_exit
