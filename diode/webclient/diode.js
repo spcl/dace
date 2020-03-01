@@ -472,12 +472,16 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 });
             this.highlighted_elements = [];
 
-            let graph = this.renderer_pane.graph;
-
             // The input contains a list of multiple elements
             for (let x of msg.elements) {
-                let sid = x[0], nid = x[1];
+                let sdfg_id = x[0], sid = x[1], nid = x[2];
                 let elem = null;
+                let graph = null;
+                if (sdfg_id >= 0)
+                    graph = this.renderer_pane.sdfg_list[sdfg_id];
+                else
+                    graph = this.renderer_pane.graph;
+                    
                 if (sid == -1)
                     elem = graph.node(nid);
                 else
@@ -5041,7 +5045,7 @@ class DIODE {
                             // Expand library node
                             REST_request("/dace/api/v1.0/expand/", {
                                     sdfg: node.sdfg,
-                                    nodeid: [0, node.element.parent_id, node.element.id]
+                                    nodeid: [node.sdfg.sdfg_list_id, node.element.parent_id, node.element.id]
                                 }, (xhr) => {
                                     if (xhr.readyState === 4 && xhr.status === 200) {
                                         let resp = parse_sdfg(xhr.response);

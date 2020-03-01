@@ -278,6 +278,9 @@ class SDFG(OrderedDiGraph):
         except RuntimeError:
             tmp['scalar_parameters'] = []
 
+        # Location in the SDFG list
+        tmp['sdfg_list_id'] = int(self.sdfg_list.index(self))
+
         tmp['attributes']['name'] = self.name
 
         return tmp

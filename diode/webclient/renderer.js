@@ -385,7 +385,7 @@ function calculateNodeSize(sdfg_state, node, ctx) {
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-function relayout_sdfg(ctx, sdfg) {
+function relayout_sdfg(ctx, sdfg, sdfg_list) {
     let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
@@ -404,7 +404,7 @@ function relayout_sdfg(ctx, sdfg) {
             stateinfo.height = LINEHEIGHT;
         }
         else {
-            state_g = relayout_state(ctx, state, sdfg);
+            state_g = relayout_state(ctx, state, sdfg, sdfg_list);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 2*STATE_MARGIN;
@@ -464,10 +464,13 @@ function relayout_sdfg(ctx, sdfg) {
     g.width = bb.width;
     g.height = bb.height;
 
+    // Add SDFG to global store
+    sdfg_list[sdfg.sdfg_list_id] = g;
+
     return g;
 }
 
-function relayout_state(ctx, sdfg_state, sdfg) {
+function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({multigraph: true});
 
@@ -504,7 +507,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
-            nested_g = relayout_sdfg(ctx, node.attributes.sdfg);
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list);
             let sdfginfo = calculateBoundingBox(nested_g);
             node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
             node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
@@ -653,6 +656,7 @@ class SDFGRenderer {
     constructor(sdfg, container, on_mouse_event = null) {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
+        this.sdfg_list = {};
 
         // Rendering-related fields
         this.container = container;
@@ -809,7 +813,8 @@ class SDFGRenderer {
 
     // Re-layout graph and nested graphs
     relayout() {
-        this.graph = relayout_sdfg(this.ctx, this.sdfg);
+        this.sdfg_list = {};
+        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list);
         this.onresize();
 
         return this.graph;

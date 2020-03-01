@@ -612,10 +612,10 @@ def applySDFGProperties(sdfg, properties, step=None):
     return sdfg
 
 
-def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
+def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
     # Iterate over the path, applying the transformations
     global_counter = {}
-    if sdfg_props is None: sdfg_props = []
+    sdfg_props = sdfg_props or []
     step = 0
     for x in optpath:
         optimizer = SDFGOptimizer(sdfg, inplace=True)
@@ -878,10 +878,11 @@ def get_transformations(sdfgs):
             nodeids = []
             properties = []
             if p is not None:
+                sdfg_id = p.sdfg_id
                 sid = p.state_id
                 nodes = list(p.subgraph.values())
                 for n in nodes:
-                    nodeids.append([sid, n])
+                    nodeids.append([sdfg_id, sid, n])
 
                 properties = dace.serialize.all_properties_to_json(p)
             optimizations.append({
