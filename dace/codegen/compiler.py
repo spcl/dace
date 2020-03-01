@@ -7,7 +7,6 @@ from __future__ import print_function
 
 import ctypes
 import os
-import itertools
 import six
 import shutil
 import subprocess
