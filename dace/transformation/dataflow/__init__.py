@@ -11,6 +11,7 @@ from .map_fission import MapFission
 
 # Data movement
 from .split_strip_mining import SplitStripMining
+from .split_tiling import SplitMapTiling
 from .strip_mining import StripMining
 from .tiling import MapTiling
 from .vectorization import Vectorization
