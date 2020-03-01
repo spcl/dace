@@ -148,6 +148,7 @@ class CompiledSDFG(object):
         self._lastargs = ()
         self._return_arrays: List[np.ndarray] = []
         self._return_kwarrays: Dict[str, np.ndarray] = {}
+        self._return_syms: Dict[str, Any] = {}
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
@@ -261,13 +262,17 @@ class CompiledSDFG(object):
         return self._lastargs
 
     def _initialize_return_values(self, kwargs):
-        if self._initialized:
-            return self._return_kwarrays
-
         # Obtain symbol values from arguments and constants
         syms = dict()
-        syms.update(kwargs)
+        syms.update({k: v for k, v in kwargs.items()
+                     if k not in self.sdfg.arrays})
         syms.update(self.sdfg.constants)
+
+        if self._initialized:
+            if self._return_syms == syms:
+                return self._return_kwarrays
+
+        self._return_syms = syms
 
         # Initialize return values with numpy arrays
         self._return_arrays = []
@@ -324,6 +329,7 @@ class CompiledSDFG(object):
 
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
+                self._lib.load()
                 self.initialize(*argtuple)
 
             # PROFILING
