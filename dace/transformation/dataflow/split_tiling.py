@@ -61,6 +61,7 @@ class SplitMapTiling(pattern_matching.Transformation):
 
         # Retrieve map entry and exit nodes.
         map_entry = graph.nodes()[self.subgraph[SplitMapTiling._map_entry]]
+        from dace.transformation.dataflow.outer_map_duplication import OuterMapDuplication
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.split_strip_mining import SplitStripMining
         stripmine_subgraph = {
@@ -104,15 +105,33 @@ class SplitMapTiling(pattern_matching.Transformation):
                 # stripmine.divides_evenly = self.divides_evenly
                 outer_map_entry, imperfect_map_entry = stripmine.apply(sdfg)
 
-            # if last_outer_map_entry:
-            #     # new_map_entry = graph.in_edges(map_entry)[0].src
-            #     mapcollapse_subgraph = {
-            #         MapCollapse._outer_map_entry:
-            #         graph.node_id(last_outer_map_entry),
-            #         MapCollapse._inner_map_entry: graph.node_id(outer_map_entry)
-            #     }
-            #     mapcollapse = MapCollapse(sdfg_id, self.state_id,
-            #                               mapcollapse_subgraph, 0)
-            #     outer_map_entry, _ = mapcollapse.apply(sdfg)
-            # # last_map_entry = graph.in_edges(map_entry)[0].src
-            # last_outer_map_entry = outer_map_entry
+            if last_outer_map_entry:
+                # new_map_entry = graph.in_edges(map_entry)[0].src
+                duplication_subgraph = {
+                    OuterMapDuplication._map_entry:
+                    graph.node_id(last_outer_map_entry)
+                }
+                duplication = OuterMapDuplication(sdfg_id, self.state_id,
+                                                  duplication_subgraph, 0)
+                duplicate_entries = duplication.apply(sdfg)
+
+                edges = graph.out_edges(duplicate_entries[0])
+                if edges[0].dst == outer_map_entry:
+                    true_last_outer_map_entry = duplicate_entries[0]
+                elif edges[0].dst == imperfect_map_entry:
+                    true_last_outer_map_entry = last_outer_map_entry
+                else:
+                    raise Exception("Duplicated entry node does not match any entry!!!")
+
+                mapcollapse_subgraph = {
+                    MapCollapse._outer_map_entry:
+                    graph.node_id(true_last_outer_map_entry),
+                    MapCollapse._inner_map_entry:
+                    graph.node_id(outer_map_entry)
+                }
+                mapcollapse = MapCollapse(sdfg_id, self.state_id,
+                                          mapcollapse_subgraph, 0)
+                outer_map_entry, _ = mapcollapse.apply(sdfg)
+            # last_map_entry = graph.in_edges(map_entry)[0].src
+            last_outer_map_entry = outer_map_entry
+            last_imperfect_map_entry = imperfect_map_entry
