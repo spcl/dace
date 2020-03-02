@@ -13,7 +13,7 @@ N = dace.symbol('N')
 
 @dace.program
 def operation(A: dace.float64[M, M], B: dace.float64[M, M], C: dace.float64[M, M]):
-    C[:] = (((A @ B) @ A) @ B) @ A
+    C[:] = A @ B @ A @ B @ A
 
 
 if __name__ == "__main__":
@@ -40,12 +40,13 @@ if __name__ == "__main__":
     sdfg = operation.to_sdfg()
     sdfg.apply_transformations(TransientReuse)
     sdfg(A=A, B=B, C=C, M=M)
+
     if dace.Config.get_bool('profiling'):
         dace.timethis('gemm', 'numpy', (2 * M.get() * K.get() * N.get()),
                       np.dot, A, B, C_regression)
     else:
         C_regression = np.dot(np.dot(np.dot(np.dot(A, B), A), B), A)
-    print(C)
+
     diff = np.linalg.norm(C_regression - C) / (M.get() * N.get())
     print("Difference:", diff)
     print("==== Program end ====")
