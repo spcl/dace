@@ -414,16 +414,18 @@ class SDFG(OrderedDiGraph):
         if self._start_state is None:
             raise ValueError('Ambiguous or undefined starting state for SDFG')
 
-        return self.node(self._start_state)
+        return self._start_state
 
-    def set_start_state(self, state_id):
+    @start_state.setter
+    def start_state(self, state_id):
         """ Manually sets the starting state of this SDFG.
             :param state_id: The node ID (use `node_id(state)`) of the
                              state to set.
         """
-        if state_id < 0 or state_id >= len(self.nodes()):
+        states = self.nodes()
+        if state_id < 0 or state_id >= len(states):
             raise ValueError("Invalid state ID")
-        self._start_state = state_id
+        self._start_state = states[state_id]
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
@@ -646,7 +648,7 @@ class SDFG(OrderedDiGraph):
 
         # If no start state has been defined, define to be the first state
         if is_start_state == True:
-            self._start_state = len(self.nodes())
+            self.start_state = len(self.nodes())
 
         return super(SDFG, self).add_node(node)
 
@@ -1812,7 +1814,7 @@ subgraph cluster_state_{state} {{
             before computing the given state. """
         from networkx import all_simple_paths
 
-        for path in all_simple_paths(self, self._start_state, state):
+        for path in all_simple_paths(self, self.start_state, state):
             yield [
                 next(e for e in self.out_edges(s) if e.dst == d)
                 for s, d in zip(path[:-1], path[1:])
@@ -1823,9 +1825,8 @@ subgraph cluster_state_{state} {{
             before computing the given state. """
         from networkx import all_simple_paths
 
-        start_state = self._start_state or self.source_nodes()[0]
         return set([
-            n for path in all_simple_paths(self, start_state, state)
+            n for path in all_simple_paths(self, self.start_state, state)
             for n in path
         ])
 
@@ -1840,7 +1841,7 @@ subgraph cluster_state_{state} {{
             if not validate_name(self.name):
                 raise InvalidSDFGError("Invalid name", self, None)
 
-            if len(self.source_nodes()) > 1 and self._start_state is None:
+            if len(self.source_nodes()) > 1 and self.start_state is None:
                 raise InvalidSDFGError("Starting state undefined", self, None)
 
             if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
