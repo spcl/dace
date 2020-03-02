@@ -413,7 +413,9 @@ class SDFG(OrderedDiGraph):
             return source_nodes[0]
         if self._start_state is None:
             raise ValueError('Ambiguous or undefined starting state for SDFG')
-
+        if self._start_state not in source_nodes:
+            raise ValueError("Start state {} not found in source nodes".format(
+                self._start_state))
         return self._start_state
 
     @start_state.setter
