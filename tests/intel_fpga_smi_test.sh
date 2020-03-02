@@ -48,7 +48,7 @@ run_sample0() {
     #2: compile both for emulation
     # Sender
     cd .dacecache/${TEST_NAME}_sender/build
-    make intelfpga_smi_compile_${TEST_NAME}_sender_emulator -j
+    make intelfpga_smi_compile_${TEST_NAME}_sender_emulator -j4
     if [ $? -ne 0 ]; then
       bail "$1 (${RED}high-level synthesis failed (${TEST_NAME}_sender)${NC})"
       return 1
