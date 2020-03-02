@@ -31,8 +31,9 @@ class Memlet(object):
     wcr = LambdaProperty(allow_none=True)
     wcr_identity = Property(dtype=object, default=None, allow_none=True)
     wcr_conflict = Property(dtype=bool, default=True)
-    allow_oob = Property(
-        dtype=bool, default=False, desc='Bypass out-of-bounds validation')
+    allow_oob = Property(dtype=bool,
+                         default=False,
+                         desc='Bypass out-of-bounds validation')
 
     def __init__(self,
                  data,
@@ -176,16 +177,15 @@ class Memlet(object):
         if hasattr(data, 'data'):
             data = data.data
 
-        return Memlet(
-            data,
-            na,
-            subset,
-            veclen,
-            wcr=wcr,
-            wcr_identity=wcr_identity,
-            other_subset=other_subset,
-            wcr_conflict=wcr_conflict,
-            debuginfo=debuginfo)
+        return Memlet(data,
+                      na,
+                      subset,
+                      veclen,
+                      wcr=wcr,
+                      wcr_identity=wcr_identity,
+                      other_subset=other_subset,
+                      wcr_conflict=wcr_conflict,
+                      debuginfo=debuginfo)
 
     @staticmethod
     def from_array(dataname, datadesc):
@@ -290,7 +290,6 @@ class Memlet(object):
 class EmptyMemlet(Memlet):
     """ A memlet without data. Primarily used for connecting nodes to scopes
         without transferring data to them. """
-
     def __init__(self):
         super(EmptyMemlet, self).__init__(None, 0, None, 1)
 
@@ -310,7 +309,6 @@ class MemletTree(object):
         all siblings of the same edge and their children, for instance if
         multiple inputs from the same access node are used.
     """
-
     def __init__(
             self, edge, parent=None, children=None
     ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
@@ -335,3 +333,9 @@ class MemletTree(object):
         while node.parent is not None:
             node = node.parent
         return node
+
+    def traverse_children(self, include_self=False):
+        if include_self:
+            yield self
+        for child in self.children:
+            yield from child.traverse_children(include_self=True)

@@ -498,6 +498,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 kernel_args_call += [p for p in scope.params]
                 unrolled_loops += 1
 
+        # Ensure no duplicate parameters are used
+        kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
+        kernel_args_call = dtypes.deduplicate(kernel_args_call)
+
         # Add kernel call host function
         if unrolled_loops == 0:
             host_body_stream.write(
