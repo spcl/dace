@@ -647,12 +647,9 @@ class SDFG(OrderedDiGraph):
         """
         if not isinstance(node, SDFGState):
             raise TypeError("Expected SDFGState, got " + str(type(node)))
-
-        # If no start state has been defined, define to be the first state
+        super(SDFG, self).add_node(node)
         if is_start_state == True:
             self.start_state = len(self.nodes())
-
-        return super(SDFG, self).add_node(node)
 
     def add_edge(self, u, v, edge):
         """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
