@@ -58,17 +58,17 @@ tests/intel_fpga_test.sh
           }
         }
 
-//         stage('Test Intel FPGA SMI') {
-//           steps {
-//             sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
-//             export COVERAGE_RCFILE=`pwd`/.coveragerc
-//             source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
-//             scl enable llvm-toolset-7.0 bash
-// export DACE_debugprint=1
-// tests/intel_fpga_smi_test.sh
-// '''
-//           }
-//         }
+        stage('Test Intel FPGA SMI') {
+          steps {
+            sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
+            export COVERAGE_RCFILE=`pwd`/.coveragerc
+            source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
+            scl enable llvm-toolset-7.0 bash
+export DACE_debugprint=1
+tests/intel_fpga_smi_test.sh
+'''
+          }
+        }
 
         stage('Test MPI') {
           steps {
