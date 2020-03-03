@@ -2976,15 +2976,23 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type is None:
             arr_type = type(parent_array)
         if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
+            var_name, _ = self.sdfg.add_scalar(var_name,
+                                               dtype,
+                                               find_new_name=True)
         elif arr_type == data.Array:
             if non_squeezed:
                 strides = [parent_array.strides[d] for d in non_squeezed]
             else:
                 strides = [1]
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+            var_name, _ = self.sdfg.add_array(var_name,
+                                              shape,
+                                              dtype,
+                                              strides=strides,
+                                              find_new_name=True)
         elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
+            var_name, _ = self.sdfg.add_stream(var_name,
+                                               dtype,
+                                               find_new_name=True)
         else:
             raise NotImplementedError(
                 "Data type {} is not implemented".format(arr_type))
