@@ -21,20 +21,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=5)
-    parser.add_argument("K", type=int, nargs="?", default=5)
-    parser.add_argument("N", type=int, nargs="?", default=5)
     args = vars(parser.parse_args())
 
     M.set(args["M"])
-    K.set(args["K"])
-    N.set(args["N"])
-
-    print('Matrix multiplication %dx%dx%d' % (M.get(), K.get(), N.get()))
 
     # Initialize arrays: Randomize A and B, zero C
-    A = np.random.rand(M.get(), K.get()).astype(np.float64)
-    B = np.random.rand(K.get(), N.get()).astype(np.float64)
-    C = np.zeros([M.get(), N.get()], dtype=np.float64)
+    A = np.random.rand(M.get(), M.get()).astype(np.float64)
+    B = np.random.rand(M.get(), M.get()).astype(np.float64)
+    C = np.zeros([M.get(), M.get()], dtype=np.float64)
     C_regression = np.zeros_like(C)
 
     sdfg = operation.to_sdfg()
@@ -42,12 +36,12 @@ if __name__ == "__main__":
     sdfg(A=A, B=B, C=C, M=M)
 
     if dace.Config.get_bool('profiling'):
-        dace.timethis('gemm', 'numpy', (2 * M.get() * K.get() * N.get()),
+        dace.timethis('gemm', 'numpy', (2 * M.get() * M.get() * M.get()),
                       np.dot, A, B, C_regression)
     else:
         C_regression = np.dot(np.dot(np.dot(np.dot(A, B), A), B), A)
 
-    diff = np.linalg.norm(C_regression - C) / (M.get() * N.get())
+    diff = np.linalg.norm(C_regression - C) / (M.get() * M.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
