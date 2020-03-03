@@ -3664,6 +3664,9 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
+        if node.value is None:  # No return value
+            return self.generic_visit(node)
+
         # Modify node value to become an expression
         new_node = ast.copy_location(ast.Expr(value=node.value), node)
 
