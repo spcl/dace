@@ -176,6 +176,18 @@ class Range(Subset):
                 for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
             ]
 
+    def size_exact(self):
+        """ Returns the number of elements in each dimension. """
+        return [
+            ts * sp.ceiling(
+                ((iMax.expr
+                    if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                    (iMin.expr if isinstance(iMin, symbolic.SymExpr) else
+                    iMin)) / (step.expr if isinstance(
+                        step, symbolic.SymExpr) else step))
+            for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
+        ]
+
     def bounding_box_size(self):
         """ Returns the size of a bounding box around this range. """
         return [
@@ -555,6 +567,8 @@ class Indices(Subset):
             raise TypeError("Expected collection of index expression: got str")
         if isinstance(indices, tuple):
             self.indices = symbolic.SymExpr(indices[0], indices[1])
+        elif isinstance(indices, symbolic.SymExpr):
+            self.indices = indices
         else:
             self.indices = symbolic.pystr_to_symbolic(indices)
         self.tile_sizes = [1]
@@ -588,6 +602,9 @@ class Indices(Subset):
 
     def size(self):
         return [1] * len(self.indices)
+
+    def size_exact(self):
+        return self.size()
 
     def min_element(self):
         return self.indices

@@ -7,6 +7,7 @@ from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
 from dace.graph import nodes, nxutil
+from dace.symbolic import issymbolic, overapproximate, SymExpr
 from dace.transformation import pattern_matching
 import sympy
 
@@ -14,13 +15,28 @@ import sympy
 def calc_set_image_index(map_idx, map_set, array_idx):
     image = []
     for a_idx in array_idx.indices:
-        new_range = [a_idx, a_idx, 1]
+        new_range = [a_idx, a_idx, SymExpr(1, 1)]
         for m_idx, m_range in zip(map_idx, map_set):
             symbol = symbolic.pystr_to_symbolic(m_idx)
-            new_range[0] = new_range[0].subs(
-                symbol, dace.symbolic.overapproximate(m_range[0]))
-            new_range[1] = new_range[1].subs(
-                symbol, dace.symbolic.overapproximate(m_range[1]))
+            for i in range(2):
+                if isinstance(m_range[i], SymExpr):
+                    exact = m_range[i].expr
+                    approx = m_range[i].approx
+                else:
+                    exact = m_range[i]
+                    approx = overapproximate(m_range[i])
+                if isinstance(new_range[i], SymExpr):
+                    new_range[i] = SymExpr(
+                        new_range[i].expr.subs([(symbol, exact)]),
+                        new_range[i].approx.subs([(symbol, approx)])
+                    )
+                elif issymbolic(new_range[i]):
+                    new_range[i] = SymExpr(
+                        new_range[i].subs([(symbol, exact)]),
+                        new_range[i].subs([(symbol, approx)])
+                    )
+                else:
+                    new_range[i] = SymExpr(new_range[i], new_range[i])
         image.append(new_range)
     return subsets.Range(image)
 
@@ -28,15 +44,28 @@ def calc_set_image_index(map_idx, map_set, array_idx):
 def calc_set_image_range(map_idx, map_set, array_range):
     image = []
     for a_range in array_range:
-        new_range = a_range
+        new_range = list(a_range)
         for m_idx, m_range in zip(map_idx, map_set):
             symbol = symbolic.pystr_to_symbolic(m_idx)
-            new_range = [
-                new_range[i].subs(symbol,
-                                  dace.symbolic.overapproximate(m_range[i]))
-                if dace.symbolic.issymbolic(new_range[i]) else new_range[i]
-                for i in range(0, 3)
-            ]
+            for i in range(3):
+                if isinstance(m_range[i], SymExpr):
+                    exact = m_range[i].expr
+                    approx = m_range[i].approx
+                else:
+                    exact = m_range[i]
+                    approx = overapproximate(m_range[i])
+                if isinstance(new_range[i], SymExpr):
+                    new_range[i] = SymExpr(
+                        new_range[i].expr.subs([(symbol, exact)]),
+                        new_range[i].approx.subs([(symbol, approx)])
+                    )
+                elif issymbolic(new_range[i]):
+                    new_range[i] = SymExpr(
+                        new_range[i].subs([(symbol, exact)]),
+                        new_range[i].subs([(symbol, approx)])
+                    )
+                else:
+                    new_range[i] = SymExpr(new_range[i], new_range[i])
         image.append(new_range)
     return subsets.Range(image)
 
@@ -59,11 +88,32 @@ def calc_set_union(set_a, set_b):
         raise ValueError('Range dimensions do not match')
     union = []
     for range_a, range_b in zip(set_a, set_b):
-        union.append([
-            sympy.Min(range_a[0], range_b[0]),
-            sympy.Max(range_a[1], range_b[1]),
-            sympy.Min(range_a[2], range_b[2]),
-        ])
+        r_union = []
+        for i in range(3):
+            if isinstance(range_a[i], SymExpr):
+                a_exact = range_a[i].expr
+                a_approx = range_a[i].approx
+            else:
+                a_exact = range_a[i]
+                a_approx = range_a[i]
+            if isinstance(range_b[i], SymExpr):
+                b_exact = range_b[i].expr
+                b_approx = range_b[i].approx
+            else:
+                b_exact = range_b[i]
+                b_approx = range_b[i]
+            if i in {0, 2}:
+                r_union.append(SymExpr(sympy.Min(a_exact, b_exact),
+                                       sympy.Min(a_approx, b_approx)))
+            else:
+                r_union.append(SymExpr(sympy.Max(a_exact, b_exact),
+                                       sympy.Max(a_approx, b_approx)))
+        union.append(r_union)
+        # union.append([
+        #     sympy.Min(range_a[0], range_b[0]),
+        #     sympy.Max(range_a[1], range_b[1]),
+        #     sympy.Min(range_a[2], range_b[2]),
+        # ])
     return subsets.Range(union)
 
 
