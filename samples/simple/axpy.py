@@ -45,8 +45,8 @@ if __name__ == "__main__":
 
     axpy(A, X, Y)
 
-    c_axpy = sp.linalg.blas.get_blas_funcs(
-        'axpy', arrays=(X_regression, Y_regression))
+    c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
+                                           arrays=(X_regression, Y_regression))
     if dace.Config.get_bool('profiling'):
         dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
                       Y_regression, N.get(), A_regression)

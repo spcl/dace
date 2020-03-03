@@ -18,26 +18,24 @@ def make_copy_to_fpga_state(sdfg):
     state = sdfg.add_state("copy_to_fpga")
 
     a_host = state.add_array("A", (H, W), dtype)
-    a_device = state.add_array(
-        "A_device", (H, W),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    a_device = state.add_array("A_device", (H, W),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
     hist_host = state.add_array("hist", (num_bins, ), dace.uint32)
-    hist_device = state.add_array(
-        "hist_device", (num_bins, ),
-        dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    hist_device = state.add_array("hist_device", (num_bins, ),
+                                  dace.uint32,
+                                  transient=True,
+                                  storage=dace.dtypes.StorageType.FPGA_Global)
 
-    state.add_memlet_path(
-        a_host,
-        a_device,
-        memlet=dace.memlet.Memlet.simple(a_device, "0:H, 0:W"))
-    state.add_memlet_path(
-        hist_host,
-        hist_device,
-        memlet=dace.memlet.Memlet.simple(hist_device, "0:num_bins"))
+    state.add_memlet_path(a_host,
+                          a_device,
+                          memlet=dace.memlet.Memlet.simple(
+                              a_device, "0:H, 0:W"))
+    state.add_memlet_path(hist_host,
+                          hist_device,
+                          memlet=dace.memlet.Memlet.simple(
+                              hist_device, "0:num_bins"))
 
     return state
 
@@ -46,17 +44,16 @@ def make_copy_to_host_state(sdfg):
 
     state = sdfg.add_state("copy_to_host")
 
-    hist_device = state.add_array(
-        "hist_device", (num_bins, ),
-        dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    hist_device = state.add_array("hist_device", (num_bins, ),
+                                  dace.uint32,
+                                  transient=True,
+                                  storage=dace.dtypes.StorageType.FPGA_Global)
     hist_host = state.add_array("hist", (num_bins, ), dace.uint32)
 
-    state.add_memlet_path(
-        hist_device,
-        hist_host,
-        memlet=dace.memlet.Memlet.simple(hist_host, "0:num_bins"))
+    state.add_memlet_path(hist_device,
+                          hist_host,
+                          memlet=dace.memlet.Memlet.simple(
+                              hist_host, "0:num_bins"))
 
     return state
 
@@ -65,13 +62,13 @@ def make_compute_state(sdfg):
 
     state = sdfg.add_state("histogram_fpga")
 
-    a = state.add_array(
-        "A_in", (H, W), dtype, storage=dace.dtypes.StorageType.FPGA_Global)
-    hist = state.add_array(
-        "hist_buffer", (num_bins, ),
-        dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+    a = state.add_array("A_in", (H, W),
+                        dtype,
+                        storage=dace.dtypes.StorageType.FPGA_Global)
+    hist = state.add_array("hist_buffer", (num_bins, ),
+                           dace.uint32,
+                           transient=True,
+                           storage=dace.dtypes.StorageType.FPGA_Local)
 
     entry, exit = state.add_map("map", {"i": "0:H", "j": "0:W"})
 
@@ -79,12 +76,17 @@ def make_compute_state(sdfg):
                                 "out[int(float(num_bins) * a)] = 1")
 
     read_memlet = dace.memlet.Memlet.simple(a, "i, j")
-    write_memlet = dace.memlet.Memlet.simple(
-        hist, "0:num_bins", wcr_str="lambda a, b: a + b", wcr_identity=0)
+    write_memlet = dace.memlet.Memlet.simple(hist,
+                                             "0:num_bins",
+                                             wcr_str="lambda a, b: a + b",
+                                             wcr_identity=0)
 
     state.add_memlet_path(a, entry, tasklet, memlet=read_memlet, dst_conn="a")
-    state.add_memlet_path(
-        tasklet, exit, hist, memlet=write_memlet, src_conn="out")
+    state.add_memlet_path(tasklet,
+                          exit,
+                          hist,
+                          memlet=write_memlet,
+                          src_conn="out")
 
     return state
 
@@ -93,21 +95,19 @@ def make_init_buffer_state(sdfg):
 
     state = sdfg.add_state("init_buffer")
 
-    hist_buffer = state.add_array(
-        "hist_buffer", (num_bins, ),
-        dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+    hist_buffer = state.add_array("hist_buffer", (num_bins, ),
+                                  dace.uint32,
+                                  transient=True,
+                                  storage=dace.dtypes.StorageType.FPGA_Local)
 
     entry, exit = state.add_map("init_map", {"i": "0:num_bins"})
     tasklet = state.add_tasklet("zero", {}, {"out"}, "out = 0")
     state.add_nedge(entry, tasklet, dace.memlet.EmptyMemlet())
-    state.add_memlet_path(
-        tasklet,
-        exit,
-        hist_buffer,
-        src_conn="out",
-        memlet=dace.memlet.Memlet.simple(hist_buffer, "i"))
+    state.add_memlet_path(tasklet,
+                          exit,
+                          hist_buffer,
+                          src_conn="out",
+                          memlet=dace.memlet.Memlet.simple(hist_buffer, "i"))
 
     return state
 
@@ -116,20 +116,18 @@ def make_write_buffer_state(sdfg):
 
     state = sdfg.add_state("write_buffer")
 
-    hist_buffer = state.add_array(
-        "hist_buffer", (num_bins, ),
-        dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Local)
-    hist_dram = state.add_array(
-        "hist_out", (num_bins, ),
-        dace.uint32,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    hist_buffer = state.add_array("hist_buffer", (num_bins, ),
+                                  dace.uint32,
+                                  transient=True,
+                                  storage=dace.dtypes.StorageType.FPGA_Local)
+    hist_dram = state.add_array("hist_out", (num_bins, ),
+                                dace.uint32,
+                                storage=dace.dtypes.StorageType.FPGA_Global)
 
-    state.add_memlet_path(
-        hist_buffer,
-        hist_dram,
-        memlet=dace.memlet.Memlet.simple(hist_dram, "0:num_bins"))
+    state.add_memlet_path(hist_buffer,
+                          hist_dram,
+                          memlet=dace.memlet.Memlet.simple(
+                              hist_dram, "0:num_bins"))
 
     return state
 
@@ -161,26 +159,24 @@ def make_sdfg(specialize):
     state = sdfg.add_state("compute")
     nested_sdfg = make_nested_sdfg(state)
     tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_in"}, {"hist_out"})
-    a_device = state.add_array(
-        "A_device", (H, W),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    hist_device = state.add_array(
-        "hist_device", (num_bins, ),
-        dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    state.add_memlet_path(
-        a_device,
-        tasklet,
-        dst_conn="A_in",
-        memlet=dace.memlet.Memlet.simple(a_device, "0:H, 0:W"))
-    state.add_memlet_path(
-        tasklet,
-        hist_device,
-        src_conn="hist_out",
-        memlet=dace.memlet.Memlet.simple(hist_device, "0:num_bins"))
+    a_device = state.add_array("A_device", (H, W),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
+    hist_device = state.add_array("hist_device", (num_bins, ),
+                                  dace.uint32,
+                                  transient=True,
+                                  storage=dace.dtypes.StorageType.FPGA_Global)
+    state.add_memlet_path(a_device,
+                          tasklet,
+                          dst_conn="A_in",
+                          memlet=dace.memlet.Memlet.simple(
+                              a_device, "0:H, 0:W"))
+    state.add_memlet_path(tasklet,
+                          hist_device,
+                          src_conn="hist_out",
+                          memlet=dace.memlet.Memlet.simple(
+                              hist_device, "0:num_bins"))
 
     copy_to_host_state = make_copy_to_host_state(sdfg)
 
@@ -195,11 +191,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("H", type=int)
     parser.add_argument("W", type=int)
-    parser.add_argument(
-        "-specialize",
-        default=False,
-        action="store_true",
-        help="Fix all symbols at compile time/in hardware")
+    parser.add_argument("-specialize",
+                        default=False,
+                        action="store_true",
+                        help="Fix all symbols at compile time/in hardware")
     args = vars(parser.parse_args())
 
     if args["specialize"]:

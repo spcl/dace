@@ -95,8 +95,8 @@ if __name__ == '__main__':
                 print('Augmented {opn}: OK'.format(opn=opname))
             else:
                 failed_tests.add(opname)
-                print('Augmented {opn}: FAIL ({diff})'.format(
-                    opn=opname, diff=norm_diff))
+                print('Augmented {opn}: FAIL ({diff})'.format(opn=opname,
+                                                              diff=norm_diff))
 
         if opname == 'div':
             test(Af, Bf)

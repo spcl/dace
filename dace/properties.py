@@ -62,7 +62,6 @@ class PropertyError(Exception):
 class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
-
     def __init__(
             self,
             getter=None,
@@ -130,8 +129,10 @@ class Property:
                     return self._from_string(obj)
                 # Otherwise ship off to the serializer, telling it which type
                 # it's dealing with as a sanity check
-                return dace.serialize.from_json(
-                    obj, *args, known_type=dtype, **kwargs)
+                return dace.serialize.from_json(obj,
+                                                *args,
+                                                known_type=dtype,
+                                                **kwargs)
 
             self._from_json = f
         else:
@@ -450,7 +451,6 @@ def indirect_properties(indirect_class, indirect_function, override=False):
     """ A decorator for objects that provides indirect properties defined
         in another class.
     """
-
     def indirection(cls):
         # For every property in the class we are indirecting to, create an
         # indirection property in this class
@@ -472,7 +472,6 @@ def indirect_properties(indirect_class, indirect_function, override=False):
 class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
-
     def to_json(self, d):
 
         # The ordered dict is more of a list than a dict.
@@ -495,7 +494,6 @@ class OrderedDictProperty(Property):
 class ListProperty(Property):
     """ Property type for lists.
     """
-
     def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
@@ -554,7 +552,6 @@ class ListProperty(Property):
 
 class DictProperty(Property):
     """ Property type for dictionaries. """
-
     def __init__(self, key_type, value_type, *args, **kwargs):
         """
         Create a dictionary property with uniform key/value types.
@@ -629,9 +626,9 @@ class DictProperty(Property):
         value_json = hasattr(self.value_type, "from_json")
 
         return {
-            self.key_type.from_json(k, sdfg)
-            if key_json else self.key_type(k): self.value_type.from_json(
-                v, sdfg) if value_json else self.value_type(v)
+            self.key_type.from_json(k, sdfg) if key_json else self.key_type(k):
+            self.value_type.from_json(v, sdfg)
+            if value_json else self.value_type(v)
             for k, v in data.items()
         }
 
@@ -658,7 +655,6 @@ class SDFGReferenceProperty(Property):
 
 class RangeProperty(Property):
     """ Custom Property type for `dace.graph.subset.Range` members. """
-
     def __set__(self, obj, value):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
@@ -679,7 +675,6 @@ class RangeProperty(Property):
 
 class DebugInfoProperty(Property):
     """ Custom Property type for DebugInfo members. """
-
     def __init__(self, **kwargs):
         if 'default' not in kwargs:
             kwargs['default'] = DebugInfo(0, 0, 0, 0)
@@ -747,7 +742,6 @@ class DebugInfoProperty(Property):
 
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
-
     def __init__(
             self,
             element_type,
@@ -764,20 +758,19 @@ class SetProperty(Property):
             **kwargs):
         if to_json is None:
             to_json = self.to_json
-        super(SetProperty, self).__init__(
-            getter=getter,
-            setter=setter,
-            dtype=set,
-            default=default,
-            from_string=from_string,
-            to_string=to_string,
-            from_json=from_json,
-            to_json=to_json,
-            choices=None,
-            unmapped=unmapped,
-            allow_none=allow_none,
-            desc=desc,
-            **kwargs)
+        super(SetProperty, self).__init__(getter=getter,
+                                          setter=setter,
+                                          dtype=set,
+                                          default=default,
+                                          from_string=from_string,
+                                          to_string=to_string,
+                                          from_json=from_json,
+                                          to_json=to_json,
+                                          choices=None,
+                                          unmapped=unmapped,
+                                          allow_none=allow_none,
+                                          desc=desc,
+                                          **kwargs)
         self._element_type = element_type
 
     @property
@@ -821,7 +814,6 @@ class SetProperty(Property):
 class LambdaProperty(Property):
     """ Custom Property type that accepts a lambda function, with conversions
         to and from strings. """
-
     @property
     def dtype(self):
         return None
@@ -862,7 +854,6 @@ class SubgraphProperty(Property):
     """ Property class that provides read-only (loading from json value is disabled)
         access to a dict value. Intended for Transformation.subgraph.
     """
-
     def __set__(self, obj, val):
         if val is not None:
             super(SubgraphProperty, self).__set__(obj, val)
@@ -880,7 +871,6 @@ class CodeBlock(list):
         also stores the original string, allowing us to preserve comments and
         formatting from user input.
     """
-
     def __init__(self, *args, **kwargs):
         self._as_string = ""
         super().__init__(*args, **kwargs)
@@ -896,7 +886,6 @@ class CodeBlock(list):
 
 class CodeProperty(Property):
     """ Custom Property type that accepts code in various languages. """
-
     @property
     def dtype(self):
         return None
@@ -1051,7 +1040,6 @@ class CodeProperty(Property):
 class SubsetProperty(Property):
     """ Custom Property type that accepts any form of subset, and enables
     parsing strings into multiple types of subsets. """
-
     @property
     def dtype(self):
         return None
@@ -1104,7 +1092,6 @@ class SubsetProperty(Property):
 
 class SymbolicProperty(Property):
     """ Custom Property type that accepts integers or Sympy expressions. """
-
     @property
     def dtype(self):
         return None
@@ -1134,12 +1121,14 @@ class DataProperty(Property):
     """ Custom Property type that represents a link to a data descriptor.
         Needs the SDFG to be passed as an argument to `from_string` and
         `choices`. """
-
     def __init__(self, desc='', default=None, **kwargs):
         # Data can be None when no data is flowing, e.g., on a memlet with a
         # map that has no external inputs
-        return super().__init__(
-            dtype=str, allow_none=True, desc=desc, default=default, **kwargs)
+        return super().__init__(dtype=str,
+                                allow_none=True,
+                                desc=desc,
+                                default=default,
+                                **kwargs)
 
     def typestring(self):
         return "DataProperty"
@@ -1188,7 +1177,6 @@ class DataProperty(Property):
 class ReferenceProperty(Property):
     """ Custom Property type that represents a link to another SDFG object.
         Needs the SDFG to be passed as an argument to `from_string`."""
-
     @staticmethod
     def from_string(s, sdfg=None):
         if sdfg is None:
@@ -1209,7 +1197,6 @@ class ReferenceProperty(Property):
 
 class ShapeProperty(Property):
     """ Custom Property type that defines a shape. """
-
     @property
     def dtype(self):
         return tuple
@@ -1246,7 +1233,6 @@ class ShapeProperty(Property):
 class TypeProperty(Property):
     """ Custom Property type that finds a type according to the input string.
     """
-
     @property
     def dtype(self):
         return type
@@ -1273,7 +1259,6 @@ class TypeProperty(Property):
 class TypeClassProperty(Property):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
-
     @property
     def dtype(self):
         return dace.dtypes.typeclass
@@ -1313,6 +1298,5 @@ class LibraryImplementationProperty(Property):
     Python side it is a standard property, but can expand into a combo-box in
     DIODE.
     """
-
     def typestring(self):
         return "LibraryImplementationProperty"

@@ -16,7 +16,6 @@ def make_registry(cls: Type):
     registry, and the third method returns a list of currently-registered
     extensions.
     """
-
     def _register(cls: Type, subclass: Type, kwargs: Dict):
         cls._registry_[subclass] = kwargs
 

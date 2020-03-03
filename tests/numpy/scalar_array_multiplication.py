@@ -55,23 +55,21 @@ if __name__ == "__main__":
     alpha_node = state.add_array('alpha', alpha.shape, dace.float64)
     A_node = state.add_array('A', A.shape, dace.float64)
     B_node = state.add_array('B', B.shape, dace.float64)
-    np_frontend.op_impl.scalar_array_multiplication(
-        state,
-        alpha_node,
-        alpha_node,
-        A_node,
-        A_node,
-        B_node,
-        B_node,
-        alpha_index=[2, 7],
-        label='samul')
+    np_frontend.op_impl.scalar_array_multiplication(state,
+                                                    alpha_node,
+                                                    alpha_node,
+                                                    A_node,
+                                                    A_node,
+                                                    B_node,
+                                                    B_node,
+                                                    alpha_index=[2, 7],
+                                                    label='samul')
 
     samul(alpha=alpha, A=A, B=B)
     B_regression = alpha_regression[2, 7] * A_regression
 
-    rel_error = (np.linalg.norm(
-        (B_regression - B).flatten(), ord=2) / np.linalg.norm(
-            B_regression.flatten(), ord=2))
+    rel_error = (np.linalg.norm((B_regression - B).flatten(), ord=2) /
+                 np.linalg.norm(B_regression.flatten(), ord=2))
     print("Relative error:", rel_error)
     print("==== Program end ====")
     exit(0 if rel_error <= 1e-15 else 1)

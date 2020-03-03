@@ -4,8 +4,10 @@ import os
 
 # First, add libraries to link (CUBLAS) to configuration
 cudaroot = os.environ['CUDA_ROOT']  # or any other environment variable
-dp.Config.append(
-    'compiler', 'cpu', 'libs', value='%s/lib64/libcublas.so' % cudaroot)
+dp.Config.append('compiler',
+                 'cpu',
+                 'libs',
+                 value='%s/lib64/libcublas.so' % cudaroot)
 ######################################################################
 
 # Create symbols
@@ -60,11 +62,10 @@ tasklet = state.add_tasklet(
     # Language (C++ in this case)
     language=dp.Language.CPP)
 
-tasklet2 = state.add_tasklet(
-    name='gemm2',
-    inputs={'a', 'b'},
-    outputs={'c'},
-    code='''
+tasklet2 = state.add_tasklet(name='gemm2',
+                             inputs={'a', 'b'},
+                             outputs={'c'},
+                             code='''
     double alpha = 1.0, beta = 0.0;
     cublasSetStream(handle, __dace_current_stream);
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -73,7 +74,7 @@ tasklet2 = state.add_tasklet(
                 &beta,
                 c, N);
     ''',
-    language=dp.Language.CPP)
+                             language=dp.Language.CPP)
 
 # Add CPU arrays, GPU arrays, and connect to tasklet
 A = state.add_read('A')

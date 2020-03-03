@@ -26,10 +26,11 @@ class MapReduceFusion(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
-                MapReduceFusion._tasklet, MapReduceFusion._tmap_exit,
-                MapReduceFusion._in_array, MapReduceFusion._reduce,
-                MapReduceFusion._out_array)
+            nxutil.node_path_graph(MapReduceFusion._tasklet,
+                                   MapReduceFusion._tmap_exit,
+                                   MapReduceFusion._in_array,
+                                   MapReduceFusion._reduce,
+                                   MapReduceFusion._out_array)
         ]
 
     @staticmethod
@@ -51,9 +52,8 @@ class MapReduceFusion(pm.Transformation):
         ]):
             return False
 
-        tmem = next(
-            e for e in graph.edges_between(tasklet, tmap_exit)
-            if e.data.data == in_array.data).data
+        tmem = next(e for e in graph.edges_between(tasklet, tmap_exit)
+                    if e.data.data == in_array.data).data
 
         # (strict) Make sure that the transient is not accessed anywhere else
         # in this state or other states

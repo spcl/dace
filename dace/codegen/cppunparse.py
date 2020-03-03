@@ -132,8 +132,7 @@ class CPPLocals(LocalScheme):
         self.locals[local_name] = (lineno, depth, dtype)
 
     def get_type(self, local_name):
-        return self.locals[local_name][
-            2] if local_name in self.locals else None
+        return self.locals[local_name][2] if local_name in self.locals else None
 
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
@@ -153,14 +152,14 @@ class PythonLocals(LocalScheme):
         self.locals = {}
 
     def is_defined(self, local_name, current_depth):
-        return local_name in self.locals and self.locals[local_name][1] == current_depth
+        return local_name in self.locals and self.locals[local_name][
+            1] == current_depth
 
     def define(self, local_name, lineno, depth, dtype=None):
         self.locals[local_name] = (lineno, depth, dtype)
 
     def get_type(self, local_name):
-        return self.locals[local_name][
-            2] if local_name in self.locals else None
+        return self.locals[local_name][2] if local_name in self.locals else None
 
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
@@ -176,7 +175,6 @@ class CPPUnparser:
     """Methods in this class recursively traverse an AST and
     output C++ source code for the abstract syntax; original formatting
     is disregarded. """
-
     def __init__(self,
                  tree,
                  depth,
@@ -808,8 +806,8 @@ class CPPUnparser:
 
         if six.PY3:
             if repr_n.endswith("j"):
-                self.write(
-                    "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
+                self.write("%s(0, %s)" %
+                           (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
                 self.write(repr_n.replace("inf", INFSTR), infer_type)
                 # If the number has a type, use it
@@ -835,8 +833,8 @@ class CPPUnparser:
                 repr_n = repr_n.replace("*j", "j")
 
             if repr_n.endswith("j"):
-                self.write(
-                    "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
+                self.write("%s(0, %s)" %
+                           (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
                 # Substitute overflowing decimal literal for AST infinities.
                 self.write(repr_n.replace("inf", INFSTR))
@@ -1193,8 +1191,11 @@ class CPPUnparser:
 
 def cppunparse(node, expr_semicolon=True, locals=None):
     strio = StringIO()
-    CPPUnparser(
-        node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon)
+    CPPUnparser(node,
+                0,
+                locals or CPPLocals(),
+                strio,
+                expr_semicolon=expr_semicolon)
     return strio.getvalue().strip()
 
 

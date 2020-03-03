@@ -19,9 +19,8 @@ void __dace_serialize(const char* arrayname, int start, int end, const void* out
 """
 
 
-@dace.program(
-    dace.immaterial(dace.float64[N], materialize_V),
-    dace.immaterial(dace.float64[N], serialize_Vout))
+@dace.program(dace.immaterial(dace.float64[N], materialize_V),
+              dace.immaterial(dace.float64[N], serialize_Vout))
 def immaterial_range_test(V, Vout):
     # Transient variable
     @dace.map(_[0:N:2])

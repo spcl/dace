@@ -38,10 +38,14 @@ class ExpandTransposePure(ExpandTransformation):
         sdfg = dace.SDFG(node.label + "_sdfg")
         state = sdfg.add_state(node.label + "_state")
 
-        _, in_array = sdfg.add_array(
-            "_inp", in_shape, dtype, storage=outer_array.storage)
-        _, out_array = sdfg.add_array(
-            "_out", out_shape, dtype, storage=outer_array.storage)
+        _, in_array = sdfg.add_array("_inp",
+                                     in_shape,
+                                     dtype,
+                                     storage=outer_array.storage)
+        _, out_array = sdfg.add_array("_out",
+                                      out_shape,
+                                      dtype,
+                                      storage=outer_array.storage)
 
         num_elements = functools.reduce(lambda x, y: x * y, in_array.shape)
         if num_elements == 1:
@@ -114,14 +118,12 @@ class ExpandTransposeMKL(ExpandTransformation):
                              str(dtype))
         _, _, (m, n) = _get_transpose_input(node, state, sdfg)
         code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(
-                    f=func, m=m, n=n, a=alpha)
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP)
+                "{n}, _out, {m});").format(f=func, m=m, n=n, a=alpha)
+        tasklet = dace.graph.nodes.Tasklet(node.name,
+                                           node.in_connectors,
+                                           node.out_connectors,
+                                           code,
+                                           language=dace.dtypes.Language.CPP)
         return tasklet
 
 
@@ -138,8 +140,10 @@ class Transpose(dace.graph.nodes.LibraryNode):
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, location=None):
-        super().__init__(
-            name, location=location, inputs={'_inp'}, outputs={'_out'})
+        super().__init__(name,
+                         location=location,
+                         inputs={'_inp'},
+                         outputs={'_out'})
         self.dtype = dtype
 
     def validate(self, sdfg, state):

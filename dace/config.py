@@ -124,8 +124,8 @@ class Config(object):
         if filename is None:
             filename = Config._metadata_filename
         with open(filename, 'r') as f:
-            Config._config_metadata = yaml.load(
-                f.read(), Loader=yaml.SafeLoader)
+            Config._config_metadata = yaml.load(f.read(),
+                                                Loader=yaml.SafeLoader)
 
     @staticmethod
     def save(path=None):

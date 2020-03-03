@@ -29,12 +29,11 @@ class CopyToDevice(pattern_matching.Transformation):
 
     _nested_sdfg = nodes.NestedSDFG("", graph.OrderedDiGraph(), set(), set())
 
-    storage = properties.Property(
-        dtype=dtypes.StorageType,
-        desc="Nested SDFG storage",
-        choices=dtypes.StorageType,
-        from_string=lambda x: dtypes.StorageType[x],
-        default=dtypes.StorageType.Default)
+    storage = properties.Property(dtype=dtypes.StorageType,
+                                  desc="Nested SDFG storage",
+                                  choices=dtypes.StorageType,
+                                  from_string=lambda x: dtypes.StorageType[x],
+                                  default=dtypes.StorageType.Default)
 
     @staticmethod
     def annotates_memlets():
@@ -96,12 +95,11 @@ class CopyToDevice(pattern_matching.Transformation):
                         storage=storage,
                         find_new_name=True)
                 elif isinstance(memdata, data.Scalar):
-                    name, _ = sdfg.add_scalar(
-                        'device_' + dataname + '_in',
-                        dtype=memdata.dtype,
-                        transient=True,
-                        storage=storage,
-                        find_new_name=True)
+                    name, _ = sdfg.add_scalar('device_' + dataname + '_in',
+                                              dtype=memdata.dtype,
+                                              transient=True,
+                                              storage=storage,
+                                              find_new_name=True)
                 else:
                     raise NotImplementedError
                 created_arrays.add(name)
@@ -148,11 +146,10 @@ class CopyToDevice(pattern_matching.Transformation):
                         storage=storage,
                         find_new_name=True)
                 elif isinstance(memdata, data.Scalar):
-                    name, _ = sdfg.add_scalar(
-                        name,
-                        dtype=memdata.dtype,
-                        transient=True,
-                        storage=storage)
+                    name, _ = sdfg.add_scalar(name,
+                                              dtype=memdata.dtype,
+                                              transient=True,
+                                              storage=storage)
                 else:
                     raise NotImplementedError
                 created_arrays.add(name)

@@ -50,8 +50,10 @@ if __name__ == "__main__":
     sdfg(A=A, B=B, N=N)
 
     # Regression
-    regression = ndimage.convolve(
-        regression, KERNEL, mode='constant', cval=0.0)
+    regression = ndimage.convolve(regression,
+                                  KERNEL,
+                                  mode='constant',
+                                  cval=0.0)
 
     residual = np.linalg.norm(B[1:N.get() - 1, 1:N.get() - 1] - regression) / (
         (N.get() - 2)**2)

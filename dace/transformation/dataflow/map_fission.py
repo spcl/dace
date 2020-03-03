@@ -48,8 +48,8 @@ class MapFission(pattern_matching.Transformation):
         ]
 
     @staticmethod
-    def _components(
-            subgraph: sd.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+    def _components(subgraph: sd.SubgraphView
+                    ) -> List[Tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -58,9 +58,9 @@ class MapFission(pattern_matching.Transformation):
         graph = (subgraph
                  if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
         sdict = subgraph.scope_dict(node_to_children=True)
-        ns = [(n, graph.exit_nodes(n)[0])
-              if isinstance(n, nodes.EntryNode) else (n, n)
-              for n in sdict[None]
+        ns = [(n,
+               graph.exit_nodes(n)[0]) if isinstance(n, nodes.EntryNode) else
+              (n, n) for n in sdict[None]
               if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
         return ns
@@ -120,8 +120,9 @@ class MapFission(pattern_matching.Transformation):
 
         if expr_index == 0:  # Map with subgraph
             subgraphs = [
-                graph.scope_subgraph(
-                    map_node, include_entry=False, include_exit=False)
+                graph.scope_subgraph(map_node,
+                                     include_entry=False,
+                                     include_exit=False)
             ]
         else:  # Map with nested SDFG
             nsdfg_node = graph.node(candidate[MapFission._nested_sdfg])
@@ -143,8 +144,8 @@ class MapFission(pattern_matching.Transformation):
             # Test that the components are connected by transients that are not
             # used anywhere else
             border_arrays |= MapFission._border_arrays(
-                nsdfg_node.sdfg if expr_index == 1 else sdfg, sg
-                if expr_index == 1 else graph, sg)
+                nsdfg_node.sdfg if expr_index == 1 else sdfg,
+                sg if expr_index == 1 else graph, sg)
             total_components.append(components)
 
             # In nested SDFGs and subgraphs, ensure none of the border
@@ -178,8 +179,9 @@ class MapFission(pattern_matching.Transformation):
         # Fail if there are arrays inside the map that are not a direct
         # output of a computational component
         # TODO(later): Support this case? Ambiguous array sizes and memlets
-        external_arrays = (border_arrays - MapFission._internal_border_arrays(
-            total_components, subgraphs))
+        external_arrays = (
+            border_arrays -
+            MapFission._internal_border_arrays(total_components, subgraphs))
         if len(external_arrays) > 0:
             return False
 
@@ -199,10 +201,9 @@ class MapFission(pattern_matching.Transformation):
         # Obtain subgraph to perform fission to
         if self.expr_index == 0:  # Map with subgraph
             subgraphs = [(graph,
-                          graph.scope_subgraph(
-                              map_entry,
-                              include_entry=False,
-                              include_exit=False))]
+                          graph.scope_subgraph(map_entry,
+                                               include_entry=False,
+                                               include_exit=False))]
             parent = sdfg
         else:  # Map with nested SDFG
             nsdfg_node = graph.node(self.subgraph[MapFission._nested_sdfg])
@@ -260,9 +261,8 @@ class MapFission(pattern_matching.Transformation):
                     edge_to_outer[edge] = path[eindex - 1]
                 else:
                     # Nested SDFGs use the internal map edges of the node
-                    outer_edge = next(
-                        e for e in graph.in_edges(nsdfg_node)
-                        if e.dst_conn == edge.src.data)
+                    outer_edge = next(e for e in graph.in_edges(nsdfg_node)
+                                      if e.dst_conn == edge.src.data)
                     edge_to_outer[edge] = outer_edge
 
             for edge in external_edges_exit:
@@ -272,15 +272,14 @@ class MapFission(pattern_matching.Transformation):
                     edge_to_outer[edge] = path[eindex + 1]
                 else:
                     # Nested SDFGs use the internal map edges of the node
-                    outer_edge = next(
-                        e for e in graph.out_edges(nsdfg_node)
-                        if e.src_conn == edge.dst.data)
+                    outer_edge = next(e for e in graph.out_edges(nsdfg_node)
+                                      if e.src_conn == edge.dst.data)
                     edge_to_outer[edge] = outer_edge
 
             # Collect all border arrays and code->code edges
             arrays = MapFission._border_arrays(
-                nsdfg_node.sdfg
-                if self.expr_index == 1 else sdfg, state, subgraph)
+                nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state,
+                subgraph)
             scalars = defaultdict(list)
             for _, component_out in components:
                 for e in subgraph.out_edges(component_out):
@@ -318,12 +317,11 @@ class MapFission(pattern_matching.Transformation):
             # Add extra maps around components
             new_map_entries = []
             for component_in, component_out in components:
-                me, mx = state.add_map(
-                    outer_map.label + '_fission',
-                    [(p, '0:1') for p in outer_map.params],
-                    outer_map.schedule,
-                    unroll=outer_map.unroll,
-                    debuginfo=outer_map.debuginfo)
+                me, mx = state.add_map(outer_map.label + '_fission',
+                                       [(p, '0:1') for p in outer_map.params],
+                                       outer_map.schedule,
+                                       unroll=outer_map.unroll,
+                                       debuginfo=outer_map.debuginfo)
 
                 # Add dynamic input connectors
                 for conn in map_entry.in_connectors:
@@ -474,9 +472,8 @@ class MapFission(pattern_matching.Transformation):
                 edge.data.subset = subsets.Range.from_array(desc)
 
                 # Find matching edge inside map
-                inner_edge = next(
-                    e for e in graph.in_edges(map_exit)
-                    if e.dst_conn[3:] == edge.src_conn[4:])
+                inner_edge = next(e for e in graph.in_edges(map_exit)
+                                  if e.dst_conn[3:] == edge.src_conn[4:])
                 graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst,
                                edge.dst_conn, dcpy(edge.data))
 

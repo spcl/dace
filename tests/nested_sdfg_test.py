@@ -35,10 +35,16 @@ nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'},
                               {'output'})
 
 # Add edges
-state.add_memlet_path(
-    A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
-state.add_memlet_path(
-    nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
+state.add_memlet_path(A,
+                      map_entry,
+                      nsdfg,
+                      dst_conn='input',
+                      memlet=Memlet.simple(A, 'i,j'))
+state.add_memlet_path(nsdfg,
+                      map_exit,
+                      B,
+                      src_conn='output',
+                      memlet=Memlet.simple(B, 'i,j'))
 
 if __name__ == '__main__':
     print('Nested SDFG test')

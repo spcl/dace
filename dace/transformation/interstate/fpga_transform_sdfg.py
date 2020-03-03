@@ -10,7 +10,6 @@ from dace.transformation import pattern_matching
 class FPGATransformSDFG(pattern_matching.Transformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
-
     @staticmethod
     def annotates_memlets():
         return True
@@ -48,6 +47,7 @@ class FPGATransformSDFG(pattern_matching.Transformation):
         nesting.promote_global_trans = True
         nesting.apply(sdfg)
 
-        fpga_transform = FPGATransformState(
-            sdfg_id, -1, {FPGATransformState._state: 0}, self.expr_index)
+        fpga_transform = FPGATransformState(sdfg_id, -1,
+                                            {FPGATransformState._state: 0},
+                                            self.expr_index)
         fpga_transform.apply(sdfg)

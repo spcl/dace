@@ -60,8 +60,10 @@ def generate_dummy(sdfg) -> str:
     sdfg_call = '''
   __dace_init_{name}({params});
   __program_{name}({params});
-  __dace_exit_{name}({params});\n\n'''.format(
-        name=sdfg.name, params=sdfg.signature(with_types=False, for_call=True))
+  __dace_exit_{name}({params});\n\n'''.format(name=sdfg.name,
+                                              params=sdfg.signature(
+                                                  with_types=False,
+                                                  for_call=True))
 
     res = includes
     res += header
@@ -137,8 +139,12 @@ def generate_code(sdfg) -> List[CodeObject]:
     (global_code, frame_code, used_targets,
      used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
-        CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
-                   'Frame', environments=used_environments)
+        CodeObject(sdfg.name,
+                   global_code + frame_code,
+                   'cpp',
+                   cpu.CPUCodeGen,
+                   'Frame',
+                   environments=used_environments)
     ]
 
     # Create code objects for each target
@@ -146,23 +152,21 @@ def generate_code(sdfg) -> List[CodeObject]:
         target_objects.extend(tgt.get_generated_codeobjects())
 
     # add a header file for calling the SDFG
-    dummy = CodeObject(
-        sdfg.name,
-        generate_headers(sdfg),
-        'h',
-        cpu.CPUCodeGen,
-        'CallHeader',
-        linkable=False)
+    dummy = CodeObject(sdfg.name,
+                       generate_headers(sdfg),
+                       'h',
+                       cpu.CPUCodeGen,
+                       'CallHeader',
+                       linkable=False)
     target_objects.append(dummy)
 
     # add a dummy main function to show how to call the SDFG
-    dummy = CodeObject(
-        sdfg.name + "_main",
-        generate_dummy(sdfg),
-        'cpp',
-        cpu.CPUCodeGen,
-        'DummyMain',
-        linkable=False)
+    dummy = CodeObject(sdfg.name + "_main",
+                       generate_dummy(sdfg),
+                       'cpp',
+                       cpu.CPUCodeGen,
+                       'DummyMain',
+                       linkable=False)
     target_objects.append(dummy)
 
     return target_objects

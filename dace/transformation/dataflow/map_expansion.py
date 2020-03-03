@@ -53,11 +53,10 @@ class MapExpansion(pm.Transformation):
 
         # Create new maps
         new_maps = [
-            nodes.Map(
-                current_map.label + '_' + str(param), [param],
-                subsets.Range([param_range]),
-                schedule=dtypes.ScheduleType.Sequential) for param, param_range
-            in zip(current_map.params[1:], current_map.range[1:])
+            nodes.Map(current_map.label + '_' + str(param), [param],
+                      subsets.Range([param_range]),
+                      schedule=dtypes.ScheduleType.Sequential) for param,
+            param_range in zip(current_map.params[1:], current_map.range[1:])
         ]
         current_map.params = [current_map.params[0]]
         current_map.range = subsets.Range([current_map.range[0]])
@@ -72,13 +71,12 @@ class MapExpansion(pm.Transformation):
         # 3. Edges for dynamic map ranges replicate until reaching range(s)
         for edge in graph.out_edges(map_entry):
             graph.remove_edge(edge)
-            graph.add_memlet_path(
-                map_entry,
-                *entries,
-                edge.dst,
-                src_conn=edge.src_conn,
-                memlet=edge.data,
-                dst_conn=edge.dst_conn)
+            graph.add_memlet_path(map_entry,
+                                  *entries,
+                                  edge.dst,
+                                  src_conn=edge.src_conn,
+                                  memlet=edge.data,
+                                  dst_conn=edge.dst_conn)
 
         # Modify dynamic map ranges
         dynamic_edges = dace.sdfg.dynamic_map_inputs(graph, map_entry)
@@ -91,23 +89,20 @@ class MapExpansion(pm.Transformation):
             path = []
             for mapnode in [map_entry] + entries:
                 path.append(mapnode)
-                if any(
-                        edge.dst_conn in map(str, symbolic.symlist(r))
-                        for r in mapnode.map.range):
-                    graph.add_memlet_path(
-                        edge.src,
-                        *path,
-                        memlet=edge.data,
-                        src_conn=edge.src_conn,
-                        dst_conn=edge.dst_conn)
+                if any(edge.dst_conn in map(str, symbolic.symlist(r))
+                       for r in mapnode.map.range):
+                    graph.add_memlet_path(edge.src,
+                                          *path,
+                                          memlet=edge.data,
+                                          src_conn=edge.src_conn,
+                                          dst_conn=edge.dst_conn)
 
         # Create new map exits
         for edge in graph.in_edges(map_exit):
             graph.remove_edge(edge)
-            graph.add_memlet_path(
-                edge.src,
-                *exits[::-1],
-                map_exit,
-                memlet=edge.data,
-                src_conn=edge.src_conn,
-                dst_conn=edge.dst_conn)
+            graph.add_memlet_path(edge.src,
+                                  *exits[::-1],
+                                  map_exit,
+                                  memlet=edge.data,
+                                  src_conn=edge.src_conn,
+                                  dst_conn=edge.dst_conn)
