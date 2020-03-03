@@ -526,6 +526,17 @@ def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     return op1 + op2
 
 
+@oprepo.replaces_operator('str', 'Add', 'int')
+@oprepo.replaces_operator('str', 'Add', 'float')
+def _addstr(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: Union[int, float]):
+    if op1 in sdfg.symbols:
+        return dace.symbol(op1) + op2
+    else:
+        raise TypeError('Cannot add "%s" (type %s) and "%s" (type %s)' %
+                        (op1, type(op1).__name__, op2, type(op2).__name__))
+
+
 def _is_scalar(sdfg: SDFG, arrname: str):
     """ Checks whether array is pseudo-scalar (shape=(1,)). """
     shape = sdfg.arrays[arrname].shape
