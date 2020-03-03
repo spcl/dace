@@ -72,56 +72,45 @@ def make_nested_sdfg(parent):
 
     sdfg = dace.SDFG("filter_nested")
 
-    sdfg.add_scalar(
-        "outsize_buffer",
-        dtype=dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers)
-    sdfg.add_array(
-        "outsize_nested", [1],
-        dtype=dace.uint32,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array(
-        "A_nested", [N],
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array(
-        "B_nested", [N],
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_scalar(
-        "ratio_nested",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_scalar("outsize_buffer",
+                    dtype=dace.uint32,
+                    transient=True,
+                    storage=dace.dtypes.StorageType.FPGA_Registers)
+    sdfg.add_array("outsize_nested", [1],
+                   dtype=dace.uint32,
+                   storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_array("A_nested", [N],
+                   dtype=dace.float32,
+                   storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_array("B_nested", [N],
+                   dtype=dace.float32,
+                   storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_scalar("ratio_nested",
+                    dtype=dace.float32,
+                    storage=dace.dtypes.StorageType.FPGA_Global)
 
     set_zero = make_set_zero(sdfg)
     loop_entry = sdfg.add_state("loop_entry")
     loop_body = make_loop_body(sdfg)
     write_out_size = make_write_out_size(sdfg)
 
-    sdfg.add_edge(
-        set_zero,
-        loop_entry,
-        dace.graph.edges.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(set_zero, loop_entry,
+                  dace.graph.edges.InterstateEdge(assignments={"i": 0}))
 
     sdfg.add_edge(
-        loop_entry,
-        loop_body,
+        loop_entry, loop_body,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i < N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
-        loop_entry,
-        write_out_size,
+        loop_entry, write_out_size,
         dace.graph.edges.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i >= N", language=dace.dtypes.Language.Python)))
 
-    sdfg.add_edge(
-        loop_body,
-        loop_entry,
-        dace.graph.edges.InterstateEdge(assignments={"i": "i + 1"}))
+    sdfg.add_edge(loop_body, loop_entry,
+                  dace.graph.edges.InterstateEdge(assignments={"i": "i + 1"}))
 
     return sdfg
 
@@ -190,29 +179,25 @@ def make_sdfg(specialize):
     else:
         sdfg = dace.SDFG("filter_fpga_{}".format(N.get()))
 
-    sdfg.add_array(
-        "A_device", [N],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_array("A_device", [N],
+                   dtype=dace.float32,
+                   transient=True,
+                   storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array("A", [N], dtype=dace.float32)
 
-    sdfg.add_array(
-        "B_device", [N],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array(
-        "outsize_device", [1],
-        dtype=dace.uint32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_array("B_device", [N],
+                   dtype=dace.float32,
+                   transient=True,
+                   storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_array("outsize_device", [1],
+                   dtype=dace.uint32,
+                   transient=True,
+                   storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array("B", [N], dtype=dace.float32)
     sdfg.add_array("outsize", [1], dtype=dace.uint32)
-    sdfg.add_scalar(
-        "ratio",
-        storage=dace.dtypes.StorageType.FPGA_Global,
-        dtype=dace.float32)
+    sdfg.add_scalar("ratio",
+                    storage=dace.dtypes.StorageType.FPGA_Global,
+                    dtype=dace.float32)
 
     copy_to_device_state = make_copy_to_device(sdfg)
     compute_state = make_compute_state(sdfg)
@@ -235,11 +220,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int)
     parser.add_argument("ratio", type=float)
-    parser.add_argument(
-        "-specialize",
-        default=False,
-        action="store_true",
-        help="Fix all symbols at compile time/in hardware")
+    parser.add_argument("-specialize",
+                        default=False,
+                        action="store_true",
+                        help="Fix all symbols at compile time/in hardware")
     args = vars(parser.parse_args())
 
     N.set(args["N"])

@@ -474,8 +474,8 @@ def winograd_convolution(dace_session, tf_node):
         IMAGE_TILE_SIZE,
         IMAGE_TILE_SIZE,
         tf_node.inputs[0].shape[-1],
-        outputShape[0] * ceil(outputShape[1] / OUTPUT_TILE_SIZE) * ceil(
-            outputShape[2] / OUTPUT_TILE_SIZE),
+        outputShape[0] * ceil(outputShape[1] / OUTPUT_TILE_SIZE) *
+        ceil(outputShape[2] / OUTPUT_TILE_SIZE),
     ]
     inputViewDims = ["0:" + str(_x) for _x in inputViewShape]
     ########Tiling the image#################################
@@ -491,8 +491,8 @@ def winograd_convolution(dace_session, tf_node):
         # ),
         "int_floor(i3,"
         # + str(ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*"
-        + str(OUTPUT_TILE_SIZE) + "+i1",
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) +
+        ")*" + str(OUTPUT_TILE_SIZE) + "+i1",
         "i2",
     ]
     inputView = state.add_transient(
@@ -526,12 +526,11 @@ def winograd_convolution(dace_session, tf_node):
         dict(zip(inputParams[0][0:2], inputViewDims[2:4])),
         dace.ScheduleType.GPU_Device,
     )
-    intermediateResultNode = state.add_transient(
-        "BtI",
-        bt.shape,
-        dace.float32,
-        dace.StorageType.GPU_Stack,
-        toplevel=False)
+    intermediateResultNode = state.add_transient("BtI",
+                                                 bt.shape,
+                                                 dace.float32,
+                                                 dace.StorageType.GPU_Stack,
+                                                 toplevel=False)
     intermediateResultNode.setzero = True
     state.add_edge(
         inputView,
@@ -774,11 +773,11 @@ def winograd_convolution(dace_session, tf_node):
     ###################Un-Tile the output to NHWC format###################
     outputParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%" + str(
-            ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
+        "(i3/" + str(outputShape[0]) + ")%" +
+        str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
         str(OUTPUT_TILE_SIZE) + "+i0",
-        "int_floor(i3," + str(
-            outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" +
+        "int_floor(i3," +
+        str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" +
         str(OUTPUT_TILE_SIZE) + "+i1",
         "i2",
     ]

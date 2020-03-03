@@ -125,10 +125,9 @@ void __dace_exit_mpi({params}) {{
                                                  child, function_stream,
                                                  callsite_stream)
 
-        self._dispatcher.dispatch_subgraph(
-            sdfg,
-            dfg_scope,
-            state_id,
-            function_stream,
-            callsite_stream,
-            skip_entry_node=True)
+        self._dispatcher.dispatch_subgraph(sdfg,
+                                           dfg_scope,
+                                           state_id,
+                                           function_stream,
+                                           callsite_stream,
+                                           skip_entry_node=True)

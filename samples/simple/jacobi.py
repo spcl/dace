@@ -61,8 +61,8 @@ if __name__ == "__main__":
     H.set(args["H"])
     MAXITER.set(args["MAXITER"])
 
-    print('Jacobi 5-point Stencil %dx%d (%d steps)' % (W.get(), H.get(),
-                                                       MAXITER.get()))
+    print('Jacobi 5-point Stencil %dx%d (%d steps)' %
+          (W.get(), H.get(), MAXITER.get()))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
 
@@ -81,14 +81,16 @@ if __name__ == "__main__":
     jacobi(A, MAXITER)
 
     # Regression
-    kernel = np.array(
-        [[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]], dtype=np.float32)
+    kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]],
+                      dtype=np.float32)
     for i in range(2 * MAXITER.get()):
-        regression = ndimage.convolve(
-            regression, kernel, mode='constant', cval=0.0)
+        regression = ndimage.convolve(regression,
+                                      kernel,
+                                      mode='constant',
+                                      cval=0.0)
 
-    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] - regression) / (
-        H.get() * W.get())
+    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] -
+                              regression) / (H.get() * W.get())
     print("Residual:", residual)
 
     #print(A.view(type=np.ndarray))

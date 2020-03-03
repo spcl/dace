@@ -4,18 +4,18 @@ import numpy as np
 
 @dace.program
 def oneret(A: dace.float64[20]):
-    return A*2
+    return A * 2
 
 
 def test_oneret():
     A = np.random.rand(20)
     result = oneret(A)
-    assert np.allclose(result, A*2)
+    assert np.allclose(result, A * 2)
 
 
 @dace.program
 def multiret(A: dace.float64[20]):
-    return A*3, A*4, A
+    return A * 3, A * 4, A
 
 
 def test_multiret():
@@ -34,7 +34,7 @@ def nested_ret(A: dace.float64[20]):
 def test_nested_ret():
     A = np.random.rand(20)
     result = nested_ret(A)
-    assert np.allclose(result, A*2 + 1)
+    assert np.allclose(result, A * 2 + 1)
 
 
 def test_return_override():

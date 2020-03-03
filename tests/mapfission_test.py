@@ -34,42 +34,44 @@ def mapfission_sdfg():
 
     # Edges
     state.add_nedge(ome, scalar, dace.EmptyMemlet())
-    state.add_memlet_path(
-        rnode,
-        ome,
-        t1,
-        memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
-        dst_conn='a')
-    state.add_memlet_path(
-        rnode,
-        ome,
-        ime2,
-        t2,
-        memlet=dace.Memlet.simple('A', '2*i+j'),
-        dst_conn='a')
-    state.add_memlet_path(
-        t2, imx2, s24node, memlet=dace.Memlet.simple('s2', 'j'), src_conn='b')
-    state.add_memlet_path(
-        rnode,
-        ome,
-        ime3,
-        t3,
-        memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
-        dst_conn='a')
-    state.add_memlet_path(
-        t3,
-        imx3,
-        s34node,
-        memlet=dace.Memlet.simple('s3out', '0'),
-        src_conn='b')
+    state.add_memlet_path(rnode,
+                          ome,
+                          t1,
+                          memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
+                          dst_conn='a')
+    state.add_memlet_path(rnode,
+                          ome,
+                          ime2,
+                          t2,
+                          memlet=dace.Memlet.simple('A', '2*i+j'),
+                          dst_conn='a')
+    state.add_memlet_path(t2,
+                          imx2,
+                          s24node,
+                          memlet=dace.Memlet.simple('s2', 'j'),
+                          src_conn='b')
+    state.add_memlet_path(rnode,
+                          ome,
+                          ime3,
+                          t3,
+                          memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
+                          dst_conn='a')
+    state.add_memlet_path(t3,
+                          imx3,
+                          s34node,
+                          memlet=dace.Memlet.simple('s3out', '0'),
+                          src_conn='b')
 
     state.add_edge(t1, 'b', t4, 'ione', dace.Memlet.simple('s1', '0'))
     state.add_edge(s24node, None, t4, 'itwo', dace.Memlet.simple('s2', '0:2'))
-    state.add_edge(s34node, None, t4, 'ithree', dace.Memlet.simple(
-        's3out', '0'))
+    state.add_edge(s34node, None, t4, 'ithree',
+                   dace.Memlet.simple('s3out', '0'))
     state.add_edge(scalar, 'out', t4, 'sc', dace.Memlet.simple('scal', '0'))
-    state.add_memlet_path(
-        t4, omx, wnode, memlet=dace.Memlet.simple('B', 'i'), src_conn='out')
+    state.add_memlet_path(t4,
+                          omx,
+                          wnode,
+                          memlet=dace.Memlet.simple('B', 'i'),
+                          src_conn='out')
 
     sdfg.validate()
     return sdfg
@@ -104,8 +106,9 @@ class MapFissionTest(unittest.TestCase):
         topmap = next(
             node for node in state.nodes()
             if isinstance(node, nodes.MapEntry) and node.label == 'outer')
-        subgraph = state.scope_subgraph(
-            topmap, include_entry=False, include_exit=False)
+        subgraph = state.scope_subgraph(topmap,
+                                        include_entry=False,
+                                        include_exit=False)
         nest_state_subgraph(graph, state, subgraph)
         self.assertGreater(graph.apply_transformations(MapFission), 0)
         graph(A=A, B=B)
@@ -125,10 +128,10 @@ class MapFissionTest(unittest.TestCase):
         irnode = nstate.add_read('a')
         task = nstate.add_tasklet('t1', {'inp'}, {'out'}, 'out = 2*inp')
         iwnode = nstate.add_write('t')
-        nstate.add_edge(irnode, None, task, 'inp', dace.Memlet.simple(
-            'a', '0'))
-        nstate.add_edge(task, 'out', iwnode, None, dace.Memlet.simple(
-            't', '0'))
+        nstate.add_edge(irnode, None, task, 'inp',
+                        dace.Memlet.simple('a', '0'))
+        nstate.add_edge(task, 'out', iwnode, None,
+                        dace.Memlet.simple('t', '0'))
 
         # t->a state
         first_state = nstate
@@ -136,10 +139,10 @@ class MapFissionTest(unittest.TestCase):
         irnode = nstate.add_read('t')
         task = nstate.add_tasklet('t2', {'inp'}, {'out'}, 'out = 3*inp')
         iwnode = nstate.add_write('b')
-        nstate.add_edge(irnode, None, task, 'inp', dace.Memlet.simple(
-            't', '0'))
-        nstate.add_edge(task, 'out', iwnode, None, dace.Memlet.simple(
-            'b', '0'))
+        nstate.add_edge(irnode, None, task, 'inp',
+                        dace.Memlet.simple('t', '0'))
+        nstate.add_edge(task, 'out', iwnode, None,
+                        dace.Memlet.simple('b', '0'))
 
         nsdfg.add_edge(first_state, nstate, dace.InterstateEdge())
 
@@ -151,18 +154,16 @@ class MapFissionTest(unittest.TestCase):
         wnode = state.add_write('A')
         me, mx = state.add_map('outer', dict(i='0:2'))
         nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
-        state.add_memlet_path(
-            rnode,
-            me,
-            nsdfg_node,
-            dst_conn='a',
-            memlet=dace.Memlet.simple('A', 'i'))
-        state.add_memlet_path(
-            nsdfg_node,
-            mx,
-            wnode,
-            src_conn='b',
-            memlet=dace.Memlet.simple('A', 'i'))
+        state.add_memlet_path(rnode,
+                              me,
+                              nsdfg_node,
+                              dst_conn='a',
+                              memlet=dace.Memlet.simple('A', 'i'))
+        state.add_memlet_path(nsdfg_node,
+                              mx,
+                              wnode,
+                              src_conn='b',
+                              memlet=dace.Memlet.simple('A', 'i'))
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
@@ -193,23 +194,27 @@ class MapFissionTest(unittest.TestCase):
         t1 = state.add_tasklet('t1', {'i1'}, {'o1', 'o2'},
                                'o1 = i1 * 2; o2 = i1 * 5')
         t2 = state.add_tasklet('t2', {'i1', 'i2'}, {'o1'}, 'o1 = i1 * i2')
-        state.add_memlet_path(
-            in1, me, t1, dst_conn='i1', memlet=dace.Memlet.simple('in1', 'i'))
-        state.add_memlet_path(
-            in2, me, t2, dst_conn='i2', memlet=dace.Memlet.simple('in2', 'i'))
+        state.add_memlet_path(in1,
+                              me,
+                              t1,
+                              dst_conn='i1',
+                              memlet=dace.Memlet.simple('in1', 'i'))
+        state.add_memlet_path(in2,
+                              me,
+                              t2,
+                              dst_conn='i2',
+                              memlet=dace.Memlet.simple('in2', 'i'))
         state.add_edge(t1, 'o1', t2, 'i1', dace.Memlet.simple('tmp', '0'))
-        state.add_memlet_path(
-            t2,
-            mx,
-            out1,
-            src_conn='o1',
-            memlet=dace.Memlet.simple('out1', 'i'))
-        state.add_memlet_path(
-            t1,
-            mx,
-            out2,
-            src_conn='o2',
-            memlet=dace.Memlet.simple('out2', 'i'))
+        state.add_memlet_path(t2,
+                              mx,
+                              out1,
+                              src_conn='o1',
+                              memlet=dace.Memlet.simple('out1', 'i'))
+        state.add_memlet_path(t1,
+                              mx,
+                              out2,
+                              src_conn='o2',
+                              memlet=dace.Memlet.simple('out2', 'i'))
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
@@ -237,12 +242,11 @@ class MapFissionTest(unittest.TestCase):
 
         state.add_edge(me, None, nsdfg_node, None, dace.EmptyMemlet())
         anode = state.add_write('A')
-        state.add_memlet_path(
-            nsdfg_node,
-            mx,
-            anode,
-            src_conn='a',
-            memlet=dace.Memlet.simple('A', 'i,j'))
+        state.add_memlet_path(nsdfg_node,
+                              mx,
+                              anode,
+                              src_conn='a',
+                              memlet=dace.Memlet.simple('A', 'i,j'))
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 

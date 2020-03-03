@@ -272,8 +272,8 @@ if __name__ == '__main__':
             else:
                 norm_diff = np.linalg.norm(numpyC - daceC)
             if norm_diff == 0.0:
-                print('Binary operator {opn}_{s}: OK'.format(
-                    opn=opname, s=side))
+                print('Binary operator {opn}_{s}: OK'.format(opn=opname,
+                                                             s=side))
             else:
                 failed_tests.add(opname + '_' + side)
                 print('Binary operator {opn}_{s}: FAIL ({diff})'.format(
@@ -284,12 +284,11 @@ if __name__ == '__main__':
             test(Bf, Af, Cf, side='r')
         elif opname in {'and', 'or'}:
             test(Ab, Bb, Cb, np_exec='numpyC[:] = np.logical_{op}(A, B)')
-            test(
-                Bb,
-                Ab,
-                Cb,
-                side='r',
-                np_exec='numpyC[:] = np.logical_{op}(A, B)')
+            test(Bb,
+                 Ab,
+                 Cb,
+                 side='r',
+                 np_exec='numpyC[:] = np.logical_{op}(A, B)')
         elif opname in {'eq', 'noteq', 'lt', 'lte', 'gt', 'gte'}:
             test(Apb, Bpb, Cb)
             test(Bpb, Apb, Cb, side='r')

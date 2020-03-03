@@ -11,8 +11,10 @@ from dace.codegen.compiler import CompilerConfigurationError, CompilationError
 def run_test(implementation):
 
     print("Testing implementation {}...".format(implementation))
-    dace.Config.set(
-        "library", "blas", "default_implementation", value=implementation)
+    dace.Config.set("library",
+                    "blas",
+                    "default_implementation",
+                    value=implementation)
     dace.Config.set("library", "blas", "override", value=True)
 
     A = np.random.rand(K, M).astype(np.float32)

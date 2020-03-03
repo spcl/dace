@@ -7,7 +7,6 @@ from typing import Dict, Type
 class InstrumentationProvider(object):
     """ Instrumentation provider for SDFGs, states, scopes, and memlets. Emits
         code on event. """
-
     @staticmethod
     def get_provider_mapping(
     ) -> Dict[InstrumentationType, Type['InstrumentationProvider']]:

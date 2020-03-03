@@ -26,8 +26,8 @@ sizes = [{
     N: 2600
 }]
 
-args = [([N, N], datatype), ([N, M], datatype), ([1], datatype), ([1],
-                                                                  datatype)]
+args = [([N, N], datatype), ([N, M], datatype), ([1], datatype),
+        ([1], datatype)]
 
 outputs = [(0, 'C')]
 

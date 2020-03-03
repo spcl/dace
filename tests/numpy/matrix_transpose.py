@@ -52,15 +52,18 @@ if __name__ == "__main__":
     state = mtr.add_state(label='mtr')
     A_node = state.add_array('A', A.shape, dace.float64)
     B_node = state.add_array('B', B.shape, dace.float64)
-    np_frontend.op_impl.matrix_transpose(
-        state, A_node, A_node, B_node, B_node, [2, 3], [4], label='mtr')
+    np_frontend.op_impl.matrix_transpose(state,
+                                         A_node,
+                                         A_node,
+                                         B_node,
+                                         B_node, [2, 3], [4],
+                                         label='mtr')
 
     mtr(A=A, B=B)
     B_regression[4] = np.transpose(A_regression[2, 3])
 
-    rel_error = (np.linalg.norm(
-        (B_regression - B).flatten(), ord=2) / np.linalg.norm(
-            B_regression.flatten(), ord=2))
+    rel_error = (np.linalg.norm((B_regression - B).flatten(), ord=2) /
+                 np.linalg.norm(B_regression.flatten(), ord=2))
     print("Relative error:", rel_error)
     print("==== Program end ====")
     exit(0 if rel_error <= 1e-15 else 1)

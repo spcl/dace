@@ -216,6 +216,20 @@ def _reduce(sdfg: SDFG,
         return []
 
 
+@oprepo.replaces('numpy.eye')
+def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
+    M = M or N
+    name, _ = sdfg.add_temp_transient([N, M], dtype)
+
+    state.add_mapped_tasklet('eye',
+                             dict(i='0:%s' % N, j='0:%s' % M), {},
+                             'val = 1 if i == (j - %s) else 0' % k,
+                             dict(val=dace.Memlet.simple(name, 'i, j')),
+                             external_edges=True)
+
+    return name
+
+
 def _simple_call(sdfg: SDFG,
                  state: SDFGState,
                  inpname: str,
@@ -503,6 +517,13 @@ def _neg(visitor: 'ProgramVisitor',
          op1: Union[int, float],
          op2=None):
     return -op1
+
+
+@oprepo.replaces_operator('symbol', 'Add', 'int')
+@oprepo.replaces_operator('symbol', 'Add', 'float')
+def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+            op1: symbolic.symbol, op2: Union[int, float]):
+    return op1 + op2
 
 
 def _is_scalar(sdfg: SDFG, arrname: str):
