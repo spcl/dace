@@ -638,7 +638,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream = CodeIOStream()
 
         # Set default storage/schedule types in SDFG
-        _set_default_schedule_and_storage_types(sdfg, schedule)
+        set_default_schedule_and_storage_types(sdfg, schedule)
 
         is_top_level = sdfg.parent is None
 
@@ -984,7 +984,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 self._dispatcher.used_environments)
 
 
-def _set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
+def set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
     """ Sets default storage and schedule types throughout SDFG.
         Replaces `ScheduleType.Default` and `StorageType.Default`
         with the corresponding types according to the parent scope's

@@ -100,7 +100,12 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
-    targets = {'cpu': cpu.CPUCodeGen(frame, sdfg)}
+    default_target = cpu.CPUCodeGen
+    for k, v in target.TargetCodeGenerator.extensions().items():
+        # If another target has already been registered as CPU, use it instead
+        if v['name'] == 'cpu':
+            default_target = k
+    targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
     targets.update({

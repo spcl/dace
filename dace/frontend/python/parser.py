@@ -160,6 +160,7 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
     :raise ValueError: If symbol values are ambiguous.
     """
     exclude = exclude or set()
+    exclude = set(symbolic.symbol(s) for s in exclude)
     equations = []
     symbols = set()
     # Collect equations and symbols from arguments and shapes

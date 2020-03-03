@@ -16,9 +16,11 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
-from dace.codegen.targets.cpu import (sym2cpp, unparse_cr, unparse_cr_split,
-                                      cpp_array_expr, synchronize_streams)
-from dace.codegen.targets.framecode import _set_default_schedule_and_storage_types
+from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
+                                      cpp_array_expr, synchronize_streams,
+                                      memlet_copy_to_absolute_strides)
+from dace.codegen.targets.framecode import \
+    set_default_schedule_and_storage_types
 
 from dace.codegen import cppunparse
 
@@ -682,8 +684,9 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
-                self._cpu_codegen.memlet_copy_to_absolute_strides(
-                    sdfg, memlet, src_node, dst_node))
+                memlet_copy_to_absolute_strides(
+                    self._dispatcher, sdfg, memlet, src_node, dst_node,
+                    self._cpu_codegen._packed_types))
             dims = len(copy_shape)
 
             # Handle unsupported copy types
@@ -790,8 +793,9 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
-                    self._cpu_codegen.memlet_copy_to_absolute_strides(
-                        sdfg, memlet, src_node, dst_node))
+                    memlet_copy_to_absolute_strides(
+                        self._dispatcher, sdfg, memlet, src_node, dst_node,
+                        self._cpu_codegen._packed_types))
 
                 dims = len(copy_shape)
 
@@ -993,14 +997,22 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
 
         # Get parameters from input/output memlets to this map
         # TODO: Refactor into its own function
-        params = set(e.data.data for node in dfg_scope.source_nodes() for e in state.in_edges(node)) | \
-                 set(e.data.data for node in dfg_scope.sink_nodes() for e in state.out_edges(node)) | \
-                 set(node.data for node in dfg_scope.nodes()
-                     if isinstance(node, nodes.AccessNode) and
-                     sdfg.arrays[node.data].toplevel)
-        params -= set(
-            e.data.data
-            for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
+        input_params = set(
+            e.data.data for node in dfg_scope.source_nodes() for e in
+            state.in_edges(node))
+        output_params = set(
+            e.data.data for node in dfg_scope.sink_nodes() for e in
+            state.out_edges(node))
+        toplevel_params = set(node.data for node in dfg_scope.nodes()
+                              if isinstance(node, nodes.AccessNode) and
+                              sdfg.arrays[node.data].toplevel)
+        dynamic_inputs = set(e.data.data
+                             for e in
+                             dace.sdfg.dynamic_map_inputs(state, scope_entry))
+        params = input_params | output_params | toplevel_params
+        params -= dynamic_inputs
+        const_params = input_params - (output_params | toplevel_params |
+                                       dynamic_inputs)
 
         # Get symbolic parameters (free symbols) for kernel
         syms = sdfg.symbols_defined_at(scope_entry)
@@ -1037,6 +1049,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             sdfg.arrays[p].signature(False, name=p) for p in sorted(params)
         ] + symbol_names
         kernel_args_typed = [
+            ('const ' if p in const_params else '') +
             sdfg.arrays[p].signature(name=p) for p in sorted(params)
         ] + symbol_sigs
 
@@ -1218,8 +1231,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Append thread-block maps from nested SDFGs
         for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
             if isinstance(node, nodes.NestedSDFG):
-                _set_default_schedule_and_storage_types(
-                    node.sdfg, node.schedule)
+                set_default_schedule_and_storage_types(node.sdfg,
+                                                       node.schedule)
 
                 tb_maps.extend([
                     n.map for state in node.sdfg.nodes()
@@ -1852,6 +1865,7 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
 
         # Block-wide reduction
         elif node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            input_dims = input_memlet.subset.dims()
             # Checks
             if not self._in_device_code:
                 raise ValueError('Block-wide GPU reduction must occur within'

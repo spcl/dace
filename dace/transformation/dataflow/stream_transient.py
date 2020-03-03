@@ -111,13 +111,12 @@ class StreamTransient(pattern_matching.Transformation):
         dataname = memlet.data
 
         # Create the new node: Temporary stream and an access node
-        newname, _ = sdfg.add_stream(
-            'tile_' + dataname,
-            sdfg.arrays[memlet.data].dtype,
-            1,
-            bbox_approx[0], [1],
-            transient=True,
-            find_new_name=True)
+        newname, _ = sdfg.add_stream('tile_' + dataname,
+                                     sdfg.arrays[memlet.data].dtype,
+                                     1,
+                                     bbox_approx[0], [1],
+                                     transient=True,
+                                     find_new_name=True)
         snode = nodes.AccessNode(newname)
 
         to_stream_mm = copy.deepcopy(memlet)
@@ -185,6 +184,16 @@ class AccumulateTransient(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.node(self.state_id)
 
+        # Choose array
+        array = self.array
+        if array is None or len(array) == 0:
+            map_exit = graph.node(self.subgraph[AccumulateTransient._map_exit])
+            outer_map_exit = graph.node(
+                self.subgraph[AccumulateTransient._outer_map_exit])
+            array = next(e.data.data
+                         for e in graph.edges_between(map_exit, outer_map_exit)
+                         if e.data.wcr is not None)
+
         # Avoid import loop
         from dace.transformation.dataflow.local_storage import LocalStorage
 
@@ -195,9 +204,10 @@ class AccumulateTransient(pattern_matching.Transformation):
             self.subgraph[AccumulateTransient._outer_map_exit]
         }
         sdfg_id = sdfg.sdfg_list.index(sdfg)
-        in_local_storage = LocalStorage(
-            sdfg_id, self.state_id, local_storage_subgraph, self.expr_index)
-        in_local_storage.array = self.array
+        in_local_storage = LocalStorage(sdfg_id, self.state_id,
+                                        local_storage_subgraph,
+                                        self.expr_index)
+        in_local_storage.array = array
         in_local_storage.apply(sdfg)
 
         # Initialize transient to zero in case of summation
