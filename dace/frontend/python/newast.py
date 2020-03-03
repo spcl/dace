@@ -1972,7 +1972,7 @@ class ProgramVisitor(ExtNodeVisitor):
                           body=None,
                           additional_syms=None):
         extrasyms = additional_syms or {}
-        body = body or node.body
+        body = body or node
         pv = ProgramVisitor(name=name,
                             filename=self.filename,
                             line_offset=node.lineno,
