@@ -4,6 +4,7 @@ from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties, SubsetProperty
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
+from sympy import Symbol
 
 @registry.autoregister
 @make_properties
@@ -29,17 +30,39 @@ class TransientReuse(pattern_matching.Transformation):
 
         # Step 1: Find all transients.
         transients = []
-        size = []
+        self.memory_before = 0
         for a in sdfg.arrays:
+            self.memory_before += sdfg.arrays[a].total_size
             if sdfg.arrays[a].transient == True:
                 transients.append(a)
-                size.append(sdfg.arrays[a].total_size)
+        print(transients)
 
         # Step 2: Determine all possible reuses and decide on a mapping.
         mapping = []
-        mapping.append((transients[2],transients[0]))
+        for n in state.nodes():
+            if isinstance(n, nodes.AccessNode) and n.data in transients:
+                predecessors = [state.predecessors(x) for x in state.predecessors(n)]
+                predecessors = [item.data for sublist in predecessors for item in sublist]
+                for t in transients:
+                    if t not in predecessors and not n.data == t:
+                        mapping.append((n.data, t))
+                    else:
+                        for m in mapping:
+                            if m[0] == t:
+                                mapping.remove(m)
+                print(n, n.data)
+                print(state.predecessors(n))
+                print([state.predecessors(x) for x in state.predecessors(n)])
+        print(mapping)
 
-        # Step 3: For each mapping redirect edges and rename memlets in the whole tree.
+        for (old1, new1) in mapping:
+            for (old2, new2) in mapping:
+                if (old1, new1) == (old2,new2) or (new1, old1) == (old2, new2):
+                    mapping.remove((old2, new2))
+        print(mapping)
+        # Step 3 For each mapping reshape transients to fit data
+
+        # Step 4: For each mapping redirect edges and rename memlets in the whole tree.
         for (old, new) in mapping:
             old_node = state.find_node(old)
             old_node.data = new
@@ -47,5 +70,15 @@ class TransientReuse(pattern_matching.Transformation):
                 for edge in state.memlet_tree(e):
                     if edge.data.data == old:
                         edge.data.data = new
-
             sdfg.remove_data(old)
+            for m in mapping:
+                if old in m:
+                    mapping.remove(m)
+
+        # Analyze memory savings
+        self.memory_after = 0
+        for a in sdfg.arrays:
+            self.memory_after += sdfg.arrays[a].total_size
+        print('memory before: ', self.memory_before, 'B')
+        print('memory after: ', self.memory_after, 'B')
+        print('memory savings: ', self.memory_before- self.memory_after, 'B')

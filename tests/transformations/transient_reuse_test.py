@@ -7,8 +7,6 @@ import numpy as np
 from dace.transformation.interstate.transient_reuse import TransientReuse
 
 M = dace.symbol('M')
-K = dace.symbol('K')
-N = dace.symbol('N')
 
 
 @dace.program
