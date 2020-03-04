@@ -36,9 +36,31 @@ class TransientReuse(pattern_matching.Transformation):
             if sdfg.arrays[a].transient == True:
                 transients.append(a)
         print(transients)
+        print(sdfg.arrays)
 
+        live = {}
         # Step 2: Determine all possible reuses and decide on a mapping.
-        mapping = []
+        for t in transients:
+            live[t] = set()
+            for n in state.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == t:
+                    live[t].add(n)
+                    for e in state.all_edges(n):
+                        for edge in state.memlet_tree(e):
+                            if edge.src == n:
+                                live[t].add(edge.dst)
+                            if edge.dst == n:
+                                live[t].add(edge.src)
+        print(live)
+        mapping = set()
+        for t in live:
+            for s in live:
+                if not s is t and live[t].intersection(live[s]) == set():
+                    mapping.add(frozenset([s,t]))
+        print(mapping)
+
+
+        '''mapping = []
         for n in state.nodes():
             if isinstance(n, nodes.AccessNode) and n.data in transients:
                 predecessors = [state.predecessors(x) for x in state.predecessors(n)]
@@ -59,7 +81,7 @@ class TransientReuse(pattern_matching.Transformation):
             for (old2, new2) in mapping:
                 if (old1, new1) == (old2,new2) or (new1, old1) == (old2, new2):
                     mapping.remove((old2, new2))
-        print(mapping)
+        print(mapping)'''
         # Step 3 For each mapping reshape transients to fit data
 
         # Step 4: For each mapping redirect edges and rename memlets in the whole tree.
