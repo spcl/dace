@@ -226,6 +226,7 @@ class DaceProgram:
         self.args = args
         self.kwargs = kwargs
         self._name = f.__name__
+        self._cached_sdfg = None
         self.argnames = _get_argnames(f)
 
         # NOTE: Important to call this outside list/dict comprehensions
@@ -248,7 +249,13 @@ class DaceProgram:
 
     def compile(self, *args, strict=None):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = parse_from_function(self, *args, strict=strict)
+        if Config.get_bool('compiler', 'use_cache') and self._cached_sdfg:
+            sdfg = self._cached_sdfg
+        else:
+            sdfg = parse_from_function(self, *args, strict=strict)
+            if Config.get_bool('compiler', 'use_cache'):
+                self._cached_sdfg = sdfg
+
         return sdfg.compile()
 
     def __call__(self, *args, **kwargs):
