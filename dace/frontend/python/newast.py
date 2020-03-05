@@ -1834,7 +1834,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if not hasattr(dim, 'free_symbols'): continue
                 self.scope_vars.update(
                     {str(k): self.globals[str(k)]
-                     for k in dim.free_symbols})
+                     for k in dim.free_symbols if str(k) in self.globals})
 
         # Disallow keywords
         for stmt in _DISALLOWED_STMTS:
