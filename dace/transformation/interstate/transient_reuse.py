@@ -56,46 +56,58 @@ class TransientReuse(pattern_matching.Transformation):
         for t in live:
             for s in live:
                 if not s is t and live[t].intersection(live[s]) == set():
-                    mapping.add(frozenset([s,t]))
+                    mapping.add(tuple(sorted([s,t],key=transients.index)))
         print(mapping)
 
+        #remove conflicting mappings, simplify mappings
+        temp = set()
+        for m in mapping:
+            add = True
+            for t in list(temp):
+                if m is t: # there should be no duplicates!! shouldn't be necessary
+                    add = False
+                (tnew, told) = t
+                (mnew, mold) = m
+                if told == mold:
+                    add = False
+                elif told == mnew:
+                    add = False
+                    temp.add((tnew, mold))
+                elif tnew == mold:
+                    add = False
+                    temp.add((mnew, told))
+            if add == True:
+                temp.add(m)
+        mapping = temp
 
-        '''mapping = []
-        for n in state.nodes():
-            if isinstance(n, nodes.AccessNode) and n.data in transients:
-                predecessors = [state.predecessors(x) for x in state.predecessors(n)]
-                predecessors = [item.data for sublist in predecessors for item in sublist]
-                for t in transients:
-                    if t not in predecessors and not n.data == t:
-                        mapping.append((n.data, t))
-                    else:
-                        for m in mapping:
-                            if m[0] == t:
-                                mapping.remove(m)
-                print(n, n.data)
-                print(state.predecessors(n))
-                print([state.predecessors(x) for x in state.predecessors(n)])
         print(mapping)
-
-        for (old1, new1) in mapping:
-            for (old2, new2) in mapping:
-                if (old1, new1) == (old2,new2) or (new1, old1) == (old2, new2):
-                    mapping.remove((old2, new2))
-        print(mapping)'''
         # Step 3 For each mapping reshape transients to fit data
 
         # Step 4: For each mapping redirect edges and rename memlets in the whole tree.
-        for (old, new) in mapping:
-            old_node = state.find_node(old)
+        for (new, old) in list(mapping):
+            for n in state.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == old:
+                    n.data = new
+                    for e in state.all_edges(n):
+                        for edge in state.memlet_tree(e):
+                            if edge.data.data == old:
+                                edge.data.data = new
+            sdfg.remove_data(old)
+        '''for (old, new) in list(mapping):
+            print(old, new)
+            try:
+                old_node = state.find_node(old)
+            except:
+                continue
             old_node.data = new
             for e in state.all_edges(old_node):
                 for edge in state.memlet_tree(e):
                     if edge.data.data == old:
                         edge.data.data = new
-            sdfg.remove_data(old)
-            for m in mapping:
+            remove_data = sdfg.remove_data(old)
+            for m in list(mapping):
                 if old in m:
-                    mapping.remove(m)
+                    mapping.remove(m)'''
 
         # Analyze memory savings
         self.memory_after = 0
