@@ -8,6 +8,7 @@ import os
 import pickle, json
 from pydoc import locate
 import random
+import re
 import shutil
 import sys
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
@@ -337,8 +338,8 @@ class SDFG(OrderedDiGraph):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
         if dataname in self._arrays:
             return self._arrays[dataname]
-        if dataname in self._symbols:
-            return self._symbols[dataname]
+        if str(dataname) in self._symbols:
+            return self._symbols[str(dataname)]
         raise KeyError('Data descriptor with name "%s" not found in SDFG' %
                        dataname)
 
@@ -358,9 +359,14 @@ class SDFG(OrderedDiGraph):
         if name == new_name:
             return
 
-        # Replace in arrays and symbols
-        replace_dict(self._arrays, name, new_name)
-        replace_dict(self._symbols, name, new_name)
+        # Replace in arrays and symbols (if a variable name)
+        if dt.validate_name(new_name):
+            replace_dict(self._arrays, name, new_name)
+            replace_dict(self._symbols, name, new_name)
+
+        # Replace inside data descriptors
+        for array in self.arrays.values():
+            replace_properties(array, name, new_name)
 
         # Replace in inter-state edges
         for edge in self.edges():
@@ -399,17 +405,21 @@ class SDFG(OrderedDiGraph):
             return source_nodes[0]
         if self._start_state is None:
             raise ValueError('Ambiguous or undefined starting state for SDFG')
+        if self._start_state not in source_nodes:
+            raise ValueError("Start state {} not found in source nodes".format(
+                self._start_state))
+        return self._start_state
 
-        return self.node(self._start_state)
-
-    def set_start_state(self, state_id):
+    @start_state.setter
+    def start_state(self, state_id):
         """ Manually sets the starting state of this SDFG.
             :param state_id: The node ID (use `node_id(state)`) of the
                              state to set.
         """
-        if state_id < 0 or state_id >= len(self.nodes()):
+        states = self.nodes()
+        if state_id < 0 or state_id >= len(states):
             raise ValueError("Invalid state ID")
-        self._start_state = state_id
+        self._start_state = states[state_id]
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
@@ -628,12 +638,9 @@ class SDFG(OrderedDiGraph):
         """
         if not isinstance(node, SDFGState):
             raise TypeError("Expected SDFGState, got " + str(type(node)))
-
-        # If no start state has been defined, define to be the first state
+        super(SDFG, self).add_node(node)
         if is_start_state == True:
-            self._start_state = len(self.nodes())
-
-        return super(SDFG, self).add_node(node)
+            self.start_state = len(self.nodes()) - 1
 
     def add_edge(self, u, v, edge):
         """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
@@ -717,10 +724,6 @@ class SDFG(OrderedDiGraph):
                     raise TypeError("Unexpected type: {}".format(type(expr)))
             for s in edge_data.condition_symbols():
                 used[s] = dt.Scalar(symbolic.symbol(s).dtype)
-        for state in self.nodes():
-            a, u = state.interstate_symbols()
-            assigned.update(a)
-            used.update(u)
 
         assigned = collections.OrderedDict([(k, v)
                                             for k, v in assigned.items()
@@ -1706,6 +1709,17 @@ subgraph cluster_state_{state} {{
             :raise NotImplementedError: Unsupported argument type.
         """
         expected_args = self.arglist()
+
+        # Omit return values from arguments
+        expected_args = collections.OrderedDict([
+            (k, v) for k, v in expected_args.items()
+            if not k.startswith('__return')
+        ])
+        kwargs = {
+            k: v
+            for k, v in kwargs.items() if not k.startswith('__return')
+        }
+
         num_args_passed = len(args) + len(kwargs)
         num_args_expected = len(expected_args)
         if num_args_passed < num_args_expected:
@@ -1787,7 +1801,7 @@ subgraph cluster_state_{state} {{
             before computing the given state. """
         from networkx import all_simple_paths
 
-        for path in all_simple_paths(self, self._start_state, state):
+        for path in all_simple_paths(self, self.start_state, state):
             yield [
                 next(e for e in self.out_edges(s) if e.dst == d)
                 for s, d in zip(path[:-1], path[1:])
@@ -1798,9 +1812,8 @@ subgraph cluster_state_{state} {{
             before computing the given state. """
         from networkx import all_simple_paths
 
-        start_state = self._start_state or self.source_nodes()[0]
         return set([
-            n for path in all_simple_paths(self, start_state, state)
+            n for path in all_simple_paths(self, self.start_state, state)
             for n in path
         ])
 
@@ -1815,7 +1828,7 @@ subgraph cluster_state_{state} {{
             if not validate_name(self.name):
                 raise InvalidSDFGError("Invalid name", self, None)
 
-            if len(self.source_nodes()) > 1 and self._start_state is None:
+            if len(self.source_nodes()) > 1 and self.start_state is None:
                 raise InvalidSDFGError("Starting state undefined", self, None)
 
             if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
@@ -2519,11 +2532,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def scope_symbols(self):
         """ Returns all symbols defined by scopes within this state. """
         return scope_symbols(self)
-
-    def interstate_symbols(self):
-        """ Returns all symbols assigned/used in interstate edges in nested
-           SDFGs within this state. """
-        return interstate_symbols(self)
 
     def undefined_symbols(self, sdfg, include_scalar_data):
         return undefined_symbols(sdfg, self, include_scalar_data)
@@ -3300,8 +3308,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise TypeError("Expected Memlet, got: {}".format(
                 type(memlet).__name__))
 
-        sdict = self.scope_dict(validate=False)
-        if scope_contains_scope(sdict, src_node, dst_node):
+        if any(isinstance(n, nd.EntryNode) for n in path_nodes):
             propagate_forward = False
         else:  # dst node's scope is higher than src node, propagate out
             propagate_forward = True
@@ -4237,11 +4244,9 @@ def data_symbols(dfg):
         if not isinstance(d, nd.AccessNode):
             continue
         ddesc = d.desc(sdfg)
-        for s in itertools.chain(ddesc.shape, ddesc.strides, ddesc.offset):
-            if isinstance(s, sp.Expr):
-                result.update((k.name, dt.Scalar(k.dtype))
-                              for k in s.free_symbols
-                              if not k.name.startswith("__dace"))
+        result.update((s.name, dt.Scalar(s.dtype)) for s in ddesc.free_symbols
+                      if not s.name.startswith('__dace'))
+
     return result
 
 
@@ -4277,27 +4282,6 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
         (key, value) for key, value in symbols.items()
         if key not in defined and not key.startswith('__dace'))
     return symbols
-
-
-def interstate_symbols(dfg):
-    """ Returns all symbols used in interstate edges in nested SDFGs within
-        this state. """
-    assigned = collections.OrderedDict()
-    used = collections.OrderedDict()
-    for node in dfg.nodes():
-        if isinstance(node, dace.graph.nodes.NestedSDFG):
-            a, u = node.sdfg.interstate_symbols()
-            assigned.update(a)
-
-            # Filter used symbols if they belong to SDFG input/output connectors
-            u = {
-                k: v
-                for k, v in u.items()
-                if k not in (node.in_connectors | node.out_connectors)
-            }
-            used.update(u)
-
-    return assigned, used
 
 
 def top_level_transients(dfg):
@@ -4403,6 +4387,64 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
     return False
 
 
+def _replsym(symlist, symrepl):
+    """ Helper function to replace symbols in various symbolic expressions. """
+    if symlist is None:
+        return None
+    if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
+        return symlist.subs(symrepl)
+    for i, dim in enumerate(symlist):
+        try:
+            symlist[i] = tuple(
+                d.subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
+        except TypeError:
+            symlist[i] = (dim.subs(symrepl)
+                          if symbolic.issymbolic(dim) else dim)
+    return symlist
+
+
+def replace_properties(node: Any, name: str, new_name: str):
+    if str(name) == str(new_name):
+        return
+    symrepl = {
+        symbolic.symbol(name):
+        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+    }
+
+    for propclass, propval in node.properties():
+        if propval is None:
+            continue
+        pname = propclass.attr_name
+        if isinstance(propclass, properties.SymbolicProperty):
+            setattr(node, pname, propval.subs(symrepl))
+        elif isinstance(propclass, properties.DataProperty):
+            if propval == name:
+                setattr(node, pname, new_name)
+        elif isinstance(propclass,
+                        (properties.RangeProperty, properties.ShapeProperty)):
+            setattr(node, pname, _replsym(list(propval), symrepl))
+        elif isinstance(propclass, properties.CodeProperty):
+            if isinstance(propval['code_or_block'], str):
+                if str(name) != str(new_name):
+                    lang = propval['language']
+                    newcode = propval['code_or_block']
+                    if not re.findall(r'[^\w]%s[^\w]' % name, newcode):
+                        continue
+
+                    if lang is dtypes.Language.CPP:  # Replace in C++ code
+                        # Use local variables and shadowing to replace
+                        replacement = 'auto %s = %s;\n' % (name, new_name)
+                        propval['code_or_block'] = replacement + newcode
+                    else:
+                        warnings.warn(
+                            'Replacement of %s with %s was not made '
+                            'for string tasklet code of language %s' %
+                            (name, new_name, lang))
+            else:
+                for stmt in propval['code_or_block']:
+                    ASTFindReplace({name: new_name}).visit(stmt)
+
+
 def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
             name: str, new_name: str):
     """ Finds and replaces all occurrences of a symbol or array in the given
@@ -4416,49 +4458,16 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
         symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
     }
 
-    def replsym(symlist):
-        if symlist is None:
-            return None
-        if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
-            return symlist.subs(symrepl)
-        for i, dim in enumerate(symlist):
-            try:
-                symlist[i] = tuple(
-                    d.subs(symrepl) if symbolic.issymbolic(d) else d
-                    for d in dim)
-            except TypeError:
-                symlist[i] = (dim.subs(symrepl)
-                              if symbolic.issymbolic(dim) else dim)
-        return symlist
-
     # Replace in node properties
     for node in subgraph.nodes():
-        for propclass, propval in node.properties():
-            pname = propclass.attr_name
-            if isinstance(propclass, properties.SymbolicProperty):
-                setattr(node, pname, propval.subs({name: new_name}))
-            if isinstance(propclass, properties.DataProperty):
-                if propval == name:
-                    setattr(node, pname, new_name)
-            if isinstance(propclass, properties.RangeProperty):
-                setattr(node, pname, replsym(propval))
-            if isinstance(propclass, properties.CodeProperty):
-                if isinstance(propval['code_or_block'], str):
-                    # TODO: C++ AST parsing for replacement?
-                    if name != str(new_name):
-                        warnings.warn('Replacement of %s with %s was not made '
-                                      'for string tasklet code' %
-                                      (name, new_name))
-                else:
-                    for stmt in propval['code_or_block']:
-                        ASTFindReplace({name: new_name}).visit(stmt)
+        replace_properties(node, name, new_name)
 
     # Replace in memlets
     for edge in subgraph.edges():
         if edge.data.data == name:
             edge.data.data = new_name
-        edge.data.subset = replsym(edge.data.subset)
-        edge.data.other_subset = replsym(edge.data.other_subset)
+        edge.data.subset = _replsym(edge.data.subset, symrepl)
+        edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
 
 
 def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):

@@ -54,7 +54,9 @@ class LocalStorage(pattern_matching.Transformation, ABC):
 
         array = self.array
         if array is None or len(array) == 0:
-            array = graph.edges_between(node_a, node_b)[0].data.data
+            array = next(e.data.data
+                         for e in graph.edges_between(node_a, node_b)
+                         if e.data.data is not None and e.data.wcr is None)
 
         original_edge = None
         invariant_memlet = None
@@ -75,14 +77,13 @@ class LocalStorage(pattern_matching.Transformation, ABC):
             raise NameError('Array %s not found!' % array)
 
         # Add transient array
-        new_data, _ = sdfg.add_array(
-            'trans_' + invariant_memlet.data, [
-                symbolic.overapproximate(r)
-                for r in invariant_memlet.bounding_box_size()
-            ],
-            sdfg.arrays[invariant_memlet.data].dtype,
-            transient=True,
-            find_new_name=True)
+        new_data, _ = sdfg.add_array('trans_' + invariant_memlet.data, [
+            symbolic.overapproximate(r)
+            for r in invariant_memlet.bounding_box_size()
+        ],
+                                     sdfg.arrays[invariant_memlet.data].dtype,
+                                     transient=True,
+                                     find_new_name=True)
         data_node = nodes.AccessNode(new_data)
 
         # Store as fields so that other transformations can use them
@@ -118,13 +119,17 @@ class InLocalStorage(LocalStorage):
     """ Implements the InLocalStorage transformation, which adds a transient
         data node between two scope entry nodes.
     """
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
-        return (isinstance(node_a, nodes.EntryNode)
-                and isinstance(node_b, nodes.EntryNode))
+        if (isinstance(node_a, nodes.EntryNode)
+                and isinstance(node_b, nodes.EntryNode)):
+            # Empty memlets cannot match
+            for edge in graph.edges_between(node_a, node_b):
+                if edge.data.data is not None:
+                    return True
+        return False
 
 
 @registry.autoregister_params(singlestate=True)
@@ -133,17 +138,17 @@ class OutLocalStorage(LocalStorage):
     """ Implements the OutLocalStorage transformation, which adds a transient
         data node between two scope exit nodes.
     """
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
 
-        # WCR edges not supported (use AccumulateTransient instead
-        if len(graph.edges_between(node_a, node_b)) == 1:
-            edge = graph.edges_between(node_a, node_b)[0]
-            if edge.data.wcr is not None:
-                return False
+        if (isinstance(node_a, nodes.ExitNode)
+                and isinstance(node_b, nodes.ExitNode)):
 
-        return (isinstance(node_a, nodes.ExitNode)
-                and isinstance(node_b, nodes.ExitNode))
+            for edge in graph.edges_between(node_a, node_b):
+                # Empty memlets cannot match; WCR edges not supported (use
+                # AccumulateTransient instead)
+                if edge.data.data is not None and edge.data.wcr is None:
+                    return True
+        return False

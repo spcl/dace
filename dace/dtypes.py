@@ -194,7 +194,6 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.immaterial`
     """
-
     def __init__(self, wrapped_type):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -420,7 +419,6 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
-
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -458,7 +456,6 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
-
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -571,7 +568,6 @@ def _atomic_counter_generator():
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
-
     def __init__(self, return_type, *variadic_args):
         self.uid = next(_atomic_counter_generator())
         from dace import data
@@ -607,8 +603,8 @@ class callback(typeclass):
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
-                input_ctypes.append(some_arg.as_ctypes()
-                                    if some_arg is not None else None)
+                input_ctypes.append(
+                    some_arg.as_ctypes() if some_arg is not None else None)
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
@@ -658,8 +654,9 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(
-                    other_inputs[i], data_type, non_symbolic_sizes)
+                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i],
+                                                     data_type,
+                                                     non_symbolic_sizes)
             return orig_function(*list_of_other_inputs)
 
         return partial(trampoline, pyfunc, arraypos, types_and_sizes)
@@ -671,8 +668,8 @@ class callback(typeclass):
         return {
             'type': 'callback',
             'arguments': [i.to_json() for i in self.input_types],
-            'returntype': self.return_type.to_json()
-            if self.return_type else None
+            'returntype':
+            self.return_type.to_json() if self.return_type else None
         }
 
     @staticmethod
@@ -853,7 +850,6 @@ class _external_function(object):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
-
     def __init__(self,
                  start_line,
                  start_column,
@@ -870,13 +866,12 @@ class DebugInfo:
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        return dict(
-            type='DebugInfo',
-            start_line=self.start_line,
-            end_line=self.end_line,
-            start_column=self.start_column,
-            end_column=self.end_column,
-            filename=self.filename)
+        return dict(type='DebugInfo',
+                    start_line=self.start_line,
+                    end_line=self.end_line,
+                    start_column=self.start_column,
+                    end_column=self.end_column,
+                    filename=self.filename)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -904,7 +899,6 @@ def json_to_typeclass(obj):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
-
     @wraps(dec)
     def layer(*args, **kwargs):
 

@@ -92,8 +92,9 @@ if __name__ == "__main__":
         state.add_array('A_' + str(len(arrays)), [3, 40, 40], dace.float32))
     state.add_edge(
         arrays[-2], None, arrays[-1], None,
-        dace.memlet.Memlet.simple(
-            arrays[-2], '20:40, 10:30', other_subset_str='2, 10:30, 20:40'))
+        dace.memlet.Memlet.simple(arrays[-2],
+                                  '20:40, 10:30',
+                                  other_subset_str='2, 10:30, 20:40'))
 
     sdfg.draw_to_file()
 
@@ -120,8 +121,8 @@ if __name__ == "__main__":
         np.linalg.norm(array_data[11][4, 1, 2, 1:N - 1] - array_data[10]) /
         (N - 2),
         np.linalg.norm(array_data[13] -
-                       array_data[12][5:N, 2:N - 2, N - 10:N - 7, 1:N - 1]) / (
-                           (N - 5) * (N - 4) * 3 * (N - 2)),
+                       array_data[12][5:N, 2:N - 2, N - 10:N - 7, 1:N - 1]) /
+        ((N - 5) * (N - 4) * 3 * (N - 2)),
         np.linalg.norm(array_data[15] - array_data[14][4, 1, 2, 1:(N - 1):2]) /
         (N / 2 - 1),
         np.linalg.norm(array_data[17][2, 10:30, 20:40] -

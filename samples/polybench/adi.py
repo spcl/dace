@@ -119,8 +119,8 @@ def adi(u):
                 pout[j] = -in_c / (in_a * pin[j - 1] + in_b)
                 qout[j] = (-in_d * uin_prev[j] +
                            (datatype(1.0) + datatype(2.0) * in_d) * uin[j] -
-                           in_f * uin_next[j] - in_a * qin[j - 1]) / (
-                               in_a * pin[j - 1] + in_b)
+                           in_f * uin_next[j] -
+                           in_a * qin[j - 1]) / (in_a * pin[j - 1] + in_b)
 
             vNi = datatype(1.0)
 
@@ -162,8 +162,8 @@ def adi(u):
                 pout[j] = -in_f / (in_d * pin[j - 1] + in_e)
                 qout[j] = (-in_a * vin_prev[j] +
                            (datatype(1.0) + datatype(2.0) * in_a) * vin[j] -
-                           in_c * vin_next[j] - in_d * qin[j - 1]) / (
-                               in_d * pin[j - 1] + in_e)
+                           in_c * vin_next[j] -
+                           in_d * qin[j - 1]) / (in_d * pin[j - 1] + in_e)
 
             uNi = datatype(1.0)
 

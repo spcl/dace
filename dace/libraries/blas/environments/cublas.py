@@ -1,5 +1,6 @@
 import dace.library
 
+
 @dace.library.environment
 class cuBLAS:
 
@@ -15,7 +16,6 @@ class cuBLAS:
     headers = ["../include/dace_cublas.h"]
     init_code = ""
     finalize_code = ""
-
 
     @staticmethod
     def handle_setup_code(node):

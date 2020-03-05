@@ -147,8 +147,9 @@ class AST_Node():
         return self.name
 
     def generate_code(self, *args):
-        raise NotImplementedError("Class " + type(
-            self).__name__ + " does not implement the generate_code method.")
+        raise NotImplementedError(
+            "Class " + type(self).__name__ +
+            " does not implement the generate_code method.")
 
     def shortdesc(self):
         ret = str(self)
@@ -287,8 +288,9 @@ class AST_Statements(AST_Node):
             prevstate = None
             for s in self.statements:
                 state = len(sdfg.nodes())
-                newstate = dace.SDFGState(
-                    "s" + str(state), sdfg, debuginfo=s.context)
+                newstate = dace.SDFGState("s" + str(state),
+                                          sdfg,
+                                          debuginfo=s.context)
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
                 if prevstate is not None:

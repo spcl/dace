@@ -34,8 +34,9 @@ class ImmaterialCodeGen(TargetCodeGenerator):
         for storage_type in cpu_storage:
             dispatcher.register_copy_dispatcher(dtypes.StorageType.Immaterial,
                                                 storage_type, None, self)
-            dispatcher.register_copy_dispatcher(
-                storage_type, dtypes.StorageType.Immaterial, None, self)
+            dispatcher.register_copy_dispatcher(storage_type,
+                                                dtypes.StorageType.Immaterial,
+                                                None, self)
 
     def get_generated_codeobjects(self):
         return []  # Immaterial storage generates inline code
@@ -76,9 +77,11 @@ class ImmaterialCodeGen(TargetCodeGenerator):
             if isinstance(dst_node, nodes.Tasklet) or \
                     (dst_node.desc(sdfg).storage == dtypes.StorageType.Register):
                 callsite_stream.write(
-                    self.memlet_definition(
-                        sdfg, memlet, arrayname, direction="in"), sdfg,
-                    state_id, [src_node, dst_node])
+                    self.memlet_definition(sdfg,
+                                           memlet,
+                                           arrayname,
+                                           direction="in"), sdfg, state_id,
+                    [src_node, dst_node])
             else:
                 callsite_stream.write("__dace_materialize(\"" + \
                                       sym2cpp(src_node) + "\", " + \
@@ -103,9 +106,11 @@ class ImmaterialCodeGen(TargetCodeGenerator):
             if isinstance(src_node, nodes.Tasklet) or \
                     (src_node.desc(sdfg).storage == dtypes.StorageType.Register):
                 callsite_stream.write(
-                    self.memlet_definition(
-                        sdfg, memlet, edge.src_conn, direction="out"), sdfg,
-                    state_id, [src_node, dst_node])
+                    self.memlet_definition(sdfg,
+                                           memlet,
+                                           edge.src_conn,
+                                           direction="out"), sdfg, state_id,
+                    [src_node, dst_node])
             else:
                 callsite_stream.write("__dace_serialize(\"" + \
                         sym2cpp(dst_node) + "\", " + \
@@ -120,8 +125,8 @@ class ImmaterialCodeGen(TargetCodeGenerator):
         if isinstance(memlet.data, data.Stream):
             return 'auto& %s = %s;\n' % (local_name, memlet.data)
 
-        result = ('auto __%s = ' % local_name + self.memlet_view_ctor(
-            sdfg, memlet, direction) + ';\n')
+        result = ('auto __%s = ' % local_name +
+                  self.memlet_view_ctor(sdfg, memlet, direction) + ';\n')
 
         # Allocate variable type
         memlet_type = '    dace::vec<%s, %s>' % (
@@ -222,8 +227,8 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                 dims = 0
 
         else:
-            raise RuntimeError(
-                'Memlet type "%s" not implemented' % memlet.subset)
+            raise RuntimeError('Memlet type "%s" not implemented' %
+                               memlet.subset)
 
         if dims == 0:
             return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t> ("%s", %s)' % (

@@ -166,10 +166,11 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         # If range is the entire array, use the array descriptor to obtain the
         # entire range
         if astrange is None:
-            return [(symbolic.pystr_to_symbolic(0),
-                     symbolic.pystr_to_symbolic(
-                         symbolic.symbol_name_or_value(s)) - 1,
-                     symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
+            return [
+                (symbolic.pystr_to_symbolic(0),
+                 symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) -
+                 1, symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape
+            ]
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
@@ -236,7 +237,6 @@ class ExtNodeTransformer(ast.NodeTransformer):
         this class is capable of traversing over top-level expressions in 
         bodies in order to discern DaCe statements from others.
     """
-
     def visit_TopLevel(self, node):
         clsname = type(node).__name__
         if getattr(self, "visit_TopLevel" + clsname, False):
@@ -256,8 +256,8 @@ class ExtNodeTransformer(ast.NodeTransformer):
                             clsname = type(value).__name__
                             if getattr(self, "visit_TopLevel" + clsname,
                                        False):
-                                value = getattr(
-                                    self, "visit_TopLevel" + clsname)(value)
+                                value = getattr(self, "visit_TopLevel" +
+                                                clsname)(value)
                             else:
                                 value = self.visit(value)
                         else:
@@ -283,7 +283,6 @@ class ExtNodeVisitor(ast.NodeVisitor):
         As opposed to `NodeVisitor`, this class is capable of traversing over 
         top-level expressions in bodies in order to discern DaCe statements 
         from others. """
-
     def visit_TopLevel(self, node):
         clsname = type(node).__name__
         if getattr(self, "visit_TopLevel" + clsname, False):

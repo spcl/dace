@@ -66,16 +66,14 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
 
     # Create matching arrays in numpy and fill with random values
     nbytes = dtype.bytes
-    A = np.ndarray(
-        [M.get(), K.get()],
-        dtype.type,
-        buffer=np.ndarray([total_a], dtype.type),
-        strides=[s * nbytes for s in a_strides])
-    B = np.ndarray(
-        [K.get(), N.get()],
-        dtype.type,
-        buffer=np.ndarray([total_b], dtype.type),
-        strides=[s * nbytes for s in b_strides])
+    A = np.ndarray([M.get(), K.get()],
+                   dtype.type,
+                   buffer=np.ndarray([total_a], dtype.type),
+                   strides=[s * nbytes for s in a_strides])
+    B = np.ndarray([K.get(), N.get()],
+                   dtype.type,
+                   buffer=np.ndarray([total_b], dtype.type),
+                   strides=[s * nbytes for s in b_strides])
 
     A[:] = np.random.rand(M.get(), K.get())
     B[:] = np.random.rand(K.get(), N.get())
@@ -83,13 +81,12 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
 
     # Invoke SDFG: compile without additional transformations and run
     csdfg = sdfg.compile(optimizer=False)
-    csdfg(
-        A=A,
-        B=B,
-        C=C,
-        M=np.int32(M.get()),
-        K=np.int32(K.get()),
-        N=np.int32(N.get()))
+    csdfg(A=A,
+          B=B,
+          C=C,
+          M=np.int32(M.get()),
+          K=np.int32(K.get()),
+          N=np.int32(N.get()))
     assert np.allclose(REPS * A @ B, C)
 
     # Return instrumentation report
@@ -133,8 +130,8 @@ if __name__ == '__main__':
 
     # Print out best configuration
     A_order, A_padding, B_order, B_padding = best_config
-    print('Fastest configuration for (%dx%dx%d) is:' % (M.get(), K.get(),
-                                                        N.get()))
+    print('Fastest configuration for (%dx%dx%d) is:' %
+          (M.get(), K.get(), N.get()))
     print('  A with storage order %s, padding = %d' % (A_order, A_padding))
     print('  B with storage order %s, padding = %d' % (B_order, B_padding))
     print('  Runtime: %f ms' % best_runtime)

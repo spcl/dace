@@ -33,8 +33,8 @@ def create_datadescriptor(obj):
         return obj.descriptor
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
-            return Array(
-                dtype=dtypes.typeclass(obj.dtype.type), shape=obj.shape)
+            return Array(dtype=dtypes.typeclass(obj.dtype.type),
+                         shape=obj.shape)
         if symbolic.issymbolic(obj):
             return Scalar(symbolic.symtype(obj))
         if isinstance(obj, dtypes.typeclass):
@@ -51,18 +51,18 @@ class Data(object):
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(
-        dtype=dace.dtypes.StorageType,
-        desc="Storage location",
-        choices=dace.dtypes.StorageType,
-        default=dace.dtypes.StorageType.Default,
-        from_string=lambda x: dtypes.StorageType[x])
+    storage = Property(dtype=dace.dtypes.StorageType,
+                       desc="Storage location",
+                       choices=dace.dtypes.StorageType,
+                       default=dace.dtypes.StorageType.Default,
+                       from_string=lambda x: dtypes.StorageType[x])
     location = Property(
         dtype=str,  # Dict[str, symbolic]
         desc='Full storage location identifier (e.g., rank, GPU ID)',
         default='')
-    toplevel = Property(
-        dtype=bool, desc="Allocate array outside of state", default=False)
+    toplevel = Property(dtype=bool,
+                        desc="Allocate array outside of state",
+                        default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, dtype, shape, transient, storage, location, toplevel,
@@ -109,6 +109,14 @@ class Data(object):
     def signature(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
+
+    @property
+    def free_symbols(self):
+        result = set()
+        for s in self.shape:
+            if isinstance(s, sp.Expr):
+                result |= set(s.free_symbols)
+        return result
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -208,7 +216,7 @@ def set_materialize_func(obj, val):
         if (obj.storage != dace.dtypes.StorageType.Default
                 and obj.storage != dace.dtypes.StorageType.Immaterial):
             raise ValueError("Immaterial array must have immaterial storage, "
-                             "but has: {}".format(storage))
+                             "but has: {}".format(obj.storage))
         obj.storage = dace.dtypes.StorageType.Immaterial
     obj._materialize_func = val
 
@@ -230,11 +238,12 @@ class Array(Data):
         'resolution.')
 
     # TODO: Should we use a Code property here?
-    materialize_func = Property(
-        dtype=str, allow_none=True, setter=set_materialize_func)
+    materialize_func = Property(dtype=str,
+                                allow_none=True,
+                                setter=set_materialize_func)
 
-    strides = ListProperty(
-        element_type=symbolic.pystr_to_symbolic,
+    strides = ShapeProperty(
+        # element_type=symbolic.pystr_to_symbolic,
         desc='For each dimension, the number of elements to '
         'skip in order to obtain the next element in '
         'that dimension.')
@@ -244,15 +253,13 @@ class Array(Data):
         desc='The total allocated size of the array. Can be used for'
         ' padding.')
 
-    offset = ListProperty(
-        element_type=symbolic.pystr_to_symbolic,
-        desc='Initial offset to translate all indices by.')
+    offset = ListProperty(element_type=symbolic.pystr_to_symbolic,
+                          desc='Initial offset to translate all indices by.')
 
-    may_alias = Property(
-        dtype=bool,
-        default=False,
-        desc='This pointer may alias with other pointers in '
-        'the same function')
+    may_alias = Property(dtype=bool,
+                         default=False,
+                         desc='This pointer may alias with other pointers in '
+                         'the same function')
 
     def __init__(self,
                  dtype,
@@ -347,17 +354,17 @@ class Array(Data):
 
         for s, (rb, re, rs) in zip(self.shape, rng):
             # Shape has to be positive
-            if isinstance(s, sympy.Basic):
+            if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
-                    s = sympy.Symbol(str(s), **s.assumptions0)
+                    s = sp.Symbol(str(s), **s.assumptions0)
                 else:
-                    s = sympy.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sympy.Basic):
+                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
+                if isinstance(rb, sp.Basic):
                     rb = rb.subs({olds: s})
-                if isinstance(re, sympy.Basic):
+                if isinstance(re, sp.Basic):
                     re = re.subs({olds: s})
-                if isinstance(rs, sympy.Basic):
+                if isinstance(rs, sp.Basic):
                     rs = rs.subs({olds: s})
 
             try:
@@ -418,6 +425,20 @@ class Array(Data):
             for d in self.shape
         ]
 
+    @property
+    def free_symbols(self):
+        result = super().free_symbols
+        for s in self.strides:
+            if isinstance(s, sp.Expr):
+                result |= set(s.free_symbols)
+        if isinstance(self.total_size, sp.Expr):
+            result |= set(self.total_size.free_symbols)
+        for o in self.offset:
+            if isinstance(o, sp.Expr):
+                result |= set(o.free_symbols)
+
+        return result
+
     # OPERATORS
     #def __add__(self, other):
     #    return (self, None)
@@ -430,8 +451,8 @@ class Stream(Data):
     # Properties
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
-    veclen = Property(
-        dtype=int, desc="Vector length. Memlets must adhere to this.")
+    veclen = Property(dtype=int,
+                      desc="Vector length. Memlets must adhere to this.")
 
     def __init__(self,
                  dtype,
@@ -523,9 +544,9 @@ class Stream(Data):
                 dace.dtypes.StorageType.GPU_Shared,
                 dace.dtypes.StorageType.GPU_Stack
         ]:
-            return 'dace::GPUStream<%s, %s> %s' % (
-                str(self.dtype.ctype), 'true'
-                if sp.log(self.buffer_size, 2).is_Integer else 'false', name)
+            return 'dace::GPUStream<%s, %s> %s' % (str(
+                self.dtype.ctype), 'true' if sp.log(
+                    self.buffer_size, 2).is_Integer else 'false', name)
 
         return 'dace::Stream<%s> %s' % (str(self.dtype.ctype), name)
 
@@ -549,17 +570,17 @@ class Stream(Data):
 
         for s, (rb, re, rs) in zip(self.shape, rng):
             # Shape has to be positive
-            if isinstance(s, sympy.Basic):
+            if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
-                    s = sympy.Symbol(str(s), **s.assumptions0)
+                    s = sp.Symbol(str(s), **s.assumptions0)
                 else:
-                    s = sympy.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sympy.Basic):
+                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
+                if isinstance(rb, sp.Basic):
                     rb = rb.subs({olds: s})
-                if isinstance(re, sympy.Basic):
+                if isinstance(re, sp.Basic):
                     re = re.subs({olds: s})
-                if isinstance(rs, sympy.Basic):
+                if isinstance(rs, sp.Basic):
                     rs = rs.subs({olds: s})
 
             try:
@@ -578,3 +599,14 @@ class Stream(Data):
                 #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
+
+    @property
+    def free_symbols(self):
+        result = super().free_symbols
+        if isinstance(self.buffer_size, sp.Expr):
+            result |= set(self.buffer_size.free_symbols)
+        for o in self.offset:
+            if isinstance(o, sp.Expr):
+                result |= set(o.free_symbols)
+
+        return result
