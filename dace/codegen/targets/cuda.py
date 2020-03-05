@@ -226,6 +226,8 @@ void __dace_exit_cuda({params}) {{
     @staticmethod
     def node_dispatch_predicate(sdfg, node):
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
+            if hasattr(node, 'location') and 'gpu' in node.location:
+                return True
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
         return False
