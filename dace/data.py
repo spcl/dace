@@ -159,12 +159,16 @@ class Scalar(Data):
         return ret
 
     def __repr__(self):
-        return 'Scalar (dtype=%s)' % self.dtype
+        result = 'Scalar (dtype=%s' % self.dtype
+        if self.replication_shape:
+            result += ', repl_shape=%s' % self.replication_shape
+        result += ')'
+        return result
 
     def clone(self):
-        return Scalar(self.dtype, self.transient, self.storage,
-                      self.allow_conflicts, self.location, self.toplevel,
-                      self.debuginfo)
+        return Scalar(self.dtype, self.replication_shape, self.transient,
+                      self.storage, self.allow_conflicts, self.location,
+                      self.toplevel, self.debuginfo)
 
     @property
     def strides(self):
@@ -183,6 +187,15 @@ class Scalar(Data):
             return False
         if self.dtype != other.type:
             return False
+        # Test replication shape
+        if (self.replication_shape and not other.replication_shape or
+                not self.replication_shape and other.replication_shape):
+            return False
+        if self.replication_shape:
+            for dim, otherdim in zip(self.replication_shape,
+                                     other.replication_shape):
+                if otherdim != dim:
+                    return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):
@@ -306,13 +319,18 @@ class Array(Data):
         self.validate()
 
     def __repr__(self):
-        return 'Array (dtype=%s, shape=%s)' % (self.dtype, self.shape)
+        result = 'Array (dtype=%s, shape=%s' % (self.dtype, self.shape)
+        if self.replication_shape:
+            result += ', repl_shape=%s' % self.replication_shape
+        result += ')'
+        return result
 
     def clone(self):
-        return Array(self.dtype, self.shape, self.materialize_func,
-                     self.transient, self.allow_conflicts, self.storage,
-                     self.location, self.strides, self.offset, self.may_alias,
-                     self.toplevel, self.debuginfo, self.total_size)
+        return Array(self.dtype, self.shape, self.replication_shape,
+                     self.materialize_func, self.transient,
+                     self.allow_conflicts, self.storage, self.location,
+                     self.strides, self.offset, self.may_alias, self.toplevel,
+                     self.debuginfo, self.total_size)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -407,6 +425,16 @@ class Array(Data):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
+
+        # Test replication shape
+        if (self.replication_shape and not other.replication_shape or
+                not self.replication_shape and other.replication_shape):
+            return False
+        if self.replication_shape:
+            for dim, otherdim in zip(self.replication_shape,
+                                     other.replication_shape):
+                if otherdim != dim:
+                    return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):
@@ -510,7 +538,11 @@ class Stream(Data):
         return ret
 
     def __repr__(self):
-        return 'Stream (dtype=%s, shape=%s)' % (self.dtype, self.shape)
+        result = 'Stream (dtype=%s, shape=%s' % (self.dtype, self.shape)
+        if self.replication_shape:
+            result += ', repl_shape=%s' % self.replication_shape
+        result += ')'
+        return result
 
     @property
     def total_size(self):
@@ -522,8 +554,9 @@ class Stream(Data):
 
     def clone(self):
         return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
-                      self.transient, self.storage, self.location, self.offset,
-                      self.toplevel, self.debuginfo)
+                      self.replication_shape, self.transient, self.storage,
+                      self.location, self.offset, self.toplevel,
+                      self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
@@ -542,6 +575,16 @@ class Stream(Data):
         for dim, otherdim in zip(self.shape, other.shape):
             if dim != otherdim:
                 return False
+        
+        # Test replication shape
+        if (self.replication_shape and not other.replication_shape or
+                not self.replication_shape and other.replication_shape):
+            return False
+        if self.replication_shape:
+            for dim, otherdim in zip(self.replication_shape,
+                                     other.replication_shape):
+                if otherdim != dim:
+                    return False
         return True
 
     def signature(self, with_types=True, for_call=False, name=None):
