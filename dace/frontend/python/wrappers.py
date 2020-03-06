@@ -26,7 +26,7 @@ class stream(object):
 
         self._type = dtype
         self._shape = shape
-        self.descriptor = data.Stream(dtype, 1, 0, shape, True)
+        self.descriptor = data.Stream(dtype, 1, 0, shape=shape, transient=True)
         self.queue_array = numpy.ndarray(shape, dtype=deque)
         for i in itertools.product(*(range(s) for s in shape)):
             self.queue_array[i] = deque()
