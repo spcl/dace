@@ -704,9 +704,13 @@ class SDFGRenderer {
             ContextMenu;
             d = document.createElement('button');
             d.innerHTML = '<i class="material-icons">menu</i>';
-            d.style = 'padding-bottom: 0px;';
+            d.style = 'padding-bottom: 0px; user-select: none';
             let that = this;
             d.onclick = function () {
+                if (that.menu && that.menu.visible()) {
+                    that.menu.destroy();
+                    return;
+                }
                 let rect = this.getBoundingClientRect();
                 let cmenu = new ContextMenu();
                 cmenu.addOption("Save view as PNG", x => that.save_as_png());
@@ -722,7 +726,7 @@ class SDFGRenderer {
         // Zoom to fit
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.zoom_to_view();
         d.title = 'Zoom to fit SDFG';
         this.toolbar.appendChild(d);
@@ -730,7 +734,7 @@ class SDFGRenderer {
         // Collapse all
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">unfold_less</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.collapse_all();
         d.title = 'Collapse all elements';
         this.toolbar.appendChild(d);
@@ -738,7 +742,7 @@ class SDFGRenderer {
         // Expand all
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">unfold_more</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.expand_all();
         d.title = 'Expand all elements';
         this.toolbar.appendChild(d);
@@ -748,7 +752,7 @@ class SDFGRenderer {
 
         // Tooltip HTML container
         this.tooltip_container = document.createElement('div');
-        this.tooltip_container.innerHTML = 'TOOLTIP';
+        this.tooltip_container.innerHTML = '';
         this.tooltip_container.className = 'tooltip';
         this.container.appendChild(this.tooltip_container);
 
