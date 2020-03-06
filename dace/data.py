@@ -50,6 +50,7 @@ class Data(object):
 
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
+    replication_shape = ShapeProperty(default=None, allow_none=True)
     transient = Property(dtype=bool, default=False)
     storage = Property(dtype=dace.dtypes.StorageType,
                        desc="Storage location",
@@ -65,10 +66,11 @@ class Data(object):
                         default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    def __init__(self, dtype, shape, transient, storage, location, toplevel,
-                 debuginfo):
+    def __init__(self, dtype, shape, replication_shape, transient, storage,
+                 location, toplevel, debuginfo):
         self.dtype = dtype
         self.shape = shape
+        self.replication_shape = replication_shape
         self.transient = transient
         self.storage = storage
         self.location = location
@@ -130,6 +132,7 @@ class Scalar(Data):
 
     def __init__(self,
                  dtype,
+                 replication_shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
@@ -138,8 +141,9 @@ class Scalar(Data):
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage,
-                                     location, toplevel, debuginfo)
+        super(Scalar, self).__init__(dtype, shape, replication_shape,
+                                     transient, storage, location, toplevel,
+                                     debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -264,6 +268,7 @@ class Array(Data):
     def __init__(self,
                  dtype,
                  shape,
+                 replication_shape=None,
                  materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
@@ -276,8 +281,8 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
-        super(Array, self).__init__(dtype, shape, transient, storage, location,
-                                    toplevel, debuginfo)
+        super(Array, self).__init__(dtype, shape, replication_shape, transient,
+                                    storage, location, toplevel, debuginfo)
 
         if shape is None:
             raise IndexError('Shape must not be None')
@@ -459,6 +464,7 @@ class Stream(Data):
                  veclen,
                  buffer_size,
                  shape=None,
+                 replication_shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  location='',
@@ -479,8 +485,9 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage,
-                                     location, toplevel, debuginfo)
+        super(Stream, self).__init__(dtype, shape, replication_shape,
+                                     transient, storage, location, toplevel,
+                                     debuginfo)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
