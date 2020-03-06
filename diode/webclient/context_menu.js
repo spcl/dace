@@ -25,11 +25,14 @@ class ContextMenu {
         }, 30);
 
         this._options = [];
+        this._cmenu_elem = null;
     }
 
     width() {
         return this._cmenu_elem.offsetWidth;
     }
+
+    visible() { return this._cmenu_elem != null; }
 
     addOption(name, onselect, onhover=null) {
         this._options.push({

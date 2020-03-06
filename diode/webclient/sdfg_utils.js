@@ -77,14 +77,18 @@ function sdfg_property_to_string(prop) {
         // Generate string from range
         let preview = '[';
         for (let range of ranges) {
-            preview += sdfg_property_to_string(range.start) + ':' +
-                sdfg_property_to_string(range.end);
-            if (range.step != 1) {
-                preview += ':' + sdfg_property_to_string(range.step);
-                if (range.tile != 1)
-                    preview += ':' + sdfg_property_to_string(range.tile);
-            } else if (range.tile != 1) {
-                preview += '::' + sdfg_property_to_string(range.tile);
+            if (range.start == range.end && range.step == 1 && range.tile == 1)
+                preview += sdfg_property_to_string(range.start);
+            else {
+                preview += sdfg_property_to_string(range.start) + ':' +
+                    sdfg_property_to_string(range.end);
+                if (range.step != 1) {
+                    preview += ':' + sdfg_property_to_string(range.step);
+                    if (range.tile != 1)
+                        preview += ':' + sdfg_property_to_string(range.tile);
+                } else if (range.tile != 1) {
+                    preview += '::' + sdfg_property_to_string(range.tile);
+                }
             }
             preview += ', ';
         }
