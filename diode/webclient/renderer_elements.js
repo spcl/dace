@@ -232,11 +232,22 @@ class Edge extends SDFGElement {
                 container.style.display = 'none';
                 return;
             }
-            container.innerHTML = attr.data + sdfg_property_to_string(attr.subset) + '<br />' + 
-                   'Volume: ' + sdfg_property_to_string(attr.num_accesses);
+            let contents = attr.data;
+            contents += sdfg_property_to_string(attr.subset);
+            
+            if (attr.other_subset)
+                contents += ' -> ' + sdfg_property_to_string(attr.other_subset);
+
+            if (attr.wcr)
+                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr) +'</b>';
+
+            contents += '<br />Volume: ' + sdfg_property_to_string(attr.num_accesses);
+            container.innerHTML = contents;
         } else {  // Interstate edge
             container.style.background = '#0000aabb';
             container.innerText = this.label();
+            if (!this.label())
+                container.style.display = 'none';
         }
     }
 
