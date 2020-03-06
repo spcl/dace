@@ -664,6 +664,7 @@ class SDFGRenderer {
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
         this.tooltip = null;
+        this.tooltip_container = null;
 
         // Mouse-related fields
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
@@ -744,6 +745,12 @@ class SDFGRenderer {
 
         this.container.append(this.toolbar);
         // End of buttons
+
+        // Tooltip HTML container
+        this.tooltip_container = document.createElement('div');
+        this.tooltip_container.innerHTML = 'TOOLTIP';
+        this.tooltip_container.className = 'tooltip';
+        this.container.appendChild(this.tooltip_container);
 
         this.ctx = this.canvas.getContext("2d");
 
@@ -932,29 +939,23 @@ class SDFGRenderer {
         } catch (ex) {}
         
         if (this.tooltip) {
-            let FONTSIZE = 18; // in pixels
             let br = this.canvas.getBoundingClientRect();
             let pos = {x: this.realmousepos.x - br.x,
                        y: this.realmousepos.y - br.y};
-            let label = this.tooltip;
-            let ctx = this.ctx;
 
-            // Reset scaling and translation
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            // Clear style and contents
+            this.tooltip_container.style = '';
+            this.tooltip_container.innerHTML = '';
+            this.tooltip_container.style.display = 'block';
+            
+            // Invoke custom container         
+            this.tooltip(this.tooltip_container);
 
-            // Set new font
-            let oldfont = ctx.font;
-            ctx.font = FONTSIZE + "px Arial";
-
-            // Draw tooltip
-            let x = pos.x + 10;
-            let textmetrics = ctx.measureText(label);
-            ctx.fillStyle = "black";
-            ctx.fillRect(x, pos.y - FONTSIZE, textmetrics.width + FONTSIZE, FONTSIZE * 1.2);
-            ctx.fillStyle = "white";
-            ctx.fillText(label, x + FONTSIZE / 2, pos.y - 0.1 * FONTSIZE);
-            ctx.fillStyle = "black";
-            ctx.font = oldfont;
+            // Make visible near mouse pointer
+            this.tooltip_container.style.top = pos.y + 'px';
+            this.tooltip_container.style.left = (pos.x + 20) + 'px';
+        } else {
+            this.tooltip_container.style.display = 'none';
         }
     }
 
