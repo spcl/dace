@@ -262,10 +262,8 @@ class MapFusion(pattern_matching.Transformation):
         edges_to_remove = set()
         nodes_to_remove = set()
         for edge in graph.in_edges(first_exit):
-            memlet_path = graph.memlet_path(edge)
-            edge_index = next(
-                i for i, e in enumerate(memlet_path) if e == edge)
-            access_node = memlet_path[-1].dst
+            tree = graph.memlet_tree(edge)
+            access_node = tree.root().edge.dst
             if access_node not in do_not_erase:
                 out_edges = [
                     e for e in graph.out_edges(access_node)
@@ -309,7 +307,7 @@ class MapFusion(pattern_matching.Transformation):
                 nodes_to_remove.add(access_node)
             else:  # The case where intermediate array node cannot be removed
                 # Node will become an output of the second map exit
-                out_e = memlet_path[edge_index + 1]
+                out_e = tree.parent.edge
                 conn = second_exit.next_connector()
                 graph.add_edge(
                     second_exit,
@@ -325,6 +323,7 @@ class MapFusion(pattern_matching.Transformation):
                 second_exit.add_in_connector('IN_' + conn)
 
                 edges_to_remove.add(out_e)
+                edges_to_remove.add(edge)
 
                 # If the second map needs this node, link the connector
                 # that generated this to the place where it is needed, with a
@@ -336,7 +335,6 @@ class MapFusion(pattern_matching.Transformation):
                         self.fuse_nodes(sdfg, graph, edge, out_e.dst,
                                         out_e.dst_conn)
 
-                edges_to_remove.add(edge)
         ###
         # First scope exit is isolated and can now be safely removed
         for e in edges_to_remove:
@@ -347,10 +345,8 @@ class MapFusion(pattern_matching.Transformation):
         # Isolate second_entry node
         ###########################
         for edge in graph.in_edges(second_entry):
-            memlet_path = graph.memlet_path(edge)
-            edge_index = next(
-                i for i, e in enumerate(memlet_path) if e == edge)
-            access_node = memlet_path[0].src
+            tree = graph.memlet_tree(edge)
+            access_node = tree.root().edge.src
             if access_node in intermediate_nodes:
                 # Already handled above, can be safely removed
                 graph.remove_edge(edge)
@@ -363,17 +359,18 @@ class MapFusion(pattern_matching.Transformation):
                            dcpy(edge.data))
             first_entry.add_in_connector('IN_' + conn)
             graph.remove_edge(edge)
-            out_e = memlet_path[edge_index + 1]
-            graph.add_edge(
-                first_entry,
-                'OUT_' + conn,
-                out_e.dst,
-                out_e.dst_conn,
-                dcpy(out_e.data),
-            )
+            for out_enode in tree.children:
+                out_e = out_enode.edge
+                graph.add_edge(
+                    first_entry,
+                    'OUT_' + conn,
+                    out_e.dst,
+                    out_e.dst_conn,
+                    dcpy(out_e.data),
+                )
+                graph.remove_edge(out_e)
             first_entry.add_out_connector('OUT_' + conn)
 
-            graph.remove_edge(out_e)
         ###
         # Second node is isolated and can now be safely removed
         graph.remove_node(second_entry)
@@ -406,11 +403,15 @@ class MapFusion(pattern_matching.Transformation):
             edge.data.subset = "0"
             local_node = edge.src
             src_connector = edge.src_conn
+
+            # Add edge that leads to the second node
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                           dcpy(edge.data))
         else:
-            sdfg.add_transient(
-                local_name,
-                edge.data.subset.size(),
-                dtype=access_node.desc(graph).dtype)
+            sdfg.add_transient(local_name,
+                               edge.data.subset.size(),
+                               dtype=access_node.desc(graph).dtype)
+            old_edge = dcpy(edge)
             local_node = graph.add_access(local_name)
             src_connector = None
             edge.data.data = local_name
@@ -424,7 +425,13 @@ class MapFusion(pattern_matching.Transformation):
                 None,
                 dcpy(edge.data),
             )
-        ########
-        # Add edge that leads to the second node
-        graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
-                       dcpy(edge.data))
+
+            # Add edge that leads to the second node
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                           dcpy(edge.data))
+
+            # Modify data and memlets on all surrounding edges to match array
+            for neighbor in graph.all_edges(local_node):
+                for e in graph.memlet_tree(neighbor):
+                    e.data.data = local_name
+                    e.data.subset.offset(old_edge.data.subset, negative=True)

@@ -140,8 +140,8 @@ class AST_BinExpression(AST_Node):
         map_entry._out_connectors.add('OUT_2')
         s.add_edge(A, None, map_entry, 'IN_1',
                    dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
-        s.add_edge(B, None, map_entry, 'IN_2', dace.memlet.Memlet.simple(
-            B, '0'))
+        s.add_edge(B, None, map_entry, 'IN_2',
+                   dace.memlet.Memlet.simple(B, '0'))
         tasklet = s.add_tasklet(_OP_TO_STRING[op], {'a', 'b'}, {'c'},
                                 'c = a' + op + 'b')
         s.add_edge(map_entry, "OUT_1", tasklet, "a",

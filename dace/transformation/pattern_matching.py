@@ -182,7 +182,6 @@ class ExpandTransformation(Transformation):
        functionality. Subclasses only need to implement the method
        "expansion".
     """
-
     @classmethod
     def expressions(clc):
         return [nxutil.node_path_graph(clc._match_node)]
@@ -215,12 +214,11 @@ class ExpandTransformation(Transformation):
         node = state.nodes()[self.subgraph[type(self)._match_node]]
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, dace.SDFG):
-            expansion = state.add_nested_sdfg(
-                expansion,
-                sdfg,
-                node.in_connectors,
-                node.out_connectors,
-                name=node.name)
+            expansion = state.add_nested_sdfg(expansion,
+                                              sdfg,
+                                              node.in_connectors,
+                                              node.out_connectors,
+                                              name=node.name)
         elif isinstance(expansion, dace.graph.nodes.CodeNode):
             pass
         else:
@@ -314,33 +312,40 @@ def match_pattern(state: SDFGState,
 
     for idx, expression in enumerate(pattern.expressions()):
         cexpr = collapse_multigraph_to_nx(expression)
-        graph_matcher = iso.DiGraphMatcher(
-            digraph, cexpr, node_match=node_match, edge_match=edge_match)
+        graph_matcher = iso.DiGraphMatcher(digraph,
+                                           cexpr,
+                                           node_match=node_match,
+                                           edge_match=edge_match)
         for subgraph in graph_matcher.subgraph_isomorphisms_iter():
             subgraph = {
                 cexpr.nodes[j]['node']: state.node_id(digraph.nodes[i]['node'])
                 for (i, j) in subgraph.items()
             }
             try:
-                match_found = pattern.can_be_applied(
-                    state, subgraph, idx, sdfg, strict=strict)
+                match_found = pattern.can_be_applied(state,
+                                                     subgraph,
+                                                     idx,
+                                                     sdfg,
+                                                     strict=strict)
             except Exception as e:
                 print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(
-                          p=pattern.__name__, c=e.__class__.__name__, e=e))
+                      ' {e}'.format(p=pattern.__name__,
+                                    c=e.__class__.__name__,
+                                    e=e))
                 match_found = False
             if match_found:
-                yield pattern(
-                    sdfg.sdfg_list.index(sdfg), sdfg.node_id(state), subgraph,
-                    idx)
+                yield pattern(sdfg.sdfg_list.index(sdfg), sdfg.node_id(state),
+                              subgraph, idx)
 
     # Recursive call for nested SDFGs
     for node in state.nodes():
         if isinstance(node, nd.NestedSDFG):
             sub_sdfg = node.sdfg
             for sub_state in sub_sdfg.nodes():
-                yield from match_pattern(
-                    sub_state, pattern, sub_sdfg, strict=strict)
+                yield from match_pattern(sub_state,
+                                         pattern,
+                                         sub_sdfg,
+                                         strict=strict)
 
 
 def match_stateflow_pattern(sdfg,
@@ -365,8 +370,10 @@ def match_stateflow_pattern(sdfg,
 
     for idx, expression in enumerate(pattern.expressions()):
         cexpr = collapse_multigraph_to_nx(expression)
-        graph_matcher = iso.DiGraphMatcher(
-            digraph, cexpr, node_match=node_match, edge_match=edge_match)
+        graph_matcher = iso.DiGraphMatcher(digraph,
+                                           cexpr,
+                                           node_match=node_match,
+                                           edge_match=edge_match)
         for subgraph in graph_matcher.subgraph_isomorphisms_iter():
             subgraph = {
                 cexpr.nodes[j]['node']: sdfg.node_id(digraph.nodes[i]['node'])
@@ -377,8 +384,9 @@ def match_stateflow_pattern(sdfg,
                                                      strict)
             except Exception as e:
                 print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(
-                          p=pattern.__name__, c=e.__class__.__name__, e=e))
+                      ' {e}'.format(p=pattern.__name__,
+                                    c=e.__class__.__name__,
+                                    e=e))
                 match_found = False
             if match_found:
                 yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
@@ -387,5 +395,6 @@ def match_stateflow_pattern(sdfg,
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG):
-                yield from match_stateflow_pattern(
-                    node.sdfg, pattern, strict=strict)
+                yield from match_stateflow_pattern(node.sdfg,
+                                                   pattern,
+                                                   strict=strict)

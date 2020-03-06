@@ -18,29 +18,28 @@ sdfg.add_array('sparsemats_in', [5], dtype=csrmatrix)
 sdfg.add_array('sparsemats_out', [5], dtype=csrmatrix)
 
 ome, omx = state.add_map('matrices', dict(i='0:5'))
-tasklet = state.add_tasklet(
-    'addone', {'mat_in'}, {'mat_out'},
-    '''
+tasklet = state.add_tasklet('addone', {'mat_in'}, {'mat_out'},
+                            '''
 for (int j = 0; j < mat_in.nnz; ++j) {
     mat_out.data[j] = mat_in.data[j] + 1.0f;
 }
 ''',
-    language=dace.Language.CPP)
+                            language=dace.Language.CPP)
 matr = state.add_read('sparsemats_in')
 matw = state.add_write('sparsemats_out')
-state.add_memlet_path(
-    matr,
-    ome,
-    tasklet,
-    dst_conn='mat_in',
-    memlet=dace.Memlet.simple('sparsemats_in', 'i'))
+state.add_memlet_path(matr,
+                      ome,
+                      tasklet,
+                      dst_conn='mat_in',
+                      memlet=dace.Memlet.simple('sparsemats_in', 'i'))
 # state.add_nedge(tasklet, omx, dace.EmptyMemlet())
-state.add_memlet_path(
-    tasklet,
-    omx,
-    matw,
-    src_conn='mat_out',
-    memlet=dace.Memlet.simple('sparsemats_out', 'i', num_accesses=-1))
+state.add_memlet_path(tasklet,
+                      omx,
+                      matw,
+                      src_conn='mat_out',
+                      memlet=dace.Memlet.simple('sparsemats_out',
+                                                'i',
+                                                num_accesses=-1))
 
 sdfg.draw_to_file()
 

@@ -37,16 +37,15 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def cmake_options():
-        compiler = make_absolute(
-            Config.get("compiler", "xilinx", "executable"))
+        compiler = make_absolute(Config.get("compiler", "xilinx",
+                                            "executable"))
         host_flags = Config.get("compiler", "xilinx", "host_flags")
         synthesis_flags = Config.get("compiler", "xilinx", "synthesis_flags")
         build_flags = Config.get("compiler", "xilinx", "build_flags")
         mode = Config.get("compiler", "xilinx", "mode")
         target_platform = Config.get("compiler", "xilinx", "platform")
-        enable_debugging = ("ON"
-                            if Config.get_bool("compiler", "xilinx",
-                                               "enable_debugging") else "OFF")
+        enable_debugging = ("ON" if Config.get_bool(
+            "compiler", "xilinx", "enable_debugging") else "OFF")
         options = [
             "-DSDACCEL_ROOT_DIR={}".format(
                 os.path.dirname(os.path.dirname(compiler))),
@@ -113,33 +112,30 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     return 0;
 }}
 
-{host_code}""".format(
-            signature=self._global_sdfg.signature(),
-            environment_variables=set_env_vars,
-            kernel_file_name=kernel_file_name,
-            host_code="".join([
-                "{separator}\n// Kernel: {kernel_name}"
-                "\n{separator}\n\n{code}\n\n".format(
-                    separator="/" * 79, kernel_name=name, code=code)
-                for (name, code) in self._host_codes
-            ])))
+{host_code}""".format(signature=self._global_sdfg.signature(),
+                      environment_variables=set_env_vars,
+                      kernel_file_name=kernel_file_name,
+                      host_code="".join([
+                          "{separator}\n// Kernel: {kernel_name}"
+                          "\n{separator}\n\n{code}\n\n".format(
+                              separator="/" * 79, kernel_name=name, code=code)
+                          for (name, code) in self._host_codes
+                      ])))
 
-        host_code_obj = CodeObject(
-            self._program_name,
-            host_code.getvalue(),
-            "cpp",
-            XilinxCodeGen,
-            "Xilinx",
-            target_type="host")
+        host_code_obj = CodeObject(self._program_name,
+                                   host_code.getvalue(),
+                                   "cpp",
+                                   XilinxCodeGen,
+                                   "Xilinx",
+                                   target_type="host")
 
         kernel_code_objs = [
-            CodeObject(
-                kernel_name,
-                code,
-                "cpp",
-                XilinxCodeGen,
-                "Xilinx",
-                target_type="device")
+            CodeObject(kernel_name,
+                       code,
+                       "cpp",
+                       XilinxCodeGen,
+                       "Xilinx",
+                       target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
 
@@ -247,8 +243,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             if defined_type == DefinedType.Scalar:
                 write_expr = var_name
             else:
-                write_expr = (write_expr + " + " + index
-                              if index else write_expr)
+                write_expr = (write_expr + " + " +
+                              index if index else write_expr)
             return "dace::Write<{}, {}>({}, {});".format(
                 type_str, vector_length, write_expr, read_expr)
 
@@ -297,8 +293,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         # Write kernel signature
         kernel_stream.write(
-            "DACE_EXPORTED void {}({}) {{\n".format(
-                kernel_name, ', '.join(kernel_args)), sdfg, state_id)
+            "DACE_EXPORTED void {}({}) {{\n".format(kernel_name,
+                                                    ', '.join(kernel_args)),
+            sdfg, state_id)
 
         # Insert interface pragmas
         mapped_args = 0
@@ -372,8 +369,8 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
                 kernel_args_module.append("dace::vec<{}, {}> {}*{}".format(
-                    p.dtype.ctype, self._memory_widths[pname], "const "
-                    if not is_output else "", arr_name))
+                    p.dtype.ctype, self._memory_widths[pname],
+                    "const " if not is_output else "", arr_name))
             else:
                 # Don't make duplicate arguments for other types than arrays
                 if pname in added:
@@ -420,8 +417,10 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".
-                        format(
-                            param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
+                        format(param=p,
+                               begin=r[0],
+                               end=r[1] + 1,
+                               increment=r[2]))
                     unrolled_loops += 1
 
         # Generate caller code in top-level function
@@ -483,8 +482,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             module_body_stream.write("\n")
 
         # Allocate local transients
-        data_to_allocate = (set(subgraph.top_level_transients()) - set(
-            sdfg.shared_transients()) - set([p[1] for p in parameters]))
+        data_to_allocate = (set(subgraph.top_level_transients()) -
+                            set(sdfg.shared_transients()) -
+                            set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.graph.nodes.AccessNode):
@@ -492,18 +492,19 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
             allocated.add(node.data)
-            self._dispatcher.dispatch_allocate(
-                sdfg, state, state_id, node, module_stream, module_body_stream)
-            self._dispatcher.dispatch_initialize(
-                sdfg, state, state_id, node, module_stream, module_body_stream)
+            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                               module_stream,
+                                               module_body_stream)
+            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
+                                                 module_stream,
+                                                 module_body_stream)
 
-        self._dispatcher.dispatch_subgraph(
-            sdfg,
-            subgraph,
-            state_id,
-            module_stream,
-            module_body_stream,
-            skip_entry_node=False)
+        self._dispatcher.dispatch_subgraph(sdfg,
+                                           subgraph,
+                                           state_id,
+                                           module_stream,
+                                           module_body_stream,
+                                           skip_entry_node=False)
 
         module_stream.write(module_body_stream.getvalue(), sdfg, state_id)
         module_stream.write("}\n\n")
@@ -541,9 +542,10 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             # identity, otherwise read the value from the output location
             prev_var = "{}_prev".format(output_memlet.data)
             callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(
-                    output_type, prev_var, is_first_iteration, identity,
-                    out_var), sdfg, state_id, node)
+                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
+                                                     is_first_iteration,
+                                                     identity, out_var), sdfg,
+                state_id, node)
             callsite_stream.write(
                 "{} = {}({}, {});".format(out_var, reduction_cpp, prev_var,
                                           in_var), sdfg, state_id, node)
@@ -591,9 +593,11 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
 
         state_id = sdfg.node_id(state)
 
-        self.generate_kernel_boilerplate_pre(
-            sdfg, state_id, kernel_name, global_data_parameters,
-            scalar_parameters, symbol_parameters, module_stream, entry_stream)
+        self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name,
+                                             global_data_parameters,
+                                             scalar_parameters,
+                                             symbol_parameters, module_stream,
+                                             entry_stream)
 
         # Emit allocations
         for node in top_level_local_data:
@@ -621,9 +625,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         for is_output, name, arg in parameters:
             if isinstance(arg, dace.data.Array):
                 kernel_args.append(
-                    arg.signature(
-                        with_types=True,
-                        name=name + ("_out" if is_output else "_in")))
+                    arg.signature(with_types=True,
+                                  name=name +
+                                  ("_out" if is_output else "_in")))
             else:
                 if name in seen:
                     continue
@@ -671,9 +675,10 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
                 else:
                     src_node = find_input_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(
-                        src_node, node, edge, sdfg, state_dfg, state_id,
-                        function_stream, callsite_stream)
+                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+                                                   state_dfg, state_id,
+                                                   function_stream,
+                                                   callsite_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._cpu_codegen._locals.define(edge.dst_conn, -1,
@@ -699,9 +704,10 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
                 else:
                     dst_node = find_output_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(
-                        node, dst_node, edge, sdfg, state_dfg, state_id,
-                        function_stream, callsite_stream)
+                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+                                                   state_dfg, state_id,
+                                                   function_stream,
+                                                   callsite_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._cpu_codegen._locals.define(edge.src_conn, -1,
@@ -718,9 +724,10 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
         # Process outgoing memlets
-        self._cpu_codegen.process_out_memlets(
-            sdfg, state_id, node, state_dfg, self._dispatcher, callsite_stream,
-            True, function_stream)
+        self._cpu_codegen.process_out_memlets(sdfg, state_id, node, state_dfg,
+                                              self._dispatcher,
+                                              callsite_stream, True,
+                                              function_stream)
 
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
@@ -728,8 +735,9 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
                  or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and edge.data.wcr is None):
-                self.generate_no_dependence_post(
-                    edge.src_conn, callsite_stream, sdfg, state_id, node)
+                self.generate_no_dependence_post(edge.src_conn,
+                                                 callsite_stream, sdfg,
+                                                 state_id, node)
 
         callsite_stream.write('}\n', sdfg, state_id, node)
 

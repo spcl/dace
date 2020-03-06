@@ -52,12 +52,11 @@ class ExpandDotOpenBLAS(ExpandTransformation):
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
         code = "_result = cblas_{}(n, _x, 1, _y, 1);".format(func)
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP)
+        tasklet = dace.graph.nodes.Tasklet(node.name,
+                                           node.in_connectors,
+                                           node.out_connectors,
+                                           code,
+                                           language=dace.dtypes.Language.CPP)
         return tasklet
 
 
@@ -92,12 +91,11 @@ class ExpandDotCuBLAS(ExpandTransformation):
                 "cublas{func}(__dace_cublas_handle, n, ___x.ptr<1>(), 1, "
                 "___y.ptr<1>(), 1, ___result.ptr<1>());".format(func=func))
 
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP)
+        tasklet = dace.graph.nodes.Tasklet(node.name,
+                                           node.in_connectors,
+                                           node.out_connectors,
+                                           code,
+                                           language=dace.dtypes.Language.CPP)
 
         return tasklet
 
@@ -118,8 +116,11 @@ class Dot(dace.graph.nodes.LibraryNode):
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, *args, **kwargs):
-        super().__init__(
-            name, *args, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={"_x", "_y"},
+                         outputs={"_result"},
+                         **kwargs)
         self.dtype = dtype
 
     def validate(self, sdfg, state):

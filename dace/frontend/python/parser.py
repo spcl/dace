@@ -160,6 +160,7 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
     :raise ValueError: If symbol values are ambiguous.
     """
     exclude = exclude or set()
+    exclude = set(symbolic.symbol(s) for s in exclude)
     equations = []
     symbols = set()
     # Collect equations and symbols from arguments and shapes
@@ -220,7 +221,6 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-
     def __init__(self, f, args, kwargs):
         self.f = f
         self.args = args

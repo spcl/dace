@@ -11,7 +11,7 @@ import six
 import shutil
 import subprocess
 import re
-from typing import Any, List
+from typing import Any, Dict, List
 import numpy as np
 import warnings
 
@@ -146,6 +146,9 @@ class CompiledSDFG(object):
         self._lib = lib
         self._initialized = False
         self._lastargs = ()
+        self._return_arrays: List[np.ndarray] = []
+        self._return_kwarrays: Dict[str, np.ndarray] = {}
+        self._return_syms: Dict[str, Any] = {}
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
@@ -172,6 +175,12 @@ class CompiledSDFG(object):
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """
+        # Return value initialization (for values that have not been given)
+        kwargs.update({
+            k: v
+            for k, v in self._initialize_return_values(kwargs).items()
+            if k not in kwargs
+        })
 
         # Argument construction
         sig = self._sdfg.signature_arglist(with_types=False)
@@ -252,6 +261,57 @@ class CompiledSDFG(object):
         self._lastargs = newargs
         return self._lastargs
 
+    def _initialize_return_values(self, kwargs):
+        # Obtain symbol values from arguments and constants
+        syms = dict()
+        syms.update(
+            {k: v
+             for k, v in kwargs.items() if k not in self.sdfg.arrays})
+        syms.update(self.sdfg.constants)
+
+        if self._initialized:
+            if self._return_syms == syms:
+                return self._return_kwarrays
+
+        self._return_syms = syms
+
+        # Initialize return values with numpy arrays
+        self._return_arrays = []
+        self._return_kwarrays = {}
+        for arrname, arr in sorted(self.sdfg.arrays.items()):
+            if arrname.startswith('__return'):
+                if isinstance(arr, dt.Stream):
+                    raise NotImplementedError('Return streams are unsupported')
+                if arr.storage in [
+                        dace.dtypes.StorageType.GPU_Global,
+                        dace.dtypes.StorageType.FPGA_Global
+                ]:
+                    raise NotImplementedError('Non-host return values are '
+                                              'unsupported')
+
+                # Create an array with the properties of the SDFG array
+                self._return_arrays.append(
+                    np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
+                               arr.dtype.type,
+                               buffer=np.ndarray(
+                                   [symbolic.evaluate(arr.total_size, syms)],
+                                   arr.dtype.type),
+                               strides=[
+                                   symbolic.evaluate(s, syms) * arr.dtype.bytes
+                                   for s in arr.strides
+                               ]))
+                self._return_kwarrays[arrname] = self._return_arrays[-1]
+
+        # Set up return_arrays field
+        if len(self._return_arrays) == 0:
+            self._return_arrays = None
+        elif len(self._return_arrays) == 1:
+            self._return_arrays = self._return_arrays[0]
+        else:
+            self._return_arrays = tuple(self._return_arrays)
+
+        return self._return_kwarrays
+
     def initialize(self, *argtuple):
         if self._init is not None:
             res = self._init(*argtuple)
@@ -270,6 +330,7 @@ class CompiledSDFG(object):
 
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
+                self._lib.load()
                 self.initialize(*argtuple)
 
             # PROFILING
@@ -277,7 +338,9 @@ class CompiledSDFG(object):
                 operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
                                     *argtuple)
             else:
-                return self._cfunc(*argtuple)
+                self._cfunc(*argtuple)
+
+            return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
                 DuplicateDLLError, ReferenceError):
             self._lib.unload()
@@ -434,6 +497,15 @@ def configure_and_compile(program_folder,
         targets[target_name] = next(
             k for k, v in TargetCodeGenerator.extensions().items()
             if v['name'] == target_name)
+
+    # Windows-only workaround: Override Visual C++'s linker to use
+    # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
+    # CMake fails to do so.
+    if os.name == 'nt':
+        if '_CL_' not in os.environ:
+            os.environ['_CL_'] = '/MT'
+        elif '/MT' not in os.environ['_CL_']:
+            os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

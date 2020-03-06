@@ -40,8 +40,8 @@ def copy_expr(
             s = offset
         o = None
     if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o, memlet.veclen
-                                        if packed_types else 1)
+        offset_cppstr = cpp_offset_expr(datadesc, s, o,
+                                        memlet.veclen if packed_types else 1)
     else:
         offset_cppstr = "0"
     dt = ""
@@ -97,22 +97,23 @@ def memlet_copy_to_absolute_strides(dispatcher,
     # Ignore vectorization flag is a hack to accommmodate FPGA behavior,
     # where the pointer type is changed to a vector type, and addresses
     # thus shouldn't take vectorization into account.
-    copy_shape = memlet.subset.size()
-    copy_shape = [symbolic.overapproximate(s) for s in copy_shape]
+    copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
 
     if memlet.data == src_node.data:
-        src_expr = copy_expr(
-            dispatcher, sdfg, src_node.data, memlet, packed_types=packed_types)
-        dst_expr = copy_expr(
-            dispatcher,
-            sdfg,
-            dst_node.data,
-            memlet,
-            None,
-            False,
-            packed_types=packed_types)
+        src_expr = copy_expr(dispatcher,
+                             sdfg,
+                             src_node.data,
+                             memlet,
+                             packed_types=packed_types)
+        dst_expr = copy_expr(dispatcher,
+                             sdfg,
+                             dst_node.data,
+                             memlet,
+                             None,
+                             False,
+                             packed_types=packed_types)
         if memlet.other_subset is not None:
             dst_expr = copy_expr(
                 dispatcher,
@@ -129,16 +130,18 @@ def memlet_copy_to_absolute_strides(dispatcher,
         src_subset = memlet.subset
 
     else:
-        src_expr = copy_expr(
-            dispatcher,
-            sdfg,
-            src_node.data,
-            memlet,
-            None,
-            False,
-            packed_types=packed_types)
-        dst_expr = copy_expr(
-            dispatcher, sdfg, dst_node.data, memlet, packed_types=packed_types)
+        src_expr = copy_expr(dispatcher,
+                             sdfg,
+                             src_node.data,
+                             memlet,
+                             None,
+                             False,
+                             packed_types=packed_types)
+        dst_expr = copy_expr(dispatcher,
+                             sdfg,
+                             dst_node.data,
+                             memlet,
+                             packed_types=packed_types)
         if memlet.other_subset is not None:
             src_expr = copy_expr(
                 dispatcher,
@@ -175,14 +178,14 @@ def memlet_copy_to_absolute_strides(dispatcher,
         # removing the "empty" dimensions (size = 1) and filter the
         # corresponding strides out
         src_strides = ([
-            stride for stride, s in zip(src_strides, src_subset.size())
-            if s != 1
+            stride
+            for stride, s in zip(src_strides, src_subset.size()) if s != 1
         ] + src_strides[len(src_subset):])  # Include tiles
         if not src_strides:
             src_strides = [1]
         dst_strides = ([
-            stride for stride, s in zip(dst_strides, dst_subset.size())
-            if s != 1
+            stride
+            for stride, s in zip(dst_strides, dst_subset.size()) if s != 1
         ] + dst_strides[len(dst_subset):])  # Include tiles
         if not dst_strides:
             dst_strides = [1]
@@ -241,8 +244,9 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
         defined_type = DefinedType.Pointer
 
     # Register defined variable
-    dispatcher.defined_vars.add(
-        pointer_name, defined_type, allow_shadowing=True)
+    dispatcher.defined_vars.add(pointer_name,
+                                defined_type,
+                                allow_shadowing=True)
 
     return '%s %s = %s%s;' % (typedef, pointer_name, datadef, offset_expr)
 
@@ -270,8 +274,8 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
         new_strides[i] = elements_remaining / reshaped_copy[i]
         elements_remaining = new_strides[i]
         if reduced_tile_sizes[i] != 1:
-            new_strides[dims + tiledim] = (
-                elements_remaining / reshaped_copy[dims + tiledim])
+            new_strides[dims + tiledim] = (elements_remaining /
+                                           reshaped_copy[dims + tiledim])
             elements_remaining = new_strides[dims + tiledim]
             tiledim += 1
 
@@ -347,9 +351,8 @@ def ndcopy_to_strided_copy(
             dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
 
         # Return new copy
-        return [copy_shape[copydim]], [src_strides[srcdim]], [
-            dst_strides[dstdim]
-        ]
+        return [copy_shape[copydim]], [src_strides[srcdim]
+                                       ], [dst_strides[dstdim]]
     else:
         return None
 
@@ -404,8 +407,11 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(
-        sdfg.arrays[memlet.data], s, o, packed_veclen, indices=indices)
+    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data],
+                                    s,
+                                    o,
+                                    packed_veclen,
+                                    indices=indices)
 
     if with_brackets:
         return "%s[%s]" % (memlet.data, offset_cppstr)
@@ -456,8 +462,9 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
             return True
-        if (isinstance(in_edges[0].src, nodes.ExitNode) and in_edges[0]
-                .src.map.schedule == dtypes.ScheduleType.Sequential):
+        if (isinstance(in_edges[0].src, nodes.ExitNode) and
+                in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential
+            ):
             return False
         return True
 
@@ -486,8 +493,10 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
 class LambdaToFunction(ast.NodeTransformer):
     def visit_Lambda(self, node: ast.Lambda):
         newbody = [ast.Return(value=node.body)]
-        newnode = ast.FunctionDef(
-            name="_anonymous", args=node.args, body=newbody, decorator_list=[])
+        newnode = ast.FunctionDef(name="_anonymous",
+                                  args=node.args,
+                                  body=newbody,
+                                  decorator_list=[])
         newnode = ast.copy_location(newnode, node)
         return ast.fix_missing_locations(newnode)
 
@@ -624,7 +633,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         @note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """
-
     def __init__(self, sdfg, memlets, constants):
         self.sdfg = sdfg
         self.memlets = memlets
@@ -662,11 +670,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             try:
                 if memlet is not None and memlet.num_accesses < 0:
                     if wcr is not None:
-                        newnode = ast.Name(
-                            id=write_and_resolve_expr(
-                                self.sdfg, memlet, nc, '__' + target,
-                                cppunparse.cppunparse(
-                                    value, expr_semicolon=False)))
+                        newnode = ast.Name(id=write_and_resolve_expr(
+                            self.sdfg, memlet, nc, '__' + target,
+                            cppunparse.cppunparse(value,
+                                                  expr_semicolon=False)))
                     else:
                         newnode = ast.Name(id="__%s.write(%s);" % (
                             target,
@@ -689,15 +696,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             subscript = unparse(slice)
 
         if wcr is not None:
-            newnode = ast.Name(
-                id=write_and_resolve_expr(
-                    self.sdfg,
-                    memlet,
-                    nc,
-                    "__" + target,
-                    cppunparse.cppunparse(value, expr_semicolon=False),
-                    indices=subscript,
-                ))
+            newnode = ast.Name(id=write_and_resolve_expr(
+                self.sdfg,
+                memlet,
+                nc,
+                "__" + target,
+                cppunparse.cppunparse(value, expr_semicolon=False),
+                indices=subscript,
+            ))
         else:
             newnode = ast.Name(id="__%s.write(%s, %s);" % (
                 target,
@@ -790,7 +796,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 class StructInitializer(ExtNodeTransformer):
     """ Replace struct creation calls with compound literal struct
         initializers in tasklets. """
-
     def __init__(self, sdfg: SDFG):
         self._structs = {}
         if sdfg is None:

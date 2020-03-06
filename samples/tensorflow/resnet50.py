@@ -41,7 +41,6 @@ class _IdentityBlock(tf.keras.Model):
         data_format: data_format for the input ('channels_first' or
         'channels_last').
         """
-
     def __init__(self, kernel_size, filters, stage, block, data_format):
         super(_IdentityBlock, self).__init__(name="")
         filters1, filters2, filters3 = filters
@@ -56,8 +55,9 @@ class _IdentityBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn2a = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2a', epsilon=0.1)
+        self.bn2a = layers.BatchNormalization(axis=bn_axis,
+                                              name=bn_name_base + '2a',
+                                              epsilon=0.1)
 
         self.conv2b = layers.Conv2D(
             filters2,
@@ -68,8 +68,9 @@ class _IdentityBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn2b = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2b', epsilon=0.1)
+        self.bn2b = layers.BatchNormalization(axis=bn_axis,
+                                              name=bn_name_base + '2b',
+                                              epsilon=0.1)
 
         self.conv2c = layers.Conv2D(
             filters3,
@@ -79,8 +80,9 @@ class _IdentityBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn2c = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2c', epsilon=0.1)
+        self.bn2c = layers.BatchNormalization(axis=bn_axis,
+                                              name=bn_name_base + '2c',
+                                              epsilon=0.1)
 
     def call(self, input_tensor, training=False):
         x = self.conv2a(input_tensor)
@@ -111,7 +113,6 @@ class _ConvBlock(tf.keras.Model):
         conv layer at main path is with strides=(2,2), and the shortcut should
         have strides=(2,2) as well.
         """
-
     def __init__(self,
                  kernel_size,
                  filters,
@@ -134,8 +135,9 @@ class _ConvBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn2a = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2a', epsilon=0.1)
+        self.bn2a = layers.BatchNormalization(axis=bn_axis,
+                                              name=bn_name_base + '2a',
+                                              epsilon=0.1)
 
         self.conv2b = layers.Conv2D(
             filters2,
@@ -146,8 +148,9 @@ class _ConvBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn2b = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2b', epsilon=0.1)
+        self.bn2b = layers.BatchNormalization(axis=bn_axis,
+                                              name=bn_name_base + '2b',
+                                              epsilon=0.1)
 
         self.conv2c = layers.Conv2D(
             filters3,
@@ -157,8 +160,9 @@ class _ConvBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn2c = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '2c', epsilon=0.1)
+        self.bn2c = layers.BatchNormalization(axis=bn_axis,
+                                              name=bn_name_base + '2c',
+                                              epsilon=0.1)
 
         self.conv_shortcut = layers.Conv2D(
             filters3,
@@ -169,8 +173,9 @@ class _ConvBlock(tf.keras.Model):
             kernel_initializer=initializer,
             bias_initializer="zeros",
         )
-        self.bn_shortcut = layers.BatchNormalization(
-            axis=bn_axis, name=bn_name_base + '1', epsilon=0.1)
+        self.bn_shortcut = layers.BatchNormalization(axis=bn_axis,
+                                                     name=bn_name_base + '1',
+                                                     epsilon=0.1)
 
     def call(self, input_tensor, training=False):
         x = self.conv2a(input_tensor)
@@ -217,7 +222,6 @@ class ResNet50(tf.keras.Model):
         Raises:
             ValueError: in case of invalid argument for data_format.
             """
-
     def __init__(
             self,
             data_format,
@@ -245,8 +249,11 @@ class ResNet50(tf.keras.Model):
             )
 
         def id_block(filters, stage, block):
-            return _IdentityBlock(
-                3, filters, stage=stage, block=block, data_format=data_format)
+            return _IdentityBlock(3,
+                                  filters,
+                                  stage=stage,
+                                  block=block,
+                                  data_format=data_format)
 
         self.conv1 = layers.Conv2D(
             64,
@@ -259,8 +266,9 @@ class ResNet50(tf.keras.Model):
             bias_initializer="zeros",
         )
         bn_axis = 1 if data_format == "channels_first" else 3
-        self.bn_conv1 = layers.BatchNormalization(
-            axis=bn_axis, name='bn_conv1', epsilon=0.1)
+        self.bn_conv1 = layers.BatchNormalization(axis=bn_axis,
+                                                  name='bn_conv1',
+                                                  epsilon=0.1)
         #self.av_pool = layers.AveragePooling2D(
         #        (3, 3),
         #        strides=(2, 2),
@@ -272,8 +280,10 @@ class ResNet50(tf.keras.Model):
             data_format=data_format,
         )
 
-        self.l2a = conv_block(
-            [64, 64, 256], stage=2, block="a", strides=(1, 1))
+        self.l2a = conv_block([64, 64, 256],
+                              stage=2,
+                              block="a",
+                              strides=(1, 1))
         self.l2b = id_block([64, 64, 256], stage=2, block="b")
         self.l2c = id_block([64, 64, 256], stage=2, block="c")
 
@@ -293,13 +303,15 @@ class ResNet50(tf.keras.Model):
         self.l5b = id_block([512, 512, 2048], stage=5, block="b")
         self.l5c = id_block([512, 512, 2048], stage=5, block="c")
 
-        self.avg_pool = layers.AveragePooling2D(
-            (7, 7), strides=(7, 7), data_format=data_format)
+        self.avg_pool = layers.AveragePooling2D((7, 7),
+                                                strides=(7, 7),
+                                                data_format=data_format)
 
         if self.include_top:
             self.flatten = layers.Flatten()
-            self.fc1000 = layers.Dense(
-                classes, name="fc1000", kernel_initializer=initializer)
+            self.fc1000 = layers.Dense(classes,
+                                       name="fc1000",
+                                       kernel_initializer=initializer)
         else:
             reduction_indices = [1, 2] if data_format == "channels_last" else [
                 2, 3

@@ -37,6 +37,7 @@ if __name__ == '__main__':
             inp: test_in,
             filter: test_filter
         })
+    
     try:
         assert tf.norm(output_dace - output_tf).eval(session=sess_tf) < 1e-3
     except:

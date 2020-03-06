@@ -325,8 +325,8 @@ class Graph(object):
                         if condition is None or condition(
                                 e.src, e.dst, e.data):
                             yield e
-                            stack.append((e.dst,
-                                          G.out_edges(e.dst).__iter__()))
+                            stack.append(
+                                (e.dst, G.out_edges(e.dst).__iter__()))
                 except StopIteration:
                     stack.pop()
 
@@ -543,12 +543,11 @@ class MultiDiConnectorGraph(MultiDiGraph):
 
     def add_edge(self, source, src_connector, destination, dst_connector,
                  data):
-        key = self._nx.add_edge(
-            source,
-            destination,
-            data=data,
-            src_conn=src_connector,
-            dst_conn=dst_connector)
+        key = self._nx.add_edge(source,
+                                destination,
+                                data=data,
+                                src_conn=src_connector,
+                                dst_conn=dst_connector)
         return (source, src_connector, destination, dst_connector, data, key)
 
     def remove_edge(self, edge):
@@ -562,7 +561,6 @@ class MultiDiConnectorGraph(MultiDiGraph):
 class OrderedDiGraph(Graph):
     """ Directed graph where nodes and edges are returned in the order they
         were added. """
-
     def __init__(self):
         self._nx = nx.DiGraph()
         # {node: ({in edge: None}, {out edges: None})}
@@ -657,7 +655,6 @@ class OrderedDiGraph(Graph):
 class OrderedMultiDiGraph(OrderedDiGraph):
     """ Directed multigraph where nodes and edges are returned in the order
         they were added. """
-
     def __init__(self):
         self._nx = nx.MultiDiGraph()
         # {node: ({in edge: edge}, {out edge: edge})}
@@ -697,13 +694,15 @@ class OrderedMultiDiGraph(OrderedDiGraph):
 class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph):
     """ Directed multigraph with node connectors (SDFG states), where nodes
         and edges are returned in the order they were added. """
-
     def __init__(self):
         super().__init__()
 
     def add_edge(self, src, src_conn, dst, dst_conn, data):
-        key = self._nx.add_edge(
-            src, dst, data=data, src_conn=src_conn, dst_conn=dst_conn)
+        key = self._nx.add_edge(src,
+                                dst,
+                                data=data,
+                                src_conn=src_conn,
+                                dst_conn=dst_conn)
         edge = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, key)
         if src not in self._nodes:
             self.add_node(src)

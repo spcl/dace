@@ -9,7 +9,6 @@ import warnings
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
-
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
@@ -56,6 +55,7 @@ class Subset(object):
 
 
 def _simplified_str(val):
+    val = _expr(val)
     try:
         return str(int(val))
     except TypeError:
@@ -76,16 +76,15 @@ def _tuple_to_symexpr(val):
 @dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
-
     def __init__(self, ranges):
         parsed_ranges = []
         parsed_tiles = []
         for r in ranges:
             if len(r) != 3 and len(r) != 4:
                 raise ValueError("Expected 3-tuple or 4-tuple")
-            parsed_ranges.append((_tuple_to_symexpr(r[0]),
-                                  _tuple_to_symexpr(r[1]),
-                                  _tuple_to_symexpr(r[2])))
+            parsed_ranges.append(
+                (_tuple_to_symexpr(r[0]), _tuple_to_symexpr(r[1]),
+                 _tuple_to_symexpr(r[2])))
             if len(r) == 3:
                 parsed_tiles.append(symbolic.pystr_to_symbolic(1))
             else:
@@ -159,10 +158,9 @@ class Range(Subset):
             int_ceil = sp.Function('int_ceil')
             return [
                 ts * int_ceil(
-                    ((iMax.approx
-                      if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                     (iMin.approx
-                      if isinstance(iMin, symbolic.SymExpr) else iMin)),
+                    ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else
+                      iMax) + 1 - (iMin.approx if isinstance(
+                          iMin, symbolic.SymExpr) else iMin)),
                     (step.approx
                      if isinstance(step, symbolic.SymExpr) else step))
                 for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
@@ -172,21 +170,30 @@ class Range(Subset):
                 ts * sp.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                     (iMin.approx
-                      if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                    (step.approx
-                     if isinstance(step, symbolic.SymExpr) else step))
+                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else
+                      iMin)) / (step.approx if isinstance(
+                          step, symbolic.SymExpr) else step))
                 for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
             ]
+
+    def size_exact(self):
+        """ Returns the number of elements in each dimension. """
+        return [
+            ts * sp.ceiling(
+                ((iMax.expr if isinstance(iMax, symbolic.SymExpr) else iMax) +
+                 1 -
+                 (iMin.expr if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+                (step.expr if isinstance(step, symbolic.SymExpr) else step))
+            for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
+        ]
 
     def bounding_box_size(self):
         """ Returns the size of a bounding box around this range. """
         return [
             # sp.floor((iMax - iMin) / step) - iMin
-            ts * ((iMax.approx
-                   if isinstance(iMax, symbolic.SymExpr) else iMax) -
-                  (iMin.approx
-                   if isinstance(iMin, symbolic.SymExpr) else iMin) + 1)
+            ts *
+            ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) -
+             (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin) + 1)
             for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
         ]
 
@@ -244,10 +251,9 @@ class Range(Subset):
                 coord, self.ranges, self.absolute_strides(strides)))
 
     def data_dims(self):
-        return (
-            sum(1 if (re - rb + 1) != 1 else 0
-                for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
-                                                    for ts in self.tile_sizes))
+        return (sum(1 if (re - rb + 1) != 1 else 0
+                    for rb, re, _ in self.ranges) +
+                sum(1 if ts != 1 else 0 for ts in self.tile_sizes))
 
     def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
@@ -392,9 +398,9 @@ class Range(Subset):
             # If dimension has only 1 token, then it is an index (not a range),
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
-                ranges.append((symbolic.pystr_to_symbolic(uni_dim_tokens[0]),
-                               symbolic.pystr_to_symbolic(uni_dim_tokens[0]),
-                               1))
+                ranges.append(
+                    (symbolic.pystr_to_symbolic(uni_dim_tokens[0]),
+                     symbolic.pystr_to_symbolic(uni_dim_tokens[0]), 1))
                 continue
                 #return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid
@@ -552,7 +558,6 @@ class Range(Subset):
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
-
     def __init__(self, indices):
         if indices is None or len(indices) == 0:
             raise TypeError('Expected an array of index expressions: got empty'
@@ -561,6 +566,8 @@ class Indices(Subset):
             raise TypeError("Expected collection of index expression: got str")
         if isinstance(indices, tuple):
             self.indices = symbolic.SymExpr(indices[0], indices[1])
+        elif isinstance(indices, symbolic.SymExpr):
+            self.indices = indices
         else:
             self.indices = symbolic.pystr_to_symbolic(indices)
         self.tile_sizes = [1]
@@ -594,6 +601,9 @@ class Indices(Subset):
 
     def size(self):
         return [1] * len(self.indices)
+
+    def size_exact(self):
+        return self.size()
 
     def min_element(self):
         return self.indices
