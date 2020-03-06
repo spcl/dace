@@ -95,18 +95,20 @@ _py2c_typeconversion = {
 }
 
 
-def interleave(inter, f, seq):
-    """Call f on each item in seq, calling inter() in between.
+def interleave(inter, f, seq, **kwargs):
+    """
+    Call f on each item in seq, calling inter() in between.
+    f can accept optional arguments (kwargs)
     """
     seq = iter(seq)
     try:
-        f(next(seq))
+        f(next(seq), **kwargs)
     except StopIteration:
         pass
     else:
         for x in seq:
             inter()
-            f(x)
+            f(x, **kwargs)
 
 
 class LocalScheme(object):
@@ -1052,7 +1054,7 @@ class CPPUnparser:
     def _BoolOp(self, t, infer_type=False):
         self.write("(", infer_type)
         s = " %s " % self.boolops[t.op.__class__]
-        interleave(lambda: self.write(s), self.dispatch, t.values)
+        interleave(lambda: self.write(s, infer_type), self.dispatch, t.values, infer_type=infer_type)
         self.write(")", infer_type)
         return dace.dtypes.typeclass(np.bool) if infer_type else None
 

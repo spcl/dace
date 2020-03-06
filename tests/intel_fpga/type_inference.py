@@ -17,7 +17,7 @@ def type_inference(x: dace.float32[N], y: dace.float32[N]):
         # computes y[i]=(int)x[i] + ((int)y[i])*2.1
         var1 = int(in_x)
         var2: int = in_y
-        var3 = 2.1
+        var3 = 2.1 if (i>1 and i<10) else 2.1 # Just for the sake of testing
         res = var1 + var3 * var2
         out = res
 
@@ -27,10 +27,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=24)
-    parser.add_argument("--compile-only",
-                        default=False,
-                        action="store_true",
-                        dest="compile-only")
+    parser.add_argument(
+        "--compile-only",
+        default=False,
+        action="store_true",
+        dest="compile-only")
     args = vars(parser.parse_args())
     dace.config.Config.set("compiler", "intel_fpga", "mode", value="emulator")
 
