@@ -232,11 +232,33 @@ class Edge extends SDFGElement {
                 container.style.display = 'none';
                 return;
             }
-            container.innerHTML = attr.data + sdfg_property_to_string(attr.subset) + '<br />' + 
-                   'Volume: ' + sdfg_property_to_string(attr.num_accesses);
+            let contents = attr.data;
+            if (attr.replication_subset) {
+                let repsubset = sdfg_property_to_string(attr.replication_subset).slice(1, -1);
+                let subset = sdfg_property_to_string(attr.subset).slice(1, -1);
+                contents += '[<span style="color: turquoise">' + repsubset + '</span>, ' + subset + ']';
+            } else
+                contents += sdfg_property_to_string(attr.subset);
+            
+            if (attr.other_subset || attr.other_repl_subset) {
+                if (attr.other_repl_subset) {
+                    let repsubset = sdfg_property_to_string(attr.other_repl_subset).slice(1, -1);
+                    let subset = sdfg_property_to_string(attr.other_subset).slice(1, -1);
+                    contents += ' -> [<span style="color: turquoise">' + repsubset + '</span>, ' + subset + ']';
+                } else
+                    contents += ' -> ' + sdfg_property_to_string(attr.other_subset);
+            }
+
+            if (attr.wcr)
+                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr) +'</b>';
+
+            contents += '<br />Volume: ' + sdfg_property_to_string(attr.num_accesses);
+            container.innerHTML = contents;
         } else {  // Interstate edge
             container.style.background = '#0000aabb';
             container.innerText = this.label();
+            if (!this.label())
+                container.style.display = 'none';
         }
     }
 
