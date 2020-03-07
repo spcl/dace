@@ -48,21 +48,20 @@ if __name__ == "__main__":
     A_node = state.add_array('A', A.shape, dace.float64)
     B_node = state.add_array('B', B.shape, dace.float64)
     C_node = state.add_array('C', C.shape, dace.float64)
-    np_frontend.op_impl.matrix_pointwise_op(
-        state,
-        A_node,
-        A_node,
-        B_node,
-        B_node,
-        C_node,
-        C_node,
-        op='*',
-        reduce=True,
-        reduce_op='+',
-        A_index=[1, 2, 3],
-        B_index=[1, 3, 2, 1],
-        C_index=[2, 2, 0],
-        label='mpwop')
+    np_frontend.op_impl.matrix_pointwise_op(state,
+                                            A_node,
+                                            A_node,
+                                            B_node,
+                                            B_node,
+                                            C_node,
+                                            C_node,
+                                            op='*',
+                                            reduce=True,
+                                            reduce_op='+',
+                                            A_index=[1, 2, 3],
+                                            B_index=[1, 3, 2, 1],
+                                            C_index=[2, 2, 0],
+                                            label='mpwop')
 
     mpwop(A=A, B=B, C=C)
     C_regression = np.dot(A_regression.flatten(), B_regression.flatten())

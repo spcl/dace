@@ -31,8 +31,8 @@ def _to_blastype(dtype):
     elif dtype == np.complex128:
         return 'Z'
     else:
-        raise TypeError(
-            'Type %s not supported in BLAS operations' % dtype.__name__)
+        raise TypeError('Type %s not supported in BLAS operations' %
+                        dtype.__name__)
 
 
 def _to_cudatype(dtype):
@@ -50,8 +50,8 @@ def _to_cudatype(dtype):
     elif dtype == np.complex128:
         return 'cuDoubleComplex'
     else:
-        raise TypeError(
-            'Type %s not supported in BLAS operations' % dtype.__name__)
+        raise TypeError('Type %s not supported in BLAS operations' %
+                        dtype.__name__)
 
 
 # TODO: Refactor to use GPUTransformLocalStorage?
@@ -132,23 +132,21 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
             if len(actual_dims) == 0:  # abort
                 actual_dims = [len(full_shape) - 1]
             if isinstance(array, dace.data.Scalar):
-                sdfg.add_array(
-                    name=cloned_name,
-                    shape=[1],
-                    dtype=array.dtype,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.GPU_Global)
+                sdfg.add_array(name=cloned_name,
+                               shape=[1],
+                               dtype=array.dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.GPU_Global)
             else:
-                sdfg.add_array(
-                    name=cloned_name,
-                    shape=[full_shape[d] for d in actual_dims],
-                    dtype=array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    strides=[array.strides[d] for d in actual_dims],
-                    offset=[array.offset[d] for d in actual_dims])
+                sdfg.add_array(name=cloned_name,
+                               shape=[full_shape[d] for d in actual_dims],
+                               dtype=array.dtype,
+                               materialize_func=array.materialize_func,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.GPU_Global,
+                               allow_conflicts=array.allow_conflicts,
+                               strides=[array.strides[d] for d in actual_dims],
+                               offset=[array.offset[d] for d in actual_dims])
             cloned_arrays[array_node.data] = cloned_name
         cloned_node = type(array_node)(cloned_name)
 
@@ -194,23 +192,21 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
             if len(actual_dims) == 0:  # abort
                 actual_dims = [len(full_shape) - 1]
             if isinstance(array, dace.data.Scalar):
-                sdfg.add_array(
-                    name=cloned_name,
-                    shape=[1],
-                    dtype=array.dtype,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.GPU_Global)
+                sdfg.add_array(name=cloned_name,
+                               shape=[1],
+                               dtype=array.dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.GPU_Global)
             else:
-                sdfg.add_array(
-                    name=cloned_name,
-                    shape=[full_shape[d] for d in actual_dims],
-                    dtype=array.dtype,
-                    materialize_func=array.materialize_func,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.GPU_Global,
-                    allow_conflicts=array.allow_conflicts,
-                    strides=[array.strides[d] for d in actual_dims],
-                    offset=[array.offset[d] for d in actual_dims])
+                sdfg.add_array(name=cloned_name,
+                               shape=[full_shape[d] for d in actual_dims],
+                               dtype=array.dtype,
+                               materialize_func=array.materialize_func,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.GPU_Global,
+                               allow_conflicts=array.allow_conflicts,
+                               strides=[array.strides[d] for d in actual_dims],
+                               offset=[array.offset[d] for d in actual_dims])
             cloned_arrays[array_node.data] = cloned_name
         cloned_node = type(array_node)(cloned_name)
         cloned_node.setzero = True
@@ -254,8 +250,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                         newmemlet.subset = type(edge.data.subset)(
                             [r for r in newsubset if r is not None])
 
-                graph.add_edge(node, None, edge.dst, edge.dst_conn,
-                               newmemlet)
+                graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
 
                 edge.data.other_subset = newmemlet.subset
                 graph.add_edge(edge.src, edge.src_conn, node, None, edge.data)
@@ -295,8 +290,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
                         newmemlet.subset = type(edge.data.subset)(
                             [r for r in newsubset if r is not None])
 
-                graph.add_edge(edge.src, edge.src_conn, node, None,
-                               newmemlet)
+                graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
 
                 edge.data.data = node.data
                 edge.data.other_subset = edge.data.subset
@@ -307,7 +301,6 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
 class ValidationError(Exception):
     """ An exception raised when inputs are not validated in SDFG library 
         calls. """
-
     def __init__(self, message):
         super().__init__(message)
 
@@ -459,13 +452,12 @@ def matrix_multiplication(state: State,
     k_entry.out_connectors = {'OUT_1', 'OUT_2'}
     k_exit.in_connectors = {'IN_1'}
     k_exit.out_connectors = {'OUT_1'}
-    ij_entry, ij_exit = state.add_map(
-        name=label + '_' + 'ij_map', ndrange=dict(ii=M_range, ij=K_range))
-    tasklet = state.add_tasklet(
-        name=label + '_' + 'tasklet',
-        inputs={'a', 'b'},
-        outputs={'c'},
-        code='c = a * b')
+    ij_entry, ij_exit = state.add_map(name=label + '_' + 'ij_map',
+                                      ndrange=dict(ii=M_range, ij=K_range))
+    tasklet = state.add_tasklet(name=label + '_' + 'tasklet',
+                                inputs={'a', 'b'},
+                                outputs={'c'},
+                                code='c = a * b')
     ij_entry.in_connectors = {'IN_1', 'IN_2'}
     ij_entry.out_connectors = {'OUT_1', 'OUT_2'}
     ij_exit.in_connectors = {'IN_1'}
@@ -490,12 +482,11 @@ def matrix_multiplication(state: State,
             wcr = None
         state.add_edge(
             tasklet, 'c', ij_exit, 'IN_1',
-            dace.Memlet.simple(
-                C_node,
-                C_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=wcr,
-                wcr_conflict=False))
+            dace.Memlet.simple(C_node,
+                               C_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=wcr,
+                               wcr_conflict=False))
         state.add_edge(ij_exit, 'OUT_1', k_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
         state.add_edge(k_exit, 'OUT_1', C_dst, None,
@@ -518,12 +509,11 @@ def matrix_multiplication(state: State,
             wcr = None
         state.add_edge(
             tasklet, 'c', k_exit, 'IN_1',
-            dace.Memlet.simple(
-                C_node,
-                C_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=wcr,
-                wcr_conflict=False))
+            dace.Memlet.simple(C_node,
+                               C_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=wcr,
+                               wcr_conflict=False))
         state.add_edge(k_exit, 'OUT_1', ij_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
         state.add_edge(ij_exit, 'OUT_1', C_dst, None,
@@ -583,15 +573,14 @@ def matrix_transpose_cublas(state: State,
             ({cutype}*)b, {bstride},
             ({cutype}*)b, {bstride}
         );
-        '''.format(
-            mode=mode,
-            btype=_to_blastype(A.dtype.type),
-            cutype=_to_cudatype(A.dtype.type),
-            rows=A.shape[1],
-            cols=A.shape[0],
-            astride=A.strides[0],
-            bstride=B.strides[0],
-            alpha=alpha),
+        '''.format(mode=mode,
+                   btype=_to_blastype(A.dtype.type),
+                   cutype=_to_cudatype(A.dtype.type),
+                   rows=A.shape[1],
+                   cols=A.shape[0],
+                   astride=A.strides[0],
+                   bstride=B.strides[0],
+                   alpha=alpha),
         language=dace.dtypes.Language.CPP)
 
     state.add_edge(A_src, None, tasklet, 'a',
@@ -838,11 +827,10 @@ def matrix_multiplication_mkl(state: State,
         label = state.label
 
     # Create tasklet
-    tasklet = state.add_tasklet(
-        name=label + '_' + 'tasklet',
-        inputs={'a', 'b'},
-        outputs={'c'},
-        code='''
+    tasklet = state.add_tasklet(name=label + '_' + 'tasklet',
+                                inputs={'a', 'b'},
+                                outputs={'c'},
+                                code='''
         std::complex<double> alpha(1, 0);
         std::complex<double> beta(0, 0);
         char opa = 'N';
@@ -857,7 +845,7 @@ def matrix_multiplication_mkl(state: State,
             (MKL_Complex16*)c, &{m}
         );
         '''.format(m=M, n=N, k=K),
-        language=dace.dtypes.Language.CPP)
+                                language=dace.dtypes.Language.CPP)
 
     state.add_edge(A_src, None, tasklet, 'a',
                    dace.Memlet.simple(A_node, A_outer_range))
@@ -918,12 +906,18 @@ def matrix_multiplication_s(A_label: str,
     state = State(label=label)
 
     # Create data nodes
-    A_node = state.add_array(
-        A_label, A_shape, A_type, transient=is_A_transient)
-    B_node = state.add_array(
-        B_label, B_shape, B_type, transient=is_B_transient)
-    C_node = state.add_array(
-        C_label, C_shape, C_type, transient=is_C_transient or create_C)
+    A_node = state.add_array(A_label,
+                             A_shape,
+                             A_type,
+                             transient=is_A_transient)
+    B_node = state.add_array(B_label,
+                             B_shape,
+                             B_type,
+                             transient=is_B_transient)
+    C_node = state.add_array(C_label,
+                             C_shape,
+                             C_type,
+                             transient=is_C_transient or create_C)
 
     # Create maps/tasklet
     k_entry, k_exit = state.add_map(
@@ -934,13 +928,12 @@ def matrix_multiplication_s(A_label: str,
     k_entry.out_connectors = {'OUT_1', 'OUT_2'}
     k_exit.in_connectors = {'IN_1'}
     k_exit.out_connectors = {'OUT_1'}
-    ij_entry, ij_exit = state.add_map(
-        name=label + '_' + 'ij_map', ndrange=dict(ii=M_range, ij=K_range))
-    tasklet = state.add_tasklet(
-        name=label + '_' + 'tasklet',
-        inputs={'a', 'b'},
-        outputs={'c'},
-        code='c = a * b')
+    ij_entry, ij_exit = state.add_map(name=label + '_' + 'ij_map',
+                                      ndrange=dict(ii=M_range, ij=K_range))
+    tasklet = state.add_tasklet(name=label + '_' + 'tasklet',
+                                inputs={'a', 'b'},
+                                outputs={'c'},
+                                code='c = a * b')
     ij_entry.in_connectors = {'IN_1', 'IN_2'}
     ij_entry.out_connectors = {'OUT_1', 'OUT_2'}
     ij_exit.in_connectors = {'IN_1'}
@@ -965,12 +958,11 @@ def matrix_multiplication_s(A_label: str,
             wcr = None
         state.add_edge(
             tasklet, 'c', ij_exit, 'IN_1',
-            dace.Memlet.simple(
-                C_node,
-                C_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=wcr,
-                wcr_conflict=False))
+            dace.Memlet.simple(C_node,
+                               C_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=wcr,
+                               wcr_conflict=False))
         state.add_edge(ij_exit, 'OUT_1', k_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
         state.add_edge(k_exit, 'OUT_1', C_node, None,
@@ -993,12 +985,11 @@ def matrix_multiplication_s(A_label: str,
             wcr = None
         state.add_edge(
             tasklet, 'c', k_exit, 'IN_1',
-            dace.Memlet.simple(
-                C_node,
-                C_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=wcr,
-                wcr_conflict=False))
+            dace.Memlet.simple(C_node,
+                               C_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=wcr,
+                               wcr_conflict=False))
         state.add_edge(k_exit, 'OUT_1', ij_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
         state.add_edge(ij_exit, 'OUT_1', C_node, None,
@@ -1088,10 +1079,11 @@ def scalar_array_multiplication(state: State,
     alpha_shape = [1]
     if hasattr(alpha_node, 'shape'):
         alpha_shape = alpha_node.shape
-    ranges = validate_scalar_array_multiplication(
-        alpha_shape,
-        A_node.desc(sdfg).shape,
-        B_node.desc(sdfg).shape, alpha_index, A_index, B_index)
+    ranges = validate_scalar_array_multiplication(alpha_shape,
+                                                  A_node.desc(sdfg).shape,
+                                                  B_node.desc(sdfg).shape,
+                                                  alpha_index, A_index,
+                                                  B_index)
     map_ranges, alpha_ranges, A_ranges, B_ranges = ranges
     alpha_outer_range, alpha_inner_range = alpha_ranges
     A_outer_range, A_inner_range = A_ranges
@@ -1103,17 +1095,16 @@ def scalar_array_multiplication(state: State,
         label = state.label
 
     # Create map/tasklet
-    map_entry, map_exit = state.add_map(
-        name=label + '_map', ndrange=map_ranges)
+    map_entry, map_exit = state.add_map(name=label + '_map',
+                                        ndrange=map_ranges)
     map_entry.in_connectors = {'IN_1', 'IN_2'}
     map_entry.out_connectors = {'OUT_1', 'OUT_2'}
     map_exit.in_connectors = {'IN_1'}
     map_exit.out_connectors = {'OUT_1'}
-    tasklet = state.add_tasklet(
-        name=label + '_tasklet',
-        inputs={'scalar', 'a'},
-        outputs={'b'},
-        code='b = scalar * a')
+    tasklet = state.add_tasklet(name=label + '_tasklet',
+                                inputs={'scalar', 'a'},
+                                outputs={'b'},
+                                code='b = scalar * a')
 
     # Add edges
     state.add_edge(alpha_src, None, map_entry, 'IN_1',
@@ -1129,12 +1120,11 @@ def scalar_array_multiplication(state: State,
     if accumulate:
         state.add_edge(
             tasklet, 'b', map_exit, 'IN_1',
-            dace.Memlet.simple(
-                B_node,
-                B_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=None,
-                wcr_conflict=wcr_conflict))
+            dace.Memlet.simple(B_node,
+                               B_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=None,
+                               wcr_conflict=wcr_conflict))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
                        dace.Memlet.simple(B_node, B_inner_range))
@@ -1174,8 +1164,9 @@ def scalar_array_multiplication_s(alpha_label: str,
                 'Array B is not transient, but its shape is not set')
 
     # Validate data
-    ranges = validate_scalar_array_multiplication(
-        alpha_shape, A_shape, B_shape, alpha_index, A_index, B_index)
+    ranges = validate_scalar_array_multiplication(alpha_shape, A_shape,
+                                                  B_shape, alpha_index,
+                                                  A_index, B_index)
     map_ranges, alpha_ranges, A_ranges, B_ranges = ranges
     alpha_outer_range, alpha_inner_range = alpha_ranges
     A_outer_range, A_inner_range = A_ranges
@@ -1190,25 +1181,30 @@ def scalar_array_multiplication_s(alpha_label: str,
     state = State(label=label)
 
     # Create data nodes
-    alpha_node = state.add_array(
-        alpha_label, alpha_shape, alpha_type, transient=is_alpha_transient)
-    A_node = state.add_array(
-        A_label, A_shape, A_type, transient=is_A_transient)
-    B_node = state.add_array(
-        B_label, B_shape, B_type, transient=is_B_transient or create_B)
+    alpha_node = state.add_array(alpha_label,
+                                 alpha_shape,
+                                 alpha_type,
+                                 transient=is_alpha_transient)
+    A_node = state.add_array(A_label,
+                             A_shape,
+                             A_type,
+                             transient=is_A_transient)
+    B_node = state.add_array(B_label,
+                             B_shape,
+                             B_type,
+                             transient=is_B_transient or create_B)
 
     # Create map/tasklet
-    map_entry, map_exit = state.add_map(
-        name=label + '_map', ndrange=map_ranges)
+    map_entry, map_exit = state.add_map(name=label + '_map',
+                                        ndrange=map_ranges)
     map_entry.in_connectors = {'IN_1', 'IN_2'}
     map_entry.out_connectors = {'OUT_1', 'OUT_2'}
     map_exit.in_connectors = {'IN_1'}
     map_exit.out_connectors = {'OUT_1'}
-    tasklet = state.add_tasklet(
-        name=label + '_tasklet',
-        inputs={'scalar', 'a'},
-        outputs={'b'},
-        code='b = scalar * a')
+    tasklet = state.add_tasklet(name=label + '_tasklet',
+                                inputs={'scalar', 'a'},
+                                outputs={'b'},
+                                code='b = scalar * a')
 
     # Add edges
     state.add_edge(alpha_node, None, map_entry, 'IN_1',
@@ -1224,12 +1220,11 @@ def scalar_array_multiplication_s(alpha_label: str,
     if accumulate:
         state.add_edge(
             tasklet, 'b', map_exit, 'IN_1',
-            dace.Memlet.simple(
-                B_node,
-                B_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=None,
-                wcr_conflict=wcr_conflict))
+            dace.Memlet.simple(B_node,
+                               B_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=None,
+                               wcr_conflict=wcr_conflict))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
                        dace.Memlet.simple(B_node, B_inner_range))
@@ -1268,17 +1263,16 @@ def constant_array_multiplication(state: State,
         label = state.label
 
     # Create map/tasklet
-    map_entry, map_exit = state.add_map(
-        name=label + '_map', ndrange=map_ranges)
+    map_entry, map_exit = state.add_map(name=label + '_map',
+                                        ndrange=map_ranges)
     map_entry.in_connectors = {'IN_1'}
     map_entry.out_connectors = {'OUT_1'}
     map_exit.in_connectors = {'IN_1'}
     map_exit.out_connectors = {'OUT_1'}
-    tasklet = state.add_tasklet(
-        name=label + '_tasklet',
-        inputs={'a'},
-        outputs={'b'},
-        code='b = {} * a'.format(constant))
+    tasklet = state.add_tasklet(name=label + '_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code='b = {} * a'.format(constant))
 
     # Add edges
     state.add_edge(A_src, None, map_entry, 'IN_1',
@@ -1290,12 +1284,11 @@ def constant_array_multiplication(state: State,
     if accumulate:
         state.add_edge(
             tasklet, 'b', map_exit, 'IN_1',
-            dace.Memlet.simple(
-                B_node,
-                B_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=None,
-                wcr_conflict=False))
+            dace.Memlet.simple(B_node,
+                               B_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=None,
+                               wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
                        dace.Memlet.simple(B_node, B_inner_range))
@@ -1329,18 +1322,17 @@ def unary_array_op(state: State,
         label = state.label
 
     # Create map/tasklet
-    map_entry, map_exit = state.add_map(
-        name=label + '_map', ndrange=map_ranges)
+    map_entry, map_exit = state.add_map(name=label + '_map',
+                                        ndrange=map_ranges)
     map_entry.in_connectors = {'IN_1'}
     map_entry.out_connectors = {'OUT_1'}
     map_exit.in_connectors = {'IN_1'}
     map_exit.out_connectors = {'OUT_1'}
-    tasklet = state.add_tasklet(
-        name=label + '_tasklet',
-        inputs={'a'},
-        outputs={'b'},
-        code=code,
-        language=lang)
+    tasklet = state.add_tasklet(name=label + '_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code=code,
+                                language=lang)
 
     # Add edges
     state.add_edge(A_src, None, map_entry, 'IN_1',
@@ -1352,12 +1344,11 @@ def unary_array_op(state: State,
     if accumulate:
         state.add_edge(
             tasklet, 'b', map_exit, 'IN_1',
-            dace.Memlet.simple(
-                B_node,
-                B_inner_range,
-                wcr_str='lambda x, y: x + y',
-                wcr_identity=None,
-                wcr_conflict=False))
+            dace.Memlet.simple(B_node,
+                               B_inner_range,
+                               wcr_str='lambda x, y: x + y',
+                               wcr_identity=None,
+                               wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
                        dace.Memlet.simple(B_node, B_inner_range))
@@ -1388,8 +1379,8 @@ def validate_matrix_transpose(
                 A_tr_shape, B_tr_shape))
 
     # Map ranges
-    map_ranges = dict(
-        ii='0:{}'.format(A_tr_shape[0]), ij='0:{}'.format(A_tr_shape[-1]))
+    map_ranges = dict(ii='0:{}'.format(A_tr_shape[0]),
+                      ij='0:{}'.format(A_tr_shape[-1]))
 
     # Validate slices and set array access ranges
     A_outer_range = '0:{}, 0:{}'.format(A_tr_shape[0], A_tr_shape[-1])
@@ -1453,8 +1444,8 @@ def matrix_transpose(state: State,
         language=lang)
 
     # Add edges
-    state.add_nedge(A_src, map_entry, dace.Memlet.simple(
-        A_node, A_outer_range))
+    state.add_nedge(A_src, map_entry,
+                    dace.Memlet.simple(A_node, A_outer_range))
     state.add_nedge(map_exit, B_dst, dace.Memlet.simple(B_node, B_outer_range))
 
     return state
@@ -1510,8 +1501,8 @@ c = a
         language=lang)
 
     # Add edges
-    state.add_nedge(A_src, map_entry, dace.Memlet.simple(
-        A_node, A_outer_range))
+    state.add_nedge(A_src, map_entry,
+                    dace.Memlet.simple(A_node, A_outer_range))
     state.add_nedge(map_exit, B_dst, dace.Memlet.simple(B_node, B_outer_range))
     state.add_nedge(map_exit, C_dst, dace.Memlet.simple(C_node, C_outer_range))
 
@@ -1559,10 +1550,14 @@ def matrix_transpose_s(A_label: str,
     state = State(label=label)
 
     # Create datanodes
-    A_node = state.add_array(
-        A_label, A_shape, A_type, transient=is_A_transient)
-    B_node = state.add_array(
-        B_label, B_shape, B_type, transient=is_B_transient or create_B)
+    A_node = state.add_array(A_label,
+                             A_shape,
+                             A_type,
+                             transient=is_A_transient)
+    B_node = state.add_array(B_label,
+                             B_shape,
+                             B_type,
+                             transient=is_B_transient or create_B)
 
     # Create map/tasklet
     _, map_entry, map_exit = state.add_mapped_tasklet(
@@ -1573,10 +1568,10 @@ def matrix_transpose_s(A_label: str,
         code='b = a')
 
     # Add edges
-    state.add_nedge(A_node, map_entry, dace.Memlet.simple(
-        A_node, A_outer_range))
-    state.add_nedge(map_exit, B_node, dace.Memlet.simple(
-        B_node, B_outer_range))
+    state.add_nedge(A_node, map_entry,
+                    dace.Memlet.simple(A_node, A_outer_range))
+    state.add_nedge(map_exit, B_node,
+                    dace.Memlet.simple(B_node, B_outer_range))
 
     return state
 
@@ -1696,17 +1691,17 @@ def matrix_pointwise_op(state: State,
         schedule = dace.dtypes.ScheduleType.Sequential
     else:
         schedule = dace.dtypes.ScheduleType.Default
-    map_entry, map_exit = state.add_map(
-        name=label + '_map', ndrange=map_ranges, schedule=schedule)
+    map_entry, map_exit = state.add_map(name=label + '_map',
+                                        ndrange=map_ranges,
+                                        schedule=schedule)
     map_entry.in_connectors = {'IN_1', 'IN_2'}
     map_entry.out_connectors = {'OUT_1', 'OUT_2'}
     map_exit.in_connectors = {'IN_1'}
     map_exit.out_connectors = {'OUT_1'}
-    tasklet = state.add_tasklet(
-        name=label + '_tasklet',
-        inputs={'a', 'b'},
-        outputs={'c'},
-        code='c = a ' + op + ' b')
+    tasklet = state.add_tasklet(name=label + '_tasklet',
+                                inputs={'a', 'b'},
+                                outputs={'c'},
+                                code='c = a ' + op + ' b')
 
     # Add edges
     state.add_edge(A_src, None, map_entry, 'IN_1',
@@ -1725,12 +1720,11 @@ def matrix_pointwise_op(state: State,
             wcr = None
         state.add_edge(
             tasklet, 'c', map_exit, 'IN_1',
-            dace.Memlet.simple(
-                C_node,
-                C_inner_range,
-                wcr_str='lambda x, y: x ' + reduce_op + ' y',
-                wcr_identity=wcr,
-                wcr_conflict=False))
+            dace.Memlet.simple(C_node,
+                               C_inner_range,
+                               wcr_str='lambda x, y: x ' + reduce_op + ' y',
+                               wcr_identity=wcr,
+                               wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'c', map_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_inner_range))
@@ -1746,11 +1740,10 @@ def csr2dense_cusparse(state: State, val: DNode, rowptr: DNode, colind: DNode,
     d_dtype = dense_array.dtype
     T = state.add_transient(dense.data + 'T', d_shape, d_dtype)
 
-    tasklet = state.add_tasklet(
-        name=dense.data + '_csr2dense',
-        inputs={'val', 'rowptr', 'colind'},
-        outputs={'dense'},
-        code='''
+    tasklet = state.add_tasklet(name=dense.data + '_csr2dense',
+                                inputs={'val', 'rowptr', 'colind'},
+                                outputs={'dense'},
+                                code='''
     cusparseSetStream(sparse_handle, __dace_current_stream);
     cusparseZcsr2dense(
         sparse_handle,
@@ -1763,7 +1756,7 @@ def csr2dense_cusparse(state: State, val: DNode, rowptr: DNode, colind: DNode,
         {m}
     );
         '''.format(m=str(d_shape[0]), n=str(d_shape[1])),
-        language=dace.dtypes.Language.CPP)
+                                language=dace.dtypes.Language.CPP)
     state.add_edge(val, None, tasklet, 'val',
                    dace.Memlet.from_array(val.data, val.desc(sdfg)))
     state.add_edge(rowptr, None, tasklet, 'rowptr',
@@ -1786,11 +1779,10 @@ def matrix_inversion_cusolver(state, arg, mat_inv, mat_index, label):
     if mat_index is not None:
         index = [str(idx) for idx in mat_index]
         inv_range = '{}, {}'.format(', '.join(index), inv_range)
-    inv_task = state.add_tasklet(
-        name=label,
-        inputs={'a'},
-        outputs={'b'},
-        code='''
+    inv_task = state.add_tasklet(name=label,
+                                 inputs={'a'},
+                                 outputs={'b'},
+                                 code='''
         cusolverDnSetStream(solver_handle, __dace_current_stream);
         int new_lwork = 0;
         cusolverDnZgetrf_bufferSize(
@@ -1829,7 +1821,7 @@ def matrix_inversion_cusolver(state, arg, mat_inv, mat_index, label):
         );
         //cudaDeviceSynchronize();
         '''.format(n=m_shape[-1]),
-        language=dace.dtypes.Language.CPP)
+                                 language=dace.dtypes.Language.CPP)
     state.add_edge(arg, None, inv_task, 'a',
                    dace.Memlet.from_array(arg.data, arg.desc(sdfg)))
     state.add_edge(inv_task, 'b', mat_inv, None,

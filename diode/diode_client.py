@@ -6,18 +6,16 @@ import argparse, requests, json, sys
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-c",
-        "--connect",
-        default="localhost",
-        metavar="IP",
-        help="Connect to Server IP. Default is localhost.")
+    parser.add_argument("-c",
+                        "--connect",
+                        default="localhost",
+                        metavar="IP",
+                        help="Connect to Server IP. Default is localhost.")
 
-    parser.add_argument(
-        "-p",
-        "--port",
-        default="5000",
-        help="Set server port. Default is 5000")
+    parser.add_argument("-p",
+                        "--port",
+                        default="5000",
+                        help="Set server port. Default is 5000")
 
     parser.add_argument(
         "-compile",
@@ -57,20 +55,18 @@ if __name__ == '__main__':
         "Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
     )
 
-    parser.add_argument(
-        "-e",
-        "--extract",
-        nargs="+",
-        choices=[
-            "txform", "sdfg", "structure", "struct_noprop", "outcode",
-            "txform_detail", "runnercode"
-        ])
+    parser.add_argument("-e",
+                        "--extract",
+                        nargs="+",
+                        choices=[
+                            "txform", "sdfg", "structure", "struct_noprop",
+                            "outcode", "txform_detail", "runnercode"
+                        ])
 
-    parser.add_argument(
-        "-ver",
-        "--version",
-        default="1.0",
-        help="Sets the REST API Version to use.")
+    parser.add_argument("-ver",
+                        "--version",
+                        default="1.0",
+                        help="Sets the REST API Version to use.")
     args = parser.parse_args()
 
     if args.compile or args.run:
@@ -172,9 +168,9 @@ if __name__ == '__main__':
             for i in range(0, 5):
                 import time
                 time.sleep(1)
-                response = requests.post(
-                    url + "/dace/api/v" + args.version + "/run/status/",
-                    json={'client_id': args.user})
+                response = requests.post(url + "/dace/api/v" + args.version +
+                                         "/run/status/",
+                                         json={'client_id': args.user})
                 try:
                     tmp = json.loads(response.text)
                 except:
@@ -257,9 +253,9 @@ if __name__ == '__main__':
                     sys.stdout.write('"advanced_transform":')
                     sys.stdout.write("{")
                     get_transformations(
-                        resp_json, lambda a, b, c: sys.
-                        stdout.write('"' + b + '":\n' + json.dumps(
-                            c, indent=2) + '\n\n'))
+                        resp_json, lambda a, b, c: sys.stdout.
+                        write('"' + b + '":\n' + json.dumps(c, indent=2) +
+                              '\n\n'))
                     sys.stdout.write("}")
                     if "txform_detail" != args.extract[-1]:
                         sys.stdout.write(',')

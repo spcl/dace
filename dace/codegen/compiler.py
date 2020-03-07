@@ -264,8 +264,9 @@ class CompiledSDFG(object):
     def _initialize_return_values(self, kwargs):
         # Obtain symbol values from arguments and constants
         syms = dict()
-        syms.update({k: v for k, v in kwargs.items()
-                     if k not in self.sdfg.arrays})
+        syms.update(
+            {k: v
+             for k, v in kwargs.items() if k not in self.sdfg.arrays})
         syms.update(self.sdfg.constants)
 
         if self._initialized:

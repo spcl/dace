@@ -121,8 +121,8 @@ class AST_Matrix(AST_Node):
 
             tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'},
                                                       code, dace.Language.CPP)
-            me, mx = sdfg.nodes()[state].add_map(
-                'init', dict(i='0:' + str(arrlen)))
+            me, mx = sdfg.nodes()[state].add_map('init',
+                                                 dict(i='0:' + str(arrlen)))
             sdfg.nodes()[state].add_edge(me, None, tasklet, None,
                                          dace.memlet.EmptyMemlet())
             sdfg.nodes()[state].add_edge(

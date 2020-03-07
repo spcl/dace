@@ -78,9 +78,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         kernel_flags = Config.get("compiler", "intel_fpga", "kernel_flags")
         mode = Config.get("compiler", "intel_fpga", "mode")
         target_board = Config.get("compiler", "intel_fpga", "board")
-        enable_debugging = ("ON"
-                            if Config.get_bool("compiler", "intel_fpga",
-                                               "enable_debugging") else "OFF")
+        enable_debugging = ("ON" if Config.get_bool(
+            "compiler", "intel_fpga", "enable_debugging") else "OFF")
         options = [
             "-DINTELFPGAOCL_ROOT_DIR={}".format(
                 os.path.dirname(os.path.dirname(compiler))),
@@ -622,7 +621,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def generate_host_function_prologue(sdfg, state, host_stream):
-
         host_stream.write("std::vector<hlslib::ocl::Kernel> kernels;", sdfg,
                           sdfg.node_id(state))
 
@@ -914,8 +912,9 @@ __kernel void \\
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
                  or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(
-                    edge.src_conn, callsite_stream, sdfg, state_id, node)
+                self.generate_no_dependence_post(edge.src_conn,
+                                                 callsite_stream, sdfg,
+                                                 state_id, node)
 
         callsite_stream.write('}\n', sdfg, state_id, node)
         self._dispatcher.defined_vars.exit_scope(node)
@@ -987,8 +986,9 @@ __kernel void \\
         memlet = edge.data
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
-        memlet_type = self.make_vector_type(
-            data_desc.dtype, self._memory_widths[data_name], False)
+        memlet_type = self.make_vector_type(data_desc.dtype,
+                                            self._memory_widths[data_name],
+                                            False)
         offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
                                      memlet.veclen)
 
@@ -1104,8 +1104,9 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
             data_desc = sdfg.arrays[data_name]
-            memlet_type = self.make_vector_type(
-                data_desc.dtype, self._memory_widths[data_name], False)
+            memlet_type = self.make_vector_type(data_desc.dtype,
+                                                self._memory_widths[data_name],
+                                                False)
             offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
                                          memlet.veclen)
 
@@ -1324,8 +1325,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             shape = self.constants[target].shape
         else:
             shape = self.sdfg.arrays[self.memlets[target][0].data].shape
-        slice_str = cpp.DaCeKeywordRemover.ndslice_cpp(
-            subscript.split(', '), shape)
+        slice_str = cpp.DaCeKeywordRemover.ndslice_cpp(subscript.split(', '),
+                                                       shape)
 
         newnode = ast.parse('%s[%s]' % (target, slice_str)).body[0].value
 

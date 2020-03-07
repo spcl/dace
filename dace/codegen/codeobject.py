@@ -20,13 +20,12 @@ class CodeObject(object):
         desc="Sub-target within target (e.g., host or device code)",
         default="")
     title = Property(dtype=str, desc="Title of code for GUI")
-    extra_compiler_kwargs = Property(
-        dtype=dict,
-        desc="Additional compiler argument "
-        "variables to add to template")
-    linkable = Property(
-        dtype=bool, desc='Should this file participate in '
-        'overall linkage?')
+    extra_compiler_kwargs = Property(dtype=dict,
+                                     desc="Additional compiler argument "
+                                     "variables to add to template")
+    linkable = Property(dtype=bool,
+                        desc='Should this file participate in '
+                        'overall linkage?')
     environments = SetProperty(
         str,
         desc="Environments required by CMake to build and run this code node.",

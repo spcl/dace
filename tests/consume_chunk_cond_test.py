@@ -13,8 +13,9 @@ stream_out = state.add_stream('S', dp.int32, transient=True)
 output = state.add_array('res', [1], dp.float32)
 
 # Consume and tasklet
-consume_entry, consume_exit = state.add_consume(
-    'cons', ('p', str(nprocs)), 'res[0] >= 44', chunksize=2)
+consume_entry, consume_exit = state.add_consume('cons', ('p', str(nprocs)),
+                                                'res[0] >= 44',
+                                                chunksize=2)
 tasklet = state.add_tasklet(
     'fibonacci', {'s'}, {'sout', 'val'}, """
 for i in range(cons_numelems):

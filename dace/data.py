@@ -455,12 +455,6 @@ class Stream(Data):
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
     veclen = Property(dtype=int,
                       desc="Vector length. Memlets must adhere to this.")
-    remote = Property(
-        dtype=bool,
-        default=False,
-        desc=
-        "States if the stream is a remote one. Used for distributed FPGA support"
-    )
 
     def __init__(self,
                  dtype,
@@ -480,7 +474,6 @@ class Stream(Data):
 
         self.veclen = veclen
         self.buffer_size = buffer_size
-        self.remote = remote
         location = location or {}
 
         if offset is not None:

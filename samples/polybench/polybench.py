@@ -31,13 +31,12 @@ def polybench_dump(filename, args, output_args):
 
         for i, name in output_args:
             fp.write("begin dump: %s\n" % name)
-            np.savetxt(
-                fp,
-                args[i].reshape(
-                    args[i].shape[0],
-                    functools.reduce(lambda a, b: a * b, args[i].shape[1:],
-                                     1)),
-                fmt="%0.7lf")
+            np.savetxt(fp,
+                       args[i].reshape(
+                           args[i].shape[0],
+                           functools.reduce(lambda a, b: a * b,
+                                            args[i].shape[1:], 1)),
+                       fmt="%0.7lf")
             fp.write("\nend   dump: %s\n" % name)
 
         fp.write("==END   DUMP_ARRAYS==\n")
@@ -95,6 +94,5 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
 
 def main(sizes, args, outputs, init_array, func, keywords=None):
     # Pass application arguments and command-line arguments through abseil
-    app.run(
-        lambda argv: _main(sizes, args, outputs, init_array, func, argv, keywords)
-    )
+    app.run(lambda argv: _main(sizes, args, outputs, init_array, func, argv,
+                               keywords))

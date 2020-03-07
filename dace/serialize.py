@@ -8,7 +8,6 @@ JSON_STORE_METADATA = True
 
 class NumpySerializer:
     """ Helper class to load/store numpy arrays from JSON. """
-
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj is None:
@@ -207,8 +206,8 @@ def set_properties_from_json(object_with_properties,
 
     remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for DIODE
-    remaining_properties = set(
-        prop for prop in remaining_properties if not prop.startswith('_meta'))
+    remaining_properties = set(prop for prop in remaining_properties
+                               if not prop.startswith('_meta'))
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
         print("WARNING: unused properties: {}".format(", ".join(

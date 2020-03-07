@@ -60,8 +60,10 @@ def generate_dummy(sdfg) -> str:
     sdfg_call = '''
   __dace_init_{name}({params});
   __program_{name}({params});
-  __dace_exit_{name}({params});\n\n'''.format(
-        name=sdfg.name, params=sdfg.signature(with_types=False, for_call=True))
+  __dace_exit_{name}({params});\n\n'''.format(name=sdfg.name,
+                                              params=sdfg.signature(
+                                                  with_types=False,
+                                                  for_call=True))
 
     res = includes
     res += header
@@ -140,6 +142,7 @@ def generate_code(sdfg) -> List[CodeObject]:
         CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
                    'Frame', target_name="cpu", environments=used_environments)
     ]
+
     # Create code objects for each target
     for tgt in used_targets:
         target_objects.extend(tgt.get_generated_codeobjects())

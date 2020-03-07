@@ -45,10 +45,9 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     _arrays_removed = 0
     _maps_transformed = 0
 
-    fullcopy = Property(
-        desc="Copy whole arrays rather than used subset",
-        dtype=bool,
-        default=False)
+    fullcopy = Property(desc="Copy whole arrays rather than used subset",
+                        dtype=bool,
+                        default=False)
 
     nested_seq = Property(
         desc="Makes nested code semantically-equivalent to single-core code,"
@@ -255,12 +254,11 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                 if len(actual_dims) == 0:  # abort
                     actual_dims = [len(full_shape) - 1]
                 if isinstance(array, data.Scalar):
-                    sdfg.add_array(
-                        name=cloned_name,
-                        shape=[1],
-                        dtype=array.dtype,
-                        transient=True,
-                        storage=dtypes.StorageType.GPU_Global)
+                    sdfg.add_array(name=cloned_name,
+                                   shape=[1],
+                                   dtype=array.dtype,
+                                   transient=True,
+                                   storage=dtypes.StorageType.GPU_Global)
                 elif isinstance(array, data.Stream):
                     sdfg.add_stream(
                         name=cloned_name,
@@ -328,12 +326,11 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                 if len(actual_dims) == 0:  # abort
                     actual_dims = [len(full_shape) - 1]
                 if isinstance(array, data.Scalar):
-                    sdfg.add_array(
-                        name=cloned_name,
-                        shape=[1],
-                        dtype=array.dtype,
-                        transient=True,
-                        storage=dtypes.StorageType.GPU_Global)
+                    sdfg.add_array(name=cloned_name,
+                                   shape=[1],
+                                   dtype=array.dtype,
+                                   transient=True,
+                                   storage=dtypes.StorageType.GPU_Global)
                 elif isinstance(array, data.Stream):
                     sdfg.add_stream(
                         name=cloned_name,
@@ -495,8 +492,8 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                             continue
                         path = graph.memlet_path(e)
                         if not isinstance(path[0].dst, nodes.CodeNode):
-                            if in_path(
-                                    path, e, nodes.EntryNode, forward=False):
+                            if in_path(path, e, nodes.EntryNode,
+                                       forward=False):
                                 if isinstance(parent, nodes.CodeNode):
                                     # Output edge
                                     break
