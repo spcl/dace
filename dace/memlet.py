@@ -25,9 +25,9 @@ class Memlet(object):
     veclen = Property(dtype=int, desc="Vector length")
     num_accesses = SymbolicProperty(default=0)
     subset = SubsetProperty(default=subsets.Range([]))
-    replication_subset = SubsetProperty(default=None, allow_none=True)
+    dist_subset = SubsetProperty(default=None, allow_none=True)
     other_subset = SubsetProperty(allow_none=True)
-    other_repl_subset = SubsetProperty(default=None, allow_none=True)
+    other_dist_subset = SubsetProperty(default=None, allow_none=True)
     data = DataProperty()
     debuginfo = DebugInfoProperty()
     wcr = LambdaProperty(allow_none=True)
@@ -44,9 +44,9 @@ class Memlet(object):
                  vector_length,
                  wcr=None,
                  wcr_identity=None,
-                 replication_subset=None,
+                 dist_subset=None,
                  other_subset=None,
-                 other_repl_subset=None,
+                 other_dist_subset=None,
                  debuginfo=None,
                  wcr_conflict=True):
         """ Constructs a Memlet.
@@ -70,11 +70,11 @@ class Memlet(object):
             :param wcr_identity: Identity value used for the first write
                                  conflict. B{Note:} this parameter will soon
                                  be deprecated.
-            :param replication_subset: The replication subset of `data` that is
+            :param dist_subset: The dist subset of `data` that is
                                        going to be accessed.
             :param other_subset: The reindexing of `subset` on the other
                                  connected data.
-            :param other_repl_subset: The reindexing of `replication_subset` on
+            :param other_dist_subset: The reindexing of `dist_subset` on
                                       the other connected data.
             :param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
@@ -87,7 +87,7 @@ class Memlet(object):
         # Properties
         self.num_accesses = num_accesses  # type: sympy.expr.Expr
         self.subset = subset  # type: subsets.Subset
-        self.replication_subset = replication_subset  # type: subsets.Subset
+        self.dist_subset = dist_subset  # type: subsets.Subset
         self.veclen = vector_length  # type: int
         if hasattr(data, 'data'):
             data = data.data
@@ -101,7 +101,7 @@ class Memlet(object):
         # The subset of the other endpoint we are copying from/to (note:
         # carries the dimensionality of the other endpoint too!)
         self.other_subset = other_subset
-        self.other_repl_subset = other_repl_subset
+        self.other_dist_subset = other_dist_subset
 
         self.debuginfo = debuginfo
 
@@ -129,9 +129,9 @@ class Memlet(object):
                veclen=1,
                wcr_str=None,
                wcr_identity=None,
-               replication_subset_str=None,
+               dist_subset_str=None,
                other_subset_str=None,
-               other_repl_subset_str=None,
+               other_dist_subset_str=None,
                wcr_conflict=True,
                num_accesses=None,
                debuginfo=None):
@@ -154,12 +154,12 @@ class Memlet(object):
             :param wcr_identity: Identity value used for the first write
                                  conflict. B{Note:} this parameter will soon
                                  be deprecated.
-            :param replication_subset_str: The replication subset of `data`
+            :param dist_subset_str: The dist subset of `data`
                                            that is going to be accessed in
                                            string format.Example: '0:P'.
             :param other_subset_str: The reindexing of `subset` on the other
                                      connected data (as a string).
-            :param other_repl_subset_str: The reindexing of `replication_subset`
+            :param other_dist_subset_str: The reindexing of `dist_subset`
                                           on the other connected data
                                           (as a string).
             :param wcr_conflict: If False, forces non-locked conflict
@@ -186,22 +186,22 @@ class Memlet(object):
         else:
             wcr = None
 
-        if replication_subset_str is not None:
-            replication_subset = SubsetProperty.from_string(
-                replication_subset_str)
+        if dist_subset_str is not None:
+            dist_subset = SubsetProperty.from_string(
+                dist_subset_str)
         else:
-            replication_subset = None
+            dist_subset = None
 
         if other_subset_str is not None:
             other_subset = SubsetProperty.from_string(other_subset_str)
         else:
             other_subset = None
         
-        if other_repl_subset_str is not None:
-            other_repl_subset = SubsetProperty.from_string(
-                other_repl_subset_str)
+        if other_dist_subset_str is not None:
+            other_dist_subset = SubsetProperty.from_string(
+                other_dist_subset_str)
         else:
-            other_repl_subset = None
+            other_dist_subset = None
 
         # If it is an access node or another memlet
         if hasattr(data, 'data'):
@@ -213,9 +213,9 @@ class Memlet(object):
                       veclen,
                       wcr=wcr,
                       wcr_identity=wcr_identity,
-                      replication_subset=replication_subset,
+                      dist_subset=dist_subset,
                       other_subset=other_subset,
-                      other_repl_subset=other_repl_subset,
+                      other_dist_subset=other_dist_subset,
                       wcr_conflict=wcr_conflict,
                       debuginfo=debuginfo)
 
@@ -231,17 +231,17 @@ class Memlet(object):
 
     def __hash__(self):
         return hash((self.data, self.num_accesses, self.subset, self.veclen,
-                     str(self.wcr), self.wcr_identity, self.replication_subset,
-                     self.other_subset, self.other_repl_subset))
+                     str(self.wcr), self.wcr_identity, self.dist_subset,
+                     self.other_subset, self.other_dist_subset))
 
     def __eq__(self, other):
         return all([
             self.data == other.data, self.num_accesses == other.num_accesses,
             self.subset == other.subset, self.veclen == other.veclen,
             self.wcr == other.wcr, self.wcr_identity == other.wcr_identity,
-            self.replication_subset == other.replication_subset,
+            self.dist_subset == other.dist_subset,
             self.other_subset == other.other_subset,
-            self.other_repl_subset == other.other_repl_subset
+            self.other_dist_subset == other.other_dist_subset
         ])
 
     def num_elements(self):
@@ -270,12 +270,12 @@ class Memlet(object):
         if self.data is None:
             return self._label(None)
         return self._label(sdfg.arrays[self.data].shape,
-                           sdfg.arrays[self.data].replication_shape)
+                           sdfg.arrays[self.data].dist_shape)
 
     def __str__(self):
         return self._label(None)
 
-    def _label(self, shape, replication_shape=None):
+    def _label(self, shape, dist_shape=None):
         result = ''
         if self.data is not None:
             result = self.data
@@ -291,8 +291,8 @@ class Memlet(object):
                 result += '(%s) ' % SymbolicProperty.to_string(
                     self.num_accesses)
 
-        if replication_shape and self.replication_subset:
-            result += '{[%s]' % str(self.replication_subset)
+        if dist_shape and self.dist_subset:
+            result += '{[%s]' % str(self.dist_subset)
 
         arrayNotation = True
         try:
@@ -305,11 +305,11 @@ class Memlet(object):
             pass
         if arrayNotation:
             partial_result = '[%s]' % str(self.subset)
-            if replication_shape and self.replication_subset:
+            if dist_shape and self.dist_subset:
                 result += ', %s}' % partial_result
             else:
                 result += partial_result
-        elif replication_shape and self.replication_subset:
+        elif dist_shape and self.dist_subset:
             result += '}'
         if self.wcr is not None and str(self.wcr) != '':
             # Autodetect reduction type
@@ -325,15 +325,15 @@ class Memlet(object):
                 result += ', id: %s' % str(self.wcr_identity)
             result += ')'
 
-        if replication_shape and self.other_repl_subset:
-            result += ' -> {[%s]' % str(self.other_repl_subset)
+        if dist_shape and self.other_dist_subset:
+            result += ' -> {[%s]' % str(self.other_dist_subset)
         if self.other_subset is not None:
             partial_result = '[%s]' % str(self.other_subset)
-            if replication_shape and self.other_repl_subset:
+            if dist_shape and self.other_dist_subset:
                 result += ', %s}' % partial_result
             else:
                 result += ' -> %s' % partial_result
-        elif replication_shape and self.other_repl_subset:
+        elif dist_shape and self.other_dist_subset:
             result += '}'
         return result
 
