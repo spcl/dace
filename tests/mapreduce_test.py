@@ -10,6 +10,7 @@ W = dace.symbol('W')
 H = dace.symbol('H')
 
 
+
 @dace.program(dace.float32[H, W], dace.float32[H, W], dace.float32[1])
 def mapreduce_test(A, B, sum):
     tmp = dace.define_local([H, W], dace.float32)

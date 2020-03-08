@@ -54,7 +54,7 @@ setup(
         '': [
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
             'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
-            'codegen/Xilinx_HLS.tcl.in'
+            'codegen/Xilinx_HLS.tcl.in', 'frontend/onnx/op_signatures.yaml'
         ] + runtime_files + cub_files + diode_files + hlslib_files
     },
     include_package_data=True,

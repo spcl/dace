@@ -265,13 +265,13 @@ class SDFG(OrderedDiGraph):
                 (k, v.to_json())
                 for k, v in sorted(self.undefined_symbols(True).items())
             ]
-        except RuntimeError:
+        except (KeyError, RuntimeError):
             tmp['undefined_symbols'] = []
 
         try:
             tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
                 self.scalar_parameters(True), key=lambda x: x[0])]
-        except RuntimeError:
+        except (KeyError, RuntimeError):
             tmp['scalar_parameters'] = []
 
         # Location in the SDFG list

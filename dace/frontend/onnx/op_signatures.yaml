@@ -1,0 +1,52 @@
+# mostly taken from https://github.com/onnx/onnx/blob/master/docs/Operators.md
+Relu:
+  inputs: ["X: T"]
+  required: 1
+  outputs: ["Y: T"]
+  types:
+    T: {"float16", "float32", "float64"}
+
+Add:
+  inputs: ["A: T", "B: T"]
+  outputs: ["C: T"]
+  required: 2
+  types:
+    T: {"uint32", "uint64", "int32", "int64", "float16", "float32", "float64"}
+
+MatMul:
+  inputs: ["A: T", "B: T"]
+  outputs: ["Y: T"]
+  required: 2
+  types:
+    T: {"uint32", "uint64", "int32", "int64", "float16", "float32", "float64"}
+
+Transpose:
+  inputs: ["data: T"]
+  outputs: ["tranposed: T"]
+  required: 1
+  attributes: ["perm"]
+  types:
+    T: {"uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "bool", "complex64", "complex128"}
+
+Reshape:
+  inputs: ["data: T", "shape: U"]
+  outputs: ["reshaped: T"]
+  required: 2
+  attributes:
+    perm: None
+  types:
+    T: {"uint32", "uint64", "int32", "int64", "float16", "float32", "float64"}
+    U: {"int64"}
+
+Gemm:
+  inputs: ["A: T" , "B: T", "C: T"]
+  outputs: ["Y: T"]
+  required: 2
+  attributes:
+    alpha: 1.0
+    beta: 1.0
+    transA: 0
+    transB: 0
+  types:
+    T: {"uint32", "uint64", "int32", "int64", "float16", "float32", "float64"}
+  
