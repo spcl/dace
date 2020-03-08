@@ -1,5 +1,6 @@
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
+from collections import namedtuple
 import ctypes
 import aenum
 import inspect
@@ -25,6 +26,15 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Global = ()  # Off-chip global memory (DRAM)
     FPGA_Local = ()  # On-chip memory (bulk storage)
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
+
+
+@extensible_enum
+class DataDistributionType(aenum.AutoNumberEnum):
+    """ Available data distribution types in the SDFG. """
+
+    Custom = ()
+    Root = ()
+    Grid = ()
 
 
 @extensible_enum
