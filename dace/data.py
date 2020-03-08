@@ -50,7 +50,7 @@ class Data(object):
 
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
-    replication_shape = ShapeProperty(default=None, allow_none=True)
+    dist_shape = ShapeProperty(default=None, allow_none=True)
     transient = Property(dtype=bool, default=False)
     storage = Property(dtype=dace.dtypes.StorageType,
                        desc="Storage location",
@@ -61,21 +61,21 @@ class Data(object):
         dtype=str,  # Dict[str, symbolic]
         desc='Full storage location identifier (e.g., rank, GPU ID)',
         default='')
-    repl_location = LambdaProperty(allow_none=True)
+    dist_location = LambdaProperty(allow_none=True)
     toplevel = Property(dtype=bool,
                         desc="Allocate array outside of state",
                         default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    def __init__(self, dtype, shape, replication_shape, transient, storage,
-                 location, repl_location, toplevel, debuginfo):
+    def __init__(self, dtype, shape, dist_shape, transient, storage,
+                 location, dist_location, toplevel, debuginfo):
         self.dtype = dtype
         self.shape = shape
-        self.replication_shape = replication_shape
+        self.dist_shape = dist_shape
         self.transient = transient
         self.storage = storage
         self.location = location
-        self.repl_location = repl_location
+        self.dist_location = dist_location
         self.toplevel = toplevel
         self.debuginfo = debuginfo
         self._validate()
@@ -134,19 +134,19 @@ class Scalar(Data):
 
     def __init__(self,
                  dtype,
-                 replication_shape=None,
+                 dist_shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
                  location='',
-                 repl_location=None,
+                 dist_location=None,
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, replication_shape,
+        super(Scalar, self).__init__(dtype, shape, dist_shape,
                                      transient, storage, location,
-                                     repl_location,toplevel, debuginfo)
+                                     dist_location,toplevel, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -163,15 +163,15 @@ class Scalar(Data):
 
     def __repr__(self):
         result = 'Scalar (dtype=%s' % self.dtype
-        if self.replication_shape:
-            result += ', repl_shape=%s' % self.replication_shape
+        if self.dist_shape:
+            result += ', dist_shape=%s' % self.dist_shape
         result += ')'
         return result
 
     def clone(self):
-        return Scalar(self.dtype, self.replication_shape, self.transient,
+        return Scalar(self.dtype, self.dist_shape, self.transient,
                       self.storage, self.allow_conflicts, self.location,
-                      self.repl_location, self.toplevel, self.debuginfo)
+                      self.dist_location, self.toplevel, self.debuginfo)
 
     @property
     def strides(self):
@@ -190,13 +190,13 @@ class Scalar(Data):
             return False
         if self.dtype != other.type:
             return False
-        # Test replication shape
-        if (self.replication_shape and not other.replication_shape or
-                not self.replication_shape and other.replication_shape):
+        # Test dist shape
+        if (self.dist_shape and not other.dist_shape or
+                not self.dist_shape and other.dist_shape):
             return False
-        if self.replication_shape:
-            for dim, otherdim in zip(self.replication_shape,
-                                     other.replication_shape):
+        if self.dist_shape:
+            for dim, otherdim in zip(self.dist_shape,
+                                     other.dist_shape):
                 if otherdim != dim:
                     return False
         return True
@@ -284,13 +284,13 @@ class Array(Data):
     def __init__(self,
                  dtype,
                  shape,
-                 replication_shape=None,
+                 dist_shape=None,
                  materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
                  location='',
-                 repl_location=None,
+                 dist_location=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -298,8 +298,8 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
-        super(Array, self).__init__(dtype, shape, replication_shape, transient,
-                                    storage, location, repl_location, toplevel,
+        super(Array, self).__init__(dtype, shape, dist_shape, transient,
+                                    storage, location, dist_location, toplevel,
                                     debuginfo)
 
         if shape is None:
@@ -325,16 +325,16 @@ class Array(Data):
 
     def __repr__(self):
         result = 'Array (dtype=%s, shape=%s' % (self.dtype, self.shape)
-        if self.replication_shape:
-            result += ', repl_shape=%s' % self.replication_shape
+        if self.dist_shape:
+            result += ', dist_shape=%s' % self.dist_shape
         result += ')'
         return result
 
     def clone(self):
-        return Array(self.dtype, self.shape, self.replication_shape,
+        return Array(self.dtype, self.shape, self.dist_shape,
                      self.materialize_func, self.transient,
                      self.allow_conflicts, self.storage, self.location,
-                     self.repl_location, self.strides, self.offset,
+                     self.dist_location, self.strides, self.offset,
                      self.may_alias, self.toplevel, self.debuginfo,
                      self.total_size)
 
@@ -432,13 +432,13 @@ class Array(Data):
             if otherdim != dim:
                 return False
 
-        # Test replication shape
-        if (self.replication_shape and not other.replication_shape or
-                not self.replication_shape and other.replication_shape):
+        # Test dist shape
+        if (self.dist_shape and not other.dist_shape or
+                not self.dist_shape and other.dist_shape):
             return False
-        if self.replication_shape:
-            for dim, otherdim in zip(self.replication_shape,
-                                     other.replication_shape):
+        if self.dist_shape:
+            for dim, otherdim in zip(self.dist_shape,
+                                     other.dist_shape):
                 if otherdim != dim:
                     return False
         return True
@@ -498,11 +498,11 @@ class Stream(Data):
                  veclen,
                  buffer_size,
                  shape=None,
-                 replication_shape=None,
+                 dist_shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  location='',
-                 repl_location=None,
+                 dist_location=None,
                  offset=None,
                  toplevel=False,
                  debuginfo=None):
@@ -520,9 +520,9 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, replication_shape,
+        super(Stream, self).__init__(dtype, shape, dist_shape,
                                      transient, storage, location,
-                                     repl_location, toplevel, debuginfo)
+                                     dist_location, toplevel, debuginfo)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -546,8 +546,8 @@ class Stream(Data):
 
     def __repr__(self):
         result = 'Stream (dtype=%s, shape=%s' % (self.dtype, self.shape)
-        if self.replication_shape:
-            result += ', repl_shape=%s' % self.replication_shape
+        if self.dist_shape:
+            result += ', dist_shape=%s' % self.dist_shape
         result += ')'
         return result
 
@@ -561,8 +561,8 @@ class Stream(Data):
 
     def clone(self):
         return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
-                      self.replication_shape, self.transient, self.storage,
-                      self.location, self.repl_location, self.offset,
+                      self.dist_shape, self.transient, self.storage,
+                      self.location, self.dist_location, self.offset,
                       self.toplevel, self.debuginfo)
 
     # Checks for equivalent shape and type
@@ -583,13 +583,13 @@ class Stream(Data):
             if dim != otherdim:
                 return False
         
-        # Test replication shape
-        if (self.replication_shape and not other.replication_shape or
-                not self.replication_shape and other.replication_shape):
+        # Test dist shape
+        if (self.dist_shape and not other.dist_shape or
+                not self.dist_shape and other.dist_shape):
             return False
-        if self.replication_shape:
-            for dim, otherdim in zip(self.replication_shape,
-                                     other.replication_shape):
+        if self.dist_shape:
+            for dim, otherdim in zip(self.dist_shape,
+                                     other.dist_shape):
                 if otherdim != dim:
                     return False
         return True
