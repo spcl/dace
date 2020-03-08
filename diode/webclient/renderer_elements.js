@@ -233,16 +233,16 @@ class Edge extends SDFGElement {
                 return;
             }
             let contents = attr.data;
-            if (attr.replication_subset) {
-                let repsubset = sdfg_property_to_string(attr.replication_subset).slice(1, -1);
+            if (attr.dist_subset) {
+                let repsubset = sdfg_property_to_string(attr.dist_subset).slice(1, -1);
                 let subset = sdfg_property_to_string(attr.subset).slice(1, -1);
                 contents += '[<span style="color: turquoise">' + repsubset + '</span>, ' + subset + ']';
             } else
                 contents += sdfg_property_to_string(attr.subset);
             
-            if (attr.other_subset || attr.other_repl_subset) {
-                if (attr.other_repl_subset) {
-                    let repsubset = sdfg_property_to_string(attr.other_repl_subset).slice(1, -1);
+            if (attr.other_subset || attr.other_dist_subset) {
+                if (attr.other_dist_subset) {
+                    let repsubset = sdfg_property_to_string(attr.other_dist_subset).slice(1, -1);
                     let subset = sdfg_property_to_string(attr.other_subset).slice(1, -1);
                     contents += ' -> [<span style="color: turquoise">' + repsubset + '</span>, ' + subset + ']';
                 } else
