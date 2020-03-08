@@ -249,7 +249,12 @@ class CPPUnparser:
                 self.dispatch(t)
         except TypeError:
             meth = getattr(self, "_" + tree.__class__.__name__)
-            return meth(tree, infer_type=infer_type)
+            try:
+                return meth(tree, infer_type=infer_type)
+            except TypeError:
+                if infer_type is True:
+                    raise  # We need to implement infer_type
+                return meth(tree)
 
     ############### Unparsing methods ######################
     # There should be one method per concrete grammar type #
