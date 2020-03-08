@@ -11,7 +11,7 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 import warnings
 import numpy as np
 import sympy as sp
@@ -31,6 +31,13 @@ from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
                              OrderedDictProperty)
+
+
+# Type hints
+Integer = Union[int, dace.symbolic.symbol]
+ShapeTuple = Tuple[Integer]
+ShapeList = List[Integer]
+Shape = Union[ShapeTuple, ShapeList]
 
 
 def getcaller() -> Tuple[str, int]:
@@ -1582,6 +1589,130 @@ subgraph cluster_state_{state} {{
                       ed.InterstateEdge(assignments=incr))
 
         return before_state, guard, after_state
+
+    def grid_dist_location(
+            self,
+            data: dt.Data,
+            subset: sbs.Subset
+    ) -> Set[Integer]:
+        factors = [[] * len(subset)]
+        multiplier = 1
+        for i, (r, s) in reversed(list(
+                enumerate(zip(subset, data.dist_shape)))
+        ):
+            if isinstance(r, (list, tuple)):
+                for j in range(r[0], r[1]+1):
+                    factors[i].append(j * multiplier)
+            else:
+                factors[i].append(r * multiplier)
+            multiplier *= s
+
+        flen = [len(l) for l in factors]
+        ranks = set()
+        for f in itertools.product(*[range(l) for l in flen]):
+            ranks.add(sum([factors[i] for i in f]))
+        
+        return ranks
+
+    def distribute_data(
+            self,
+            data_name: str,
+            dist_type: dtypes.DataDistributionType,
+            dist_shape: Shape = None,
+            local_shape: Shape = None,
+            dist_location: Callable[[sbs.Subset], Set[Integer]] = None,
+            inv_location: Callable[[sbs.Subset], sbs.Subset] = None
+    ):
+        data = self.arrays[data_name]
+
+        if dist_type == dtypes.DataDistributionType.Root:
+            data.dist_shape = (1,)
+            data.dist_location = 'lambda s, d, x: set([0])'
+
+            visited_edges = set()
+            for state in self.nodes():
+                for node in state.nodes():
+                    if isinstance(node, nd.AccessNode):
+                        for e1 in state.all_edges(node):
+                            for e2 in state.memlet_tree(e1):
+                                if (e2 in visited_edges or
+                                        e2.data.data != data_name):
+                                    continue
+                                if e2.dst == node and e2.data.other_subset:
+                                    e2.data.other_dist_subset = sbs.Range(
+                                        [(0, 0, 1)])
+                                else:
+                                    e2.data.dist_subset = sbs.Range(
+                                        [(0, 0, 1)])
+                                visited_edges.add(e2)
+
+        elif dist_type == dtypes.DataDistributionType.Grid:
+            if len(dist_shape) != len(data.shape):
+                raise ValueError("Distributed shape must have the same length"
+                                 " as the shape of the data.")
+            
+            data.dist_shape = dist_shape
+            data.shape = [
+                symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, d))
+                for s, d in zip(data.shape, dist_shape)]
+            data.dist_location = 'lambda s, d, x: s.grid_dist_location(d, x)'
+
+            visited_edges = set()
+            for state in self.nodes():
+                for node in state.nodes():
+                    if isinstance(node, nd.AccessNode):
+                        for e1 in state.all_edges(node):
+                            for e2 in state.memlet_tree(e1):
+                                if (e2 in visited_edges or
+                                        e2.data.data != data_name):
+                                    continue
+                                ranges = []
+                                if e2.dst == node and e2.data.other_subset:
+                                    for r, s in zip(e2.data.other_subset,
+                                                    data.shape
+                                    ):
+                                        if isinstance(r, (list, tuple)):
+                                            ranges.append((
+                                                symbolic.pystr_to_symbolic(
+                                                    "{} % {}".format(r[0], s)
+                                                ),
+                                                symbolic.pystr_to_symbolic(
+                                                    "{} % {}".format(r[1], s)
+                                                ),
+                                                1
+                                            ))
+                                    e2.data.other_dist_subset = sbs.Range(
+                                        ranges)
+                                else:
+                                    for r, s in zip(e2.data.subset,
+                                                    data.shape
+                                    ):
+                                        if isinstance(r, (list, tuple)):
+                                            ranges.append((
+                                                symbolic.pystr_to_symbolic(
+                                                    "{} % {}".format(r[0], s)
+                                                ),
+                                                symbolic.pystr_to_symbolic(
+                                                    "{} % {}".format(r[1], s)
+                                                ),
+                                                1
+                                            ))
+                                    e2.data.dist_subset = sbs.Range(
+                                        ranges)
+                                visited_edges.add(e2)
+
+        elif dist_type == dtypes.DataDistributionType.Custom:
+            if dist_shape is None:
+                raise ValueError("Distibuted shape cannot be None.")
+            if local_shape is None:
+                local_shape = data.shape
+            if dist_location is None:
+                raise ValueError("Distributed location cannot be None.")
+        
+            data.dist_shape = dist_shape
+            data.shape = local_shape
+            data.dist_location = dist_location
+
 
     # SDFG queries
     ##############################
