@@ -7,9 +7,10 @@ from dace.codegen.targets.cpp import *
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.graph import nodes, nxutil
-from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
-                       is_devicelevel, is_array_stream_view,
-                       NodeNotExpandedError)
+from dace.graph.graph import MultiConnectorEdge
+from dace.sdfg import (ScopeSubgraphView, SDFG, SDFGState,
+                       scope_contains_scope, is_devicelevel,
+                       is_array_stream_view, NodeNotExpandedError)
 
 _REDUCTION_TYPE_TO_OPENMP = {
     dtypes.ReductionType.Max: 'max',
@@ -709,10 +710,17 @@ class CPUCodeGen(TargetCodeGenerator):
             # Skip array->code (will be handled as a tasklet input)
             if isinstance(node, nodes.AccessNode) and isinstance(
                     v, nodes.CodeNode):
+                self.generate_movement_src(sdfg, dfg, state_id, node, dst_node,
+                                           edge, False, function_stream,
+                                           result, result)
                 continue
 
             # code->code (e.g., tasklet to tasklet)
             if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
+                after_stream = CodeIOStream()
+                self.generate_movement_src(sdfg, dfg, state_id, node, dst_node,
+                                           edge, True, function_stream, result,
+                                           after_stream)
                 shared_data_name = edge.data.data
                 result.write(
                     "%s = %s;" % (shared_data_name, edge.src_conn),
@@ -720,22 +728,38 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     [edge.src, edge.dst],
                 )
+                result.write(after_stream.getvalue())
                 continue
 
             # If the memlet is not pointing to a data node (e.g. tasklet), then
             # the tasklet will take care of the copy
             if not isinstance(dst_node, nodes.AccessNode):
+                self.generate_movement_src(sdfg, dfg, state_id, node, dst_node,
+                                           edge, False, function_stream,
+                                           result, result)
                 continue
             # If the memlet is pointing into an array in an inner scope, then
             # the inner scope (i.e., the output array) must handle it
             if scope_dict[
                     node] != scope_dict[dst_node] and scope_contains_scope(
                         scope_dict, node, dst_node):
+                self.generate_movement_src(sdfg, dfg, state_id, node, dst_node,
+                                           edge, False, function_stream,
+                                           result, result)
                 continue
 
             # Array to tasklet (path longer than 1, handled at tasklet entry)
             if node == dst_node:
+                self.generate_movement_src(sdfg, dfg, state_id, node, dst_node,
+                                           edge, False, function_stream,
+                                           result, result)
                 continue
+
+            # We are responsible to write the copy, emit the source copy
+            after_stream = CodeIOStream()
+            self.generate_movement_src(sdfg, dfg, state_id, node, dst_node,
+                                       edge, False, function_stream, result,
+                                       after_stream)
 
             # Tasklet -> array
             if isinstance(node, nodes.CodeNode):
@@ -793,6 +817,9 @@ class CPUCodeGen(TargetCodeGenerator):
                         function_stream,
                         result,
                     )
+
+            # Write the after-copy hook value
+            result.write(after_stream.getvalue())
 
     def memlet_view_ctor(self, sdfg, memlet, is_output):
         memlet_params = []
@@ -1075,6 +1102,12 @@ class CPUCodeGen(TargetCodeGenerator):
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
+
+                after_stream = CodeIOStream()
+                self.generate_movement_dst(sdfg, dfg, state_id, src_node, node,
+                                           edge, True, function_stream,
+                                           callsite_stream, after_stream)
+
                 # Special case: code->code
                 if isinstance(src_node, nodes.CodeNode):
                     shared_data_name = edge.data.data
@@ -1093,7 +1126,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     )
                     self._dispatcher.defined_vars.add(edge.dst_conn,
                                                       DefinedType.Scalar)
-
                 else:
                     self._dispatcher.dispatch_copy(
                         src_node,
@@ -1110,6 +1142,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1,
                                     sdfg.arrays[memlet.data].dtype.ctype)
                 arrays.add(edge.dst_conn)
+                inner_stream.write(after_stream.getvalue())
 
         inner_stream.write("\n", sdfg, state_id, node)
 
@@ -1199,7 +1232,6 @@ class CPUCodeGen(TargetCodeGenerator):
                                                   DefinedType.Scalar)
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
                                     sdfg.arrays[memlet.data].dtype.ctype)
-                locals_defined = True
 
         # Emit post-memlet tasklet preamble code
         callsite_stream.write(after_memlets_stream.getvalue())
@@ -2023,6 +2055,11 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                 # (copies are generated at the inner scope, where both arrays exist)
                 if (scope_contains_scope(sdict, src_node, node)
                         and sdict[src_node] != sdict[node]):
+                    after_stream = CodeIOStream()
+                    self.generate_movement_dst(sdfg, dfg, state_id, src_node,
+                                               node, edge, True,
+                                               function_stream,
+                                               callsite_stream, after_stream)
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -2033,6 +2070,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                         function_stream,
                         callsite_stream,
                     )
+                    callsite_stream.write(after_stream.getvalue())
+                else:
+                    self.generate_movement_dst(sdfg, dfg, state_id, src_node,
+                                               node, edge, False,
+                                               function_stream,
+                                               callsite_stream,
+                                               callsite_stream)
 
         # Process outgoing memlets (array-to-array write should be emitted
         # from the first leading edge out of the array)
@@ -2054,7 +2098,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         """
         Generates code for the beginning of an SDFG scope, outputting it to
         the given code streams.
-        :param sdfg: The SDFG to generate code from.
+        :param sdfg: The SDFG to generate code for.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
         :param function_stream: A `CodeIOStream` object that will be
@@ -2074,7 +2118,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         """
         Generates code for the end of an SDFG scope, outputting it to
         the given code streams.
-        :param sdfg: The SDFG to generate code from.
+        :param sdfg: The SDFG to generate code for.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
         :param function_stream: A `CodeIOStream` object that will be
@@ -2096,7 +2140,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         """
         Generates code for the beginning of a tasklet. This method is
         intended to be overloaded by subclasses.
-        :param sdfg: The SDFG to generate code from.
+        :param sdfg: The SDFG to generate code for.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
         :param node: The tasklet node in the state.
@@ -2116,7 +2160,7 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         """
         Generates code for the end of a tasklet. This method is intended to be
         overloaded by subclasses.
-        :param sdfg: The SDFG to generate code from.
+        :param sdfg: The SDFG to generate code for.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
         :param node: The tasklet node in the state.
@@ -2127,5 +2171,67 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
                                       code before output memlets are generated.
         :param after_memlets_stream: A `CodeIOStream` object that will emit code
                                      after output memlets are generated.
+        """
+        pass
+
+    def generate_movement_src(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView,
+                              state_id: int, src_node: nodes.Node,
+                              dst_node: nodes.Node, edge: MultiConnectorEdge,
+                              src_is_instigator: bool,
+                              function_stream: CodeIOStream,
+                              before_movement_stream: CodeIOStream,
+                              after_movement_stream: CodeIOStream):
+        """
+        Generates code for a data movement (copy) at the source location.
+        :param sdfg: The SDFG to generate code for.
+        :param dfg_scope: The `ScopeSubgraphView` to generate code from.
+        :param state_id: The node ID of the state in the given SDFG.
+        :param src_node: Source (this) node at the beginning of the memlet path.
+        :param dst_node: Destination node at the end of the memlet path.
+        :param edge: The edge adjacent to the source representing the copy.
+        :param src_is_instigator: True iff the source node is the one
+                                  responsible to generate the copy. True means
+                                  that this is the node with the innermost
+                                  scope, i.e., coming out of a tasklet.
+        :param function_stream: A `CodeIOStream` object that will be
+                                generated outside the calling code, for
+                                use when generating global functions.
+        :param before_movement_stream: A `CodeIOStream` object that will emit
+                                      code before the movement is generated, if
+                                      `src_is_instigator` is True.
+        :param after_movement_stream: A `CodeIOStream` object that will emit
+                                      code before the movement is generated, if
+                                      `src_is_instigator` is True.
+        """
+        pass
+
+    def generate_movement_dst(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView,
+                              state_id: int, src_node: nodes.Node,
+                              dst_node: nodes.Node, edge: MultiConnectorEdge,
+                              dst_is_instigator: bool,
+                              function_stream: CodeIOStream,
+                              before_movement_stream: CodeIOStream,
+                              after_movement_stream: CodeIOStream):
+        """
+        Generates code for a data movement (copy) at the destination location.
+        :param sdfg: The SDFG to generate code for.
+        :param dfg_scope: The `ScopeSubgraphView` to generate code from.
+        :param state_id: The node ID of the state in the given SDFG.
+        :param src_node: Source node at the beginning of the memlet path.
+        :param dst_node: Destination (this) node at the end of the memlet path.
+        :param edge: The edge adjacent to the destination representing the copy.
+        :param dst_is_instigator: True iff the destination node is the one
+                                  responsible to generate the copy. True means
+                                  that this is the node with the innermost
+                                  scope, i.e., a tasklet input.
+        :param function_stream: A `CodeIOStream` object that will be
+                                generated outside the calling code, for
+                                use when generating global functions.
+        :param before_movement_stream: A `CodeIOStream` object that will emit
+                                      code before the movement is generated, if
+                                      `dst_is_instigator` is True.
+        :param after_movement_stream: A `CodeIOStream` object that will emit
+                                      code before the movement is generated, if
+                                      `dst_is_instigator` is True.
         """
         pass
