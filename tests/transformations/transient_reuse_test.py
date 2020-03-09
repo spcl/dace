@@ -11,7 +11,7 @@ M = dace.symbol('M')
 
 @dace.program
 def operation(A: dace.float64[M, M], B: dace.float64[M, M], C: dace.float64[M, M]):
-    C[:] = A @ B @ A @ B @ A
+    C[:] = A @ (A @ B) @ (A @ B) @ B
 
 
 if __name__ == "__main__":
@@ -37,7 +37,7 @@ if __name__ == "__main__":
         dace.timethis('gemm', 'numpy', (2 * M.get() * M.get() * M.get()),
                       np.dot, A, B, C_regression)
     else:
-        C_regression = np.dot(np.dot(np.dot(np.dot(A, B), A), B), A)
+        C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), B)
 
     diff = np.linalg.norm(C_regression - C) / (M.get() * M.get())
     print("Difference:", diff)
