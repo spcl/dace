@@ -32,7 +32,6 @@ from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
 from dace.properties import (make_properties, Property, CodeProperty,
                              OrderedDictProperty)
 
-
 # Type hints
 Integer = Union[int, dace.symbolic.symbol]
 ShapeTuple = Tuple[Integer]
@@ -1590,18 +1589,14 @@ subgraph cluster_state_{state} {{
 
         return before_state, guard, after_state
 
-    def grid_dist_location(
-            self,
-            data: dt.Data,
-            subset: sbs.Subset
-    ) -> Set[Integer]:
+    def grid_dist_location(self, data: dt.Data,
+                           subset: sbs.Subset) -> Set[Integer]:
         factors = [[] * len(subset)]
         multiplier = 1
-        for i, (r, s) in reversed(list(
-                enumerate(zip(subset, data.dist_shape)))
-        ):
+        for i, (r, s) in reversed(list(enumerate(zip(subset,
+                                                     data.dist_shape)))):
             if isinstance(r, (list, tuple)):
-                for j in range(r[0], r[1]+1):
+                for j in range(r[0], r[1] + 1):
                     factors[i].append(j * multiplier)
             else:
                 factors[i].append(r * multiplier)
@@ -1611,7 +1606,7 @@ subgraph cluster_state_{state} {{
         ranks = set()
         for f in itertools.product(*[range(l) for l in flen]):
             ranks.add(sum([factors[i] for i in f]))
-        
+
         return ranks
 
     def distribute_data(
@@ -1621,12 +1616,11 @@ subgraph cluster_state_{state} {{
             dist_shape: Shape = None,
             local_shape: Shape = None,
             dist_location: Callable[[sbs.Subset], Set[Integer]] = None,
-            inv_location: Callable[[sbs.Subset], sbs.Subset] = None
-    ):
+            inv_location: Callable[[sbs.Subset], sbs.Subset] = None):
         data = self.arrays[data_name]
 
         if dist_type == dtypes.DataDistributionType.Root:
-            data.dist_shape = (1,)
+            data.dist_shape = (1, )
             data.dist_location = 'lambda s, d, x: set([0])'
 
             visited_edges = set()
@@ -1635,26 +1629,28 @@ subgraph cluster_state_{state} {{
                     if isinstance(node, nd.AccessNode):
                         for e1 in state.all_edges(node):
                             for e2 in state.memlet_tree(e1):
-                                if (e2 in visited_edges or
-                                        e2.data.data != data_name):
+                                if (e2 in visited_edges
+                                        or e2.data.data != data_name):
                                     continue
                                 if e2.dst == node and e2.data.other_subset:
-                                    e2.data.other_dist_subset = sbs.Range(
-                                        [(0, 0, 1)])
+                                    e2.data.other_dist_subset = sbs.Range([
+                                        (0, 0, 1)
+                                    ])
                                 else:
-                                    e2.data.dist_subset = sbs.Range(
-                                        [(0, 0, 1)])
+                                    e2.data.dist_subset = sbs.Range([(0, 0, 1)
+                                                                     ])
                                 visited_edges.add(e2)
 
         elif dist_type == dtypes.DataDistributionType.Grid:
             if len(dist_shape) != len(data.shape):
                 raise ValueError("Distributed shape must have the same length"
                                  " as the shape of the data.")
-            
+
             data.dist_shape = dist_shape
             data.shape = [
                 symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, d))
-                for s, d in zip(data.shape, dist_shape)]
+                for s, d in zip(data.shape, dist_shape)
+            ]
             data.dist_location = 'lambda s, d, x: s.grid_dist_location(d, x)'
 
             visited_edges = set()
@@ -1663,42 +1659,33 @@ subgraph cluster_state_{state} {{
                     if isinstance(node, nd.AccessNode):
                         for e1 in state.all_edges(node):
                             for e2 in state.memlet_tree(e1):
-                                if (e2 in visited_edges or
-                                        e2.data.data != data_name):
+                                if (e2 in visited_edges
+                                        or e2.data.data != data_name):
                                     continue
                                 ranges = []
                                 if e2.dst == node and e2.data.other_subset:
                                     for r, s in zip(e2.data.other_subset,
-                                                    data.shape
-                                    ):
+                                                    data.shape):
                                         if isinstance(r, (list, tuple)):
-                                            ranges.append((
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[0], s)
-                                                ),
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[1], s)
-                                                ),
-                                                1
-                                            ))
+                                            ranges.append(
+                                                (symbolic.pystr_to_symbolic(
+                                                    "{} % {}".format(r[0], s)),
+                                                 symbolic.pystr_to_symbolic(
+                                                     "{} % {}".format(r[1],
+                                                                      s)), 1))
                                     e2.data.other_dist_subset = sbs.Range(
                                         ranges)
                                 else:
                                     for r, s in zip(e2.data.subset,
-                                                    data.shape
-                                    ):
+                                                    data.shape):
                                         if isinstance(r, (list, tuple)):
-                                            ranges.append((
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[0], s)
-                                                ),
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[1], s)
-                                                ),
-                                                1
-                                            ))
-                                    e2.data.dist_subset = sbs.Range(
-                                        ranges)
+                                            ranges.append(
+                                                (symbolic.pystr_to_symbolic(
+                                                    "{} % {}".format(r[0], s)),
+                                                 symbolic.pystr_to_symbolic(
+                                                     "{} % {}".format(r[1],
+                                                                      s)), 1))
+                                    e2.data.dist_subset = sbs.Range(ranges)
                                 visited_edges.add(e2)
 
         elif dist_type == dtypes.DataDistributionType.Custom:
@@ -1708,11 +1695,10 @@ subgraph cluster_state_{state} {{
                 local_shape = data.shape
             if dist_location is None:
                 raise ValueError("Distributed location cannot be None.")
-        
+
             data.dist_shape = dist_shape
             data.shape = local_shape
             data.dist_location = dist_location
-
 
     # SDFG queries
     ##############################
@@ -3647,9 +3633,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise TypeError("node_id_or_label is not an int nor string")
 
     def is_empty(self):
-        return len([
-            n for n in self.nodes() if not isinstance(n, nd.EmptyTasklet)
-        ]) == 0
+        return self.number_of_nodes() == 0
 
     def fill_scope_connectors(self):
         """ Creates new "IN_%d" and "OUT_%d" connectors on each scope entry

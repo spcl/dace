@@ -1253,11 +1253,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         callsite_stream.write(after_memlets_stream.getvalue())
 
-    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node,
-                               function_stream, callsite_stream):
-        self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream)
-
     def _generate_NestedSDFG(
             self,
             sdfg,

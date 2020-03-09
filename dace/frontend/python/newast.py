@@ -2071,8 +2071,7 @@ class ProgramVisitor(ExtNodeVisitor):
             injected_node_count = 0
             for s in sdfg.nodes():
                 for n in s.nodes():
-                    if (isinstance(n, nodes.Tasklet)
-                            and not isinstance(n, nodes.EmptyTasklet)):
+                    if isinstance(n, nodes.Tasklet):
                         n.add_in_connector(stream_elem)
                         rnode = s.add_read(ntrans)
                         s.add_edge(rnode, None, n, stream_elem,
