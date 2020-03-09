@@ -348,10 +348,10 @@ class CPPUnparser:
                     self.write("auto ")
 
             self.dispatch(target, infer_type)
-            if not isinstance(target, ast.Subscript):
-                self.dtype = self.locals.get_type(target.id)
-            else:
+            if isinstance(target, ast.Subscript) or isinstance(target, ast.Attribute):
                 self.dtype = self.locals.get_type(target.value.id)
+            else:
+                self.dtype = self.locals.get_type(target.id)
 
         self.write(" = ", infer_type)
         self.dispatch(t.value, infer_type)
