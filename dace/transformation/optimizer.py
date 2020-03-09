@@ -21,7 +21,6 @@ class Optimizer(object):
         graph representation, by matching patterns and applying 
         transformations on it.
     """
-
     def __init__(self, sdfg, inplace=False):
         """ Constructs an SDFG optimizer.
             :param sdfg: The SDFG to transform.
@@ -93,12 +92,13 @@ class Optimizer(object):
             _patterns = [p for p in patterns if p in self.patterns]
         for state_id, state in state_enum:
             for pattern in _patterns:
-                yield from pattern_matching.match_pattern(
-                    state, pattern, sdfg, strict=strict)
+                yield from pattern_matching.match_pattern(state,
+                                                          pattern,
+                                                          sdfg,
+                                                          strict=strict)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
-
         def get_actions(actions, graph, match):
             subgraph_node_ids = match.subgraph.values()
             subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
@@ -200,9 +200,9 @@ class SDFGOptimizer(Optimizer):
         """
         sdfg_file = self.sdfg.name + '.sdfg'
         if os.path.isfile(sdfg_file):
-            ui_input = input(
-                'An SDFG with the filename "%s" was found. '
-                'Would you like to use it instead? [Y/n] ' % sdfg_file)
+            ui_input = input('An SDFG with the filename "%s" was found. '
+                             'Would you like to use it instead? [Y/n] ' %
+                             sdfg_file)
             if len(ui_input) == 0 or ui_input[0] not in ['n', 'N']:
                 return dace.SDFG.from_file(sdfg_file)
 
@@ -261,8 +261,8 @@ class SDFGOptimizer(Optimizer):
                 )
                 break
 
-            match_id = (str(occurrence) if pattern_name is None else
-                        '%s$%d' % (pattern_name, occurrence))
+            match_id = (str(occurrence) if pattern_name is None else '%s$%d' %
+                        (pattern_name, occurrence))
             sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
             print('You selected (%s) pattern %s with parameters %s' %
                   (match_id, pattern_match.print_match(sdfg), str(param_dict)))

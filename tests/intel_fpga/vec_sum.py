@@ -25,11 +25,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=24)
-    parser.add_argument(
-        "--compile-only",
-        default=False,
-        action="store_true",
-        dest="compile-only")
+    parser.add_argument("--compile-only",
+                        default=False,
+                        action="store_true",
+                        dest="compile-only")
     args = vars(parser.parse_args())
     dace.config.Config.set("compiler", "intel_fpga", "mode", value="emulator")
 

@@ -1,7 +1,9 @@
 import dace.library
 
+
 def assert_exists(name):
     dace.library.get_library(name)
+
 
 def assert_not_exists(name):
     raised = False
@@ -12,6 +14,7 @@ def assert_not_exists(name):
         pass
     if not raised:
         raise RuntimeError("Library " + name + " exists.")
+
 
 assert_not_exists("FooLib")
 assert_not_exists("BarLib")

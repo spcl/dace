@@ -43,8 +43,8 @@ class ExpandMatMulPure(ExpandTransformation):
         state = sdfg.add_state(node.label + "_state")
 
         ((edge_a, outer_array_a, shape_a),
-         (edge_b, outer_array_b, shape_b)) = _get_matmul_inputs(
-             node, parent_state, parent_sdfg)
+         (edge_b, outer_array_b,
+          shape_b)) = _get_matmul_inputs(node, parent_state, parent_sdfg)
 
         if (len(shape_a) != 2 or len(shape_b) != 2
                 or shape_a[1] != shape_b[0]):
@@ -75,11 +75,10 @@ class ExpandMatMulPure(ExpandTransformation):
             },
             '__c = __a * __b', {
                 '__c':
-                dace.Memlet.simple(
-                    "_c",
-                    '__i0, __i1',
-                    wcr_str='lambda x, y: x + y',
-                    wcr_identity=0)
+                dace.Memlet.simple("_c",
+                                   '__i0, __i1',
+                                   wcr_str='lambda x, y: x + y',
+                                   wcr_identity=0)
             },
             external_edges=True)
 
@@ -129,12 +128,11 @@ class ExpandMatMulMKL(ExpandTransformation):
         code = ("cblas_{f}(CblasRowMajor, CblasNoTrans, CblasNoTrans, "
                 "{m}, {n}, {k}, {a}, _a, {k}, _b, {n}, {b}, _c, {n});").format(
                     f=func, m=m, n=n, k=k, a=alpha, b=beta)
-        tasklet = dace.graph.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP)
+        tasklet = dace.graph.nodes.Tasklet(node.name,
+                                           node.in_connectors,
+                                           node.out_connectors,
+                                           code,
+                                           language=dace.dtypes.Language.CPP)
         return tasklet
 
 
@@ -142,18 +140,17 @@ class ExpandMatMulMKL(ExpandTransformation):
 class MatMul(dace.graph.nodes.LibraryNode):
 
     # Global properties
-    implementations = {
-        "pure": ExpandMatMulPure,
-        "MKL": ExpandMatMulMKL
-    }
+    implementations = {"pure": ExpandMatMulPure, "MKL": ExpandMatMulMKL}
     default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, location=None):
-        super().__init__(
-            name, location=location, inputs={'_a', '_b'}, outputs={'_c'})
+        super().__init__(name,
+                         location=location,
+                         inputs={'_a', '_b'},
+                         outputs={'_c'})
         self.dtype = dtype
 
     def validate(self, sdfg, state):

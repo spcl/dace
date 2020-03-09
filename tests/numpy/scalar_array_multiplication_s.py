@@ -52,26 +52,24 @@ if __name__ == "__main__":
 
     samul = SDFG(name='samul')
     samul.add_node(
-        np_frontend.op_impl.scalar_array_multiplication_s(
-            'alpha',
-            alpha.shape,
-            dace.float64,
-            'A',
-            A.shape,
-            dace.float64,
-            False,
-            'B',
-            B.shape,
-            dace.float64,
-            alpha_index=[2, 7],
-            label='samul'))
+        np_frontend.op_impl.scalar_array_multiplication_s('alpha',
+                                                          alpha.shape,
+                                                          dace.float64,
+                                                          'A',
+                                                          A.shape,
+                                                          dace.float64,
+                                                          False,
+                                                          'B',
+                                                          B.shape,
+                                                          dace.float64,
+                                                          alpha_index=[2, 7],
+                                                          label='samul'))
 
     samul(alpha=alpha, A=A, B=B)
     B_regression = alpha_regression[2, 7] * A_regression
 
-    rel_error = (np.linalg.norm(
-        (B_regression - B).flatten(), ord=2) / np.linalg.norm(
-            B_regression.flatten(), ord=2))
+    rel_error = (np.linalg.norm((B_regression - B).flatten(), ord=2) /
+                 np.linalg.norm(B_regression.flatten(), ord=2))
     print("Relative error:", rel_error)
     print("==== Program end ====")
     exit(0 if rel_error <= 1e-15 else 1)

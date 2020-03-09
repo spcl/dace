@@ -69,12 +69,11 @@ def _method(sdfg: SDFG, sample_data: data.Array):
 @specifies_datatype(datatype=data.Stream)
 def _method(sdfg: SDFG, sample_data: data.Stream):
     name = sdfg.temp_data_name()
-    new_data = sdfg.add_stream(
-        name,
-        sample_data.dtype,
-        buffer_size=sample_data.buffer_size,
-        shape=sample_data.shape,
-        transient=True)
+    new_data = sdfg.add_stream(name,
+                               sample_data.dtype,
+                               buffer_size=sample_data.buffer_size,
+                               shape=sample_data.shape,
+                               transient=True)
     return name, new_data
 
 
@@ -144,8 +143,11 @@ def _define_streamarray(sdfg: SDFG,
                         buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
     name = sdfg.temp_data_name()
-    sdfg.add_stream(
-        name, dtype, shape=shape, buffer_size=buffer_size, transient=True)
+    sdfg.add_stream(name,
+                    dtype,
+                    shape=shape,
+                    buffer_size=buffer_size,
+                    transient=True)
     return name
 
 
@@ -176,8 +178,9 @@ def _reduce(sdfg: SDFG,
             output_subset = copy.deepcopy(input_subset)
             output_subset.pop(axis)
             output_shape = output_subset.size()
-        outarr, arr = sdfg.add_temp_transient(
-            output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
+        outarr, arr = sdfg.add_temp_transient(output_shape,
+                                              sdfg.arrays[inarr].dtype,
+                                              sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
         inarr = input
@@ -218,7 +221,8 @@ def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
     M = M or N
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
-    state.add_mapped_tasklet('eye', dict(i='0:%s' % N, j='0:%s' % M), {},
+    state.add_mapped_tasklet('eye',
+                             dict(i='0:%s' % N, j='0:%s' % M), {},
                              'val = 1 if i == (j - %s) else 0' % k,
                              dict(val=dace.Memlet.simple(name, 'i, j')),
                              external_edges=True)
@@ -241,8 +245,8 @@ def _simple_call(sdfg: SDFG,
     if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
-        tasklet = state.add_tasklet(
-            func, {'__inp'}, {'__out'}, '__out = {f}(__inp)'.format(f=func))
+        tasklet = state.add_tasklet(func, {'__inp'}, {'__out'},
+                                    '__out = {f}(__inp)'.format(f=func))
         state.add_edge(inp, None, tasklet, '__inp',
                        Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None,
@@ -473,8 +477,8 @@ def _scalarbinop(sdfg: SDFG,
                  arrop, ','.join(['__i%d' % i
                                   for i in range(len(arr.shape))])),
          },
-        '__out = %s %s %s' % ('__in2' if reverse else '__in1', opcode, '__in1'
-                              if reverse else '__in2'),
+        '__out = %s %s %s' % ('__in2' if reverse else '__in1', opcode,
+                              '__in1' if reverse else '__in2'),
         {
             '__out':
             Memlet.simple(
@@ -517,11 +521,8 @@ def _neg(visitor: 'ProgramVisitor',
 
 @oprepo.replaces_operator('symbol', 'Add', 'int')
 @oprepo.replaces_operator('symbol', 'Add', 'float')
-def _addsym(visitor: 'ProgramVisitor',
-         sdfg: SDFG,
-         state: SDFGState,
-         op1: symbolic.symbol,
-         op2: Union[int, float]):
+def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+            op1: symbolic.symbol, op2: Union[int, float]):
     return op1 + op2
 
 
@@ -650,19 +651,18 @@ augassign_ops = {
 }
 
 # Define all standard Python unary operators
-for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'), ('Invert',
-                                                                  '~')]:
+for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'),
+                   ('Invert', '~')]:
     _makeunop(op, opcode)
 
 # Define all standard Python binary operators
 # NOTE: ('MatMult', '@') is defined separately
 for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
-                   ('FloorDiv', '//'), ('Mod', '%'), ('Pow', '**'), ('LShift',
-                                                                     '<<'),
-                   ('RShift', '>>'), ('BitOr', '|'), ('BitXor',
-                                                      '^'), ('BitAnd', '&'),
-                   ('And', 'and'), ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='),
-                   ('Lt', '<'), ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
+                   ('FloorDiv', '//'), ('Mod', '%'), ('Pow', '**'),
+                   ('LShift', '<<'), ('RShift', '>>'), ('BitOr', '|'),
+                   ('BitXor', '^'), ('BitAnd', '&'), ('And', 'and'),
+                   ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='), ('Lt', '<'),
+                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
     _makebinop(op, opcode)
 
 
@@ -688,12 +688,12 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     import dace.libraries.blas as blas  # Avoid import loop
     tasklet = blas.MatMul('_MatMult_', restype)
     state.add_node(tasklet)
-    state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(
-        op1, arr1))
-    state.add_edge(acc2, None, tasklet, '_b', dace.Memlet.from_array(
-        op2, arr2))
-    state.add_edge(tasklet, '_c', acc3, None, dace.Memlet.from_array(
-        op3, arr3))
+    state.add_edge(acc1, None, tasklet, '_a',
+                   dace.Memlet.from_array(op1, arr1))
+    state.add_edge(acc2, None, tasklet, '_b',
+                   dace.Memlet.from_array(op2, arr2))
+    state.add_edge(tasklet, '_c', acc3, None,
+                   dace.Memlet.from_array(op3, arr3))
 
     return op3
 
@@ -754,16 +754,15 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
         if dtypes.isconstant(v) and not k in argtypes and k != '_'
     }).visit(src_ast)
 
-    pv = ProgramVisitor(
-        name=f.__name__,
-        filename=src_file,
-        line_offset=src_line,
-        col_offset=0,
-        global_vars=global_vars,
-        constants=constants,
-        scope_arrays=argtypes,
-        scope_vars={},
-        other_sdfgs=other_sdfgs)
+    pv = ProgramVisitor(name=f.__name__,
+                        filename=src_file,
+                        line_offset=src_line,
+                        col_offset=0,
+                        global_vars=global_vars,
+                        constants=constants,
+                        scope_arrays=argtypes,
+                        scope_vars={},
+                        other_sdfgs=other_sdfgs)
 
     sdfg, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
@@ -793,7 +792,6 @@ class DaceSyntaxError(Exception):
 class StructTransformer(ast.NodeTransformer):
     """ A Python AST transformer that replaces `Call`s to create structs with
         the custom StructInitializer AST node. """
-
     def __init__(self, gvars):
         super().__init__()
         self._structs = {
@@ -1074,13 +1072,12 @@ def _parse_memlet(visitor, src: MemletType, dst: MemletType,
     else:
         expr = dstexpr
 
-    return localvar, Memlet(
-        expr.name,
-        expr.accesses,
-        expr.subset,
-        1,
-        wcr=expr.wcr,
-        wcr_identity=expr.wcr_identity)
+    return localvar, Memlet(expr.name,
+                            expr.accesses,
+                            expr.subset,
+                            1,
+                            wcr=expr.wcr,
+                            wcr_identity=expr.wcr_identity)
 
 
 def _subset_has_indirection(subset):
@@ -1198,11 +1195,13 @@ def add_indirection_subgraph(sdfg: SDFG,
             if PVisitor.nested:
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
                 if output:
-                    arrname = PVisitor._add_write_access(
-                        arr_name, arr_rng, target=None)
+                    arrname = PVisitor._add_write_access(arr_name,
+                                                         arr_rng,
+                                                         target=None)
                 else:
-                    arrname = PVisitor._add_read_access(
-                        arr_name, arr_rng, target=None)
+                    arrname = PVisitor._add_read_access(arr_name,
+                                                        arr_rng,
+                                                        target=None)
                 access = [0] * len(access)
                 conn = 'index_%s_%d' % (arr_name, i)
             arr = sdfg.arrays[arrname]
@@ -1228,10 +1227,9 @@ def add_indirection_subgraph(sdfg: SDFG,
                 else:
                     entry = src
                 path = [read_node, entry] + inp_base_path
-            graph.add_memlet_path(
-                *path,
-                dst_conn="index_%s_%d" % (arr_name, i),
-                memlet=indexMemlet)
+            graph.add_memlet_path(*path,
+                                  dst_conn="index_%s_%d" % (arr_name, i),
+                                  memlet=indexMemlet)
 
     #########################
     # Step 3
@@ -1246,9 +1244,9 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
 
-    tasklet.code = code.format(
-        arr='__ind_' + local_name,
-        index=', '.join([symbolic.symstr(s) for s in newsubset]))
+    tasklet.code = code.format(arr='__ind_' + local_name,
+                               index=', '.join(
+                                   [symbolic.symstr(s) for s in newsubset]))
 
     # Create transient variable to trigger the indirect load
     tmp_name = '__' + local_name + '_value'
@@ -1260,12 +1258,11 @@ def add_indirection_subgraph(sdfg: SDFG,
         rng = copy.deepcopy(memlet.subset)
         if isinstance(rng, subsets.Range):
             rng.squeeze()
-        _, storage = sdfg.add_array(
-            tmp_name,
-            rng.bounding_box_size(),
-            array.dtype,
-            storage=dtypes.StorageType.Default,
-            transient=True)
+        _, storage = sdfg.add_array(tmp_name,
+                                    rng.bounding_box_size(),
+                                    array.dtype,
+                                    storage=dtypes.StorageType.Default,
+                                    transient=True)
         # Force creation of transients for range indirection
         if output:
             if src:
@@ -1307,8 +1304,9 @@ def add_indirection_subgraph(sdfg: SDFG,
             path = out_base_path + [dst]
         else:
             raise Exception("Src node type for indirection is invalid.")
-        graph.add_memlet_path(
-            *path, src_conn='__ind_' + local_name, memlet=fullMemlet)
+        graph.add_memlet_path(*path,
+                              src_conn='__ind_' + local_name,
+                              memlet=fullMemlet)
     else:
         if isinstance(src, nodes.EntryNode):
             full_read_node = graph.add_read(memlet.data)
@@ -1317,8 +1315,9 @@ def add_indirection_subgraph(sdfg: SDFG,
             path = [src] + inp_base_path
         else:
             raise Exception("Src node type for indirection is invalid.")
-        graph.add_memlet_path(
-            *path, dst_conn='__ind_' + local_name, memlet=fullMemlet)
+        graph.add_memlet_path(*path,
+                              dst_conn='__ind_' + local_name,
+                              memlet=fullMemlet)
 
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
@@ -1337,8 +1336,10 @@ def add_indirection_subgraph(sdfg: SDFG,
             src_conn = None
         else:
             src_conn = local_name
-        graph.add_memlet_path(
-            *path, src_conn=src_conn, dst_conn='lookup', memlet=valueMemlet)
+        graph.add_memlet_path(*path,
+                              src_conn=src_conn,
+                              dst_conn='lookup',
+                              memlet=valueMemlet)
         # Connect original source to the indirected-range-transient
         if start_src:
             if isinstance(start_src, nodes.AccessNode):
@@ -1353,8 +1354,10 @@ def add_indirection_subgraph(sdfg: SDFG,
             dst_conn = None
         else:
             dst_conn = local_name
-        graph.add_memlet_path(
-            *path, src_conn='lookup', dst_conn=dst_conn, memlet=valueMemlet)
+        graph.add_memlet_path(*path,
+                              src_conn='lookup',
+                              dst_conn=dst_conn,
+                              memlet=valueMemlet)
         # Connect original destination to the indirected-range-transient
         if end_dst:
             if isinstance(end_dst, nodes.AccessNode):
@@ -1370,7 +1373,6 @@ def add_indirection_subgraph(sdfg: SDFG,
 class GlobalResolver(ast.NodeTransformer):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
-
     def __init__(self, globals: Dict[str, Any]):
         self.globals = globals
         self.current_scope = set()
@@ -1393,8 +1395,8 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                return ast.copy_location(
-                    ast.Num(n=self.globals[node.id]), node)
+                return ast.copy_location(ast.Num(n=self.globals[node.id]),
+                                         node)
         return node
 
 
@@ -1402,20 +1404,20 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
-
-    def __init__(self,
-                 defined,
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 filename: str,
-                 lang=dtypes.Language.Python,
-                 location: str = '-1',
-                 nested: bool = False,
-                 scope_arrays: Dict[str, data.Data] = dict(),
-                 scope_vars: Dict[str, str] = dict(),
-                 variables: Dict[str, str] = dict(),
-                 accesses: Dict[Tuple[str, dace.subsets.Subset, str],
-                                str] = dict()):
+    def __init__(
+            self,
+            defined,
+            sdfg: SDFG,
+            state: SDFGState,
+            filename: str,
+            lang=dtypes.Language.Python,
+            location: str = '-1',
+            nested: bool = False,
+            scope_arrays: Dict[str, data.Data] = dict(),
+            scope_vars: Dict[str, str] = dict(),
+            variables: Dict[str, str] = dict(),
+            accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict()
+    ):
         """ Creates an AST parser for tasklets.
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
@@ -1469,17 +1471,16 @@ class TaskletTransformer(ExtNodeTransformer):
         # Determine tasklet name (either declared as a function or use line #)
         name = getattr(tasklet_ast, 'name', 'tasklet_%d' % tasklet_ast.lineno)
 
-        t = self.state.add_tasklet(
-            name,
-            set(self.inputs.keys()),
-            set(self.outputs.keys()),
-            self.extcode or tasklet_ast,
-            language=self.lang,
-            code_global=self.globalcode,
-            code_init=self.initcode,
-            code_exit=self.exitcode,
-            location=self.location,
-            debuginfo=locinfo)
+        t = self.state.add_tasklet(name,
+                                   set(self.inputs.keys()),
+                                   set(self.outputs.keys()),
+                                   self.extcode or tasklet_ast,
+                                   language=self.lang,
+                                   code_global=self.globalcode,
+                                   code_init=self.initcode,
+                                   code_exit=self.exitcode,
+                                   location=self.location,
+                                   debuginfo=locinfo)
 
         return t, self.inputs, self.outputs, self.accesses
 
@@ -1496,8 +1497,8 @@ class TaskletTransformer(ExtNodeTransformer):
         if new_name:
             var_name = new_name
         elif target:
-            var_name = "__tmp_{l}_{c}".format(
-                l=target.lineno, c=target.col_offset)
+            var_name = "__tmp_{l}_{c}".format(l=target.lineno,
+                                              c=target.col_offset)
         else:
             var_name = self.sdfg.temp_data_name()
 
@@ -1733,7 +1734,6 @@ class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
     """
-
     def __init__(
             self,
             name: str,
@@ -1768,8 +1768,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self.filename = filename
         if nested:
-            self.name = "{n}_{l}_{c}".format(
-                n=name, l=line_offset, c=col_offset)
+            self.name = "{n}_{l}_{c}".format(n=name,
+                                             l=line_offset,
+                                             c=col_offset)
         else:
             self.name = name
 
@@ -1924,8 +1925,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return arg
 
-    def _decorator_or_annotation_params(
-            self, node: ast.FunctionDef) -> List[Tuple[str, Any]]:
+    def _decorator_or_annotation_params(self, node: ast.FunctionDef
+                                        ) -> List[Tuple[str, Any]]:
         """ Returns a list of parameters, either from the function parameters
             and decorator arguments or parameters and their annotations (type
             hints).
@@ -1959,24 +1960,23 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_subprogram(self, name, node, is_tasklet=False):
 
-        pv = ProgramVisitor(
-            name=name,
-            filename=self.filename,
-            line_offset=node.lineno,
-            col_offset=node.col_offset,
-            global_vars=self.globals,
-            constants=self.sdfg.constants,
-            scope_arrays={
-                **self.scope_arrays,
-                **self.sdfg.arrays
-            },
-            scope_vars={
-                **self.scope_vars,
-                **self.variables
-            },
-            other_sdfgs=self.other_sdfgs,
-            nested=True,
-            tmp_idx=self.sdfg._temp_transients + 1)
+        pv = ProgramVisitor(name=name,
+                            filename=self.filename,
+                            line_offset=node.lineno,
+                            col_offset=node.col_offset,
+                            global_vars=self.globals,
+                            constants=self.sdfg.constants,
+                            scope_arrays={
+                                **self.scope_arrays,
+                                **self.sdfg.arrays
+                            },
+                            scope_vars={
+                                **self.scope_vars,
+                                **self.variables
+                            },
+                            other_sdfgs=self.other_sdfgs,
+                            nested=True,
+                            tmp_idx=self.sdfg._temp_transients + 1)
 
         return pv.parse_program(node, is_tasklet)
 
@@ -1994,8 +1994,8 @@ class ProgramVisitor(ExtNodeVisitor):
             dec = rname(node.decorator_list[0])
 
         # Create a new state for the statement
-        state = self._add_state("s{l}_{c}".format(
-            l=node.lineno, c=node.col_offset))
+        state = self._add_state("s{l}_{c}".format(l=node.lineno,
+                                                  c=node.col_offset))
 
         # Define internal node for reconnection
         internal_node = None
@@ -2022,8 +2022,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 (stream_name, stream_elem, PE_tuple, condition,
                  chunksize) = self._parse_consume_inputs(node)
                 map_inputs = {}
-                entry, exit = state.add_consume(
-                    node.name, PE_tuple, condition, chunksize=chunksize)
+                entry, exit = state.add_consume(node.name,
+                                                PE_tuple,
+                                                condition,
+                                                chunksize=chunksize)
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
                 sdfg, inputs, outputs = self._parse_subprogram(node.name, node)
@@ -2081,13 +2083,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Inject to nested SDFG node
         internal_node.add_in_connector(ntrans)
         stream_node = state.add_read(stream_name)
-        state.add_edge_pair(
-            entry,
-            internal_node,
-            stream_node,
-            external_memlet,
-            scope_connector='stream',
-            internal_connector=ntrans)
+        state.add_edge_pair(entry,
+                            internal_node,
+                            stream_node,
+                            external_memlet,
+                            scope_connector='stream',
+                            internal_connector=ntrans)
 
         # Mark as input so that no extra edges are added
         inputs[ntrans] = None
@@ -2228,9 +2229,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (iterator, ranges)
 
-    def _parse_map_inputs(
-            self, name: str, params: List[Tuple[str, str]],
-            node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
+    def _parse_map_inputs(self, name: str, params: List[Tuple[str, str]],
+                          node: ast.AST
+                          ) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
             parameter dictionary and returning relevant memlets.
             :return: A 2-tuple of (parameter dictionary, mapping from connector
@@ -2446,8 +2447,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         if isinstance(memlet.data, data.Stream):
                             self.sdfg.add_stream(vname, dtype)
                         else:
-                            self.sdfg.add_array(
-                                vname, shape, dtype, strides=strides)
+                            self.sdfg.add_array(vname,
+                                                shape,
+                                                dtype,
+                                                strides=strides)
                         self.inputs[vname] = (scope_memlet, inner_indices)
                         # self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                         memlet.data = vname
@@ -2466,13 +2469,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 read_node = state.add_read(vname)
 
                 if entry_node is not None:
-                    state.add_memlet_path(
-                        read_node,
-                        entry_node,
-                        internal_node,
-                        memlet=memlet,
-                        src_conn=None,
-                        dst_conn=conn)
+                    state.add_memlet_path(read_node,
+                                          entry_node,
+                                          internal_node,
+                                          memlet=memlet,
+                                          src_conn=None,
+                                          dst_conn=conn)
                 else:
                     state.add_edge(read_node, None, internal_node, conn,
                                    memlet)
@@ -2528,8 +2530,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         vname = "{c}_out_of_{s}{n}".format(
                             c=conn,
                             s=self.sdfg.nodes().index(state),
-                            n=('_%s' % state.node_id(exit_node)
-                               if exit_node else ''))
+                            n=('_%s' %
+                               state.node_id(exit_node) if exit_node else ''))
                         self.accesses[(name, scope_memlet.subset,
                                        'w')] = (vname, orng)
                         orig_shape = orng.size()
@@ -2551,8 +2553,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         if isinstance(memlet.data, data.Stream):
                             self.sdfg.add_stream(vname, dtype)
                         else:
-                            self.sdfg.add_array(
-                                vname, shape, dtype, strides=strides)
+                            self.sdfg.add_array(vname,
+                                                shape,
+                                                dtype,
+                                                strides=strides)
                         self.outputs[vname] = (scope_memlet, inner_indices)
                         # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
                         inner_memlet.data = vname
@@ -2561,13 +2565,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     vname = memlet.data
                 write_node = state.add_write(vname)
                 if exit_node is not None:
-                    state.add_memlet_path(
-                        internal_node,
-                        exit_node,
-                        write_node,
-                        memlet=inner_memlet,
-                        src_conn=conn,
-                        dst_conn=None)
+                    state.add_memlet_path(internal_node,
+                                          exit_node,
+                                          write_node,
+                                          memlet=inner_memlet,
+                                          src_conn=conn,
+                                          dst_conn=None)
                 else:
                     state.add_edge(internal_node, conn, write_node, None,
                                    inner_memlet)
@@ -2618,7 +2621,8 @@ class ProgramVisitor(ExtNodeVisitor):
             params = [(k, ':'.join(v)) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs(
                 'map_%d' % node.lineno, params, node)
-            me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno), ndrange=params)
+            me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
+                                   ndrange=params)
             # body = SDFG('MapBody')
             body, inputs, outputs = self._parse_subprogram('MapBody', node)
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
@@ -2636,8 +2640,8 @@ class ProgramVisitor(ExtNodeVisitor):
             end_loop_state = self.last_state
 
             # Add loop to SDFG
-            loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) <
-                                 0) == True) else '<'
+            loop_cond = '>' if ((
+                pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0],
                 ranges[0][0],
@@ -2697,16 +2701,15 @@ class ProgramVisitor(ExtNodeVisitor):
         return indices
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType):
-        ttrans = TaskletTransformer(
-            self.defined,
-            self.sdfg,
-            state,
-            self.filename,
-            nested=self.nested,
-            scope_arrays=self.scope_arrays,
-            scope_vars=self.scope_vars,
-            variables=self.variables,
-            accesses=self.accesses)
+        ttrans = TaskletTransformer(self.defined,
+                                    self.sdfg,
+                                    state,
+                                    self.filename,
+                                    nested=self.nested,
+                                    scope_arrays=self.scope_arrays,
+                                    scope_vars=self.scope_vars,
+                                    variables=self.variables,
+                                    accesses=self.accesses)
         node, inputs, outputs, self.accesses = ttrans.parse_tasklet(node)
 
         # Convert memlets to their actual data nodes
@@ -2737,8 +2740,8 @@ class ProgramVisitor(ExtNodeVisitor):
             op_array = self.sdfg.arrays[op_name]
             op_subset = subsets.Range.from_array(op_array)
 
-        state = self._add_state("assign_{l}_{c}".format(
-            l=node.lineno, c=node.col_offset))
+        state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
+                                                        c=node.col_offset))
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
@@ -2770,11 +2773,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     (target_subset, op_subset))
             op1 = state.add_read(op_name)
             op2 = state.add_write(target_name)
-            tasklet = state.add_tasklet(
-                name=state.label,
-                inputs={'__inp'},
-                outputs={'__out'},
-                code='__out = __inp')
+            tasklet = state.add_tasklet(name=state.label,
+                                        inputs={'__inp'},
+                                        outputs={'__out'},
+                                        code='__out = __inp')
             inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
             out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
             state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
@@ -2805,8 +2807,8 @@ class ProgramVisitor(ExtNodeVisitor):
             op_array = self.sdfg.arrays[op_name]
             op_subset = subsets.Range.from_array(op_array)
 
-        state = self._add_state("assign_{l}_{c}".format(
-            l=node.lineno, c=node.col_offset))
+        state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
+                                                        c=node.col_offset))
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
@@ -2828,18 +2830,16 @@ class ProgramVisitor(ExtNodeVisitor):
                     out_memlet = Memlet.simple(
                         wtarget_name, ','.join(
                             ['__i%d' % i for i in range(len(wtarget_subset))]))
-                    state.add_mapped_tasklet(
-                        state.label, {
-                            '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                            for i, (start, end,
-                                    step) in enumerate(wtarget_subset)
-                        }, {
-                            '__in1': in1_memlet,
-                            '__in2': in2_memlet
-                        },
-                        '__out = __in1 {op} __in2'.format(op=op),
-                        {'__out': out_memlet},
-                        external_edges=True)
+                    state.add_mapped_tasklet(state.label, {
+                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
+                        for i, (start, end, step) in enumerate(wtarget_subset)
+                    }, {
+                        '__in1': in1_memlet,
+                        '__in2': in2_memlet
+                    },
+                                             '__out = __in1 {op} __in2'.format(
+                                                 op=op), {'__out': out_memlet},
+                                             external_edges=True)
                 else:
                     op1 = state.add_read(op_name)
                     op2 = state.add_write(wtarget_name)
@@ -2861,8 +2861,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     ]))
                 in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
                 out_memlet = Memlet.simple(
-                    wtarget_name, ','.join(
-                        ['__i%d' % i for i in range(len(wtarget_subset))]))
+                    wtarget_name,
+                    ','.join(['__i%d' % i
+                              for i in range(len(wtarget_subset))]))
                 state.add_mapped_tasklet(
                     state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
@@ -2919,8 +2920,9 @@ class ProgramVisitor(ExtNodeVisitor):
         if new_name:
             var_name = new_name
         elif target:
-            var_name = "__tmp_{l}_{c}_{a}".format(
-                l=target.lineno, c=target.col_offset, a=access_type)
+            var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno,
+                                                  c=target.col_offset,
+                                                  a=access_type)
         else:
             var_name = self.sdfg.temp_data_name()
 
@@ -2952,12 +2954,13 @@ class ProgramVisitor(ExtNodeVisitor):
         inner_indices = set(non_squeezed)
 
         if access_type == 'r':
-            self.inputs[var_name] = (dace.Memlet(
-                parent_name, rng.num_elements(), rng, 1), inner_indices)
+            self.inputs[var_name] = (dace.Memlet(parent_name,
+                                                 rng.num_elements(), rng,
+                                                 1), inner_indices)
         else:
             self.outputs[var_name] = (dace.Memlet(parent_name,
-                                                  rng.num_elements(), rng, 1),
-                                      inner_indices)
+                                                  rng.num_elements(), rng,
+                                                  1), inner_indices)
 
         return var_name
 
@@ -3023,9 +3026,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if len(results) != len(elts):
             raise DaceSyntaxError(
-                self, node,
-                'Function returns %d values but %d provided' % (len(results),
-                                                                len(elts)))
+                self, node, 'Function returns %d values but %d provided' %
+                (len(results), len(elts)))
 
         defined_vars = {**self.variables, **self.scope_vars}
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
@@ -3092,15 +3094,16 @@ class ProgramVisitor(ExtNodeVisitor):
                     wnode = output_indirection.add_write(true_name)
                     memlet = Memlet.simple(true_name, str(rng))
                     tmp = self.sdfg.temp_data_name()
-                    wtarget = add_indirection_subgraph(
-                        self.sdfg, output_indirection, None, wnode, memlet,
-                        tmp, self, True)
+                    wtarget = add_indirection_subgraph(self.sdfg,
+                                                       output_indirection,
+                                                       None, wnode, memlet,
+                                                       tmp, self, True)
                 else:
                     wtarget = (true_name, rng)
                 if op:
                     if _subset_has_indirection(rng):
-                        self._add_state(
-                            'slice_%s_%d' % (true_name, node.lineno))
+                        self._add_state('slice_%s_%d' %
+                                        (true_name, node.lineno))
                         rnode = self.last_state.add_read(true_name)
                         memlet = Memlet.simple(true_name, str(rng))
                         tmp = self.sdfg.temp_data_name()
@@ -3166,8 +3169,8 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(node, ast.Attribute):
             if node.attr != "shape":
                 raise DaceSyntaxError(
-                    self, node, "Attribute {} is not shape".format(
-                        rname(node)))
+                    self, node,
+                    "Attribute {} is not shape".format(rname(node)))
             shape = self.scope_arrays[node.value.id].shape
         else:
             raise DaceSyntaxError(
@@ -3196,8 +3199,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 dtype = getattr(self.globals[node.value.id], node.attr)
             elif node.attr != "dtype":
                 raise DaceSyntaxError(
-                    self, node, "Attribute {} is not dtype".format(
-                        rname(node)))
+                    self, node,
+                    "Attribute {} is not dtype".format(rname(node)))
             else:
                 dtype = self.scope_arrays[node.value.id].dtype
         else:
@@ -3305,12 +3308,13 @@ class ProgramVisitor(ExtNodeVisitor):
                          for arg in node.keywords]
                 required_args = func.argnames
 
-                sdfg = copy.deepcopy(func.to_sdfg(*({
-                    **self.defined,
-                    **self.sdfg.arrays,
-                    **self.sdfg.symbols
-                }[arg] if isinstance(arg, str) else arg
-                                      for aname, arg in args)))
+                sdfg = copy.deepcopy(
+                    func.to_sdfg(*({
+                        **self.defined,
+                        **self.sdfg.arrays,
+                        **self.sdfg.symbols
+                    }[arg] if isinstance(arg, str) else arg
+                                   for aname, arg in args)))
 
             else:
                 raise DaceSyntaxError(
@@ -3327,7 +3331,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     sdfg, {
                         k: self.sdfg.arrays[v]
                         for k, v in args if v in self.sdfg.arrays
-                    }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+                    },
+                    set(sym.arg for sym in node.keywords
+                        if sym.arg in symbols))
             except ValueError as ex:
                 raise DaceSyntaxError(self, node, str(ex))
             if len(mapping) == 0:  # Default to same-symbol mapping
@@ -3436,8 +3442,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     name, rng, atype = access_key
                     if atype == 'r':
                         del self.accesses[access_key]
-                        access_value = self._add_write_access(
-                            name, rng, node, new_name=vname)
+                        access_value = self._add_write_access(name,
+                                                              rng,
+                                                              node,
+                                                              new_name=vname)
                         memlet.data = vname
                     # Delete the old read descriptor
                     conn_used = False
@@ -3498,7 +3506,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                       '__dacesym_' + sym,
                                                       symvalue)
 
-                    new_arrname = self.sdfg.add_datadesc(new_arrname, newarr,
+                    new_arrname = self.sdfg.add_datadesc(new_arrname,
+                                                         newarr,
                                                          find_new_name=True)
 
                     # Create an output entry for the connectors
@@ -3513,7 +3522,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if len(rets) > 0:
                     raise DaceSyntaxError(
                         self, node, 'Both return values and output slices '
-                                    'unsupported')
+                        'unsupported')
 
                 assign_node = ast.Assign()
                 targets = []
@@ -3521,11 +3530,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 for t, v in output_slices:
                     targets.append(t)
                     value.append(v)
-                assign_node = ast.Assign(
-                    targets=ast.Tuple(elts=targets),
-                    value=ast.Tuple(elts=value),
-                    lineno=node.lineno,
-                    col_offset=node.col_offset)
+                assign_node = ast.Assign(targets=ast.Tuple(elts=targets),
+                                         value=ast.Tuple(elts=value),
+                                         lineno=node.lineno,
+                                         col_offset=node.col_offset)
                 return self._visit_assign(assign_node, assign_node.targets,
                                           None)
 
@@ -3596,13 +3604,12 @@ class ProgramVisitor(ExtNodeVisitor):
             wnode = state.add_write(dst_name)
             state.add_nedge(
                 rnode, wnode,
-                Memlet(
-                    src_name,
-                    src_expr.accesses,
-                    subsets.Range.from_array(self.sdfg.arrays[src_name]),
-                    1,
-                    wcr=dst_expr.wcr,
-                    wcr_identity=dst_expr.wcr_identity))
+                Memlet(src_name,
+                       src_expr.accesses,
+                       subsets.Range.from_array(self.sdfg.arrays[src_name]),
+                       1,
+                       wcr=dst_expr.wcr,
+                       wcr_identity=dst_expr.wcr_identity))
             return
 
         # Calling reduction or other SDFGs / functions
@@ -3620,9 +3627,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Return values can either be tuples or a single object
         if isinstance(node.value, (ast.Tuple, ast.List)):
-            ast_tuple = ast.copy_location(ast.parse('(%s,)' % ','.join(
-                '__return_%d' % i for i in range(
-                    len(node.value.elts)))).body[0].value, node)
+            ast_tuple = ast.copy_location(
+                ast.parse('(%s,)' % ','.join(
+                    '__return_%d' % i
+                    for i in range(len(node.value.elts)))).body[0].value, node)
             self._visit_assign(new_node, ast_tuple, None)
         else:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
@@ -3727,9 +3735,11 @@ class ProgramVisitor(ExtNodeVisitor):
         result = []
         for operand in operands:
             if isinstance(operand, str) and operand in self.sdfg.arrays:
-                result.append((operand, type(self.sdfg.arrays[operand]).__name__))
+                result.append(
+                    (operand, type(self.sdfg.arrays[operand]).__name__))
             elif isinstance(operand, str) and operand in self.scope_arrays:
-                result.append((operand, type(self.scope_arrays[operand]).__name__))
+                result.append(
+                    (operand, type(self.scope_arrays[operand]).__name__))
             else:
                 result.append((operand, type(operand).__name__))
 
@@ -3755,8 +3765,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.last_state = init_state
             else:
                 init_state = self.sdfg.nodes()[0]
-            tasklet = init_state.add_tasklet(
-                'init_{}'.format(name), {}, {'out'}, 'out = {}'.format(node.n))
+            tasklet = init_state.add_tasklet('init_{}'.format(name), {},
+                                             {'out'},
+                                             'out = {}'.format(node.n))
             access = init_state.add_write(name)
             init_state.add_edge(tasklet, 'out', access, None,
                                 dace.Memlet.simple(name, '0'))
@@ -3775,14 +3786,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse operands
         op1_parsed = self._gettype(op1)
         if len(op1_parsed) > 1:
-            raise DaceSyntaxError(self, op1,
-                                  'Operand cannot be a tuple')
+            raise DaceSyntaxError(self, op1, 'Operand cannot be a tuple')
         operand1, op1type = op1_parsed[0]
         if op2 is not None:
             op2_parsed = self._gettype(op2)
             if len(op2_parsed) > 1:
-                raise DaceSyntaxError(self, op2,
-                                      'Operand cannot be a tuple')
+                raise DaceSyntaxError(self, op2, 'Operand cannot be a tuple')
             operand2, op2type = op2_parsed[0]
         else:
             operand2, op2type = None, None
@@ -3793,12 +3802,12 @@ class ProgramVisitor(ExtNodeVisitor):
             elif op2type == 'Array' and isinstance(op1, ast.Num):
                 operand1, op1type = self._convert_num_to_array(op1)
 
-        func = oprepo.Replacements.getop(
-            op1type, opname, otherclass=op2type)
+        func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
         if func is None:
             # Check for SDFG as fallback
-            func = oprepo.Replacements.getop(
-                op1type, opname, otherclass=op2type)
+            func = oprepo.Replacements.getop(op1type,
+                                             opname,
+                                             otherclass=op2type)
             if func is None:
                 raise DaceSyntaxError(
                     self, node,
@@ -3833,12 +3842,11 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Compare(self, node: ast.Compare):
         if len(node.ops) > 1 or len(node.comparators) > 1:
             raise NotImplementedError
-        binop_node = ast.BinOp(
-            node.left,
-            node.ops[0],
-            node.comparators[0],
-            lineno=node.lineno,
-            col_offset=node.col_offset)
+        binop_node = ast.BinOp(node.left,
+                               node.ops[0],
+                               node.comparators[0],
+                               lineno=node.lineno,
+                               col_offset=node.col_offset)
         return self.visit_BinOp(binop_node)
 
     ### Subscript (slicing) handling
@@ -3867,8 +3875,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Obtain array
         node_parsed = self._gettype(node.value)
         if len(node_parsed) > 1:
-            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
-                                                    'be a tuple')
+            raise DaceSyntaxError(self, node.value,
+                                  'Subscripted object cannot '
+                                  'be a tuple')
         array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node,
@@ -3895,8 +3904,9 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             other_subset = copy.deepcopy(expr.subset)
             other_subset.squeeze()
-            tmp, tmparr = self.sdfg.add_temp_transient(
-                other_subset.size(), arrobj.dtype, arrobj.storage)
+            tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(),
+                                                       arrobj.dtype,
+                                                       arrobj.storage)
             wnode = self.last_state.add_write(tmp)
             self.last_state.add_nedge(
                 rnode, wnode,

@@ -84,11 +84,10 @@ class ReduceExpansion(pm.Transformation):
             schedule=(dtypes.ScheduleType.Default
                       if len(outer_map_range) > 0 else red_node.schedule))
 
-        tasklet = graph.add_tasklet(
-            name='red_tasklet',
-            inputs={'in_1'},
-            outputs={'out_1'},
-            code='out_1 = in_1')
+        tasklet = graph.add_tasklet(name='red_tasklet',
+                                    inputs={'in_1'},
+                                    outputs={'out_1'},
+                                    code='out_1 = in_1')
 
         inner_map_entry.in_connectors = {'IN_1'}
         inner_map_entry.out_connectors = {'OUT_1'}

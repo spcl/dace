@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
     highdim(A, B)
 
-    diff = np.linalg.norm(B_regression - B) / (
-        N.get() * M.get() * K.get() * L.get())
+    diff = np.linalg.norm(B_regression - B) / (N.get() * M.get() * K.get() *
+                                               L.get())
     print('Difference:', diff)
     exit(0 if diff <= 1e-5 else 1)

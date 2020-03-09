@@ -21,7 +21,6 @@ def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
 class stream(object):
     """ Stream array object in Python. Mostly used in the Python SDFG 
         simulator. """
-
     def __init__(self, dtype, shape):
         from dace import data
 

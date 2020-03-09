@@ -157,8 +157,8 @@ def draw_graph(sdfg, graph, standalone=True):
             scope = sdict[scope]
         return False
 
-    nodes_to_draw = set(
-        node for node in graph.nodes() if not is_collapsed(node))
+    nodes_to_draw = set(node for node in graph.nodes()
+                        if not is_collapsed(node))
 
     # Collect edges to draw for collapsed nodes (we also need edges coming out of scope exits)
     nodes_for_edges = set()

@@ -49,21 +49,20 @@ if __name__ == "__main__":
 
     mmul = SDFG(name='mmul')
     mmul.add_node(
-        np_frontend.op_impl.matrix_multiplication_s(
-            'A',
-            A.shape,
-            dace.float64,
-            'B',
-            B.shape,
-            dace.float64,
-            False,
-            'C',
-            C.shape,
-            dace.float64,
-            A_index=[1, 2, 3],
-            B_index=[1, 3, 2, 1],
-            C_index=[2, 2],
-            label='mmul'))
+        np_frontend.op_impl.matrix_multiplication_s('A',
+                                                    A.shape,
+                                                    dace.float64,
+                                                    'B',
+                                                    B.shape,
+                                                    dace.float64,
+                                                    False,
+                                                    'C',
+                                                    C.shape,
+                                                    dace.float64,
+                                                    A_index=[1, 2, 3],
+                                                    B_index=[1, 3, 2, 1],
+                                                    C_index=[2, 2],
+                                                    label='mmul'))
 
     mmul(A=A, B=B, C=C)
     np.dot(A_regression, B_regression, C_regression)
