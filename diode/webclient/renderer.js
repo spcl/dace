@@ -683,6 +683,7 @@ class SDFGRenderer {
             this.canvas_manager.destroy();
             this.container.removeChild(this.canvas);
             this.container.removeChild(this.toolbar);
+            this.container.removeChild(this.tooltip_container);
         } catch (ex) {
             // Do nothing
         }
@@ -754,6 +755,7 @@ class SDFGRenderer {
         this.tooltip_container = document.createElement('div');
         this.tooltip_container.innerHTML = '';
         this.tooltip_container.className = 'tooltip';
+        this.tooltip_container.onmouseover = () => this.tooltip_container.style.display = "none";
         this.container.appendChild(this.tooltip_container);
 
         this.ctx = this.canvas.getContext("2d");
