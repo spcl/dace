@@ -368,6 +368,29 @@ class Graph(object):
             to dest_node """
         return nx.all_simple_paths(self._nx, source_node, dest_node)
 
+    def all_nodes_between(self, begin, end):
+        """Finds all nodes between begin and end. Returns None if there is any
+           path starting at begin that does not reach end."""
+        to_visit = [begin]
+        seen = set()
+        while len(to_visit) > 0:
+            n = to_visit.pop()
+            if n == end:
+                continue  # We've reached the end node
+            if n in seen:
+                continue  # We've already visited this node
+            seen.add(n)
+            # Keep chasing all paths to reach the end node
+            node_out_edges = self.out_edges(n)
+            if len(node_out_edges) == 0:
+                # We traversed to the end without finding the end
+                return None
+            for e in node_out_edges:
+                next_node = e.dst
+                if next_node != end and next_node not in seen:
+                    to_visit.append(next_node)
+        return seen
+
 
 @dace.serialize.serializable
 class SubgraphView(Graph):
