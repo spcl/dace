@@ -572,9 +572,12 @@ class Range(Subset):
     def replace(self, repl_dict):
         for i, ((rb, re, rs),
                 ts) in enumerate(zip(self.ranges, self.tile_sizes)):
-            self.ranges[i] = (rb.subs(repl_dict), re.subs(repl_dict),
-                              rs.subs(repl_dict))
-            self.tile_sizes[i] = ts.subs(repl_dict)
+            self.ranges[i] = (
+                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
+                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
+                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
+            self.tile_sizes[i] = (ts.subs(repl_dict)
+                                  if symbolic.issymbolic(ts) else ts)
 
 
 @dace.serialize.serializable
@@ -754,7 +757,8 @@ class Indices(Subset):
 
     def replace(self, repl_dict):
         for i, ind in enumerate(self.indices):
-            self.indices[i] = ind.subs(repl_dict)
+            self.indices[i] = (ind.subs(repl_dict)
+                               if symbolic.issymbolic(ind) else ind)
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
