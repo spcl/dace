@@ -2,8 +2,9 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import dtypes, registry, symbolic
+from dace import dtypes, registry, symbolic, subsets
 from dace.graph import nodes, nxutil
+from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.transformation import pattern_matching
 from typing import List, Union
@@ -120,6 +121,15 @@ class MapFusion(pattern_matching.Transformation):
         perm = MapFusion.find_permutation(first_map_entry.map,
                                           second_map_entry.map)
         if perm is None:
+            return False
+
+        # Check if any intermediate transient is also going to another location
+        second_inodes = set(e.src for e in graph.in_edges(second_map_entry)
+                            if isinstance(e.src, nodes.AccessNode))
+        transients_to_remove = intermediate_nodes & second_inodes
+        # if any(e.dst != second_map_entry for n in transients_to_remove
+        #        for e in graph.out_edges(n)):
+        if any(graph.out_degree(n) > 1 for n in transients_to_remove):
             return False
 
         # Create a dict that maps parameters of the first map to those of the
