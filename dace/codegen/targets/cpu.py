@@ -1990,18 +1990,8 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
 
             # Store back tmpout into the true output
             if i == end_braces - 1 and use_tmpout:
-                # TODO: This is a targeted fix that has to be generalized when
-                # refactoring code generation. The issue is related to an
-                # inconsistency on whether an output connector generates a tmp
-                # scalar variable to be used with __write or a pointer to the
-                # output array.
-                scalar_output = True
-                for r in output_subset:
-                    if r != 0 and r != (0, 0, 1):
-                        scalar_output = False
-                        break
-                arr = sdfg.arrays[output_memlet.data]
-                if scalar_output and sdfg.parent_sdfg and not arr.transient:
+                if (self._dispatcher.defined_vars.get(
+                        output_memlet.data) == DefinedType.Scalar):
                     out_var = output_memlet.data
                 else:
                     out_var = cpp_array_expr(sdfg, output_memlet)
