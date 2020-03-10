@@ -1116,6 +1116,11 @@ class SymbolicProperty(Property):
         # Go through sympy once to reorder factors
         return str(pystr_to_symbolic(str(obj), simplify=False))
 
+    def to_json(self, val):
+        if val is None:
+            return None
+        return SymbolicProperty.to_string(val)
+
 
 class DataProperty(Property):
     """ Custom Property type that represents a link to a data descriptor.
