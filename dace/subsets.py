@@ -627,6 +627,9 @@ class Indices(Subset):
     def max_element(self):
         return self.indices
 
+    def max_element_approx(self):
+        return [_approx(ind) for ind in self.indices]
+
     def data_dims(self):
         return 0
 
