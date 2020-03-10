@@ -282,22 +282,20 @@ class MapFusion(pattern_matching.Transformation):
                 # In this transformation, there can only be one edge to the
                 # second map
                 assert len(out_edges) == 1
+
                 # Get source connector to the second map
                 connector = out_edges[0].dst_conn[3:]
 
-                new_dst = None
-                new_dst_conn = None
+                new_dsts = []
                 # Look at the second map entry out-edges to get the new
-                # destination
-                for _e in graph.out_edges(second_entry):
-                    if _e.src_conn[4:] == connector:
-                        new_dst = _e.dst
-                        new_dst_conn = _e.dst_conn
-                        break
-                if new_dst is None:
-                    # Access node is not used in the second map
+                # destinations
+                for e in graph.out_edges(second_entry):
+                    if e.src_conn[4:] == connector:
+                        new_dsts.append(e)
+                if not new_dsts:  # Access node is not used in the second map
                     nodes_to_remove.add(access_node)
                     continue
+
                 # If the source is an access node, modify the memlet to point
                 # to it
                 if (isinstance(edge.src, nodes.AccessNode)
@@ -309,7 +307,8 @@ class MapFusion(pattern_matching.Transformation):
 
                 else:
                     # Add a transient scalar/array
-                    self.fuse_nodes(sdfg, graph, edge, new_dst, new_dst_conn)
+                    self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
+                                    new_dsts[0].dst_conn, new_dsts[1:])
 
                 edges_to_remove.add(edge)
 
@@ -388,8 +387,15 @@ class MapFusion(pattern_matching.Transformation):
         # Fix scope exit to point to the right map
         second_exit.map = first_entry.map
 
-    def fuse_nodes(self, sdfg, graph, edge, new_dst, new_dst_conn):
+    def fuse_nodes(self,
+                   sdfg,
+                   graph,
+                   edge,
+                   new_dst,
+                   new_dst_conn,
+                   other_edges=None):
         """ Fuses two nodes via memlets and possibly transient arrays. """
+        other_edges = other_edges or []
         memlet_path = graph.memlet_path(edge)
         access_node = memlet_path[-1].dst
 
@@ -417,6 +423,10 @@ class MapFusion(pattern_matching.Transformation):
             # Add edge that leads to the second node
             graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
                            dcpy(edge.data))
+
+            for e in other_edges:
+                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
+                               dcpy(edge.data))
         else:
             sdfg.add_transient(local_name,
                                edge.data.subset.size(),
@@ -439,6 +449,10 @@ class MapFusion(pattern_matching.Transformation):
             # Add edge that leads to the second node
             graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
                            dcpy(edge.data))
+
+            for e in other_edges:
+                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
+                               dcpy(edge.data))
 
             # Modify data and memlets on all surrounding edges to match array
             for neighbor in graph.all_edges(local_node):
