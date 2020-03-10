@@ -746,8 +746,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 could_be_scalar = True
                 if isinstance(node, nodes.NestedSDFG):
-                    could_be_scalar = isinstance(node.sdfg.arrays[uconn],
-                                                 data.Scalar)
+                    could_be_scalar = not isinstance(node.sdfg.arrays[uconn],
+                                                     data.Array)
 
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
@@ -916,7 +916,7 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: data.Data = None,
                           allow_shadowing=False):
-        could_be_scalar = not conntype or isinstance(conntype, data.Scalar)
+        could_be_scalar = not conntype or not isinstance(conntype, data.Array)
         result = ("auto __%s = " % local_name +
                   self.memlet_ctor(sdfg, memlet, output) + ";\n")
 
