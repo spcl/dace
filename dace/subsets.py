@@ -569,6 +569,13 @@ class Range(Subset):
     def string_list(self):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
+    def replace(self, repl_dict):
+        for i, ((rb, re, rs),
+                ts) in enumerate(zip(self.ranges, self.tile_sizes)):
+            self.ranges[i] = (rb.subs(repl_dict), re.subs(repl_dict),
+                              rs.subs(repl_dict))
+            self.tile_sizes[i] = ts.subs(repl_dict)
+
 
 @dace.serialize.serializable
 class Indices(Subset):
@@ -744,6 +751,10 @@ class Indices(Subset):
     def unsqueeze(self, axes):
         for axis in sorted(axes):
             self.indices.insert(axis, 0)
+
+    def replace(self, repl_dict):
+        for i, ind in enumerate(self.indices):
+            self.indices[i] = ind.subs(repl_dict)
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:

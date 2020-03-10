@@ -157,28 +157,20 @@ class MapFusion(pattern_matching.Transformation):
                 continue
 
             provided = False
+
+            # Compute second subset with respect to first subset's symbols
+            sbs_permuted = dcpy(second_memlet.subset)
+            sbs_permuted.replace({
+                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+                for k, v in params_dict.items()
+            })
+
             for first_memlet in out_memlets:
                 if first_memlet.data != second_memlet.data:
                     continue
-                # If there is an equivalent subset, it is provided
-                expected_second_subset = []
-                for _tup in first_memlet.subset:
-                    new_tuple = []
-                    if isinstance(_tup, symbolic.symbol):
-                        new_tuple = symbolic.symbol(params_dict[str(_tup)])
-                    elif isinstance(_tup, (list, tuple)):
-                        for _sym in _tup:
-                            if (isinstance(_sym, symbolic.symbol)
-                                    and str(_sym) in params_dict):
-                                new_tuple.append(
-                                    symbolic.symbol(params_dict[str(_sym)]))
-                            else:
-                                new_tuple.append(_sym)
-                        new_tuple = tuple(new_tuple)
-                    else:
-                        new_tuple = _tup
-                    expected_second_subset.append(new_tuple)
-                if expected_second_subset == list(second_memlet.subset):
+
+                # If there is a covered subset, it is provided
+                if first_memlet.subset.covers(sbs_permuted):
                     provided = True
                     break
 
