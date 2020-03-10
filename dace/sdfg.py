@@ -59,12 +59,12 @@ def getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
 class Scope(object):
     """ A class defining a scope, its parent and children scopes, variables, and
         scope entry/exit nodes. """
-    def __init__(self, entrynode, exitnode):
-        self.parent = None
-        self.children = []
-        self.defined_vars = []
-        self.entry = entrynode
-        self.exit = exitnode
+    def __init__(self, entrynode: nd.EntryNode, exitnode: nd.ExitNode):
+        self.parent: 'Scope' = None
+        self.children: List['Scope'] = []
+        self.defined_vars: List[str] = []
+        self.entry: nd.EntryNode = entrynode
+        self.exit: nd.ExitNode = exitnode
 
 
 class InvalidSDFGError(Exception):
