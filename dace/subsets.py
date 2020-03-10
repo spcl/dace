@@ -12,12 +12,21 @@ class Subset(object):
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
+        def nng(expr):
+            # When dealing with set sizes, assume symbols are non-negative
+            # TODO: Fix in symbol definition, not here
+            for sym in list(expr.free_symbols):
+                expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+            return expr
+
         try:
-            return all([
-                rb <= orb and re >= ore for rb, re, orb, ore in zip(
-                    self.min_element(), self.max_element(),
-                    other.min_element(), other.max_element())
-            ])
+            return all([(symbolic.simplify_ext(nng(rb)) <=
+                         symbolic.simplify_ext(nng(orb))) == True
+                        and (symbolic.simplify_ext(nng(re)) >=
+                             symbolic.simplify_ext(nng(ore))) == True
+                        for rb, re, orb, ore in zip(
+                            self.min_element(), self.max_element_approx(),
+                            other.min_element(), other.max_element_approx())])
         except TypeError:
             return False
 
@@ -65,6 +74,12 @@ def _simplified_str(val):
 def _expr(val):
     if isinstance(val, symbolic.SymExpr):
         return val.expr
+    return val
+
+
+def _approx(val):
+    if isinstance(val, symbolic.SymExpr):
+        return val.approx
     return val
 
 
@@ -202,8 +217,9 @@ class Range(Subset):
 
     def max_element(self):
         return [_expr(x[1]) for x in self.ranges]
-        # return [(sp.floor((iMax - iMin) / step) - 1) * step
-        #        for iMin, iMax, step in self.ranges]
+
+    def max_element_approx(self):
+        return [_approx(x[1]) for x in self.ranges]
 
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
