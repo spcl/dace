@@ -1,7 +1,7 @@
 import itertools
 import warnings
 
-from dace import data, registry
+from dace import data, registry, memlet as mm
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.cpp import *
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
@@ -744,12 +744,18 @@ class CPUCodeGen(TargetCodeGenerator):
                         "Cannot copy memlet without a local connector: {} to {}"
                         .format(str(edge.src), str(edge.dst)))
 
+                could_be_scalar = True
+                if isinstance(node, nodes.NestedSDFG):
+                    could_be_scalar = isinstance(node.sdfg.arrays[uconn],
+                                                 data.Scalar)
+
                 try:
                     positive_accesses = bool(memlet.num_accesses >= 0)
                 except TypeError:
                     positive_accesses = False
 
-                if memlet.subset.data_dims() == 0 and positive_accesses:
+                if (memlet.subset.data_dims() == 0 and positive_accesses
+                        and could_be_scalar):
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
@@ -904,11 +910,13 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def memlet_definition(self,
-                          sdfg,
-                          memlet,
-                          output,
-                          local_name,
+                          sdfg: SDFG,
+                          memlet: mm.Memlet,
+                          output: bool,
+                          local_name: str,
+                          conntype: data.Data = None,
                           allow_shadowing=False):
+        could_be_scalar = not conntype or isinstance(conntype, data.Scalar)
         result = ("auto __%s = " % local_name +
                   self.memlet_ctor(sdfg, memlet, output) + ";\n")
 
@@ -959,7 +967,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
         elif var_type == DefinedType.Pointer:
-            if memlet.num_accesses == 1 and memlet.subset.num_elements() == 1:
+            if (memlet.num_accesses == 1 and memlet.subset.num_elements() == 1
+                    and could_be_scalar):
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
@@ -970,7 +979,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
             else:
-                if memlet.subset.data_dims() == 0:
+                if memlet.subset.data_dims() == 0 and could_be_scalar:
                     # Forward ArrayView
                     result += "auto &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)
@@ -1290,6 +1299,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                        in_memlet,
                                        False,
                                        vconn,
+                                       conntype=node.sdfg.arrays[vconn],
                                        allow_shadowing=True), sdfg, state_id,
                 node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
@@ -1298,11 +1308,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     out_code = emit_memlet_reference(self._dispatcher, sdfg,
                                                      out_memlet, uconn)
                 else:
-                    out_code = self.memlet_definition(sdfg,
-                                                      out_memlet,
-                                                      True,
-                                                      uconn,
-                                                      allow_shadowing=True)
+                    out_code = self.memlet_definition(
+                        sdfg,
+                        out_memlet,
+                        True,
+                        uconn,
+                        conntype=node.sdfg.arrays[uconn],
+                        allow_shadowing=True)
 
                 callsite_stream.write(out_code, sdfg, state_id, node)
 
