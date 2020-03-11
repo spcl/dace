@@ -365,10 +365,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 "__state_{}_{}:\n".format(sdfg.name, state.label), sdfg, sid)
 
             # Don't generate brackets and comments for empty states
-            if len([
-                    n for n in state.nodes()
-                    if not isinstance(n, dace.graph.nodes.EmptyTasklet)
-            ]) > 0:
+            if len([n for n in state.nodes()]) > 0:
 
                 callsite_stream.write('{', sdfg, sid)
 

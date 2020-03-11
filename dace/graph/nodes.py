@@ -353,26 +353,6 @@ class Tasklet(CodeNode):
             return self.label
 
 
-@make_properties
-class EmptyTasklet(Tasklet):
-    """ A special tasklet that contains no code. Used for filling empty states
-        in an SDFG. """
-    def __init__(self, label=""):
-        super(EmptyTasklet, self).__init__(label)
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, style="invis", shape="octagon")
-
-    def validate(self, sdfg, state):
-        pass
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        ret = EmptyTasklet("dummylabel")
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
-        return ret
-
-
 # ------------------------------------------------------------------------------
 
 
