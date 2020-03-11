@@ -77,7 +77,7 @@ Useful environment variable configurations include:
 * `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
 
 Context configuration:
- * `DACE_use_cache` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
+ * `DACE_compiler_use_cache` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
  * `DACE_debugprint` (default: True): Print debugging information.
  
 SDFG processing:
