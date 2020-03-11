@@ -347,11 +347,11 @@ class CPPUnparser:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")
 
-            self.dispatch(target, infer_type)
-            if not isinstance(target, ast.Subscript):
-                self.dtype = self.locals.get_type(target.id)
-            else:
-                self.dtype = self.locals.get_type(target.value.id)
+            # dispatch target and infer its type
+            inferred_type = self.dispatch(target, infer_type)
+            if not infer_type:
+                inferred_type = self.dispatch(target, True)
+            self.dtype = inferred_type
 
         self.write(" = ", infer_type)
         self.dispatch(t.value, infer_type)
@@ -784,7 +784,7 @@ class CPPUnparser:
             if infer_type:
                 if t.id.strip("()") in _py2c_typeconversion:
                     inferred_type = _py2c_typeconversion[t.id.strip("()")]
-                elif self.defined_symbols.get(t.id) is not None:
+                elif  self.defined_symbols is not None and self.defined_symbols.get(t.id) is not None:
                     # defined symbols could have dtypes, in case convert it to typeclass
                     inferred_type = self.defined_symbols.get(t.id)
                     if isinstance(inferred_type, np.dtype):
@@ -1063,15 +1063,16 @@ class CPPUnparser:
         self.write(")", infer_type)
         return dace.dtypes.typeclass(np.bool) if infer_type else None
 
-    def _Attribute(self, t):
-        self.dispatch(t.value)
+    def _Attribute(self, t, infer_type=False):
+        inferred_type = self.dispatch(t.value, infer_type)
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
         if isinstance(t.value, ast.Num) and isinstance(t.value.n, int):
-            self.write(" ")
-        self.write(".")
-        self.write(t.attr)
+            self.write(" ", infer_type)
+        self.write(".", infer_type)
+        self.write(t.attr, infer_type)
+        return inferred_type
 
     def _Call(self, t, infer_type=False):
         inf_type = self.dispatch(t.func, infer_type)
