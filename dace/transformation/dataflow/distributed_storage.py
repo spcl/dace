@@ -76,8 +76,8 @@ class DataDistribution(pattern_matching.Transformation):
 
         if self.dist_type == dtypes.DataDistributionType.Grid:
             data = sdfg.arrays[node.data]
-            random.seed()
-            self.dist_shape = [random.randrange(1, 5) for s in data.shape]
+            self.dist_shape = [symbolic.pystr_to_symbolic("N{}".format(i))
+                               for i in range(len(data.shape))]
 
         sdfg.distribute_data(node.data, self.dist_type, self.dist_shape,
                              self.local_shape, self.dist_location)

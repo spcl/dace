@@ -1635,15 +1635,23 @@ subgraph cluster_state_{state} {{
                     if isinstance(node, nd.AccessNode):
                         for e1 in state.all_edges(node):
                             for e2 in state.memlet_tree(e1):
-                                if (e2 in visited_edges or
-                                        e2.data.data != data_name):
+                                if e2 in visited_edges:
                                     continue
-                                if e2.dst == node and e2.data.other_subset:
-                                    e2.data.other_dist_subset = sbs.Range(
-                                        [(0, 0, 1)])
-                                else:
-                                    e2.data.dist_subset = sbs.Range(
-                                        [(0, 0, 1)])
+                                if (not isinstance(e2.src, nd.CodeNode) and
+                                        not isinstance(e2.dst, nd.CodeNode)):
+                                    visited_edges.add(e2)
+                                    continue
+                                if e2.data.data != data_name:
+                                    visited_edges.add(e2)
+                                    continue
+                                e2.data.dist_subset = sbs.Range([(0, 0, 1)])
+                                # TODO: Fix other_subset and access node copying cases
+                                # if e2.dst == node and e2.data.other_subset:
+                                #     e2.data.other_dist_subset = sbs.Range(
+                                #         [(0, 0, 1)])
+                                # else:
+                                #     e2.data.dist_subset = sbs.Range(
+                                #         [(0, 0, 1)])
                                 visited_edges.add(e2)
 
         elif dist_type == dtypes.DataDistributionType.Grid:
@@ -1651,10 +1659,14 @@ subgraph cluster_state_{state} {{
                 raise ValueError("Distributed shape must have the same length"
                                  " as the shape of the data.")
             
-            data.dist_shape = dist_shape
-            data.shape = [
-                symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, d))
-                for s, d in zip(data.shape, dist_shape)]
+            # data.dist_shape = dist_shape
+            # data.shape = [
+            #     symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, d))
+            #     for s, d in zip(data.shape, dist_shape)]
+            data.dist_shape = [
+                symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, t))
+                for s, t in zip(data.shape, dist_shape)]
+            data.shape = dist_shape
             data.dist_location = 'lambda s, d, x: s.grid_dist_location(d, x)'
 
             visited_edges = set()
@@ -1663,42 +1675,68 @@ subgraph cluster_state_{state} {{
                     if isinstance(node, nd.AccessNode):
                         for e1 in state.all_edges(node):
                             for e2 in state.memlet_tree(e1):
-                                if (e2 in visited_edges or
-                                        e2.data.data != data_name):
+                                if e2 in visited_edges:
                                     continue
-                                ranges = []
-                                if e2.dst == node and e2.data.other_subset:
-                                    for r, s in zip(e2.data.other_subset,
-                                                    data.shape
-                                    ):
-                                        if isinstance(r, (list, tuple)):
-                                            ranges.append((
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[0], s)
-                                                ),
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[1], s)
-                                                ),
-                                                1
-                                            ))
-                                    e2.data.other_dist_subset = sbs.Range(
-                                        ranges)
-                                else:
-                                    for r, s in zip(e2.data.subset,
-                                                    data.shape
-                                    ):
-                                        if isinstance(r, (list, tuple)):
-                                            ranges.append((
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[0], s)
-                                                ),
-                                                symbolic.pystr_to_symbolic(
-                                                    "{} % {}".format(r[1], s)
-                                                ),
-                                                1
-                                            ))
-                                    e2.data.dist_subset = sbs.Range(
-                                        ranges)
+                                if (not isinstance(e2.src, nd.CodeNode) and
+                                        not isinstance(e2.dst, nd.CodeNode)):
+                                    visited_edges.add(e2)
+                                    continue
+                                if e2.data.data != data_name:
+                                    visited_edges.add(e2)
+                                    continue
+                                dist_ranges = []
+                                local_ranges = []
+                                for r, s in zip(e2.data.subset, data.shape):
+                                    if isinstance(r, (list, tuple)):
+                                        dist_ranges.append((
+                                            symbolic.pystr_to_symbolic(
+                                                "int_floor({}, {})".format(
+                                                    r[0], s)
+                                            ), symbolic.pystr_to_symbolic(
+                                                "int_floor({}, {})".format(
+                                                    r[1], s)
+                                            ), 1))
+                                        local_ranges.append((
+                                            symbolic.pystr_to_symbolic(
+                                                "{} % {}".format(r[0], s)
+                                            ), symbolic.pystr_to_symbolic(
+                                                "{} % {}".format(r[1], s)
+                                            ), 1))
+                                    else:
+                                        dist_ranges.append((
+                                            symbolic.pystr_to_symbolic(
+                                                "int_floor({}, {})".format(
+                                                    r, s)
+                                            ), symbolic.pystr_to_symbolic(
+                                                "int_floor({}, {})".format(
+                                                    r, s)
+                                            ), 1))
+                                        local_ranges.append((
+                                            symbolic.pystr_to_symbolic(
+                                                "{} Mod {}".format(r, s)
+                                            ), symbolic.pystr_to_symbolic(
+                                                "{} Mod {}".format(r, s)
+                                            ), 1))
+                                e2.data.dist_subset = sbs.Range(dist_ranges)
+                                e2.data.subset = sbs.Range(local_ranges)
+                                # TODO: Fix other_subset and access node copying cases
+                                # ranges = []
+                                # if e2.dst == node and e2.data.other_subset:
+                                #     for r, s in zip(e2.data.other_subset,
+                                #                     data.shape
+                                #     ):
+                                #         if isinstance(r, (list, tuple)):
+                                #             ranges.append((
+                                #                 symbolic.pystr_to_symbolic(
+                                #                     "{} // {}".format(r[0], s)
+                                #                 ),
+                                #                 symbolic.pystr_to_symbolic(
+                                #                     "{} // {}".format(r[1], s)
+                                #                 ),
+                                #                 1
+                                #             ))
+                                #     e2.data.other_dist_subset = sbs.Range(
+                                #         ranges)
                                 visited_edges.add(e2)
 
         elif dist_type == dtypes.DataDistributionType.Custom:
