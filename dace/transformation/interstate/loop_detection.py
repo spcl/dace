@@ -1,15 +1,13 @@
-""" State fusion transformation """
+""" Loop detection transformation """
 
 import sympy as sp
 import networkx as nx
 
-from dace import dtypes, registry, sdfg as sd
-from dace.graph import edges, nodes, nxutil
+from dace import sdfg as sd
+from dace.graph import edges, nxutil
 from dace.transformation import pattern_matching
-from dace.config import Config
 
 
-@registry.autoregister
 class DetectLoop(pattern_matching.Transformation):
     """ Detects a for-loop construct from an SDFG. """
 
