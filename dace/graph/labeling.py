@@ -731,6 +731,47 @@ def propagate_memlet(dfg_state,
 
         assert new_subset is not None
 
+        ### Begin of distributed subset #######################################
+        if arr.dist_shape:
+            new_dist_subset = None
+            for md in aggdata:
+                tmp_dist_subset = None
+                for pclass in MemletPattern.extensions():
+                    pattern = pclass()
+                    if pattern.match([md.dist_subset], variable_context,
+                                     mapnode.range, [md]):
+                        tmp_dist_subset = pattern.propagate(
+                            arr, [md.dist_subset], mapnode.range)
+                        break
+                else:
+                    # No patterns found. Emit a warning and propagate the entire
+                    # array
+                    warnings.warn('(Distributed) Cannot find appropriate '
+                                  'memlet pattern to propagate %s through %s' %
+                                  (str(md.dist_subset), str(mapnode.range)))
+                    tmp_dist_subset = subsets.Range([(0, s - 1, 1)
+                                                    for s in arr.dist_shape])
+
+                # Union edges as necessary
+                if new_dist_subset is None:
+                    new_dist_subset = tmp_dist_subset
+                else:
+                    old_dist_subset = new_dist_subset
+                    new_dist_subset = subsets.union(new_dist_subset,
+                                                    tmp_dist_subset)
+                    if new_dist_subset is None:
+                        warnings.warn('(Distributed) Subset union failed '
+                                      'between %s and %s ' %
+                                      (old_dist_subset, tmp_dist_subset))
+
+            # Some unions failed
+            if new_dist_subset is None:
+                new_dist_subset = subsets.Range([(0, s - 1, 1)
+                                                for s in arr.dist_shape])
+
+            assert new_dist_subset is not None
+        ### End of distributed subset #########################################
+
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
         new_subset = subsets.Range.from_array(arr)
@@ -741,6 +782,8 @@ def propagate_memlet(dfg_state,
 
     new_memlet = copy.copy(memlet)
     new_memlet.subset = new_subset
+    if arr.dist_shape:
+        new_memlet.dist_subset = new_dist_subset
     new_memlet.other_subset = None
 
     # Number of accesses in the propagated memlet is the sum of the internal
