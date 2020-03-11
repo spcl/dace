@@ -82,7 +82,11 @@ class DetectLoop(pattern_matching.Transformation):
                                                        sdfg.start_state)
         loop_nodes = nxutil.dfs_topological_sort(
             sdfg, sources=[begin], condition=lambda _, child: child != guard)
+        backedge_found = False
         for node in loop_nodes:
+            if any(e.dst == guard for e in graph.out_edges(node)):
+                backedge_found = True
+
             # Traverse the dominator tree upwards, if we reached the guard,
             # the node is in the loop. If we reach the starting state
             # without passing through the guard, fail.
@@ -93,6 +97,9 @@ class DetectLoop(pattern_matching.Transformation):
                 dom = dominators[dom]
             else:
                 return False
+
+        if not backedge_found:
+            return False
 
         return True
 
