@@ -1707,9 +1707,9 @@ subgraph cluster_state_{state} {{
                                             ), 1))
                                         local_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "{} Mod {}".format(r, s)
+                                                "{} % {}".format(r, s)
                                             ), symbolic.pystr_to_symbolic(
-                                                "{} Mod {}".format(r, s)
+                                                "{} % {}".format(r, s)
                                             ), 1))
                                 e2.data.dist_subset = sbs.Range(dist_ranges)
                                 e2.data.subset = sbs.Range(local_ranges)

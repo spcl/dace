@@ -423,7 +423,7 @@ class GenericSMemlet(SeparableMemletPattern):
 
         if (used_symbols & set(self.params)
                 and any(s not in defined_vars
-                        for s in node_range.free_symbols)):
+                        for s in node_range.free_symbols.values())):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
