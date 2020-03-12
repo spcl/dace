@@ -90,7 +90,12 @@ class LoopUnroll(DetectLoop):
         condition = condition_edge.data.condition_sympy()
 
         # If loop cannot be detected, fail
-        if not LoopUnroll._loop_range(itervar, guard_inedges, condition):
+        rng = LoopUnroll._loop_range(itervar, guard_inedges, condition)
+        if not rng:
+            return False
+
+        # If loop is not specialized or constant-sized, fail
+        if any(symbolic.issymbolic(r, sdfg.constants) for r in rng):
             return False
 
         return True
