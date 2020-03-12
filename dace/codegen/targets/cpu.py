@@ -1411,6 +1411,8 @@ class CPUCodeGen(TargetCodeGenerator):
         #  generator (that CPU inherits from) is implemented
         if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             map_header += "#pragma omp parallel for"
+            if node.map.collapse > 1:
+                map_header += ' collapse(%d)' % node.map.collapse
             # Loop over outputs, add OpenMP reduction clauses to detected cases
             # TODO: set up register outside loop
             # exit_node = dfg.exit_nodes(node)[0]
