@@ -277,8 +277,8 @@ class SDFG(OrderedDiGraph):
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info={'sdfg': None}):
-
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -298,7 +298,7 @@ class SDFG(OrderedDiGraph):
             ret, json_obj, ignore_properties={'constants_prop', 'name'})
 
         for n in nodes:
-            nci = copy.deepcopy(context_info)
+            nci = copy.copy(context_info)
             nci['sdfg'] = ret
 
             state = SDFGState.from_json(n, context=nci)
