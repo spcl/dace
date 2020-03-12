@@ -21,7 +21,8 @@ def preamble():
     # Emit javascript headers for SDFG renderer
     sdfv_deps = [
         'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
-        'renderer_elements.js', 'sdfg_utils.js', 'renderer.js'
+        'external_lib/math.min.js', 'renderer_elements.js', 'sdfg_utils.js',
+        'renderer.js'
     ]
     result = ''
 
