@@ -100,7 +100,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # The sdfg symbols smi_rank and smi_num_ranks, will be used to load the proper bitstream
         if self.enable_smi:
             if execution_mode == "emulator":
-                kernel_file_name = "std::string kernel_path = DACE_BINARY_DIR \"/emulator_\"+std::to_string(smi_rank)+\"/{}".format(
+                kernel_file_name = "std::string kernel_path = DACE_BINARY_DIR \"/emulator_\"+std::to_string(__dace_comm_rank)+\"/{}".format(
                     self._program_name)
             elif execution_mode == "hardware":
                 kernel_file_name = "std::string kernel_path = DACE_BINARY_DIR \"/{}".format(
@@ -141,14 +141,14 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             int __dace_comm_size = 1;
             int __dace_comm_rank = 0;
             """)
-
+            # TODO: understand if we want to generate MPI_Init/Calls
             host_code.write("""
                DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-                   CHECK_MPI(MPI_Init(NULL, NULL));
+                   //CHECK_MPI(MPI_Init(NULL, NULL));
                    CHECK_MPI(MPI_Comm_size(MPI_COMM_WORLD, &__dace_comm_size));
                    CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
                    {kernel_file_name};
-                   hlslib::ocl::GlobalContext().MakeProgram(kernel_path);                   
+                   hlslib::ocl::GlobalContext({context}).MakeProgram(kernel_path);                   
                    return 0;
                }}
 
@@ -156,6 +156,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 signature=self._global_sdfg.signature(),
                 emulation_flag=emulation_flag,
                 kernel_file_name=kernel_file_name,
+                context = 0 if execution_mode == "emulator" else "__dace_comm_rank%2",
                 host_code="".join([
                     "{separator}\n// Kernel: {kernel_name}"
                     "\n{separator}\n\n{code}\n\n".format(separator="/" * 79,
@@ -164,8 +165,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                     for (name, code) in self._host_codes
                 ])))
             host_code.write("""DACE_EXPORTED void __dace_exit_intel_fpga() {{
-    CHECK_MPI(MPI_Barrier(MPI_COMM_WORLD));
-    CHECK_MPI(MPI_Finalize());
+    //CHECK_MPI(MPI_Barrier(MPI_COMM_WORLD));
+    //CHECK_MPI(MPI_Finalize());
 }}""")
         else:
             host_code.write("""
@@ -592,9 +593,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 "std::vector < hlslib::ocl::Buffer < char, hlslib::ocl::Access::read >> buffers;"
             )
             host_code_body_stream.write(
-                "SMI_Comm smi_comm = SmiInit_{}(smi_rank, smi_num_ranks, ROUTING_DIR, "
+                "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
                 "hlslib::ocl::GlobalContext(), program, buffers);".format(
                     kernel_name))
+            host_code_body_stream.write(
+                "MPI_Barrier(MPI_COMM_WORLD);")
+
 
         self.generate_host_function_prologue(sdfg, state,
                                              host_code_body_stream)
