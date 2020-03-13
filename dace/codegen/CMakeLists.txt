@@ -477,7 +477,7 @@ if(DACE_ENABLE_INTELFPGA)
     set(SMI_HOST_CODEGEN_TARGETS)   # list of host based targets
 
     #TODO define NUM_RANKS
-    set(NUM_RANKS 2)
+    set(NUM_RANKS 4)
 
     set(WORKDIR ${CMAKE_CURRENT_BINARY_DIR}/)
     file(MAKE_DIRECTORY ${WORKDIR})
@@ -572,9 +572,22 @@ if(DACE_ENABLE_INTELFPGA)
                 ${PROGRAM_METADATA}
             WORKING_DIRECTORY ${WORKDIR}
     )
+
+    # TODO: this is problematic if we want to compute topologies on the fly
     foreach(TARGET IN ITEMS ${KERNEL_TARGETS})
         add_dependencies(${ROUTING_TARGET} ${TARGET})
     endforeach()
+
+    # utility target for recomputing the routing table
+    set(RECOMPUTE_TABLE intelfpga_smi_recompute_table_${DACE_PROGRAM_NAME})
+    add_custom_target(${RECOMPUTE_TABLE}
+            COMMAND python3
+                ${SMI_SCRIPT} route
+                ${TOPOLOGY_FILE}
+                ${WORKDIR}/smi-routes
+                ${PROGRAM_METADATA}
+            WORKING_DIRECTORY ${WORKDIR}
+    )
 
     # generate host code in the src directory (note: we assume here one host code per program)
     set(HOST_GENERATED_TARGET intelfpga_smi_${DACE_PROGRAM_NAME}_codegen_host)
