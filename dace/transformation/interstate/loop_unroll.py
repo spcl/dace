@@ -122,7 +122,7 @@ class LoopUnroll(DetectLoop):
             raise NotImplementedError  # TODO(later)
 
         # Find the state prior to the loop
-        if str(rng[0]) == guard_inedges[0].data.assignments[itervar]:
+        if str(sp.simplify(rng[0])) == str(sp.simplify(guard_inedges[0].data.assignments[itervar])):
             before_state: sd.SDFGState = guard_inedges[0].src
             last_state: sd.SDFGState = guard_inedges[1].src
         else:
