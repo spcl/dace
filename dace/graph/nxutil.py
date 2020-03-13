@@ -102,7 +102,7 @@ def depth_limited_dfs_iter(source, depth):
             stack.pop()
 
 
-def dfs_topological_sort(G, sources=None, parent=False, condition=None):
+def dfs_topological_sort(G, sources=None, condition=None):
     """ Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering

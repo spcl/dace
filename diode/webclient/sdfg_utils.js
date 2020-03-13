@@ -64,7 +64,7 @@ function stringify_sdfg(sdfg) {
 // Includes various properties and returns their string representation
 function sdfg_property_to_string(prop) {
     if (prop === null) return prop;
-    if (prop.type === "subsets.Indices") {
+    if (prop.type === "Indices" || prop.type === "subsets.Indices") {
         let indices = prop.indices;
         let preview = '[';
         for (let index of indices) {
@@ -80,8 +80,14 @@ function sdfg_property_to_string(prop) {
             if (range.start == range.end && range.step == 1 && range.tile == 1)
                 preview += sdfg_property_to_string(range.start);
             else {
+                let endp1 = sdfg_property_to_string(range.end) + ' + 1';
+                // Try to simplify using math.js
+                try {
+                    endp1 = math.simplify(endp1).toString();
+                } catch(e) {}
+
                 preview += sdfg_property_to_string(range.start) + ':' +
-                    sdfg_property_to_string(range.end);
+                    endp1;
                 if (range.step != 1) {
                     preview += ':' + sdfg_property_to_string(range.step);
                     if (range.tile != 1)
