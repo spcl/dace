@@ -12,12 +12,21 @@ class Subset(object):
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
+        def nng(expr):
+            # When dealing with set sizes, assume symbols are non-negative
+            # TODO: Fix in symbol definition, not here
+            for sym in list(expr.free_symbols):
+                expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+            return expr
+
         try:
-            return all([
-                rb <= orb and re >= ore for rb, re, orb, ore in zip(
-                    self.min_element(), self.max_element(),
-                    other.min_element(), other.max_element())
-            ])
+            return all([(symbolic.simplify_ext(nng(rb)) <=
+                         symbolic.simplify_ext(nng(orb))) == True
+                        and (symbolic.simplify_ext(nng(re)) >=
+                             symbolic.simplify_ext(nng(ore))) == True
+                        for rb, re, orb, ore in zip(
+                            self.min_element(), self.max_element_approx(),
+                            other.min_element(), other.max_element_approx())])
         except TypeError:
             return False
 
@@ -65,6 +74,12 @@ def _simplified_str(val):
 def _expr(val):
     if isinstance(val, symbolic.SymExpr):
         return val.expr
+    return val
+
+
+def _approx(val):
+    if isinstance(val, symbolic.SymExpr):
+        return val.approx
     return val
 
 
@@ -180,11 +195,10 @@ class Range(Subset):
         """ Returns the number of elements in each dimension. """
         return [
             ts * sp.ceiling(
-                ((iMax.expr
-                    if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                    (iMin.expr if isinstance(iMin, symbolic.SymExpr) else
-                    iMin)) / (step.expr if isinstance(
-                        step, symbolic.SymExpr) else step))
+                ((iMax.expr if isinstance(iMax, symbolic.SymExpr) else iMax) +
+                 1 -
+                 (iMin.expr if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+                (step.expr if isinstance(step, symbolic.SymExpr) else step))
             for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
         ]
 
@@ -203,8 +217,9 @@ class Range(Subset):
 
     def max_element(self):
         return [_expr(x[1]) for x in self.ranges]
-        # return [(sp.floor((iMax - iMin) / step) - 1) * step
-        #        for iMin, iMax, step in self.ranges]
+
+    def max_element_approx(self):
+        return [_approx(x[1]) for x in self.ranges]
 
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
@@ -554,6 +569,16 @@ class Range(Subset):
     def string_list(self):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
+    def replace(self, repl_dict):
+        for i, ((rb, re, rs),
+                ts) in enumerate(zip(self.ranges, self.tile_sizes)):
+            self.ranges[i] = (
+                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
+                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
+                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
+            self.tile_sizes[i] = (ts.subs(repl_dict)
+                                  if symbolic.issymbolic(ts) else ts)
+
 
 @dace.serialize.serializable
 class Indices(Subset):
@@ -611,6 +636,9 @@ class Indices(Subset):
 
     def max_element(self):
         return self.indices
+
+    def max_element_approx(self):
+        return [_approx(ind) for ind in self.indices]
 
     def data_dims(self):
         return 0
@@ -726,6 +754,11 @@ class Indices(Subset):
     def unsqueeze(self, axes):
         for axis in sorted(axes):
             self.indices.insert(axis, 0)
+
+    def replace(self, repl_dict):
+        for i, ind in enumerate(self.indices):
+            self.indices[i] = (ind.subs(repl_dict)
+                               if symbolic.issymbolic(ind) else ind)
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:

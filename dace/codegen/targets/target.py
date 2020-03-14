@@ -16,7 +16,6 @@ class TargetCodeGenerator(object):
           * Array allocation/deallocation/initialization/copying
           * Scope (map, consume) code generation
     """
-
     def get_generated_codeobjects(self):
         """ Returns a list of generated `CodeObject` classes corresponding
             to files with generated code. If an empty list is returned
@@ -162,7 +161,6 @@ class TargetCodeGenerator(object):
 class IllegalCopy(TargetCodeGenerator):
     """ A code generator that is triggered when invalid copies are specified
         by the SDFG. Only raises an exception on failure. """
-
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
         raise TypeError('Illegal copy! (from ' + str(src_node) + ' to ' +
@@ -185,7 +183,6 @@ class DefinedType(aenum.AutoNumberEnum):
 class DefinedMemlets:
     """ Keeps track of the type of defined memlets to ensure that they are
         referenced correctly in nested scopes and SDFGs. """
-
     def __init__(self):
         self._scopes = [(None, {})]
 
@@ -211,8 +208,8 @@ class DefinedMemlets:
             ancestor: int = 0,
             allow_shadowing: bool = False):
         if not isinstance(name, str):
-            raise TypeError(
-                'Variable name type cannot be %s' % type(name).__name__)
+            raise TypeError('Variable name type cannot be %s' %
+                            type(name).__name__)
 
         for _, scope in reversed(self._scopes):
             if name in scope:
@@ -233,7 +230,6 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
-
     def __init__(self):
         self._used_targets = set()
         self._used_environments = set()
@@ -429,8 +425,9 @@ class TargetDispatcher(object):
                     state, ", ".join(
                         [type(x).__name__ for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
-            satisfied_dispatchers[0].generate_state(
-                sdfg, state, function_stream, callsite_stream)
+            satisfied_dispatchers[0].generate_state(sdfg, state,
+                                                    function_stream,
+                                                    callsite_stream)
         else:  # num_satisfied == 0
             # Otherwise use the generic code generator (CPU)
             self._generic_state_dispatcher.generate_state(
@@ -447,8 +444,8 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
-        start_nodes = list(
-            v for v in dfg.nodes() if len(list(dfg.predecessors(v))) == 0)
+        start_nodes = list(v for v in dfg.nodes()
+                           if len(list(dfg.predecessors(v))) == 0)
 
         # Mark nodes to skip in order to be able to skip
         nodes_to_skip = set()
@@ -497,8 +494,9 @@ class TargetDispatcher(object):
                         [type(x).__name__ for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
             self._used_targets.add(satisfied_dispatchers[0])
-            satisfied_dispatchers[0].generate_node(
-                sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            satisfied_dispatchers[0].generate_node(sdfg, dfg, state_id, node,
+                                                   function_stream,
+                                                   callsite_stream)
         else:  # num_satisfied == 0
             # Otherwise use the generic code generator (CPU)
             self._used_targets.add(self._generic_node_dispatcher)

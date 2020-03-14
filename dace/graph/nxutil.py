@@ -102,7 +102,7 @@ def depth_limited_dfs_iter(source, depth):
             stack.pop()
 
 
-def dfs_topological_sort(G, sources=None, parent=False, condition=None):
+def dfs_topological_sort(G, sources=None, condition=None):
     """ Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering
@@ -212,8 +212,8 @@ def traverse_sdfg_scope(G, source, yield_edges=True):
                     stack.append((scope + 1, child, iter(G.out_edges(child))))
                 elif isinstance(child, nodes.ExitNode):
                     if scope > 1:  # Don't traverse beyond scope
-                        stack.append((scope - 1, child, iter(
-                            G.out_edges(child))))
+                        stack.append(
+                            (scope - 1, child, iter(G.out_edges(child))))
                 else:
                     stack.append((scope, child, iter(G.out_edges(child))))
         except StopIteration:
@@ -247,12 +247,12 @@ def range_to_str(ranges, limit_length=50):
     def convert_index(r):
         if len(r) == 3:
             if r[2] != 1:
-                return "{}:{}:{}".format(
-                    symbolic.symstr(r[0]), symbolic.symstr(r[1]),
-                    symbolic.symstr(r[2]))
+                return "{}:{}:{}".format(symbolic.symstr(r[0]),
+                                         symbolic.symstr(r[1]),
+                                         symbolic.symstr(r[2]))
             else:
-                return "{}:{}".format(
-                    symbolic.symstr(r[0]), symbolic.symstr(r[1]))
+                return "{}:{}".format(symbolic.symstr(r[0]),
+                                      symbolic.symstr(r[1]))
         else:
             raise ValueError("Unsupported range: " + str(r))
 
@@ -298,12 +298,11 @@ def str_to_range(rangeStr):
     return ranges
 
 
-def change_edge_dest(
-        graph: dace.graph.graph.OrderedDiGraph,
-        node_a: Union[dace.graph.nodes.Node,
-                      dace.graph.graph.OrderedMultiDiConnectorGraph],
-        node_b: Union[dace.graph.nodes.Node,
-                      dace.graph.graph.OrderedMultiDiConnectorGraph]):
+def change_edge_dest(graph: dace.graph.graph.OrderedDiGraph,
+                     node_a: Union[dace.graph.nodes.Node, dace.graph.graph.
+                                   OrderedMultiDiConnectorGraph],
+                     node_b: Union[dace.graph.nodes.Node, dace.graph.graph.
+                                   OrderedMultiDiConnectorGraph]):
     """ Changes the destination of edges from node A to node B.
 
         The function finds all edges in the graph that have node A as their
@@ -342,12 +341,11 @@ def change_edge_dest(
             graph.add_edge(e.src, node_b, e.data)
 
 
-def change_edge_src(
-        graph: dace.graph.graph.OrderedDiGraph,
-        node_a: Union[dace.graph.nodes.Node,
-                      dace.graph.graph.OrderedMultiDiConnectorGraph],
-        node_b: Union[dace.graph.nodes.Node,
-                      dace.graph.graph.OrderedMultiDiConnectorGraph]):
+def change_edge_src(graph: dace.graph.graph.OrderedDiGraph,
+                    node_a: Union[dace.graph.nodes.Node, dace.graph.graph.
+                                  OrderedMultiDiConnectorGraph],
+                    node_b: Union[dace.graph.nodes.Node, dace.graph.graph.
+                                  OrderedMultiDiConnectorGraph]):
     """ Changes the sources of edges from node A to node B.
 
         The function finds all edges in the graph that have node A as their 
@@ -414,11 +412,10 @@ def merge_maps(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
                outer_map_exit: dace.graph.nodes.MapExit,
                inner_map_entry: dace.graph.nodes.MapEntry,
                inner_map_exit: dace.graph.nodes.MapExit,
-               param_merge: Callable[[params, params],
-                                     params] = lambda p1, p2: p1 + p2,
-               range_merge: Callable[[
-                   ranges, ranges
-               ], ranges] = lambda r1, r2: type(r1)(r1.ranges + r2.ranges)
+               param_merge: Callable[[params, params], params] = lambda p1, p2:
+               p1 + p2,
+               range_merge: Callable[[ranges, ranges], ranges] = lambda r1, r2:
+               type(r1)(r1.ranges + r2.ranges)
                ) -> (dace.graph.nodes.MapEntry, dace.graph.nodes.MapExit):
     """ Merges two maps (their entries and exits). It is assumed that the
     operation is valid. """

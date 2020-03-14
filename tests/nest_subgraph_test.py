@@ -13,13 +13,12 @@ def create_sdfg():
     sdfg.add_array('A', [2], dace.float32)
     sdfg.add_array('B', [2], dace.float32)
     state = sdfg.add_state()
-    t, me, mx = state.add_mapped_tasklet(
-        'map',
-        dict(i='0:2'),
-        dict(a=dace.Memlet.simple('A', 'i')),
-        'b = a * 2',
-        dict(b=dace.Memlet.simple('B', 'i')),
-        external_edges=True)
+    t, me, mx = state.add_mapped_tasklet('map',
+                                         dict(i='0:2'),
+                                         dict(a=dace.Memlet.simple('A', 'i')),
+                                         'b = a * 2',
+                                         dict(b=dace.Memlet.simple('B', 'i')),
+                                         external_edges=True)
     return sdfg, state, t, me, mx
 
 
@@ -33,20 +32,18 @@ def create_tiled_sdfg():
     t = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a * 2')
     A = state.add_read('A')
     B = state.add_write('B')
-    state.add_memlet_path(
-        A,
-        ome,
-        ime,
-        t,
-        dst_conn='a',
-        memlet=dace.Memlet.simple('A', 'i*2 + j'))
-    state.add_memlet_path(
-        t,
-        imx,
-        omx,
-        B,
-        src_conn='b',
-        memlet=dace.Memlet.simple('B', 'i*2 + j'))
+    state.add_memlet_path(A,
+                          ome,
+                          ime,
+                          t,
+                          dst_conn='a',
+                          memlet=dace.Memlet.simple('A', 'i*2 + j'))
+    state.add_memlet_path(t,
+                          imx,
+                          omx,
+                          B,
+                          src_conn='b',
+                          memlet=dace.Memlet.simple('B', 'i*2 + j'))
     return sdfg, state
 
 
@@ -65,8 +62,8 @@ class NestStateSubgraph(unittest.TestCase):
 
         tasklet_nodes = [n for n in state.nodes() if isinstance(n, Tasklet)]
         with self.assertRaises(ValueError):
-            nest_state_subgraph(sdfg, state, SubgraphView(
-                state, tasklet_nodes))
+            nest_state_subgraph(sdfg, state,
+                                SubgraphView(state, tasklet_nodes))
 
         nest_state_subgraph(sdfg, state, SubgraphView(state,
                                                       [tasklet_nodes[0]]))

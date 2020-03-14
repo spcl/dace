@@ -326,9 +326,9 @@ def new():
 def raise_exception(error_type, message, my_lexer):
     startpos = 1 + my_lexer.lexdata.rfind("\n", 0, my_lexer.lexpos)
     endpos = my_lexer.lexdata.find("\n", startpos)
-    raise error_type(
-        message, ("inputfile", my_lexer.lineno, 1 + my_lexer.lexpos - startpos,
-                  my_lexer.lexdata[startpos:endpos]))
+    raise error_type(message,
+                     ("inputfile", my_lexer.lineno, 1 + my_lexer.lexpos -
+                      startpos, my_lexer.lexdata[startpos:endpos]))
 
 
 def main():

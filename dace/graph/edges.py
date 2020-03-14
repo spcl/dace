@@ -40,8 +40,8 @@ class InterstateEdge(object):
         desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
         from_string=assignments_from_string,
         to_string=assignments_to_string)
-    condition = CodeProperty(
-        desc="Transition condition", default=ast.parse("1").body[0])
+    condition = CodeProperty(desc="Transition condition",
+                             default=ast.parse("1").body[0])
 
     def __init__(self, condition=None, assignments=None):
 
@@ -118,7 +118,6 @@ class InterstateEdge(object):
 class RedirectEdge(InterstateEdge):
     """ An inter-state edge type used for rendering self-looping edges
         on graph clusters in GraphViz. """
-
     def __init__(self):
         super(RedirectEdge, self).__init__()
         self._dotOpts["arrowhead"] = "none"

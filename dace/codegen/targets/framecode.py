@@ -20,7 +20,6 @@ class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
-
     def __init__(self, *args, **kwargs):
         self._dispatcher = TargetDispatcher()
         self._dispatcher.register_state_dispatcher(self)
@@ -51,8 +50,8 @@ class DaCeCodeGenerator(object):
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(
-                    "constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname,
-                                                 str(cstval)), sdfg)
+                    "constexpr %s %s = %s;\n" %
+                    (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
 
     def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream):
         """ Generate a header in every output file that includes custom types
@@ -183,8 +182,8 @@ DACE_EXPORTED int __dace_init_%s(%s)
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s(%s);' % (target.target_name,
-                                                         paramnames), sdfg)
+                    '__result |= __dace_init_%s(%s);' %
+                    (target.target_name, paramnames), sdfg)
         for env in environments:
             if env.init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
@@ -234,8 +233,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Emit internal transient array allocation
         # Don't allocate transients shared with another state
-        data_to_allocate = (
-            set(state.top_level_transients()) - set(sdfg.shared_transients()))
+        data_to_allocate = (set(state.top_level_transients()) -
+                            set(sdfg.shared_transients()))
         allocated = set()
         for node in state.data_nodes():
             if node.data not in data_to_allocate or node.data in allocated:
@@ -243,8 +242,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
                                                global_stream, callsite_stream)
-            self._dispatcher.dispatch_initialize(
-                sdfg, state, sid, node, global_stream, callsite_stream)
+            self._dispatcher.dispatch_initialize(sdfg, state, sid, node,
+                                                 global_stream,
+                                                 callsite_stream)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -262,24 +262,22 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) == 1:
-            self._dispatcher.dispatch_subgraph(
-                sdfg,
-                state,
-                sid,
-                global_stream,
-                callsite_stream,
-                skip_entry_node=False)
+            self._dispatcher.dispatch_subgraph(sdfg,
+                                               state,
+                                               sid,
+                                               global_stream,
+                                               callsite_stream,
+                                               skip_entry_node=False)
         else:
             callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
                 callsite_stream.write("#pragma omp section\n{")
-                self._dispatcher.dispatch_subgraph(
-                    sdfg,
-                    c,
-                    sid,
-                    global_stream,
-                    callsite_stream,
-                    skip_entry_node=False)
+                self._dispatcher.dispatch_subgraph(sdfg,
+                                                   c,
+                                                   sid,
+                                                   global_stream,
+                                                   callsite_stream,
+                                                   skip_entry_node=False)
                 callsite_stream.write("} // End omp section")
             callsite_stream.write("} // End omp sections")
 
@@ -296,8 +294,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             and sdfg.arrays[node.data].transient == False)):
                     continue
                 deallocated.add(node.data)
-                self._dispatcher.dispatch_deallocate(
-                    sdfg, state, sid, node, global_stream, callsite_stream)
+                self._dispatcher.dispatch_deallocate(sdfg, state, sid, node,
+                                                     global_stream,
+                                                     callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._dispatcher.instrumentation.values():
@@ -504,19 +503,21 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             generated_edges.add(then_entry)
 
                             # Generate the then-scope
-                            self.generate_states(
-                                sdfg, state.label + "_then", control_flow,
-                                global_stream, callsite_stream, then_scope,
-                                states_generated, generated_edges)
+                            self.generate_states(sdfg, state.label + "_then",
+                                                 control_flow, global_stream,
+                                                 callsite_stream, then_scope,
+                                                 states_generated,
+                                                 generated_edges)
 
                             callsite_stream.write("} else {", sdfg, sid)
                             generated_edges.add(else_scope.entry.edge)
 
                             # Generate the else-scope
-                            self.generate_states(
-                                sdfg, state.label + "_else", control_flow,
-                                global_stream, callsite_stream, else_scope,
-                                states_generated, generated_edges)
+                            self.generate_states(sdfg, state.label + "_else",
+                                                 control_flow, global_stream,
+                                                 callsite_stream, else_scope,
+                                                 states_generated,
+                                                 generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
                             generated_edges.add(else_scope.exit.edge)
@@ -592,30 +593,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream.write(
             "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
 
-    @staticmethod
-    def all_nodes_between(graph, begin, end):
-        """Finds all nodes between begin and end. Returns None if there is any
-           path starting at begin that does not reach end."""
-        to_visit = [begin]
-        seen = set()
-        while len(to_visit) > 0:
-            n = to_visit.pop()
-            if n == end:
-                continue  # We've reached the end node
-            if n in seen:
-                continue  # We've already visited this node
-            seen.add(n)
-            # Keep chasing all paths to reach the end node
-            node_out_edges = graph.out_edges(n)
-            if len(node_out_edges) == 0:
-                # We traversed to the end without finding the end
-                return None
-            for e in node_out_edges:
-                next_node = e.dst
-                if next_node != end and next_node not in seen:
-                    to_visit.append(next_node)
-        return seen
-
     def generate_code(self,
                       sdfg: SDFG,
                       schedule: Optional[dtypes.ScheduleType],
@@ -672,16 +649,17 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             if isvarName in allocated:
                 continue
             callsite_stream.write(
-                '%s;\n' % (isvarType.signature(
-                    with_types=True, name=isvarName)), sdfg)
+                '%s;\n' %
+                (isvarType.signature(with_types=True, name=isvarName)), sdfg)
 
         # Initialize parameter arrays
         for argnode in dtypes.deduplicate(sdfg.input_arrays() +
                                           sdfg.output_arrays()):
             # Ignore transient arrays
             if argnode.desc(sdfg).transient: continue
-            self._dispatcher.dispatch_initialize(
-                sdfg, sdfg, None, argnode, global_stream, callsite_stream)
+            self._dispatcher.dispatch_initialize(sdfg, sdfg, None, argnode,
+                                                 global_stream,
+                                                 callsite_stream)
 
         callsite_stream.write('\n', sdfg)
 
@@ -704,8 +682,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             # Group in terms of starting node
             starting_nodes = [c[0] for c in all_cycles]
             # Order cycles according to starting node in topological sort
-            starting_nodes = sorted(
-                starting_nodes, key=lambda x: states_topological.index(x))
+            starting_nodes = sorted(starting_nodes,
+                                    key=lambda x: states_topological.index(x))
             cycles_by_node = [[c for c in all_cycles if c[0] == n]
                               for n in starting_nodes]
             for cycles in cycles_by_node:
@@ -865,13 +843,11 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                 # Now traverse from the source and verify that all possible paths
                 # pass through the dominator
-                left_nodes = DaCeCodeGenerator.all_nodes_between(
-                    sdfg, left, dominator)
+                left_nodes = sdfg.all_nodes_between(left, dominator)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                right_nodes = DaCeCodeGenerator.all_nodes_between(
-                    sdfg, right, dominator)
+                right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
@@ -921,9 +897,10 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         states_generated = set()  # For sanity check
         generated_edges = set()
-        self.generate_states(
-            sdfg, "sdfg", control_flow, global_stream, callsite_stream,
-            set(states_topological), states_generated, generated_edges)
+        self.generate_states(sdfg, "sdfg", control_flow,
+                             global_stream, callsite_stream,
+                             set(states_topological), states_generated,
+                             generated_edges)
 
         #######################################################################
 

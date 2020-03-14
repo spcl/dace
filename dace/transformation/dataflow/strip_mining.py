@@ -28,13 +28,11 @@ def calc_set_image_index(map_idx, map_set, array_idx):
                 if isinstance(new_range[i], SymExpr):
                     new_range[i] = SymExpr(
                         new_range[i].expr.subs([(symbol, exact)]),
-                        new_range[i].approx.subs([(symbol, approx)])
-                    )
+                        new_range[i].approx.subs([(symbol, approx)]))
                 elif issymbolic(new_range[i]):
                     new_range[i] = SymExpr(
                         new_range[i].subs([(symbol, exact)]),
-                        new_range[i].subs([(symbol, approx)])
-                    )
+                        new_range[i].subs([(symbol, approx)]))
                 else:
                     new_range[i] = SymExpr(new_range[i], new_range[i])
         image.append(new_range)
@@ -57,13 +55,11 @@ def calc_set_image_range(map_idx, map_set, array_range):
                 if isinstance(new_range[i], SymExpr):
                     new_range[i] = SymExpr(
                         new_range[i].expr.subs([(symbol, exact)]),
-                        new_range[i].approx.subs([(symbol, approx)])
-                    )
+                        new_range[i].approx.subs([(symbol, approx)]))
                 elif issymbolic(new_range[i]):
                     new_range[i] = SymExpr(
                         new_range[i].subs([(symbol, exact)]),
-                        new_range[i].subs([(symbol, approx)])
-                    )
+                        new_range[i].subs([(symbol, approx)]))
                 else:
                     new_range[i] = SymExpr(new_range[i], new_range[i])
         image.append(new_range)
@@ -103,11 +99,13 @@ def calc_set_union(set_a, set_b):
                 b_exact = range_b[i]
                 b_approx = range_b[i]
             if i in {0, 2}:
-                r_union.append(SymExpr(sympy.Min(a_exact, b_exact),
-                                       sympy.Min(a_approx, b_approx)))
+                r_union.append(
+                    SymExpr(sympy.Min(a_exact, b_exact),
+                            sympy.Min(a_approx, b_approx)))
             else:
-                r_union.append(SymExpr(sympy.Max(a_exact, b_exact),
-                                       sympy.Max(a_approx, b_approx)))
+                r_union.append(
+                    SymExpr(sympy.Max(a_exact, b_exact),
+                            sympy.Max(a_approx, b_approx)))
         union.append(r_union)
         # union.append([
         #     sympy.Min(range_a[0], range_b[0]),

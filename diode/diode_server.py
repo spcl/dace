@@ -45,7 +45,6 @@ class ConfigCopy:
     """
         Copied Config for passing by-value
     """
-
     def __init__(self, config_values):
         self._config = config_values
 
@@ -82,7 +81,6 @@ class ExecutorServer:
     """
        Implements a server scheduling execution of dace programs
     """
-
     def __init__(self):
 
         self._command_queue = queue.Queue(
@@ -457,9 +455,8 @@ def getEnum(name):
         print("Enum type '" + str(name) + "' is not in Whitelist")
         abort(400)
 
-    return jsonify({
-        'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]
-    })
+    return jsonify(
+        {'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]})
 
 
 @app.route('/dace/api/v1.0/getLibImpl/<string:name>', methods=['GET'])
@@ -650,8 +647,9 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
                 #if prop['name'] == 'subgraph': continue
                 #set_properties_from_json(pattern, prop, sdfg)
 
-                dace.serialize.set_properties_from_json(
-                    pattern, x['params']['props'], context=sdfg)
+                dace.serialize.set_properties_from_json(pattern,
+                                                        x['params']['props'],
+                                                        context=sdfg)
                 pattern.apply_pattern(tsdfg)
 
                 if not useGlobalSuffix:
@@ -819,8 +817,9 @@ def compileProgram(request, language, perfopts=None):
                         sp = None
                     print("Applying opts for " + sdfg_name)
                     print("Dict: " + str(sdfg_dict.keys()))
-                    sdfg_dict[sdfg_name] = applyOptPath(
-                        sdfg_dict[sdfg_name], op, sdfg_props=sp)
+                    sdfg_dict[sdfg_name] = applyOptPath(sdfg_dict[sdfg_name],
+                                                        op,
+                                                        sdfg_props=sp)
 
         code_tuple_dict = {}
         # Deep-copy the SDFG (codegen may change the SDFG it operates on)
@@ -1198,11 +1197,10 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-l",
-        "--localhost",
-        action="store_true",
-        help="Bind to localhost only")
+    parser.add_argument("-l",
+                        "--localhost",
+                        action="store_true",
+                        help="Bind to localhost only")
 
     parser.add_argument(
         "-r",
@@ -1210,11 +1208,10 @@ if __name__ == '__main__':
         action="store_true",
         help="Use ssh commands instead of locally running dace")
 
-    parser.add_argument(
-        "-rd",
-        "--restoredace",
-        action="store_true",
-        help="Restore the backup file")
+    parser.add_argument("-rd",
+                        "--restoredace",
+                        action="store_true",
+                        help="Restore the backup file")
 
     parser.add_argument(
         "-e",
@@ -1237,11 +1234,10 @@ if __name__ == '__main__':
     es_ref.append(es)
 
     if not args.executor:
-        app.run(
-            host='localhost' if args.localhost else "0.0.0.0",
-            debug=True,
-            port=args.port,
-            use_reloader=False)
+        app.run(host='localhost' if args.localhost else "0.0.0.0",
+                debug=True,
+                port=args.port,
+                use_reloader=False)
 
         es.stop()
     else:

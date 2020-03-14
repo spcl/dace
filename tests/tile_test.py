@@ -38,8 +38,8 @@ if __name__ == "__main__":
     TW.set(args["TW"])
     TH.set(args["TH"])
 
-    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W.get(), H.get(),
-                                                          TW.get(), TH.get()))
+    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' %
+          (W.get(), H.get(), TW.get(), TH.get()))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)

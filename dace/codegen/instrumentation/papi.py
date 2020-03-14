@@ -162,10 +162,10 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
         dst_nodedesc = dst_node.desc(sdfg)
         ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype, memlet.veclen)
 
-        fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " + "/".join(
-            sym2cpp(dst_strides)))
-        copy_size = "sizeof(%s) * %s * (%s)" % (ctype, sym2cpp(memlet.veclen),
-                                                fac3)
+        fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " +
+                "/".join(sym2cpp(dst_strides)))
+        copy_size = "sizeof(%s) * %s * (%s)" % (ctype, sym2cpp(
+            memlet.veclen), fac3)
         node_id = _unified_id(state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it
         # would be a section with 1 entry))
@@ -228,16 +228,16 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
         if isinstance(node, nodes.Tasklet):
             inner_stream.write(
-                "dace::perf::%s __perf_%s;\n" % (self.perf_counter_string(),
-                                                 node.label),
+                "dace::perf::%s __perf_%s;\n" %
+                (self.perf_counter_string(), node.label),
                 sdfg,
                 state_id,
                 node,
             )
             inner_stream.write(
                 'auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, '
-                '    %d, PAPI_thread_id(), 0);\n' % (node.label, node.label,
-                                                     unified_id),
+                '    %d, PAPI_thread_id(), 0);\n' %
+                (node.label, node.label, unified_id),
                 sdfg,
                 state_id,
                 node,
@@ -459,9 +459,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             )
 
             # Mark the section start with zeros (due to dynamic accesses)
-            result.write(
-                self.perf_section_start_string(unified_id, "0", "0"), sdfg,
-                state_id, node)
+            result.write(self.perf_section_start_string(unified_id, "0", "0"),
+                         sdfg, state_id, node)
 
             # Generate a thread affinity locker
             result.write(
@@ -577,8 +576,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         return '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});
 __perf_{id}.enterCritical();        
-        '''.format(
-            counter_str=pcs, id=unified_id, it=iteration, core=core_str)
+        '''.format(counter_str=pcs, id=unified_id, it=iteration, core=core_str)
 
     @staticmethod
     def perf_counter_end_measurement_string(unified_id):
@@ -600,7 +598,6 @@ __perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);''' % (
 
 class PAPIUtils(object):
     """ General-purpose utilities for working with PAPI. """
-
     @staticmethod
     def available_counters() -> Dict[str, int]:
         """
@@ -614,12 +611,11 @@ class PAPIUtils(object):
             return {}
 
         try:
-            p = subprocess.Popen(
-                "papi_avail -d -a | grep -E '^PAPI_'",
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True)
+            p = subprocess.Popen("papi_avail -d -a | grep -E '^PAPI_'",
+                                 shell=True,
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT,
+                                 universal_newlines=True)
             stdout, _ = p.communicate(timeout=60)
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             return {}
