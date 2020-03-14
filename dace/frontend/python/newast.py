@@ -4,7 +4,7 @@ import copy
 import itertools
 from functools import reduce
 import re
-from typing import Any, Dict, List, Tuple, Union, Callable
+from typing import Any, Dict, List, Tuple, Union, Callable, Optional
 import warnings
 
 import dace
@@ -1453,9 +1453,11 @@ class TaskletTransformer(ExtNodeTransformer):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
-    def parse_tasklet(self, tasklet_ast: TaskletType):
+    def parse_tasklet(self, tasklet_ast: TaskletType,
+                      name: Optional[str] = None):
         """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
             :param tasklet_ast: The Tasklet's Python AST to parse.
+            :param name: Optional name to use as prefix for tasklet.
             :return: 3-tuple of (Tasklet node, input memlets, output memlets).
             @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
         """
@@ -1469,7 +1471,11 @@ class TaskletTransformer(ExtNodeTransformer):
                                    self.filename)
 
         # Determine tasklet name (either declared as a function or use line #)
-        name = getattr(tasklet_ast, 'name', 'tasklet_%d' % tasklet_ast.lineno)
+        if name is not None:
+            name += '_' + str(tasklet_ast.lineno)
+        else:
+            name = getattr(tasklet_ast, 'name',
+                           'tasklet_%d' % tasklet_ast.lineno)
 
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
@@ -2624,7 +2630,7 @@ class ProgramVisitor(ExtNodeVisitor):
             me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
                                    ndrange=params)
             # body = SDFG('MapBody')
-            body, inputs, outputs = self._parse_subprogram('MapBody', node)
+            body, inputs, outputs = self._parse_subprogram(self.name, node)
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs,
@@ -2700,7 +2706,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return indices
 
-    def _parse_tasklet(self, state: SDFGState, node: TaskletType):
+    def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
         ttrans = TaskletTransformer(self.defined,
                                     self.sdfg,
                                     state,
@@ -2710,7 +2716,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                     scope_vars=self.scope_vars,
                                     variables=self.variables,
                                     accesses=self.accesses)
-        node, inputs, outputs, self.accesses = ttrans.parse_tasklet(node)
+        node, inputs, outputs, self.accesses = ttrans.parse_tasklet(node, name)
 
         # Convert memlets to their actual data nodes
         for i in inputs.values():
@@ -3644,8 +3650,16 @@ class ProgramVisitor(ExtNodeVisitor):
             if funcname == 'dace.tasklet':
                 # Parse as tasklet
                 state = self._add_state('with_%d' % node.lineno)
-                tasklet, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(
-                    state, node)
+
+                # Parse tasklet name
+                namelist = self.name.split('_')
+                if len(namelist) > 2:  # Remove trailing line and column number
+                    name = '_'.join(namelist[:-2])
+                else:
+                    name = self.name
+
+                tasklet, inputs, outputs, sdfg_inp, sdfg_out = \
+                    self._parse_tasklet(state, node, name)
 
                 # Add memlets
                 self._add_dependencies(state, tasklet, None, None, inputs,
