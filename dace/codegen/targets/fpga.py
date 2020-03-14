@@ -1299,7 +1299,7 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = hlslib::ocl::GlobalContext().CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = hlslib::ocl::GlobalContext(__dace_fpga_context).CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 

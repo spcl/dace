@@ -80,6 +80,10 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
+        #Here we have to get also SMI related options (even if we don't use them)
+        smi_ranks = Config.get("compiler", "intel_fpga", "smi_ranks")
+        smi_rendezvous = ("ON" if Config.get_bool(
+            "compiler", "intel_fpga", "smi_rendezvous") else "OFF")
         options = [
             "-DINTELFPGAOCL_ROOT_DIR={}".format(
                 os.path.dirname(os.path.dirname(compiler))),
@@ -88,6 +92,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             "-DDACE_INTELFPGA_MODE={}".format(mode),
             "-DDACE_INTELFPGA_TARGET_BOARD=\"{}\"".format(target_board),
             "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_INTELFPGA_SMI_NUM_RANKS={}".format(smi_ranks),
+            "-DDACE_INTELFPGA_SMI_RENDEZVOUS={}".format(smi_rendezvous),
         ]
         return options
 
@@ -129,6 +135,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 #include <iostream>\n""")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
+        host_code.write("unsigned int __dace_fpga_context=0;")
         if self.enable_smi:
             # add MPI and SMI init calls
             # TODO: handle different contexts. Possibile solution: define it as global variable and allow
@@ -148,7 +155,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                    CHECK_MPI(MPI_Comm_size(MPI_COMM_WORLD, &__dace_comm_size));
                    CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
                    {kernel_file_name};
-                   hlslib::ocl::GlobalContext({context}).MakeProgram(kernel_path);                   
+                   __dace_fpga_context = {context};
+                   hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram(kernel_path);                   
                    return 0;
                }}
 
@@ -171,7 +179,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         else:
             host_code.write("""
     DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-        hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
+        hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram({kernel_file_name});
         return 0;
     }}
 
@@ -594,7 +602,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             )
             host_code_body_stream.write(
                 "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
-                "hlslib::ocl::GlobalContext(), program, buffers);".format(
+                "hlslib::ocl::GlobalContext(__dace_fpga_context), program, buffers);".format(
                     kernel_name))
             host_code_body_stream.write(
                 "MPI_Barrier(MPI_COMM_WORLD);")

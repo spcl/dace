@@ -103,14 +103,15 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""\
 #include "dace/xilinx/host.h"
 #include "dace/dace.h"
-#include <iostream>\n\n""")
+#include <iostream>
+unsigned int __dace_fpga_context=0;\n\n""")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
         host_code.write("""
 DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     {environment_variables}
-    hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
+    hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram({kernel_file_name});
     return 0;
 }}
 
