@@ -24,6 +24,8 @@ set(DACE_INTELFPGA_HOST_FLAGS "" CACHE STRING "Extra flags to host compiler.")
 set(DACE_INTELFPGA_KERNEL_FLAGS "" CACHE STRING "Extra flags to kernel compiler.")
 set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
 set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
+set(DACE_INTELFPGA_SMI_RENDEZVOUS ON CACHE STRING "Use rendezvous in P2P communications.")
+set(DACE_INTELFPGA_SMI_NUM_RANKS 2 CACHE STRING "Number of ranks used for emulation.")
 
 # Target detection
 set(DACE_ENABLE_MPI OFF)
@@ -467,8 +469,6 @@ if(DACE_ENABLE_INTELFPGA)
   	# TODO parse optional arguments (dace.conf?)
     set(EXTRA_ARGS ${ARGN})
     set(OPT_CONSECUTIVE_READS 8)
-    set(OPT_MAX_RANKS 8)
-    set(OPT_P2P_RENDEZVOUS ON)
 
   	set(PROGRAM_METADATA)           # list of produced JSON metadata (one per program)
     set(KERNEL_TARGETS)             # list of targets (one per program)
@@ -528,8 +528,8 @@ if(DACE_ENABLE_INTELFPGA)
               ${SMI_SCRIPT} codegen-device
               --include '${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/../runtime/include ${DACE_SMI_DIR}/include ${CMAKE_CURRENT_BINARY_DIR}'
               --consecutive-read-limit '${OPT_CONSECUTIVE_READS}'
-              --max-ranks '${OPT_MAX_RANKS}'
-              --p2p-rendezvous '${OPT_P2P_RENDEZVOUS}'
+              --max-ranks '${DACE_INTELFPGA_SMI_NUM_RANKS}'
+              --p2p-rendezvous '${DACE_INTELFPGA_SMI_RENDEZVOUS}'
               ${TOPOLOGY_FILE}  
               ${SMI_REWRITER}
               ${DACE_KERNEL_SRC_DIR}
