@@ -3059,16 +3059,22 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self.add_nodes_from([map_entry, tasklet, map_exit])
 
         # Create access nodes
+        inpdict = {}
+        outdict = {}
         if external_edges:
+            input_nodes = input_nodes or {}
+            output_nodes = output_nodes or {}
             input_data = set(memlet.data for memlet in inputs.values())
             output_data = set(memlet.data for memlet in outputs.values())
-            inpdict = input_nodes or {}
-            outdict = output_nodes or {}
-            if not input_nodes:
-                for inp in input_data:
+            for inp in input_data:
+                if inp in input_nodes:
+                    inpdict[inp] = input_nodes[inp]
+                else:
                     inpdict[inp] = self.add_read(inp)
-            if not output_nodes:
-                for out in output_data:
+            for out in output_data:
+                if out in output_nodes:
+                    outdict[out] = output_nodes[out]
+                else:
                     outdict[out] = self.add_write(out)
 
         # Connect inputs from map to tasklet
