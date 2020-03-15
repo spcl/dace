@@ -57,9 +57,9 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'scipy', 'pyyaml',
-          'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
+          'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml',
+          'ply', 'websockets', 'graphviz', 'requests', 'flask',
           'scikit-build', 'cmake', 'aenum'
       ],
-      tests_require=['coverage'],
+      tests_require=['coverage', 'scipy', 'absl-py', 'opt_einsum'],
       scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
