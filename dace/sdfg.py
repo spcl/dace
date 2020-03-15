@@ -272,6 +272,10 @@ class SDFG(OrderedDiGraph):
         except RuntimeError:
             tmp['scalar_parameters'] = []
 
+        # Location in the SDFG list
+        self.reset_sdfg_list()
+        tmp['sdfg_list_id'] = int(self.sdfg_list.index(self))
+
         tmp['attributes']['name'] = self.name
 
         return tmp
@@ -511,6 +515,13 @@ class SDFG(OrderedDiGraph):
                                          (name, node, state))
 
         del self._arrays[name]
+
+    def reset_sdfg_list(self):
+        if self.parent_sdfg is not None:
+            self._sdfg_list = self.parent_sdfg.reset_sdfg_list()
+        else:
+            self._sdfg_list = list(self.all_sdfgs_recursive())
+        return self._sdfg_list
 
     def update_sdfg_list(self, sdfg_list):
         # TODO: Refactor

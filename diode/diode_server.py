@@ -7,6 +7,7 @@ import dace.frontend.octave.parse as octave_frontend
 from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
+from dace.transformation.pattern_matching import Transformation
 from dace.graph.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
@@ -609,20 +610,27 @@ def applySDFGProperties(sdfg, properties, step=None):
     return sdfg
 
 
-def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
+def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
     # Iterate over the path, applying the transformations
     global_counter = {}
-    if sdfg_props is None: sdfg_props = []
+    sdfg_props = sdfg_props or []
     step = 0
     for x in optpath:
         optimizer = SDFGOptimizer(sdfg, inplace=True)
-        matching = optimizer.get_pattern_matches()
+
+        name = x['name']
+        classname = name[:name.index('$')] if name.find('$') >= 0 else name
+
+        transformation = next(t for t in Transformation.extensions().keys() if
+                              t.__name__ == classname)
+        matching = optimizer.get_pattern_matches(patterns=[transformation])
 
         # Apply properties (will automatically apply by step-matching)
         sdfg = applySDFGProperties(sdfg, sdfg_props, step)
 
         for pattern in matching:
             name = type(pattern).__name__
+            tsdfg = sdfg.sdfg_list[pattern.sdfg_id]
 
             if useGlobalSuffix:
                 if name in global_counter:
@@ -642,7 +650,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
                 dace.serialize.set_properties_from_json(pattern,
                                                         x['params']['props'],
                                                         context=sdfg)
-                pattern.apply_pattern(sdfg)
+                pattern.apply_pattern(tsdfg)
 
                 if not useGlobalSuffix:
                     break
@@ -877,10 +885,11 @@ def get_transformations(sdfgs):
             nodeids = []
             properties = []
             if p is not None:
+                sdfg_id = p.sdfg_id
                 sid = p.state_id
                 nodes = list(p.subgraph.values())
                 for n in nodes:
-                    nodeids.append([sid, n])
+                    nodeids.append([sdfg_id, sid, n])
 
                 properties = dace.serialize.all_properties_to_json(p)
             optimizations.append({
