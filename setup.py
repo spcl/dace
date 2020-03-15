@@ -61,5 +61,5 @@ setup(name='dace',
           'ply', 'websockets', 'graphviz', 'requests', 'flask',
           'scikit-build', 'cmake', 'aenum'
       ],
-      tests_require=['coverage', 'scipy', 'absl-py', 'opt_einsum'],
+      extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},
       scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
