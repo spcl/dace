@@ -166,7 +166,13 @@ class LoopUnroll(DetectLoop):
                 # Replace conditions in subgraph edges
                 data: edges.InterstateEdge = copy.deepcopy(edge.data)
                 if data.condition:
-                    ASTFindReplace({itervar: str(i)}).visit(data.condition)
+                    # TODO: Condition seems to sometimes be a list, even
+                    # though this should always be a single expression.
+                    try:
+                        condition = data.condition[0]
+                    except AttributeError:
+                        condition = data.condition
+                    ASTFindReplace({itervar: str(i)}).visit(condition)
 
                 sdfg.add_edge(src, dst, data)
 
