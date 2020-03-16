@@ -119,28 +119,32 @@ def create_batch_gemm_sdfg(dtype, strides):
     sdfg = SDFG('einsum')
     state = sdfg.add_state()
     BATCH, M, K, N, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (
-        symbolic.symbol(s) for s in [
+        #symbolic.symbol(s) for s in [
+        strides[s] for s in [
             'BATCH', 'M', 'K', 'N', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB',
             'sCM', 'sCN', 'sCB'
         ])
 
     batched = strides['BATCH'] != 1
 
-    sdfg.add_array('X',
-                   dtype=dtype,
-                   shape=[BATCH, M, K] if batched else [M, K],
-                   strides=[sAB, sAM, sAK] if batched else [sAM, sAK],
-                   storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('Y',
-                   dtype=dtype,
-                   shape=[BATCH, K, N] if batched else [K, N],
-                   strides=[sBB, sBK, sBN] if batched else [sBK, sBN],
-                   storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('Z',
-                   dtype=dtype,
-                   shape=[BATCH, M, N] if batched else [M, N],
-                   strides=[sCB, sCM, sCN] if batched else [sCM, sCN],
-                   storage=dtypes.StorageType.GPU_Global)
+    _, xarr = sdfg.add_array('X',
+                             dtype=dtype,
+                             shape=[BATCH, M, K] if batched else [M, K],
+                             strides=[sAB, sAM, sAK] if batched else [
+                                 sAM, sAK],
+                             storage=dtypes.StorageType.GPU_Global)
+    _, yarr = sdfg.add_array('Y',
+                             dtype=dtype,
+                             shape=[BATCH, K, N] if batched else [K, N],
+                             strides=[sBB, sBK, sBN] if batched else [
+                                 sBK, sBN],
+                             storage=dtypes.StorageType.GPU_Global)
+    _, zarr = sdfg.add_array('Z',
+                             dtype=dtype,
+                             shape=[BATCH, M, N] if batched else [M, N],
+                             strides=[sCB, sCM, sCN] if batched else [
+                                 sCM, sCN],
+                             storage=dtypes.StorageType.GPU_Global)
 
     gX = state.add_read('X')
     gY = state.add_read('Y')
@@ -348,12 +352,20 @@ def _create_einsum_internal(sdfg: SDFG,
         # Add state before this one to initialize the output value
         if to_init:
             init_state = sdfg.add_state_before(state)
-            init_state.add_mapped_tasklet(
-                'einsum_reset',
-                {k: '0:%s' % chardict[k] for k in einsum.output},
-                {}, 'out_%s = 0' % output,
-                {'out_%s' % output: Memlet.simple(output, output_index)},
-                external_edges=True)
+            if len(einsum.output) > 0:
+                init_state.add_mapped_tasklet(
+                    'einsum_reset',
+                    {k: '0:%s' % chardict[k] for k in einsum.output},
+                    {}, 'out_%s = 0' % output,
+                    {'out_%s' % output: Memlet.simple(output, output_index)},
+                    external_edges=True)
+            else:  # Scalar output
+                t = init_state.add_tasklet('einsum_reset', {},
+                                           {'out_%s' % output},
+                                           'out_%s = 0' % output)
+                onode = init_state.add_write(output)
+                init_state.add_edge(t, 'out_%s' % output, onode, None,
+                                    Memlet.simple(output, '0'))
 
         # Pure einsum map
         state.add_mapped_tasklet(
@@ -366,7 +378,7 @@ def _create_einsum_internal(sdfg: SDFG,
             'out_%s = %s' % (output, ' * '.join('inp_%s' % arr for arr in arrays)),
             {'out_%s' % output: Memlet.simple(output, output_index,
                                               wcr_str='lambda a,b: a+b')},
-            input_nodes=nodes,
+            input_nodes=input_nodes,
             output_nodes={output: c},
             external_edges=True)
     else:
