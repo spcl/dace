@@ -2,6 +2,7 @@ import dace
 from dace.memlet import Memlet
 from dace.codegen.compiler import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
+import itertools
 import numpy as np
 import sys
 import warnings
@@ -9,7 +10,8 @@ import warnings
 ###############################################################################
 
 
-def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
+def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
+              data_layout='CCC'):
     m = dace.symbol("m")
     n = dace.symbol("n")
     k = dace.symbol("k")
@@ -17,21 +19,31 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("cublasgemm_{}".format(dtype))
+    sdfg = dace.SDFG("cublasgemm_{}_{}".format(dtype.type.__name__, data_layout))
     state = sdfg.add_state("dataflow")
+
+    # Data layout is a 3-character string with either C (for row major)
+    # or F (for column major) matrices for x, y, and z respectively.
+    xstrides = (k, 1) if data_layout[0] == 'C' else (1, m)
+    ystrides = (n, 1) if data_layout[1] == 'C' else (1, k)
+    zstrides = (n, 1) if data_layout[2] == 'C' else (1, m)
+
 
     sdfg.add_array("x" + suffix, [m, k],
                    dtype,
                    storage=storage,
-                   transient=transient)
+                   transient=transient,
+                   strides=xstrides)
     sdfg.add_array("y" + suffix, [k, n],
                    dtype,
                    storage=storage,
-                   transient=transient)
+                   transient=transient,
+                   strides=ystrides)
     sdfg.add_array("result" + suffix, [m, n],
                    dtype,
                    storage=storage,
-                   transient=transient)
+                   transient=transient,
+                   strides=zstrides)
 
     x = state.add_read("x" + suffix)
     y = state.add_read("y" + suffix)
@@ -48,7 +60,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                           node,
                           dst_conn="_b",
                           memlet=Memlet.simple(y, "0:k, 0:n"))
-    # TODO: remove -1 once this no longer triggers a write in the codegen.
     state.add_memlet_path(node,
                           result,
                           src_conn="_c",
@@ -91,31 +102,27 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-def _test_matmul(implementation, dtype, sdfg):
-    try:
-        csdfg = sdfg.compile()
-    except (CompilerConfigurationError, CompilationError):
-        warnings.warn(
-            'Configuration/compilation failed, library missing or '
-            'misconfigured, skipping test for {}.'.format(implementation))
-        return
+def _test_matmul(implementation, dtype, impl_name, storage,
+                 data_layout='CCC', eps=1e-6):
+    sdfg = make_sdfg(impl_name, dtype, storage, data_layout)
+    csdfg = sdfg.compile(optimizer=False)
 
     m, n, k = 32, 31, 30
 
-    x = np.ndarray([m, k], dtype=dtype)
-    y = np.ndarray([k, n], dtype=dtype)
-    result = np.ndarray([m, n], dtype=dtype)
+    x = np.ndarray([m, k], dtype=dtype.type, order=data_layout[0])
+    y = np.ndarray([k, n], dtype=dtype.type, order=data_layout[1])
+    z = np.ndarray([m, n], dtype=dtype.type, order=data_layout[2])
 
-    x[:] = 2.5
-    y[:] = 2
-    result[:] = 0
+    x[:] = np.random.rand(m, k)
+    y[:] = np.random.rand(k, n)
+    z[:] = 0
 
-    csdfg(x=x, y=y, result=result, m=m, n=n, k=k)
+    csdfg(x=x, y=y, result=z, m=m, n=n, k=k)
 
     ref = np.dot(x, y)
 
-    diff = np.linalg.norm(ref - result)
-    if diff >= 1e-6:
+    diff = np.linalg.norm(ref - z)
+    if diff >= eps:
         print("Unexpected result returned from dot product: "
               "diff %f" % diff)
         sys.exit(1)
@@ -123,17 +130,33 @@ def _test_matmul(implementation, dtype, sdfg):
     print("Test ran successfully for {}.".format(implementation))
 
 
-def test_matmul():
-    _test_matmul(
-        "32-bit cuBLAS", np.float32,
-        make_sdfg("cuBLAS", dace.float32, dace.StorageType.GPU_Global))
-    _test_matmul(
-        "64-bit cuBLAS", np.float64,
-        make_sdfg("cuBLAS", dace.float64, dace.StorageType.GPU_Global))
+def test_types():
+    # Try different data types
+    _test_matmul('cuBLAS double', dace.float64, 'cuBLAS',
+                     dace.StorageType.GPU_Global)
+    _test_matmul('cuBLAS half', dace.float16, 'cuBLAS',
+                    dace.StorageType.GPU_Global, eps=1)
+    _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
+                    dace.StorageType.GPU_Global)
+    _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS',
+                    dace.StorageType.GPU_Global)
 
+def test_layouts():
+    # Try all data layouts
+    for dl in map(lambda t: ''.join(t), itertools.product(*([['C', 'F']]*3))):
+        _test_matmul('cuBLAS float ' + dl, dace.float32, 'cuBLAS',
+                     dace.StorageType.GPU_Global, data_layout=dl)
 
 ###############################################################################
 
-if __name__ == "__main__":
-    test_matmul()
+if __name__ == '__main__':
+    import os
+    try:
+        test_types()
+        test_layouts()
+    except SystemExit as ex:
+        print('\n', flush=True)
+        # Skip all teardown to avoid crashes affecting exit code
+        os._exit(ex.code)
+    os._exit(0)
 ###############################################################################

@@ -67,10 +67,12 @@ namespace {
 
 class _CublasConstants {
  public:
+  __half const* HalfZero() const { return (__half*)zero_; }
   float const* FloatZero() const { return (float*)zero_; }
   double const* DoubleZero() const { return (double*)zero_; }
   cuComplex const* Complex64Zero() const { return (cuComplex*)zero_; }
   cuDoubleComplex const* Complex128Zero() const { return (cuDoubleComplex*)zero_; }
+  __half const* HalfPone() const { return half_pone_; }
   float const* FloatPone() const { return float_pone_; }
   double const* DoublePone() const { return double_pone_; }
   cuComplex const* Complex64Pone() const { return complex64_pone_; }
@@ -85,6 +87,10 @@ class _CublasConstants {
     cudaMemset(zero_, 0, sizeof(cuDoubleComplex) * 1);
     
     // Allocate constant one
+    cudaMalloc(&half_pone_, sizeof(__half) * 1);
+    __half half_pone = __float2half(1.0f);
+    cudaMemcpy(half_pone_, &half_pone, sizeof(__half) * 1,
+               cudaMemcpyHostToDevice);
     cudaMalloc(&float_pone_, sizeof(float) * 1);
     float float_pone = 1.0f;
     cudaMemcpy(float_pone_, &float_pone, sizeof(float) * 1,
@@ -107,6 +113,7 @@ class _CublasConstants {
 
   ~_CublasConstants() {
     cudaFree(zero_);
+    cudaFree(half_pone_);
     cudaFree(float_pone_);
     cudaFree(double_pone_);
     cudaFree(complex64_pone_);
@@ -123,6 +130,7 @@ class _CublasConstants {
   }
 
   void* zero_;
+  __half* half_pone_;
   float* float_pone_;
   double* double_pone_;
   cuComplex* complex64_pone_;

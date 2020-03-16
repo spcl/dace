@@ -181,13 +181,20 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         dtype = node.dtype
         func = '%sgemm' % to_blastype(dtype.type)
-        if dtype == dace.float32:
+        if dtype == dace.float16:
+            cdtype = '__half'
+            factort = 'Half'
+        elif dtype == dace.float32:
+            cdtype = 'float'
             factort = 'Float'
         elif dtype == dace.float64:
+            cdtype = 'double'
             factort = 'Double'
         elif dtype == dace.complex64:
+            cdtype = 'cuComplex'
             factort = 'Complex64'
         elif dtype == dace.complex128:
+            cdtype = 'cuDoubleComplex'
             factort = 'Complex128'
         else:
             raise ValueError("Unsupported type: " + str(dtype))
@@ -231,10 +238,10 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
             cublas{func}(__dace_cublas_handle, CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                         {M}, {N}, {K},
                         {alpha},
-                        {x}, {lda},
-                        {y}, {ldb},
+                        ({dtype}*){x}, {lda},
+                        ({dtype}*){y}, {ldb},
                         {beta},
-                        _c, {ldc});
+                        ({dtype}*)_c, {ldc});
             '''.format(M=opt['M'],
                        N=opt['N'],
                        K=k,
@@ -247,7 +254,7 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                        tb=opt['tb'],
                        alpha=alpha,
                        beta=beta,
-                       c_dtype=dtype.ctype,
+                       dtype=cdtype,
                        func=func)
         tasklet = dace.graph.nodes.Tasklet(node.name,
                                            node.in_connectors,
