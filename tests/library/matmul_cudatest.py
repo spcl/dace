@@ -19,7 +19,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("cublasgemm_{}_{}".format(dtype.type.__name__, data_layout))
+    sdfg = dace.SDFG("mm_{}_{}".format(dtype.type.__name__, data_layout))
     state = sdfg.add_state("dataflow")
 
     # Data layout is a 3-character string with either C (for row major)
@@ -121,9 +121,14 @@ def _test_matmul(implementation, dtype, impl_name, storage,
 
     ref = np.dot(x, y)
 
+    if dtype == dace.float16 and np.linalg.norm(z) == 0:
+        print('No computation performed, half-precision probably not '
+              'supported, skipping test.')
+        return
+
     diff = np.linalg.norm(ref - z)
     if diff >= eps:
-        print("Unexpected result returned from dot product: "
+        print("Unexpected result returned from matrix multiplication: "
               "diff %f" % diff)
         sys.exit(1)
 
@@ -133,13 +138,13 @@ def _test_matmul(implementation, dtype, impl_name, storage,
 def test_types():
     # Try different data types
     _test_matmul('cuBLAS double', dace.float64, 'cuBLAS',
-                     dace.StorageType.GPU_Global)
+                 dace.StorageType.GPU_Global)
     _test_matmul('cuBLAS half', dace.float16, 'cuBLAS',
-                    dace.StorageType.GPU_Global, eps=1)
+                 dace.StorageType.GPU_Global, eps=1)
     _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
-                    dace.StorageType.GPU_Global)
+                 dace.StorageType.GPU_Global, eps=1e-4)
     _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS',
-                    dace.StorageType.GPU_Global)
+                 dace.StorageType.GPU_Global)
 
 def test_layouts():
     # Try all data layouts
