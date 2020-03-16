@@ -10,7 +10,7 @@ from dace.graph.edges import InterstateEdge
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.common.op_impl import _to_blastype
+from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
 
 
 def _is_sequential(index_list):
@@ -146,110 +146,7 @@ def create_batch_gemm_sdfg(dtype, strides):
     gY = state.add_read('Y')
     gZ = state.add_access('Z')
 
-    # possible order (C, row based) of dimensions in input array
-    # and computed result based on
-    # 1. N/T - transpose flag in cublas
-    # 2. LR/RL - order in which A and B are passed into cublas
-    #     k m, n k -> n m (LR, N, N)
-    #     m k, n k -> n m (LR, T, N)
-    #     k m, k n -> n m (LR, N, T)
-    #     m k, k n -> n m (LR, T, T)
-    #     m k, k n -> m n (RL, N, N)
-    #     m k, n k -> m n (RL, N, T)
-    #     k m, k n -> m n (RL, T, N)
-    #     k m, n k -> m n (RL, T, T)
-    #       |    |      |
-    #     use these 3 to detect correct option
-
-    opts = {
-        'mkm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mnm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'knm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'T'
-        },
-        'knn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'mnn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mkn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'T'
-        },
-    }
-
-    if strides['sAM'] == 1:
-        optA = 'm'
-    elif strides['sAK'] == 1:
-        optA = 'k'
-    else:
-        raise Exception("sAM or sAK should be 1")
-
-    if strides['sBK'] == 1:
-        optB = 'k'
-    elif strides['sBN'] == 1:
-        optB = 'n'
-    else:
-        raise Exception("sBK or sBN should be 1")
-
-    if strides['sCM'] == 1:
-        optC = 'm'
-    elif strides['sCN'] == 1:
-        optC = 'n'
-    else:
-        raise Exception("sCM or sCN should be 1")
-
-    opt = opts[optA + optB + optC]
+    opt = get_gemm_opts(xarr, yarr, zarr)
 
     opt['sta'] = sAB
     opt['stb'] = sBB
@@ -279,7 +176,7 @@ def create_batch_gemm_sdfg(dtype, strides):
         code_init = ''
         code_exit = ''
 
-    cublas_gemm = 'cublas%sgemm' % _to_blastype(dtype.type)
+    cublas_gemm = 'cublas%sgemm' % to_blastype(dtype.type)
 
     if not batched:
         code = '''

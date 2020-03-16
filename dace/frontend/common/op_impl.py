@@ -7,6 +7,7 @@ import dace.subsets as sbs
 from dace import symbolic
 import typing
 import numpy as np
+from dace.libraries.blas.blas_helpers import to_blastype as _to_blastype
 
 State = dace.sdfg.SDFGState
 Shape = typing.List[typing.Union[int, symbolic.symbol]]
@@ -16,24 +17,6 @@ DNode = dace.graph.nodes.AccessNode
 
 
 # TODO: Most of the external operations here emit Z (complex double) ops, fix
-def _to_blastype(dtype):
-    """ Returns a BLAS character that corresponds to the input type.
-        Used in MKL/CUBLAS calls. """
-
-    if dtype == np.float16:
-        return 'H'
-    elif dtype == np.float32:
-        return 'S'
-    elif dtype == np.float64:
-        return 'D'
-    elif dtype == np.complex64:
-        return 'C'
-    elif dtype == np.complex128:
-        return 'Z'
-    else:
-        raise TypeError('Type %s not supported in BLAS operations' %
-                        dtype.__name__)
-
 
 def _to_cudatype(dtype):
     """ Returns a CUDA typename that corresponds to the input type.

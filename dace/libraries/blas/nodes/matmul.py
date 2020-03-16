@@ -1,11 +1,11 @@
 from copy import deepcopy as dc
 import numpy as np
 from dace.config import Config
-from dace.frontend.common.op_impl import gpu_transform_tasklet
 import dace.library
 import dace.properties
 import dace.graph.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
+from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
 from .. import environments
 
 
