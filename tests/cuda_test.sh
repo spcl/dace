@@ -184,6 +184,7 @@ runall() {
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
     
     runtestargs instrumentation_test.py gpu
+    runtestargs library/matmul_cudatest.py
 }
 
 
