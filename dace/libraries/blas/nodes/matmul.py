@@ -105,20 +105,17 @@ class ExpandMatMulMKL(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         dtype = node.dtype
+        func = to_blastype(dtype.type).lower() + 'gemm'
         if dtype == dace.float32:
-            func = "sgemm"
             alpha = "1.0f"
             beta = "0.0f"
         elif dtype == dace.float64:
-            func = "dgemm"
             alpha = "1.0"
             beta = "0.0"
         elif dtype == dace.complex64:
-            func = "cgemm"
             alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
             beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
         elif dtype == dace.complex128:
-            func = "zgemm"
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
             beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
         else:
@@ -136,11 +133,136 @@ class ExpandMatMulMKL(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandMatMulMKL(ExpandTransformation):
+
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        dtype = node.dtype
+        func = to_blastype(dtype.type).lower() + 'gemm'
+        if dtype == dace.float32:
+            alpha = "1.0f"
+            beta = "0.0f"
+        elif dtype == dace.float64:
+            alpha = "1.0"
+            beta = "0.0"
+        elif dtype == dace.complex64:
+            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+        elif dtype == dace.complex128:
+            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+        else:
+            raise ValueError("Unsupported type for BLAS dot product: " +
+                             str(dtype))
+        (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
+        code = ("cblas_{f}(CblasRowMajor, CblasNoTrans, CblasNoTrans, "
+                "{m}, {n}, {k}, {a}, _a, {k}, _b, {n}, {b}, _c, {n});").format(
+                    f=func, m=m, n=n, k=k, a=alpha, b=beta)
+        tasklet = dace.graph.nodes.Tasklet(node.name,
+                                           node.in_connectors,
+                                           node.out_connectors,
+                                           code,
+                                           language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
+@dace.library.expansion
+class ExpandMatMulCuBLAS(ExpandTransformation):
+
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        gpuid = node.location or '0'
+        node.validate(sdfg, state)
+        dtype = node.dtype
+        func = '%sgemm' % to_blastype(dtype.type)
+        if dtype == dace.float32:
+            factort = 'Float'
+        elif dtype == dace.float64:
+            factort = 'Double'
+        elif dtype == dace.complex64:
+            factort = 'Complex64'
+        elif dtype == dace.complex128:
+            factort = 'Complex128'
+        else:
+            raise ValueError("Unsupported type: " + str(dtype))
+
+        alpha = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sPone()" % factort
+        beta = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sZero()" % factort
+
+        # Find inputs and output
+        adesc, bdesc, cdesc = None, None, None
+        for e in state.in_edges(node):
+            if e.dst_conn == '_a':
+                anode = state.memlet_path(e)[0].src
+                if isinstance(anode, dace.graph.nodes.AccessNode):
+                    adesc = sdfg.arrays[anode.data]
+            elif e.dst_conn == '_b':
+                bnode = state.memlet_path(e)[0].src
+                if isinstance(bnode, dace.graph.nodes.AccessNode):
+                    bdesc = sdfg.arrays[bnode.data]
+        for e in state.out_edges(node):
+            if e.src_conn == '_c':
+                cnode = state.memlet_path(e)[-1].dst
+                if isinstance(cnode, dace.graph.nodes.AccessNode):
+                    cdesc = sdfg.arrays[cnode.data]
+        if not adesc or not bdesc or not cdesc:
+            raise ValueError('Unsupported input/output arrays')
+        
+        (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
+        opt = get_gemm_opts(adesc, bdesc, cdesc)
+        opt['x'] = '_a'
+        opt['y'] = '_b'
+        opt['M'] = m
+        opt['N'] = n
+        if opt['swap']:
+            opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
+            opt['x'], opt['y'] = opt['y'], opt['x']
+            opt['ta'], opt['tb'] = opt['tb'], opt['ta']
+            opt['M'], opt['N'] = opt['N'], opt['M']
+
+        
+        code = environments.cublas.cuBLAS.handle_setup_code(node) + '''
+            cublas{func}(__dace_cublas_handle, CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                        {M}, {N}, {K},
+                        {alpha},
+                        {x}, {lda},
+                        {y}, {ldb},
+                        {beta},
+                        _c, {ldc});
+            '''.format(M=opt['M'],
+                       N=opt['N'],
+                       K=k,
+                       lda=opt['lda'],
+                       ldb=opt['ldb'],
+                       ldc=opt['ldc'],
+                       x=opt['x'],
+                       y=opt['y'],
+                       ta=opt['ta'],
+                       tb=opt['tb'],
+                       alpha=alpha,
+                       beta=beta,
+                       c_dtype=dtype.ctype,
+                       func=func)
+        tasklet = dace.graph.nodes.Tasklet(node.name,
+                                           node.in_connectors,
+                                           node.out_connectors,
+                                           code,
+                                           language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
 @dace.library.node
 class MatMul(dace.graph.nodes.LibraryNode):
 
     # Global properties
-    implementations = {"pure": ExpandMatMulPure, "MKL": ExpandMatMulMKL}
+    implementations = {"pure": ExpandMatMulPure, "MKL": ExpandMatMulMKL,
+                       "cuBLAS": ExpandMatMulCuBLAS}
     default_implementation = None
 
     # Object fields

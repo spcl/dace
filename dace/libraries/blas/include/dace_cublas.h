@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cuda_runtime.h>
 #include <cublas_v2.h>
 
 #include <cstddef>    // size_t
@@ -66,10 +67,10 @@ namespace {
 
 class _CublasConstants {
  public:
-  float const* FloatZero() const { return float_zero_; }
-  double const* DoubleZero() const { return double_zero_; }
-  cuComplex const* Complex64Zero() const { return complex64_zero_; }
-  cuDoubleComplex const* Complex128Zero() const { return complex128_zero_; }
+  float const* FloatZero() const { return (float*)zero_; }
+  double const* DoubleZero() const { return (double*)zero_; }
+  cuComplex const* Complex64Zero() const { return (cuComplex*)zero_; }
+  cuDoubleComplex const* Complex128Zero() const { return (cuDoubleComplex*)zero_; }
   float const* FloatPone() const { return float_pone_; }
   double const* DoublePone() const { return double_pone_; }
   cuComplex const* Complex64Pone() const { return complex64_pone_; }
@@ -79,30 +80,17 @@ class _CublasConstants {
     if (cudaSetDevice(device) != cudaSuccess) {
       throw std::runtime_error("Failed to set CUDA device.");
     }
-    // Allocate constant zero
-    cudaMalloc(&float_zero_, sizeof(float) * 1);
-    float float_zero = 0.0f;
-    cudaMemcpy(float_zero_, &float_zero, sizeof(float) * 1,
-               cudaMemcpyHostToDevice);
-    cudaMalloc(&double_zero_, sizeof(double) * 1);
-    double double_zero = 0.0;
-    cudaMemcpy(double_zero_, &double_zero, sizeof(double) * 1,
-               cudaMemcpyHostToDevice);
-    cudaMalloc(&complex64_zero_, sizeof(cuComplex) * 1);
-    cuComplex complex64_zero = make_cuComplex(0.0f, 0.0f);
-    cudaMemcpy(complex64_zero_, &complex64_zero, sizeof(cuComplex) * 1,
-               cudaMemcpyHostToDevice);
-    cudaMalloc(&complex128_zero_, sizeof(cuDoubleComplex) * 1);
-    cuDoubleComplex complex128_zero = make_cuDoubleComplex(0.0, 0.0);
-    cudaMemcpy(complex128_zero_, &complex128_zero, sizeof(cuDoubleComplex) * 1,
-               cudaMemcpyHostToDevice);
+    // Allocate constant zero with the largest used size
+    cudaMalloc(&zero_, sizeof(cuDoubleComplex) * 1);
+    cudaMemset(zero_, 0, sizeof(cuDoubleComplex) * 1);
+    
     // Allocate constant one
     cudaMalloc(&float_pone_, sizeof(float) * 1);
     float float_pone = 1.0f;
     cudaMemcpy(float_pone_, &float_pone, sizeof(float) * 1,
                cudaMemcpyHostToDevice);
     cudaMalloc(&double_pone_, sizeof(double) * 1);
-    double double_pone = 0.0;
+    double double_pone = 1.0;
     cudaMemcpy(double_pone_, &double_pone, sizeof(double) * 1,
                cudaMemcpyHostToDevice);
     cudaMalloc(&complex64_pone_, sizeof(cuComplex) * 1);
@@ -118,10 +106,7 @@ class _CublasConstants {
   _CublasConstants(_CublasConstants const&) = delete;
 
   ~_CublasConstants() {
-    cudaFree(float_zero_);
-    cudaFree(double_zero_);
-    cudaFree(complex64_zero_);
-    cudaFree(complex128_zero_);
+    cudaFree(zero_);
     cudaFree(float_pone_);
     cudaFree(double_pone_);
     cudaFree(complex64_pone_);
@@ -137,10 +122,7 @@ class _CublasConstants {
     }
   }
 
-  float* float_zero_;
-  double* double_zero_;
-  cuComplex* complex64_zero_;
-  cuDoubleComplex* complex128_zero_;
+  void* zero_;
   float* float_pone_;
   double* double_pone_;
   cuComplex* complex64_pone_;
