@@ -103,7 +103,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
 
 
 def _test_matmul(implementation, dtype, impl_name, storage,
-                 data_layout='CCC', eps=1e-6):
+                 data_layout='CCC', eps=1e-4):
     sdfg = make_sdfg(impl_name, dtype, storage, data_layout)
     csdfg = sdfg.compile(optimizer=False)
 
@@ -138,13 +138,13 @@ def _test_matmul(implementation, dtype, impl_name, storage,
 def test_types():
     # Try different data types
     _test_matmul('cuBLAS double', dace.float64, 'cuBLAS',
-                 dace.StorageType.GPU_Global)
+                 dace.StorageType.GPU_Global, eps=1e-6)
     _test_matmul('cuBLAS half', dace.float16, 'cuBLAS',
                  dace.StorageType.GPU_Global, eps=1)
     _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
-                 dace.StorageType.GPU_Global, eps=1e-4)
-    _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS',
                  dace.StorageType.GPU_Global)
+    _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS',
+                 dace.StorageType.GPU_Global, eps=1e-6)
 
 def test_layouts():
     # Try all data layouts
