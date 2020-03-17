@@ -5,24 +5,23 @@ from dace.properties import Property, SetProperty, make_properties
 class CodeObject(object):
     name = Property(dtype=str, desc="Filename to use")
     code = Property(dtype=str, desc="The code attached to this object")
-    language = Property(
-        dtype=str,
-        desc="Language used for this code (same " +
-        "as its file extension)")  # dtype=dtypes.Language?
-    target = Property(
-        dtype=type, desc="Target to use for compilation", allow_none=True)
+    language = Property(dtype=str,
+                        desc="Language used for this code (same " +
+                        "as its file extension)")  # dtype=dtypes.Language?
+    target = Property(dtype=type,
+                      desc="Target to use for compilation",
+                      allow_none=True)
     target_type = Property(
         dtype=str,
         desc="Sub-target within target (e.g., host or device code)",
         default="")
     title = Property(dtype=str, desc="Title of code for GUI")
-    extra_compiler_kwargs = Property(
-        dtype=dict,
-        desc="Additional compiler argument "
-        "variables to add to template")
-    linkable = Property(
-        dtype=bool, desc='Should this file participate in '
-        'overall linkage?')
+    extra_compiler_kwargs = Property(dtype=dict,
+                                     desc="Additional compiler argument "
+                                     "variables to add to template")
+    linkable = Property(dtype=bool,
+                        desc='Should this file participate in '
+                        'overall linkage?')
     environments = SetProperty(
         str,
         desc="Environments required by CMake to build and run this code node.",

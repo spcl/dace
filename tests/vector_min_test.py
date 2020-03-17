@@ -27,12 +27,9 @@ if __name__ == '__main__':
 
     # Easy way to add a tasklet
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
-        'mytasklet',
-        dict(i='0:N:2'),
-        dict(
-            a=Memlet.simple(A, 'i', veclen=2),
-            b=Memlet.simple(B, 'i', veclen=2)),
-        'c = min(a, b)',
+        'mytasklet', dict(i='0:N:2'),
+        dict(a=Memlet.simple(A, 'i', veclen=2),
+             b=Memlet.simple(B, 'i', veclen=2)), 'c = min(a, b)',
         dict(c=Memlet.simple(C, 'i', veclen=2)))
 
     # Add outer edges

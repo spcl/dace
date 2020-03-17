@@ -39,8 +39,10 @@ class symbol(sympy.Symbol):
             # to modifying different references of symbols with the same name.
             self = sympy.Symbol.__xnew__(cls, name, **assumptions)
         else:
-            self = sympy.Symbol.__xnew__(
-                cls, name, integer=True, **assumptions)
+            self = sympy.Symbol.__xnew__(cls,
+                                         name,
+                                         integer=True,
+                                         **assumptions)
 
         self.dtype = dtype
         self._constraints = []
@@ -133,7 +135,6 @@ class symbol(sympy.Symbol):
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
-
     def __init__(self,
                  main_expr: Union[str, 'SymExpr'],
                  approx_expr: Optional[Union[str, 'SymExpr']] = None):
@@ -152,8 +153,8 @@ class SymExpr(object):
         return self._approx_expr
 
     def subs(self, repldict):
-        return SymExpr(
-            self._main_expr.subs(repldict), self._approx_expr.subs(repldict))
+        return SymExpr(self._main_expr.subs(repldict),
+                       self._approx_expr.subs(repldict))
 
     def __str__(self):
         if self.expr != self.approx:
@@ -509,15 +510,15 @@ def sympy_intdiv_fix(expr):
             # Floor of floor: "floor(floor(c/d) / b)"
             m = floor.match(sympy.floor(int_floor(c, d) / b))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(
-                    int_floor(m[c], m[d]), m[b]))
+                nexpr = nexpr.subs(floor, int_floor(int_floor(m[c], m[d]),
+                                                    m[b]))
                 processed += 1
                 continue
             # Floor of floor: "floor(a / floor(c/d))"
             m = floor.match(sympy.floor(a / int_floor(c, d)))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(
-                    m[c], m[d])))
+                nexpr = nexpr.subs(floor, int_floor(m[a],
+                                                    int_floor(m[c], m[d])))
                 processed += 1
                 continue
 
@@ -549,12 +550,33 @@ def sympy_divide_fix(expr):
             nexpr = nexpr.subs(
                 candidate,
                 int_floor(
-                    sympy.mul.Mul(*(
-                        candidate.args[:ri] + candidate.args[ri + 1:])),
+                    sympy.mul.Mul(*(candidate.args[:ri] +
+                                    candidate.args[ri + 1:])),
                     int(1 / candidate.args[ri])))
             processed += 1
 
     return nexpr
+
+
+def simplify_ext(expr):
+    """
+    An extended version of simplification with expression fixes for sympy.
+    :param expr: A sympy expression.
+    :return: Simplified version of the expression.
+    """
+    a = sympy.Wild('a')
+    b = sympy.Wild('b')
+    c = sympy.Wild('c')
+
+    # Push expressions into both sides of min/max.
+    # Example: Min(N, 4) + 1 => Min(N + 1, 5)
+    dic = expr.match(sympy.Min(a, b) + c)
+    if dic:
+        return sympy.Min(dic[a] + dic[c], dic[b] + dic[c])
+    dic = expr.match(sympy.Max(a, b) + c)
+    if dic:
+        return sympy.Max(dic[a] + dic[c], dic[b] + dic[c])
+    return expr
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
@@ -574,20 +596,19 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     # TODO: support SymExpr over-approximated expressions
     try:
-        return sympy_to_dace(
-            sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify),
+                             symbol_map)
     except TypeError:  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
-        return sympy_to_dace(
-            sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify),
+                             symbol_map)
 
 
 class DaceSympyPrinter(StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
-
     def _print_Float(self, expr):
         if int(expr) == expr:
             return str(int(expr))
@@ -595,18 +616,17 @@ class DaceSympyPrinter(StrPrinter):
 
     def _print_Function(self, expr):
         if str(expr.func) == 'int_floor':
-            return '((%s) / (%s))' % (self._print(expr.args[0]),
-                                      self._print(expr.args[1]))
+            return '((%s) / (%s))' % (self._print(
+                expr.args[0]), self._print(expr.args[1]))
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
-        return '((%s) %% (%s))' % (self._print(expr.args[0]),
-                                   self._print(expr.args[1]))
+        return '((%s) %% (%s))' % (self._print(
+            expr.args[0]), self._print(expr.args[1]))
 
 
 def symstr(sym):
     """ Convert a symbolic expression to a C++ compilable expression. """
-
     def repstr(s):
         return s.replace('Min', 'min').replace('Max', 'max')
 
@@ -650,7 +670,6 @@ class SympyAwarePickler(pickle.Pickler):
     """ Custom Pickler class that safely saves SymPy expressions
         with function definitions in expressions (e.g., int_ceil).
     """
-
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
             # Save sympy expression as srepr
@@ -664,7 +683,6 @@ class SympyAwareUnpickler(pickle.Unpickler):
     """ Custom Unpickler class that safely restores SymPy expressions
         with function definitions in expressions (e.g., int_ceil).
     """
-
     def persistent_load(self, pid):
         type_tag, value = pid
         if type_tag == "DaCeSympyExpression":

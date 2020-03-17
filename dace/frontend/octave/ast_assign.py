@@ -64,8 +64,10 @@ class AST_Assign(AST_Node):
                 name = self.lhs.get_name()
 
                 if name not in sdfg.arrays:
-                    sdfg.add_array(
-                        name, dims, basetype, debuginfo=self.context)
+                    sdfg.add_array(name,
+                                   dims,
+                                   basetype,
+                                   debuginfo=self.context)
                 rhs_datanode = self.rhs.get_datanode(sdfg, state)
                 lhs_datanode = self.lhs.get_datanode(sdfg, state)
 
@@ -90,11 +92,10 @@ class AST_Assign(AST_Node):
                 dims = vardef.get_dims()
                 basetype = vardef.get_basetype()
                 if self.lhs.arrayname.get_name() not in sdfg.arrays:
-                    sdfg.add_array(
-                        self.lhs.arrayname.get_name(),
-                        dims,
-                        basetype,
-                        debuginfo=self.context)
+                    sdfg.add_array(self.lhs.arrayname.get_name(),
+                                   dims,
+                                   basetype,
+                                   debuginfo=self.context)
                 dn = sdfg.nodes()[state].add_access(
                     self.lhs.arrayname.get_name())
 
@@ -107,14 +108,13 @@ class AST_Assign(AST_Node):
 
                 if self.lhs.is_data_dependent_access() == False:
                     msubset = self.lhs.make_range_from_accdims()
-                    writem = dace.memlet.Memlet(
-                        self.lhs.arrayname.get_name(),
-                        msubset.num_elements(),
-                        msubset,
-                        1,
-                        None,
-                        None,
-                        debuginfo=self.context)
+                    writem = dace.memlet.Memlet(self.lhs.arrayname.get_name(),
+                                                msubset.num_elements(),
+                                                msubset,
+                                                1,
+                                                None,
+                                                None,
+                                                debuginfo=self.context)
 
                     sdfg.nodes()[state].add_edge(rhs_datanode, None, dn, None,
                                                  writem)

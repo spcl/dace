@@ -20,34 +20,33 @@ def make_init_state(sdfg):
     state = sdfg.add_state("init")
 
     a_host = state.add_array("A", (M, N), dtype)
-    a_device = state.add_array(
-        "A_device", (M, N),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    a_device = state.add_array("A_device", (M, N),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
     x_host = state.add_array("x", (M, ), dtype)
-    x_device = state.add_array(
-        "x_device", (M, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    x_device = state.add_array("x_device", (M, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
     y_host = state.add_array("y", (M, ), dtype)
-    y_device = state.add_array(
-        "y_device", (N, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    y_device = state.add_array("y_device", (N, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
 
-    state.add_memlet_path(
-        a_host,
-        a_device,
-        memlet=dace.memlet.Memlet.simple(a_device, "0:N, 0:M"))
+    state.add_memlet_path(a_host,
+                          a_device,
+                          memlet=dace.memlet.Memlet.simple(
+                              a_device, "0:N, 0:M"))
 
-    state.add_memlet_path(
-        x_host, x_device, memlet=dace.memlet.Memlet.simple(x_device, "0:M"))
+    state.add_memlet_path(x_host,
+                          x_device,
+                          memlet=dace.memlet.Memlet.simple(x_device, "0:M"))
 
-    state.add_memlet_path(
-        y_host, y_device, memlet=dace.memlet.Memlet.simple(y_device, "0:N"))
+    state.add_memlet_path(y_host,
+                          y_device,
+                          memlet=dace.memlet.Memlet.simple(y_device, "0:N"))
 
     return state
 
@@ -57,14 +56,14 @@ def make_finalize_state(sdfg):
     state = sdfg.add_state("finalize")
 
     y_host = state.add_array("y", (M, ), dtype)
-    y_device = state.add_array(
-        "y_device", (N, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    y_device = state.add_array("y_device", (N, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
 
-    state.add_memlet_path(
-        y_device, y_host, memlet=dace.memlet.Memlet.simple(y_host, "0:N"))
+    state.add_memlet_path(y_device,
+                          y_host,
+                          memlet=dace.memlet.Memlet.simple(y_host, "0:N"))
 
     return state
 
@@ -73,16 +72,17 @@ def make_load_state(sdfg):
 
     state = sdfg.add_state("load")
 
-    y = state.add_array(
-        "y_nested", (N, ), dtype, storage=dace.dtypes.StorageType.FPGA_Global)
-    y_buffer = state.add_array(
-        "y_buffer", (N, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+    y = state.add_array("y_nested", (N, ),
+                        dtype,
+                        storage=dace.dtypes.StorageType.FPGA_Global)
+    y_buffer = state.add_array("y_buffer", (N, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Local)
 
-    state.add_memlet_path(
-        y, y_buffer, memlet=dace.memlet.Memlet.simple(y_buffer, "0:N"))
+    state.add_memlet_path(y,
+                          y_buffer,
+                          memlet=dace.memlet.Memlet.simple(y_buffer, "0:N"))
 
     return state
 
@@ -91,16 +91,17 @@ def make_store_state(sdfg):
 
     state = sdfg.add_state("store")
 
-    y_buffer = state.add_array(
-        "y_buffer", (N, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Local)
-    y = state.add_array(
-        "y_nested", (N, ), dtype, storage=dace.dtypes.StorageType.FPGA_Global)
+    y_buffer = state.add_array("y_buffer", (N, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Local)
+    y = state.add_array("y_nested", (N, ),
+                        dtype,
+                        storage=dace.dtypes.StorageType.FPGA_Global)
 
-    state.add_memlet_path(
-        y_buffer, y, memlet=dace.memlet.Memlet.simple(y, "0:N"))
+    state.add_memlet_path(y_buffer,
+                          y,
+                          memlet=dace.memlet.Memlet.simple(y, "0:N"))
 
     return state
 
@@ -109,15 +110,16 @@ def make_compute_state(sdfg):
 
     state = sdfg.add_state("compute")
 
-    a = state.add_array(
-        "A_nested", (M, N), dtype, storage=dace.dtypes.StorageType.FPGA_Global)
-    x = state.add_array(
-        "x_nested", (M, ), dtype, storage=dace.dtypes.StorageType.FPGA_Global)
-    y_buffer = state.add_array(
-        "y_buffer", (N, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+    a = state.add_array("A_nested", (M, N),
+                        dtype,
+                        storage=dace.dtypes.StorageType.FPGA_Global)
+    x = state.add_array("x_nested", (M, ),
+                        dtype,
+                        storage=dace.dtypes.StorageType.FPGA_Global)
+    y_buffer = state.add_array("y_buffer", (N, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Local)
 
     cols_entry, cols_exit = state.add_map(
         "cols", {"m": "0:M"}, schedule=dace.ScheduleType.Sequential)
@@ -126,30 +128,29 @@ def make_compute_state(sdfg):
     tasklet = state.add_tasklet("update", {"a", "x_in"}, {"update"},
                                 "update = a * x_in")
 
-    wcr_memlet = dace.memlet.Memlet.simple(
-        y_buffer, "n", wcr_str="lambda a, b: a + b", wcr_identity=0)
+    wcr_memlet = dace.memlet.Memlet.simple(y_buffer,
+                                           "n",
+                                           wcr_str="lambda a, b: a + b",
+                                           wcr_identity=0)
 
-    state.add_memlet_path(
-        a,
-        cols_entry,
-        rows_entry,
-        tasklet,
-        dst_conn="a",
-        memlet=dace.memlet.Memlet.simple(a, "m, n"))
-    state.add_memlet_path(
-        x,
-        cols_entry,
-        rows_entry,
-        tasklet,
-        dst_conn="x_in",
-        memlet=dace.memlet.Memlet.simple(x, "m"))
-    state.add_memlet_path(
-        tasklet,
-        rows_exit,
-        cols_exit,
-        y_buffer,
-        src_conn="update",
-        memlet=wcr_memlet)
+    state.add_memlet_path(a,
+                          cols_entry,
+                          rows_entry,
+                          tasklet,
+                          dst_conn="a",
+                          memlet=dace.memlet.Memlet.simple(a, "m, n"))
+    state.add_memlet_path(x,
+                          cols_entry,
+                          rows_entry,
+                          tasklet,
+                          dst_conn="x_in",
+                          memlet=dace.memlet.Memlet.simple(x, "m"))
+    state.add_memlet_path(tasklet,
+                          rows_exit,
+                          cols_exit,
+                          y_buffer,
+                          src_conn="update",
+                          memlet=wcr_memlet)
 
     return state
 
@@ -170,37 +171,32 @@ def make_outer_compute_state(sdfg):
     tasklet = state.add_nested_sdfg(nested_sdfg, sdfg,
                                     {"A_nested", "x_nested"}, {"y_nested"})
 
-    a_device = state.add_array(
-        "A_device", (M, N),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    x_device = state.add_array(
-        "x_device", (M, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
-    y_device = state.add_array(
-        "y_device", (N, ),
-        dtype,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    a_device = state.add_array("A_device", (M, N),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
+    x_device = state.add_array("x_device", (M, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
+    y_device = state.add_array("y_device", (N, ),
+                               dtype,
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Global)
 
-    state.add_memlet_path(
-        a_device,
-        tasklet,
-        dst_conn="A_nested",
-        memlet=dace.memlet.Memlet.simple(a_device, "0:M, 0:N"))
-    state.add_memlet_path(
-        x_device,
-        tasklet,
-        dst_conn="x_nested",
-        memlet=dace.memlet.Memlet.simple(x_device, "0:M"))
-    state.add_memlet_path(
-        tasklet,
-        y_device,
-        src_conn="y_nested",
-        memlet=dace.memlet.Memlet.simple(y_device, "0:N"))
+    state.add_memlet_path(a_device,
+                          tasklet,
+                          dst_conn="A_nested",
+                          memlet=dace.memlet.Memlet.simple(
+                              a_device, "0:M, 0:N"))
+    state.add_memlet_path(x_device,
+                          tasklet,
+                          dst_conn="x_nested",
+                          memlet=dace.memlet.Memlet.simple(x_device, "0:M"))
+    state.add_memlet_path(tasklet,
+                          y_device,
+                          src_conn="y_nested",
+                          memlet=dace.memlet.Memlet.simple(y_device, "0:N"))
 
     return state
 
@@ -231,11 +227,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int)
     parser.add_argument("M", type=int)
-    parser.add_argument(
-        "-specialize",
-        default=False,
-        action="store_true",
-        help="Also fix M in hardware")
+    parser.add_argument("-specialize",
+                        default=False,
+                        action="store_true",
+                        help="Also fix M in hardware")
     args = vars(parser.parse_args())
 
     N.set(args["N"])
@@ -250,7 +245,6 @@ if __name__ == "__main__":
         M.set(args["M"])
     else:
         gemv.specialize(dict(M=M))
-
 
     print("Running GEMV {}x{} ({}specialized)".format(
         N.get(), M.get(), ("" if args["specialize"] else "not ")))

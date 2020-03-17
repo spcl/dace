@@ -59,18 +59,16 @@ def getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
 class Scope(object):
     """ A class defining a scope, its parent and children scopes, variables, and
         scope entry/exit nodes. """
-
-    def __init__(self, entrynode, exitnode):
-        self.parent = None
-        self.children = []
-        self.defined_vars = []
-        self.entry = entrynode
-        self.exit = exitnode
+    def __init__(self, entrynode: nd.EntryNode, exitnode: nd.ExitNode):
+        self.parent: 'Scope' = None
+        self.children: List['Scope'] = []
+        self.defined_vars: List[str] = []
+        self.entry: nd.EntryNode = entrynode
+        self.exit: nd.ExitNode = exitnode
 
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
-
     def __init__(self, message: str, sdfg, state_id):
         self.message = message
         self.sdfg = sdfg
@@ -86,7 +84,6 @@ class InvalidSDFGError(Exception):
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
-
     def __init__(self, message: str, sdfg, edge_id):
         self.message = message
         self.sdfg = sdfg
@@ -108,7 +105,6 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
-
     def __init__(self, message: str, sdfg, state_id, node_id):
         self.message = message
         self.sdfg = sdfg
@@ -132,14 +128,12 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
-
     def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
-
     def __init__(self, message: str, sdfg, state_id, edge_id):
         self.message = message
         self.sdfg = sdfg
@@ -194,13 +188,13 @@ class SDFG(OrderedDiGraph):
 
     #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
-    constants_prop = Property(
-        dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(
-        dtype=dict,
-        desc="Data descriptors for this SDFG",
-        to_json=_arrays_to_json,
-        from_json=_arrays_from_json)
+    constants_prop = Property(dtype=dict,
+                              default={},
+                              desc="Compile-time constants")
+    _arrays = Property(dtype=dict,
+                       desc="Data descriptors for this SDFG",
+                       to_json=_arrays_to_json,
+                       from_json=_arrays_from_json)
 
     global_code = CodeProperty(
         desc=
@@ -278,13 +272,17 @@ class SDFG(OrderedDiGraph):
         except RuntimeError:
             tmp['scalar_parameters'] = []
 
+        # Location in the SDFG list
+        self.reset_sdfg_list()
+        tmp['sdfg_list_id'] = int(self.sdfg_list.index(self))
+
         tmp['attributes']['name'] = self.name
 
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info={'sdfg': None}):
-
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -293,19 +291,18 @@ class SDFG(OrderedDiGraph):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = SDFG(
-            name=attrs['name'],
-            arg_types=dace.serialize.loads(
-                dace.serialize.dumps(attrs['arg_types'])),
-            constants=dace.serialize.loads(
-                dace.serialize.dumps(attrs['constants_prop'])),
-            parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'],
+                   arg_types=dace.serialize.loads(
+                       dace.serialize.dumps(attrs['arg_types'])),
+                   constants=dace.serialize.loads(
+                       dace.serialize.dumps(attrs['constants_prop'])),
+                   parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
             ret, json_obj, ignore_properties={'constants_prop', 'name'})
 
         for n in nodes:
-            nci = copy.deepcopy(context_info)
+            nci = copy.copy(context_info)
             nci['sdfg'] = ret
 
             state = SDFGState.from_json(n, context=nci)
@@ -347,8 +344,8 @@ class SDFG(OrderedDiGraph):
             return self._arrays[dataname]
         if str(dataname) in self._symbols:
             return self._symbols[str(dataname)]
-        raise KeyError(
-            'Data descriptor with name "%s" not found in SDFG' % dataname)
+        raise KeyError('Data descriptor with name "%s" not found in SDFG' %
+                       dataname)
 
     def replace(self, name: str, new_name: str):
         """ Finds and replaces all occurrences of a symbol or array name in SDFG.
@@ -356,7 +353,6 @@ class SDFG(OrderedDiGraph):
             :param new_name: Name to replace.
             :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
-
         def replace_dict(d, old, new):
             if old in d:
                 if new in d:
@@ -413,17 +409,21 @@ class SDFG(OrderedDiGraph):
             return source_nodes[0]
         if self._start_state is None:
             raise ValueError('Ambiguous or undefined starting state for SDFG')
+        if self._start_state not in source_nodes:
+            raise ValueError("Start state {} not found in source nodes".format(
+                self._start_state))
+        return self._start_state
 
-        return self.node(self._start_state)
-
-    def set_start_state(self, state_id):
+    @start_state.setter
+    def start_state(self, state_id):
         """ Manually sets the starting state of this SDFG.
             :param state_id: The node ID (use `node_id(state)`) of the
                              state to set.
         """
-        if state_id < 0 or state_id >= len(self.nodes()):
+        states = self.nodes()
+        if state_id < 0 or state_id >= len(states):
             raise ValueError("Invalid state ID")
-        self._start_state = state_id
+        self._start_state = states[state_id]
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
@@ -510,11 +510,18 @@ class SDFG(OrderedDiGraph):
             for state in self.nodes():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and nd.data == name:
-                        raise ValueError(
-                            "Data descriptor %s is already used"
-                            "in node %s, state %s" % (name, node, state))
+                        raise ValueError("Data descriptor %s is already used"
+                                         "in node %s, state %s" %
+                                         (name, node, state))
 
         del self._arrays[name]
+
+    def reset_sdfg_list(self):
+        if self.parent_sdfg is not None:
+            self._sdfg_list = self.parent_sdfg.reset_sdfg_list()
+        else:
+            self._sdfg_list = list(self.all_sdfgs_recursive())
+        return self._sdfg_list
 
     def update_sdfg_list(self, sdfg_list):
         # TODO: Refactor
@@ -592,11 +599,10 @@ class SDFG(OrderedDiGraph):
             :param dtype: Optional data type of the symbol, or None to deduce
                           automatically.
         """
-
         def get_type(obj):
             if isinstance(obj, np.ndarray):
-                return dt.Array(
-                    dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type], shape=obj.shape)
+                return dt.Array(dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type],
+                                shape=obj.shape)
             elif isinstance(obj, dtypes.typeclass):
                 return dt.Scalar(type(obj))
             elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
@@ -643,12 +649,9 @@ class SDFG(OrderedDiGraph):
         """
         if not isinstance(node, SDFGState):
             raise TypeError("Expected SDFGState, got " + str(type(node)))
-
-        # If no start state has been defined, define to be the first state
+        super(SDFG, self).add_node(node)
         if is_start_state == True:
-            self._start_state = len(self.nodes())
-
-        return super(SDFG, self).add_node(node)
+            self.start_state = len(self.nodes()) - 1
 
     def add_edge(self, u, v, edge):
         """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
@@ -736,8 +739,8 @@ class SDFG(OrderedDiGraph):
         assigned = collections.OrderedDict([(k, v)
                                             for k, v in assigned.items()
                                             if not k.startswith('__dace')])
-        used = collections.OrderedDict(
-            [(k, v) for k, v in used.items() if not k.startswith('__dace')])
+        used = collections.OrderedDict([(k, v) for k, v in used.items()
+                                        if not k.startswith('__dace')])
 
         return assigned, used
 
@@ -956,8 +959,9 @@ class SDFG(OrderedDiGraph):
         for name, arg_type in arg_list.items():
             if isinstance(arg_type, dace.data.Data):
                 signature_args.append(
-                    arg_type.signature(
-                        name=name, with_types=with_types, for_call=for_call))
+                    arg_type.signature(name=name,
+                                       with_types=with_types,
+                                       for_call=for_call))
             else:
                 raise TypeError("Unsupported argument type")
 
@@ -1006,9 +1010,9 @@ class SDFG(OrderedDiGraph):
             for state in self.nodes():
                 for node in state.nodes():
                     if isinstance(node, dace.graph.nodes.NestedSDFG):
-                        node.sdfg.draw_to_file(
-                            filename=node.sdfg.name + "_" + filename,
-                            recursive=True)
+                        node.sdfg.draw_to_file(filename=node.sdfg.name + "_" +
+                                               filename,
+                                               recursive=True)
 
     def draw(self):
         """ Creates a GraphViz representation of the full SDFG, including all
@@ -1065,13 +1069,12 @@ class SDFG(OrderedDiGraph):
                         ltail=srcCluster,
                     ))
                 edges.append(
-                    dot.draw_edge_explicit(
-                        redName,
-                        dstName,
-                        edge,
-                        self,
-                        srcState,
-                        lhead=dstCluster))
+                    dot.draw_edge_explicit(redName,
+                                           dstName,
+                                           edge,
+                                           self,
+                                           srcState,
+                                           lhead=dstCluster))
 
         # Mark first and last states
         first = self.start_state
@@ -1108,10 +1111,10 @@ subgraph cluster_state_{state} {{
             cluster += "\n}"
             clusters.append(cluster)
 
-        return (
-            "digraph SDFG {\n    outputorder=nodesfirst;\n" +
-            "    compound=true;\n" + "    newrank=true;\n" +
-            "\n    ".join(nodes + edges) + "\n" + "\n".join(clusters) + "\n}")
+        return ("digraph SDFG {\n    outputorder=nodesfirst;\n" +
+                "    compound=true;\n" + "    newrank=true;\n" +
+                "\n    ".join(nodes + edges) + "\n" + "\n".join(clusters) +
+                "\n}")
 
     # TODO(later): Also implement the "_repr_svg_" method for static output
     def _repr_html_(self):
@@ -1306,8 +1309,8 @@ subgraph cluster_state_{state} {{
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
-            raise TypeError(
-                "Array name must be a string. Got %s" % type(name).__name__)
+            raise TypeError("Array name must be a string. Got %s" %
+                            type(name).__name__)
 
         # If exists, fail
         if name in self._arrays:
@@ -1330,18 +1333,17 @@ subgraph cluster_state_{state} {{
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Array(
-            dtype,
-            shape,
-            storage=storage,
-            materialize_func=materialize_func,
-            allow_conflicts=allow_conflicts,
-            transient=transient,
-            strides=strides,
-            offset=offset,
-            toplevel=toplevel,
-            debuginfo=debuginfo,
-            total_size=total_size)
+        desc = dt.Array(dtype,
+                        shape,
+                        storage=storage,
+                        materialize_func=materialize_func,
+                        allow_conflicts=allow_conflicts,
+                        transient=transient,
+                        strides=strides,
+                        offset=offset,
+                        toplevel=toplevel,
+                        debuginfo=debuginfo,
+                        total_size=total_size)
 
         self._arrays[name] = desc
         return name, desc
@@ -1360,8 +1362,8 @@ subgraph cluster_state_{state} {{
                    find_new_name=False):
         """ Adds a stream to the SDFG data descriptor store. """
         if not isinstance(name, str):
-            raise TypeError(
-                "Stream name must be a string. Got %s" % type(name).__name__)
+            raise TypeError("Stream name must be a string. Got %s" %
+                            type(name).__name__)
 
         # If exists, fail
         if name in self._arrays:
@@ -1400,8 +1402,8 @@ subgraph cluster_state_{state} {{
                    find_new_name=False):
         """ Adds a scalar to the SDFG data descriptor store. """
         if not isinstance(name, str):
-            raise TypeError(
-                "Scalar name must be a string. Got %s" % type(name).__name__)
+            raise TypeError("Scalar name must be a string. Got %s" %
+                            type(name).__name__)
         # If exists, fail
         if name in self._arrays:
             if not find_new_name:
@@ -1440,20 +1442,19 @@ subgraph cluster_state_{state} {{
                       find_new_name=False):
         """ Convenience function to add a transient array to the data
             descriptor store. """
-        return self.add_array(
-            name,
-            shape,
-            dtype,
-            storage,
-            materialize_func,
-            True,
-            strides,
-            offset,
-            toplevel=toplevel,
-            debuginfo=debuginfo,
-            allow_conflicts=allow_conflicts,
-            total_size=total_size,
-            find_new_name=find_new_name)
+        return self.add_array(name,
+                              shape,
+                              dtype,
+                              storage,
+                              materialize_func,
+                              True,
+                              strides,
+                              offset,
+                              toplevel=toplevel,
+                              debuginfo=debuginfo,
+                              allow_conflicts=allow_conflicts,
+                              total_size=total_size,
+                              find_new_name=find_new_name)
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
@@ -1479,19 +1480,18 @@ subgraph cluster_state_{state} {{
                            total_size=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
-        return self.add_array(
-            self.temp_data_name(),
-            shape,
-            dtype,
-            storage,
-            materialize_func,
-            True,
-            strides,
-            offset,
-            toplevel=toplevel,
-            debuginfo=debuginfo,
-            allow_conflicts=allow_conflicts,
-            total_size=total_size)
+        return self.add_array(self.temp_data_name(),
+                              shape,
+                              dtype,
+                              storage,
+                              materialize_func,
+                              True,
+                              strides,
+                              offset,
+                              toplevel=toplevel,
+                              debuginfo=debuginfo,
+                              allow_conflicts=allow_conflicts,
+                              total_size=total_size)
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False):
         """ Adds an existing data descriptor to the SDFG array store.
@@ -1589,8 +1589,8 @@ subgraph cluster_state_{state} {{
 
         # Loop incrementation
         incr = None if increment_expr is None else {loop_var: increment_expr}
-        self.add_edge(
-            loop_end_state, guard, ed.InterstateEdge(assignments=incr))
+        self.add_edge(loop_end_state, guard,
+                      ed.InterstateEdge(assignments=incr))
 
         return before_state, guard, after_state
 
@@ -1736,15 +1736,15 @@ subgraph cluster_state_{state} {{
         if num_args_passed < num_args_expected:
             expected_kwargs = list(expected_args.keys())[len(args):]
             missing_args = [k for k in expected_kwargs if k not in kwargs]
-            raise RuntimeError(
-                "Missing arguments to SDFG: '%s'" % (', '.join(missing_args)))
+            raise RuntimeError("Missing arguments to SDFG: '%s'" %
+                               (', '.join(missing_args)))
         elif num_args_passed > num_args_expected:
             unnecessary_args = []
             extra_args = len(args) - len(expected_args)
             if extra_args > 0:
-                unnecessary_args.extend(
-                    'Argument #%d' % (i + len(expected_args) + 1)
-                    for i in range(extra_args))
+                unnecessary_args.extend('Argument #%d' %
+                                        (i + len(expected_args) + 1)
+                                        for i in range(extra_args))
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [
@@ -1812,7 +1812,7 @@ subgraph cluster_state_{state} {{
             before computing the given state. """
         from networkx import all_simple_paths
 
-        for path in all_simple_paths(self, self._start_state, state):
+        for path in all_simple_paths(self, self.start_state, state):
             yield [
                 next(e for e in self.out_edges(s) if e.dst == d)
                 for s, d in zip(path[:-1], path[1:])
@@ -1823,9 +1823,8 @@ subgraph cluster_state_{state} {{
             before computing the given state. """
         from networkx import all_simple_paths
 
-        start_state = self._start_state or self.source_nodes()[0]
         return set([
-            n for path in all_simple_paths(self, start_state, state)
+            n for path in all_simple_paths(self, self.start_state, state)
             for n in path
         ])
 
@@ -1840,7 +1839,7 @@ subgraph cluster_state_{state} {{
             if not validate_name(self.name):
                 raise InvalidSDFGError("Invalid name", self, None)
 
-            if len(self.source_nodes()) > 1 and self._start_state is None:
+            if len(self.source_nodes()) > 1 and self.start_state is None:
                 raise InvalidSDFGError("Starting state undefined", self, None)
 
             if len(set([s.label for s in self.nodes()])) != len(self.nodes()):
@@ -1900,20 +1899,20 @@ subgraph cluster_state_{state} {{
             k for k, v in Transformation.extensions().items()
             if v.get('strict', False)
         ]
-        self.apply_transformations_repeated(
-            strict_transformations,
-            validate=validate,
-            strict=True,
-            validate_all=validate_all)
+        self.apply_transformations_repeated(strict_transformations,
+                                            validate=validate,
+                                            strict=True,
+                                            validate_all=validate_all)
 
-    def apply_transformations(self,
-                              xforms: Union[Type, List[Type]],
-                              options: Optional[Union[Dict[str, Any], List[
-                                  Dict[str, Any]]]] = None,
-                              validate: bool = True,
-                              validate_all: bool = False,
-                              strict: bool = False,
-                              states: Optional[List[Any]] = None) -> int:
+    def apply_transformations(
+            self,
+            xforms: Union[Type, List[Type]],
+            options: Optional[
+                Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            validate: bool = True,
+            validate_all: bool = False,
+            strict: bool = False,
+            states: Optional[List[Any]] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
             :param xforms: A Transformation class or a sequence.
@@ -1955,9 +1954,8 @@ subgraph cluster_state_{state} {{
         for xform, opts in zip(xforms, options):
             # Find only the first match
             try:
-                match = next(
-                    m for m in opt.get_pattern_matches(
-                        strict=strict, patterns=[xform], states=states))
+                match = next(m for m in opt.get_pattern_matches(
+                    strict=strict, patterns=[xform], states=states))
             except StopIteration:
                 continue
             sdfg = self.sdfg_list[match.sdfg_id]
@@ -1983,8 +1981,8 @@ subgraph cluster_state_{state} {{
     def apply_transformations_repeated(
             self,
             xforms: Union[Type, List[Type]],
-            options: Optional[Union[Dict[str, Any], List[Dict[str,
-                                                              Any]]]] = None,
+            options: Optional[
+                Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             validate: bool = True,
             validate_all: bool = False,
             strict: bool = False,
@@ -2031,13 +2029,14 @@ subgraph cluster_state_{state} {{
         while applied:
             applied = False
             # Find and apply one of
-            for match in opt.get_pattern_matches(
-                    strict=strict, patterns=xforms, states=states):
+            for match in opt.get_pattern_matches(strict=strict,
+                                                 patterns=xforms,
+                                                 states=states):
                 sdfg = self.sdfg_list[match.sdfg_id]
 
                 # Set transformation properties
-                opts = next(
-                    o for x, o in zip(xforms, options) if type(match) is x)
+                opts = next(o for x, o in zip(xforms, options)
+                            if type(match) is x)
                 for prop_name, prop_val in opts.items():
                     setattr(match, prop_name, prop_val)
 
@@ -2073,12 +2072,11 @@ subgraph cluster_state_{state} {{
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
 
-        self.apply_transformations(
-            GPUTransformSDFG,
-            validate=validate,
-            validate_all=validate_all,
-            strict=strict,
-            states=states)
+        self.apply_transformations(GPUTransformSDFG,
+                                   validate=validate,
+                                   validate_all=validate_all,
+                                   strict=strict,
+                                   states=states)
 
     def expand_library_nodes(self):
         """ Recursively expand all unexpanded library nodes in the SDFG,
@@ -2133,7 +2131,6 @@ subgraph cluster_state_{state} {{
 
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
-
     def memlet_path(self,
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
@@ -2165,9 +2162,8 @@ class MemletTrackingView(object):
                         "Source connector cannot be None for {}".format(
                             curedge.src))
                 assert curedge.src_conn.startswith("OUT_")
-                next_edge = next(
-                    e for e in state.in_edges(curedge.src)
-                    if e.dst_conn == "IN_" + curedge.src_conn[4:])
+                next_edge = next(e for e in state.in_edges(curedge.src)
+                                 if e.dst_conn == "IN_" + curedge.src_conn[4:])
                 result.insert(0, next_edge)
                 curedge = next_edge
 
@@ -2183,9 +2179,9 @@ class MemletTrackingView(object):
                             curedge.dst))
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
-                next_edge = next(
-                    e for e in state.out_edges(curedge.dst)
-                    if e.src_conn == "OUT_" + curedge.dst_conn[3:])
+                next_edge = next(e for e in state.out_edges(curedge.dst)
+                                 if e.src_conn == "OUT_" +
+                                 curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
 
@@ -2226,17 +2222,15 @@ class MemletTrackingView(object):
                    and curedge.src_conn is not None):
                 assert curedge.src_conn.startswith('OUT_')
                 cname = curedge.src_conn[4:]
-                curedge = next(
-                    e for e in state.in_edges(curedge.src)
-                    if e.dst_conn == 'IN_%s' % cname)
+                curedge = next(e for e in state.in_edges(curedge.src)
+                               if e.dst_conn == 'IN_%s' % cname)
         elif propagate_backward:
             while (isinstance(curedge.dst, nd.ExitNode)
                    and curedge.dst_conn is not None):
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
-                curedge = next(
-                    e for e in state.out_edges(curedge.dst)
-                    if e.src_conn == 'OUT_%s' % cname)
+                curedge = next(e for e in state.out_edges(curedge.dst)
+                               if e.src_conn == 'OUT_%s' % cname)
         tree_root = mm.MemletTree(curedge)
 
         # Collect children (recursively)
@@ -2286,7 +2280,6 @@ class MemletTrackingView(object):
 class ScopeSubgraphView(SubgraphView, MemletTrackingView):
     """ An extension to SubgraphView that enables the creation of scope
         dictionaries in subgraphs and free symbols. """
-
     def __init__(self, graph, subgraph_nodes):
         super(ScopeSubgraphView, self).__init__(graph, subgraph_nodes)
         self._clear_scopedict_cache()
@@ -2420,15 +2413,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    nosync = Property(
-        dtype=bool,
-        default=False,
-        desc="Do not synchronize at the end of the state")
+    nosync = Property(dtype=bool,
+                      default=False,
+                      desc="Do not synchronize at the end of the state")
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -2501,11 +2492,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     def add_edge(self, u, u_connector, v, v_connector, memlet):
         if not isinstance(u, nd.Node):
-            raise TypeError(
-                "Source node is not of type nd.Node (type: %s)" % str(type(u)))
+            raise TypeError("Source node is not of type nd.Node (type: %s)" %
+                            str(type(u)))
         if u_connector is not None and not isinstance(u_connector, str):
-            raise TypeError("Source connector is not string (type: %s)" % str(
-                type(u_connector)))
+            raise TypeError("Source connector is not string (type: %s)" %
+                            str(type(u_connector)))
         if not isinstance(v, nd.Node):
             raise TypeError("Destination node is not of type nd.Node (type: " +
                             "%s)" % str(type(v)))
@@ -2513,8 +2504,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise TypeError("Destination connector is not string (type: %s)" %
                             str(type(v_connector)))
         if not isinstance(memlet, mm.Memlet):
-            raise TypeError(
-                "Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
+            raise TypeError("Memlet is not of type Memlet (type: %s)" %
+                            str(type(memlet)))
 
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
@@ -2572,8 +2563,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             scope_dict = {
                 k: sorted(v)
                 for k, v in sorted(
-                    self.scope_dict(node_to_children=True, return_ids=True)
-                    .items())
+                    self.scope_dict(node_to_children=True,
+                                    return_ids=True).items())
             }
         except RuntimeError:
             scope_dict = {}
@@ -2617,8 +2608,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = SDFGState(
-            label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
+        ret = SDFGState(label=json_obj['label'],
+                        sdfg=context['sdfg'],
+                        debuginfo=None)
 
         rec_ci = {
             'sdfg': context['sdfg'],
@@ -2628,14 +2620,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         dace.serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
         for n in nodes:
-            nret = dace.serialize.loads(
-                dace.serialize.dumps(n), context=rec_ci)
+            nret = dace.serialize.loads(dace.serialize.dumps(n),
+                                        context=rec_ci)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            eret = dace.serialize.loads(
-                dace.serialize.dumps(e), context=rec_ci)
+            eret = dace.serialize.loads(dace.serialize.dumps(e),
+                                        context=rec_ci)
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)
@@ -2677,8 +2669,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if node is None:
                 exit_node = None
             else:
-                exit_node = next(
-                    v for v in scopenodes if isinstance(v, nd.ExitNode))
+                exit_node = next(v for v in scopenodes
+                                 if isinstance(v, nd.ExitNode))
             scope = Scope(node, exit_node)
             scope.defined_vars = set(
                 symbolic.pystr_to_symbolic(s)
@@ -2798,10 +2790,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: An array access node.
         """
         debuginfo = getdebuginfo(debuginfo)
-        node = nd.AccessNode(
-            array_or_stream_name,
-            dtypes.AccessType.ReadOnly,
-            debuginfo=debuginfo)
+        node = nd.AccessNode(array_or_stream_name,
+                             dtypes.AccessType.ReadOnly,
+                             debuginfo=debuginfo)
         self.add_node(node)
         return node
 
@@ -2812,10 +2803,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: An array access node.
         """
         debuginfo = getdebuginfo(debuginfo)
-        node = nd.AccessNode(
-            array_or_stream_name,
-            dtypes.AccessType.WriteOnly,
-            debuginfo=debuginfo)
+        node = nd.AccessNode(array_or_stream_name,
+                             dtypes.AccessType.WriteOnly,
+                             debuginfo=debuginfo)
         self.add_node(node)
         return node
 
@@ -2826,10 +2816,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: An array access node.
         """
         debuginfo = getdebuginfo(debuginfo)
-        node = nd.AccessNode(
-            array_or_stream_name,
-            dtypes.AccessType.ReadWrite,
-            debuginfo=debuginfo)
+        node = nd.AccessNode(array_or_stream_name,
+                             dtypes.AccessType.ReadWrite,
+                             debuginfo=debuginfo)
         self.add_node(node)
         return node
 
@@ -2928,8 +2917,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         map_range = properties.SubsetProperty.from_string(", ".join(
             [ndrange[p] for p in params]))
-        map = nd.Map(
-            name, params, map_range, schedule, unroll, debuginfo=debuginfo)
+        map = nd.Map(name,
+                     params,
+                     map_range,
+                     schedule,
+                     unroll,
+                     debuginfo=debuginfo)
         return map
 
     def add_map(
@@ -2950,8 +2943,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = getdebuginfo(debuginfo)
-        map = self._map_from_ndrange(
-            name, schedule, unroll, ndrange, debuginfo=debuginfo)
+        map = self._map_from_ndrange(name,
+                                     schedule,
+                                     unroll,
+                                     ndrange,
+                                     debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, map_exit])
@@ -2986,13 +2982,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     properties.SymbolicProperty.from_string(elements[1]))
 
         debuginfo = getdebuginfo(debuginfo)
-        consume = nd.Consume(
-            name,
-            pe_tuple,
-            condition,
-            schedule,
-            chunksize,
-            debuginfo=debuginfo)
+        consume = nd.Consume(name,
+                             pe_tuple,
+                             condition,
+                             schedule,
+                             chunksize,
+                             debuginfo=debuginfo)
         entry = nd.ConsumeEntry(consume)
         exit = nd.ConsumeExit(consume)
 
@@ -3065,8 +3060,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             location=location,
             debuginfo=debuginfo,
         )
-        map = self._map_from_ndrange(
-            map_name, schedule, unroll_map, map_ranges, debuginfo=debuginfo)
+        map = self._map_from_ndrange(map_name,
+                                     schedule,
+                                     unroll_map,
+                                     map_ranges,
+                                     debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, tasklet, map_exit])
@@ -3171,8 +3169,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: A Reduce node
         """
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(
-            wcr, axes, wcr_identity, schedule, debuginfo=debuginfo)
+        result = nd.Reduce(wcr,
+                           axes,
+                           wcr_identity,
+                           schedule,
+                           debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3345,15 +3346,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         for i, edge in enumerate(path):
             # Figure out source and destination connectors
             if propagate_forward:
-                sconn = src_conn if i == 0 else (
-                    "OUT_" + edge.src.last_connector())
+                sconn = src_conn if i == 0 else ("OUT_" +
+                                                 edge.src.last_connector())
                 dconn = (dst_conn if i == len(edges) - 1 else
                          ("IN_" + edge.dst.next_connector()))
             else:
                 sconn = (src_conn if i == len(edges) - 1 else
                          ("OUT_" + edge.src.next_connector()))
-                dconn = dst_conn if i == 0 else (
-                    "IN_" + edge.dst.last_connector())
+                dconn = dst_conn if i == 0 else ("IN_" +
+                                                 edge.dst.last_connector())
 
             if isinstance(cur_memlet, dace.memlet.EmptyMemlet):
                 if propagate_forward:
@@ -3411,19 +3412,18 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
-        self.parent.add_array(
-            name,
-            shape,
-            dtype,
-            storage,
-            materialize_func,
-            transient,
-            strides,
-            offset,
-            toplevel,
-            debuginfo,
-            find_new_name=find_new_name,
-            total_size=total_size)
+        self.parent.add_array(name,
+                              shape,
+                              dtype,
+                              storage,
+                              materialize_func,
+                              transient,
+                              strides,
+                              offset,
+                              toplevel,
+                              debuginfo,
+                              find_new_name=find_new_name,
+                              total_size=total_size)
         return self.add_access(name, debuginfo)
 
     def add_stream(
@@ -3494,18 +3494,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                       debuginfo=None,
                       total_size=None):
         """ @attention: This function is deprecated. """
-        return self.add_array(
-            name,
-            shape,
-            dtype,
-            storage,
-            materialize_func,
-            True,
-            strides,
-            offset,
-            toplevel,
-            debuginfo,
-            total_size=total_size)
+        return self.add_array(name,
+                              shape,
+                              dtype,
+                              storage,
+                              materialize_func,
+                              True,
+                              strides,
+                              offset,
+                              toplevel,
+                              debuginfo,
+                              total_size=total_size)
 
     # SDFG queries
     ######################################
@@ -3766,8 +3765,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if incoming_edges > 1 and not isinstance(node, nd.ExitNode):
                     raise InvalidSDFGNodeError(
                         "Connector %s cannot have more "
-                        "than one incoming edge, found %d" % (conn,
-                                                              incoming_edges),
+                        "than one incoming edge, found %d" %
+                        (conn, incoming_edges),
                         sdfg,
                         state_id,
                         nid,
@@ -3791,8 +3790,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if outgoing_edges > 1 and isinstance(node, nd.ExitNode):
                     raise InvalidSDFGNodeError(
                         "Connector %s cannot have more "
-                        "than one outgoing edge, found %d" % (conn,
-                                                              outgoing_edges),
+                        "than one outgoing edge, found %d" %
+                        (conn, outgoing_edges),
                         sdfg,
                         state_id,
                         nid,
@@ -3856,10 +3855,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if e.data.data is not None and e.data.allow_oob == False:
                 subset_node = (dst_node if isinstance(dst_node, nd.AccessNode)
                                and e.data.data == dst_node.data else src_node)
-                other_subset_node = (dst_node
-                                     if isinstance(dst_node, nd.AccessNode)
-                                     and e.data.data != dst_node.data else
-                                     src_node)
+                other_subset_node = (
+                    dst_node if isinstance(dst_node, nd.AccessNode)
+                    and e.data.data != dst_node.data else src_node)
 
                 if isinstance(subset_node, nd.AccessNode):
                     arr = sdfg.arrays[subset_node.data]
@@ -3867,8 +3865,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     if e.data.subset.dims() != len(arr.shape):
                         raise InvalidSDFGEdgeError(
                             "Memlet subset does not match node dimension "
-                            "(expected %d, got %d)" % (len(arr.shape),
-                                                       e.data.subset.dims()),
+                            "(expected %d, got %d)" %
+                            (len(arr.shape), e.data.subset.dims()),
                             sdfg,
                             state_id,
                             eid,
@@ -3894,8 +3892,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                     if e.data.other_subset.dims() != len(arr.shape):
                         raise InvalidSDFGEdgeError(
                             "Memlet other_subset does not match node dimension "
-                            "(expected %d, got %d)" % (len(
-                                arr.shape), e.data.other_subset.dims()),
+                            "(expected %d, got %d)" %
+                            (len(arr.shape), e.data.other_subset.dims()),
                             sdfg,
                             state_id,
                             eid,
@@ -3928,8 +3926,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                             'Undefined symbols %s found in memlet subset' %
                             undefs, sdfg, state_id, eid)
                     if e.data.other_subset is not None:
-                        undefs = (
-                            e.data.other_subset.free_symbols - defined_symbols)
+                        undefs = (e.data.other_subset.free_symbols -
+                                  defined_symbols)
                         if len(undefs) > 0:
                             raise InvalidSDFGEdgeError(
                                 'Undefined symbols %s found in memlet '
@@ -3938,7 +3936,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             # Memlet path scope lifetime checks
             # If scope(src) == scope(dst): OK
-            if scope[src_node] == scope[dst_node] or src_node == scope[dst_node]:
+            if scope[src_node] == scope[dst_node] or src_node == scope[
+                    dst_node]:
                 pass
             # If scope(src) contains scope(dst), then src must be a data node
             elif scope_contains_scope(scope, src_node, dst_node):
@@ -4106,7 +4105,6 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,
 def _scope_dict_to_ids(state: SDFGState, scope_dict: Dict[Any, List[Any]]):
     """ Return a JSON-serializable dictionary of a scope dictionary,
         using integral node IDs instead of object references. """
-
     def node_id_or_none(node):
         if node is None: return -1
         return state.node_id(node)
@@ -4266,8 +4264,8 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
         symbols = collections.OrderedDict()
     defined = set(sdfg.constants.keys())
     symbols.update(
-        obj.data_symbols(True)
-        if isinstance(obj, SDFG) else obj.data_symbols())
+        obj.data_symbols(True) if isinstance(obj, SDFG) else obj.data_symbols(
+        ))
     assigned, used = obj.interstate_symbols()
     defined |= assigned.keys()
     symbols.update(used)
@@ -4401,8 +4399,7 @@ def _replsym(symlist, symrepl):
     for i, dim in enumerate(symlist):
         try:
             symlist[i] = tuple(
-                d.subs(symrepl) if symbolic.issymbolic(d) else d
-                for d in dim)
+                d.subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
         except TypeError:
             symlist[i] = (dim.subs(symrepl)
                           if symbolic.issymbolic(dim) else dim)
@@ -4426,8 +4423,8 @@ def replace_properties(node: Any, name: str, new_name: str):
         elif isinstance(propclass, properties.DataProperty):
             if propval == name:
                 setattr(node, pname, new_name)
-        elif isinstance(propclass, (properties.RangeProperty,
-                                    properties.ShapeProperty)):
+        elif isinstance(propclass,
+                        (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
             if isinstance(propval['code_or_block'], str):
@@ -4444,8 +4441,8 @@ def replace_properties(node: Any, name: str, new_name: str):
                     else:
                         warnings.warn(
                             'Replacement of %s with %s was not made '
-                            'for string tasklet code of language %s' % (
-                                name, new_name, lang))
+                            'for string tasklet code of language %s' %
+                            (name, new_name, lang))
             else:
                 for stmt in propval['code_or_block']:
                     ASTFindReplace({name: new_name}).visit(stmt)
@@ -4594,3 +4591,89 @@ def _get_optimizer_class(class_override):
         warnings.warn('Optimizer interface class "%s" not found' % clazz)
 
     return result
+
+
+def consolidate_edges_scope(state: SDFGState,
+                            scope_node: Union[nd.EntryNode, nd.ExitNode]
+                            ) -> int:
+    """
+        Union scope-entering memlets relating to the same data node in a scope.
+        This effectively reduces the number of connectors and allows more
+        transformations to be performed, at the cost of losing the individual
+        per-tasklet memlets.
+        :param state: The SDFG state in which the scope to consolidate resides.
+        :param scope_node: The scope node whose edges will be consolidated.
+        :return: Number of edges removed.
+    """
+    if scope_node is None:
+        return 0
+    data_to_conn = {}
+    consolidated = 0
+    if isinstance(scope_node, nd.EntryNode):
+        outer_edges = state.in_edges
+        inner_edges = state.out_edges
+        remove_outer_connector = scope_node.remove_in_connector
+        remove_inner_connector = scope_node.remove_out_connector
+        prefix, oprefix = 'IN_', 'OUT_'
+    else:
+        outer_edges = state.out_edges
+        inner_edges = state.in_edges
+        remove_outer_connector = scope_node.remove_out_connector
+        remove_inner_connector = scope_node.remove_in_connector
+        prefix, oprefix = 'OUT_', 'IN_'
+
+    edges_by_connector = collections.defaultdict(list)
+    connectors_to_remove = set()
+    for e in inner_edges(scope_node):
+        edges_by_connector[e.src_conn].append(e)
+        if e.data.data not in data_to_conn:
+            data_to_conn[e.data.data] = e.src_conn
+        elif data_to_conn[e.data.data] != e.src_conn:  # Need to consolidate
+            connectors_to_remove.add(e.src_conn)
+
+    for conn in connectors_to_remove:
+        e = edges_by_connector[conn][0]
+        # Outer side of the scope - remove edge and union subsets
+        target_conn = prefix + data_to_conn[e.data.data][len(oprefix):]
+        conn_to_remove = prefix + conn[len(oprefix):]
+        remove_outer_connector(conn_to_remove)
+        out_edge = next(ed for ed in outer_edges(scope_node)
+                        if ed.dst_conn == target_conn)
+        edge_to_remove = next(ed for ed in outer_edges(scope_node)
+                              if ed.dst_conn == conn_to_remove)
+        out_edge.data.subset = sbs.union(out_edge.data.subset,
+                                         edge_to_remove.data.subset)
+        state.remove_edge(edge_to_remove)
+        consolidated += 1
+        # Inner side of the scope - remove and reconnect
+        remove_inner_connector(e.src_conn)
+        for e in edges_by_connector[conn]:
+            e._src_conn = data_to_conn[e.data.data]
+
+    return consolidated
+
+
+def consolidate_edges(sdfg: SDFG) -> int:
+    """
+    Union scope-entering memlets relating to the same data node in all states.
+    This effectively reduces the number of connectors and allows more
+    transformations to be performed, at the cost of losing the individual
+    per-tasklet memlets.
+    :param sdfg: The SDFG to consolidate.
+    :return: Number of edges removed.
+    """
+    consolidated = 0
+    for state in sdfg.nodes():
+        # Start bottom-up
+        queue = state.scope_leaves()
+        next_queue = []
+        while len(queue) > 0:
+            for scope in queue:
+                consolidated += consolidate_edges_scope(state, scope.entry)
+                consolidated += consolidate_edges_scope(state, scope.exit)
+                if scope.parent is not None:
+                    next_queue.append(scope.parent)
+            queue = next_queue
+            next_queue = []
+
+    return consolidated

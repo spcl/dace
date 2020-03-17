@@ -221,7 +221,6 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-
     def __init__(self, f, args, kwargs):
         self.f = f
         self.args = args

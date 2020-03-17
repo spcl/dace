@@ -8,7 +8,6 @@ from collections import OrderedDict
 
 class PropertyTests(unittest.TestCase):
     """Implements unit tests for dace.graph.properties.Property class."""
-
     def test_indirect_properties(self):
 
         m = dace.graph.nodes.Map(

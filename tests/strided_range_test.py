@@ -17,16 +17,18 @@ b[3] = a[1,1] * 2
 me, mx = s0.add_map('srmap', dict(i='0:4'))
 
 # Reading A at [1,    2i:2i+8:8:2,    3]
-s0.add_memlet_path(
-    A,
-    me,
-    tasklet,
-    dst_conn='a',
-    memlet=Memlet.simple(A, '1, 2*i:2*i+10:8:2, 3'))
+s0.add_memlet_path(A,
+                   me,
+                   tasklet,
+                   dst_conn='a',
+                   memlet=Memlet.simple(A, '1, 2*i:2*i+10:8:2, 3'))
 
 # Writing B at [4*i:4*i+4]
-s0.add_memlet_path(
-    tasklet, mx, B, src_conn='b', memlet=Memlet.simple(B, '4*i:4*i+4'))
+s0.add_memlet_path(tasklet,
+                   mx,
+                   B,
+                   src_conn='b',
+                   memlet=Memlet.simple(B, '4*i:4*i+4'))
 
 if __name__ == '__main__':
     print('Strided range tasklet test')

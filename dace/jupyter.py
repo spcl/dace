@@ -21,13 +21,14 @@ def preamble():
     # Emit javascript headers for SDFG renderer
     sdfv_deps = [
         'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
-        'renderer_elements.js', 'sdfg_utils.js', 'renderer.js'
+        'external_lib/math.min.js', 'renderer_elements.js', 'sdfg_utils.js',
+        'renderer.js'
     ]
     result = ''
 
     # Load dependencies
-    root_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), '..', 'diode', 'webclient')
+    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
+                             'diode', 'webclient')
     for dep in sdfv_deps:
         file = os.path.join(root_path, dep)
         with open(file, 'r') as fp:

@@ -36,8 +36,7 @@ class SDFGElement {
     }
 
     // Produces HTML for a hover-tooltip
-    tooltip() {
-        return null;
+    tooltip(container) {
     }
 
     topleft() {
@@ -106,7 +105,7 @@ class State extends SDFGElement {
         ctx.fillStyle = "#000000";
 
         if (mousepos && this.intersect(mousepos.x, mousepos.y))
-            renderer.tooltip = this.tooltip();
+            renderer.tooltip = (c) => this.tooltip(c);
         // Draw state name in center without contents (does not look good)
         /*
         let FONTSIZE = Math.min(renderer.canvas_manager.points_per_pixel() * 16, 100);
@@ -122,8 +121,8 @@ class State extends SDFGElement {
         */
     }
 
-    tooltip() {
-        return "State: " + this.label();
+    tooltip(container) {
+        container.innerHTML = 'State: ' + this.label();
     }
 
     attributes() {
@@ -200,7 +199,7 @@ class Edge extends SDFGElement {
 
         let style = this.strokeStyle();
         if (style !== 'black')
-            renderer.tooltip = this.tooltip();
+            renderer.tooltip = (c) => this.tooltip(c);
         if (this.parent_id == null && style === 'black') {  // Interstate edge
             style = 'blue';
         }
@@ -225,8 +224,35 @@ class Edge extends SDFGElement {
         ctx.strokeStyle = "black";
     }
 
-    tooltip() {
-        return this.label();
+    tooltip(container) {
+        let attr = this.attributes();
+        // Memlet
+        if (attr.subset !== undefined) {
+            if (attr.subset === null) {  // Empty memlet
+                container.style.display = 'none';
+                return;
+            }
+            let contents = attr.data;
+            contents += sdfg_property_to_string(attr.subset);
+            
+            if (attr.other_subset)
+                contents += ' -> ' + sdfg_property_to_string(attr.other_subset);
+
+            if (attr.wcr)
+                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr) +'</b>';
+
+            let num_accesses = sdfg_property_to_string(attr.num_accesses);
+            if (num_accesses == -1)
+                num_accesses = "<b>Dynamic</b>";
+
+            contents += '<br /><font style="font-size: 14px">Volume: ' + num_accesses + '</font>';
+            container.innerHTML = contents;
+        } else {  // Interstate edge
+            container.style.background = '#0000aabb';
+            container.innerText = this.label();
+            if (!this.label())
+                container.style.display = 'none';
+        }
     }
 
     set_layout() {
@@ -269,7 +295,7 @@ class Connector extends SDFGElement {
         ctx.fillStyle = "black";
         ctx.strokeStyle = "black";
         if (this.strokeStyle() !== 'black')
-            renderer.tooltip = this.tooltip();
+            renderer.tooltip = (c) => this.tooltip(c);
     }
 
     attributes() {
@@ -280,8 +306,11 @@ class Connector extends SDFGElement {
 
     label() { return this.data.name; }
 
-    tooltip() {
-        return this.label();
+    tooltip(container) {
+        container.style.background = '#f0fdffee';
+        container.style.color = 'black';
+        container.style.border = '1px solid black';
+        container.innerText = this.label();
     }
 }
 

@@ -76,10 +76,10 @@ class InlineSDFG(pattern_matching.Transformation):
                             and (node.data not in in_connectors
                                  or nstate.in_degree(node) > 0)):
                         return False
-                    if (node.data in in_connectors and any(
-                            e.dst.data in all_connectors
-                            for e in nstate.out_edges(node)
-                            if isinstance(e.dst, nodes.AccessNode))):
+                    if (node.data in in_connectors
+                            and any(e.dst.data in all_connectors
+                                    for e in nstate.out_edges(node)
+                                    if isinstance(e.dst, nodes.AccessNode))):
                         return False
 
         return True
@@ -185,10 +185,10 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
                 if node.data not in transients and datadesc.transient:
-                    name = sdfg.add_datadesc(
-                        '%s_%s' % (nsdfg.label, node.data),
-                        datadesc,
-                        find_new_name=True)
+                    name = sdfg.add_datadesc('%s_%s' %
+                                             (nsdfg.label, node.data),
+                                             datadesc,
+                                             find_new_name=True)
                     transients[node.data] = name
 
         # All transients of edges between code nodes are also added to parent
@@ -197,10 +197,10 @@ class InlineSDFG(pattern_matching.Transformation):
                     and isinstance(edge.dst, nodes.CodeNode)):
                 datadesc = nsdfg.arrays[edge.data.data]
                 if edge.data.data not in transients and datadesc.transient:
-                    name = sdfg.add_datadesc(
-                        '%s_%s' % (nsdfg.label, edge.data.data),
-                        datadesc,
-                        find_new_name=True)
+                    name = sdfg.add_datadesc('%s_%s' %
+                                             (nsdfg.label, edge.data.data),
+                                             datadesc,
+                                             find_new_name=True)
                     transients[edge.data.data] = name
 
         # Collect nodes to add to top-level graph
@@ -307,10 +307,16 @@ class InlineSDFG(pattern_matching.Transformation):
 
         # Remove all unused external inputs/output memlet paths, as well as
         # resulting isolated nodes
-        removed_in_edges = self._remove_edge_path(
-            state, inputs, set(inputs.keys()) - source_accesses, reverse=True)
-        removed_out_edges = self._remove_edge_path(
-            state, outputs, set(outputs.keys()) - sink_accesses, reverse=False)
+        removed_in_edges = self._remove_edge_path(state,
+                                                  inputs,
+                                                  set(inputs.keys()) -
+                                                  source_accesses,
+                                                  reverse=True)
+        removed_out_edges = self._remove_edge_path(state,
+                                                   outputs,
+                                                   set(outputs.keys()) -
+                                                   sink_accesses,
+                                                   reverse=False)
 
         # Re-add in/out edges to first/last nodes in subgraph
         order = [
@@ -352,9 +358,10 @@ class InlineSDFG(pattern_matching.Transformation):
                                               inner_edge.dst_conn, new_memlet)
                     mtree = state.memlet_tree(new_edge)
                 else:
-                    new_edge = state.add_edge(
-                        inner_edge.src, inner_edge.src_conn, top_edge.dst,
-                        top_edge.dst_conn, new_memlet)
+                    new_edge = state.add_edge(inner_edge.src,
+                                              inner_edge.src_conn,
+                                              top_edge.dst, top_edge.dst_conn,
+                                              new_memlet)
                     mtree = state.memlet_tree(new_edge)
 
                 # Modify all memlets going forward/backward

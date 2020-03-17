@@ -186,8 +186,8 @@ class FPGATransformState(pattern_matching.Transformation):
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-                full_range = subsets.Range(
-                    [(0, s - 1, 1) for s in array.shape])
+                full_range = subsets.Range([(0, s - 1, 1)
+                                            for s in array.shape])
                 mem = memlet.Memlet(node.data, full_range.num_elements(),
                                     full_range, 1)
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
@@ -231,8 +231,8 @@ class FPGATransformState(pattern_matching.Transformation):
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                full_range = subsets.Range(
-                    [(0, s - 1, 1) for s in array.shape])
+                full_range = subsets.Range([(0, s - 1, 1)
+                                            for s in array.shape])
                 mem = memlet.Memlet('fpga_' + node.data,
                                     full_range.num_elements(), full_range, 1)
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)

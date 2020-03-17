@@ -385,7 +385,7 @@ function calculateNodeSize(sdfg_state, node, ctx) {
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-function relayout_sdfg(ctx, sdfg) {
+function relayout_sdfg(ctx, sdfg, sdfg_list) {
     let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
@@ -404,7 +404,7 @@ function relayout_sdfg(ctx, sdfg) {
             stateinfo.height = LINEHEIGHT;
         }
         else {
-            state_g = relayout_state(ctx, state, sdfg);
+            state_g = relayout_state(ctx, state, sdfg, sdfg_list);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 2*STATE_MARGIN;
@@ -464,10 +464,13 @@ function relayout_sdfg(ctx, sdfg) {
     g.width = bb.width;
     g.height = bb.height;
 
+    // Add SDFG to global store
+    sdfg_list[sdfg.sdfg_list_id] = g;
+
     return g;
 }
 
-function relayout_state(ctx, sdfg_state, sdfg) {
+function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({multigraph: true});
 
@@ -504,7 +507,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
-            nested_g = relayout_sdfg(ctx, node.attributes.sdfg);
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list);
             let sdfginfo = calculateBoundingBox(nested_g);
             node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
             node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
@@ -653,6 +656,7 @@ class SDFGRenderer {
     constructor(sdfg, container, on_mouse_event = null) {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
+        this.sdfg_list = {};
 
         // Rendering-related fields
         this.container = container;
@@ -664,6 +668,7 @@ class SDFGRenderer {
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
         this.tooltip = null;
+        this.tooltip_container = null;
 
         // Mouse-related fields
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
@@ -682,6 +687,7 @@ class SDFGRenderer {
             this.canvas_manager.destroy();
             this.container.removeChild(this.canvas);
             this.container.removeChild(this.toolbar);
+            this.container.removeChild(this.tooltip_container);
         } catch (ex) {
             // Do nothing
         }
@@ -703,9 +709,13 @@ class SDFGRenderer {
             ContextMenu;
             d = document.createElement('button');
             d.innerHTML = '<i class="material-icons">menu</i>';
-            d.style = 'padding-bottom: 0px;';
+            d.style = 'padding-bottom: 0px; user-select: none';
             let that = this;
             d.onclick = function () {
+                if (that.menu && that.menu.visible()) {
+                    that.menu.destroy();
+                    return;
+                }
                 let rect = this.getBoundingClientRect();
                 let cmenu = new ContextMenu();
                 cmenu.addOption("Save view as PNG", x => that.save_as_png());
@@ -721,7 +731,7 @@ class SDFGRenderer {
         // Zoom to fit
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.zoom_to_view();
         d.title = 'Zoom to fit SDFG';
         this.toolbar.appendChild(d);
@@ -729,7 +739,7 @@ class SDFGRenderer {
         // Collapse all
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">unfold_less</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.collapse_all();
         d.title = 'Collapse all elements';
         this.toolbar.appendChild(d);
@@ -737,13 +747,20 @@ class SDFGRenderer {
         // Expand all
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">unfold_more</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.expand_all();
         d.title = 'Expand all elements';
         this.toolbar.appendChild(d);
 
         this.container.append(this.toolbar);
         // End of buttons
+
+        // Tooltip HTML container
+        this.tooltip_container = document.createElement('div');
+        this.tooltip_container.innerHTML = '';
+        this.tooltip_container.className = 'tooltip';
+        this.tooltip_container.onmouseover = () => this.tooltip_container.style.display = "none";
+        this.container.appendChild(this.tooltip_container);
 
         this.ctx = this.canvas.getContext("2d");
 
@@ -809,7 +826,8 @@ class SDFGRenderer {
 
     // Re-layout graph and nested graphs
     relayout() {
-        this.graph = relayout_sdfg(this.ctx, this.sdfg);
+        this.sdfg_list = {};
+        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list);
         this.onresize();
 
         return this.graph;
@@ -932,29 +950,23 @@ class SDFGRenderer {
         } catch (ex) {}
         
         if (this.tooltip) {
-            let FONTSIZE = 18; // in pixels
             let br = this.canvas.getBoundingClientRect();
             let pos = {x: this.realmousepos.x - br.x,
                        y: this.realmousepos.y - br.y};
-            let label = this.tooltip;
-            let ctx = this.ctx;
 
-            // Reset scaling and translation
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            // Clear style and contents
+            this.tooltip_container.style = '';
+            this.tooltip_container.innerHTML = '';
+            this.tooltip_container.style.display = 'block';
+            
+            // Invoke custom container         
+            this.tooltip(this.tooltip_container);
 
-            // Set new font
-            let oldfont = ctx.font;
-            ctx.font = FONTSIZE + "px Arial";
-
-            // Draw tooltip
-            let x = pos.x + 10;
-            let textmetrics = ctx.measureText(label);
-            ctx.fillStyle = "black";
-            ctx.fillRect(x, pos.y - FONTSIZE, textmetrics.width + FONTSIZE, FONTSIZE * 1.2);
-            ctx.fillStyle = "white";
-            ctx.fillText(label, x + FONTSIZE / 2, pos.y - 0.1 * FONTSIZE);
-            ctx.fillStyle = "black";
-            ctx.font = oldfont;
+            // Make visible near mouse pointer
+            this.tooltip_container.style.top = pos.y + 'px';
+            this.tooltip_container.style.left = (pos.x + 20) + 'px';
+        } else {
+            this.tooltip_container.style.display = 'none';
         }
     }
 

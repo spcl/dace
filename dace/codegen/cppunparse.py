@@ -95,18 +95,20 @@ _py2c_typeconversion = {
 }
 
 
-def interleave(inter, f, seq):
-    """Call f on each item in seq, calling inter() in between.
+def interleave(inter, f, seq, **kwargs):
+    """
+    Call f on each item in seq, calling inter() in between.
+    f can accept optional arguments (kwargs)
     """
     seq = iter(seq)
     try:
-        f(next(seq))
+        f(next(seq), **kwargs)
     except StopIteration:
         pass
     else:
         for x in seq:
             inter()
-            f(x)
+            f(x, **kwargs)
 
 
 class LocalScheme(object):
@@ -132,8 +134,7 @@ class CPPLocals(LocalScheme):
         self.locals[local_name] = (lineno, depth, dtype)
 
     def get_type(self, local_name):
-        return self.locals[local_name][
-            2] if local_name in self.locals else None
+        return self.locals[local_name][2] if local_name in self.locals else None
 
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
@@ -153,14 +154,14 @@ class PythonLocals(LocalScheme):
         self.locals = {}
 
     def is_defined(self, local_name, current_depth):
-        return local_name in self.locals and self.locals[local_name][1] == current_depth
+        return local_name in self.locals and self.locals[local_name][
+            1] == current_depth
 
     def define(self, local_name, lineno, depth, dtype=None):
         self.locals[local_name] = (lineno, depth, dtype)
 
     def get_type(self, local_name):
-        return self.locals[local_name][
-            2] if local_name in self.locals else None
+        return self.locals[local_name][2] if local_name in self.locals else None
 
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
@@ -176,7 +177,6 @@ class CPPUnparser:
     """Methods in this class recursively traverse an AST and
     output C++ source code for the abstract syntax; original formatting
     is disregarded. """
-
     def __init__(self,
                  tree,
                  depth,
@@ -249,7 +249,12 @@ class CPPUnparser:
                 self.dispatch(t)
         except TypeError:
             meth = getattr(self, "_" + tree.__class__.__name__)
-            return meth(tree, infer_type=infer_type)
+            try:
+                return meth(tree, infer_type=infer_type)
+            except TypeError:
+                if infer_type is True:
+                    raise  # We need to implement infer_type
+                return meth(tree)
 
     ############### Unparsing methods ######################
     # There should be one method per concrete grammar type #
@@ -342,11 +347,11 @@ class CPPUnparser:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")
 
-            self.dispatch(target, infer_type)
-            if not isinstance(target, ast.Subscript):
-                self.dtype = self.locals.get_type(target.id)
-            else:
-                self.dtype = self.locals.get_type(target.value.id)
+            # dispatch target and infer its type
+            inferred_type = self.dispatch(target, infer_type)
+            if not infer_type:
+                inferred_type = self.dispatch(target, True)
+            self.dtype = inferred_type
 
         self.write(" = ", infer_type)
         self.dispatch(t.value, infer_type)
@@ -779,7 +784,7 @@ class CPPUnparser:
             if infer_type:
                 if t.id.strip("()") in _py2c_typeconversion:
                     inferred_type = _py2c_typeconversion[t.id.strip("()")]
-                elif self.defined_symbols.get(t.id) is not None:
+                elif  self.defined_symbols is not None and self.defined_symbols.get(t.id) is not None:
                     # defined symbols could have dtypes, in case convert it to typeclass
                     inferred_type = self.defined_symbols.get(t.id)
                     if isinstance(inferred_type, np.dtype):
@@ -808,8 +813,8 @@ class CPPUnparser:
 
         if six.PY3:
             if repr_n.endswith("j"):
-                self.write(
-                    "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
+                self.write("%s(0, %s)" %
+                           (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
                 self.write(repr_n.replace("inf", INFSTR), infer_type)
                 # If the number has a type, use it
@@ -835,8 +840,8 @@ class CPPUnparser:
                 repr_n = repr_n.replace("*j", "j")
 
             if repr_n.endswith("j"):
-                self.write(
-                    "%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
+                self.write("%s(0, %s)" %
+                           (dtype, repr_n.replace("inf", INFSTR)[:-1]))
             else:
                 # Substitute overflowing decimal literal for AST infinities.
                 self.write(repr_n.replace("inf", INFSTR))
@@ -1054,19 +1059,20 @@ class CPPUnparser:
     def _BoolOp(self, t, infer_type=False):
         self.write("(", infer_type)
         s = " %s " % self.boolops[t.op.__class__]
-        interleave(lambda: self.write(s), self.dispatch, t.values)
+        interleave(lambda: self.write(s, infer_type), self.dispatch, t.values, infer_type=infer_type)
         self.write(")", infer_type)
         return dace.dtypes.typeclass(np.bool) if infer_type else None
 
-    def _Attribute(self, t):
-        self.dispatch(t.value)
+    def _Attribute(self, t, infer_type=False):
+        inferred_type = self.dispatch(t.value, infer_type)
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
         if isinstance(t.value, ast.Num) and isinstance(t.value.n, int):
-            self.write(" ")
-        self.write(".")
-        self.write(t.attr)
+            self.write(" ", infer_type)
+        self.write(".", infer_type)
+        self.write(t.attr, infer_type)
+        return inferred_type
 
     def _Call(self, t, infer_type=False):
         inf_type = self.dispatch(t.func, infer_type)
@@ -1193,8 +1199,11 @@ class CPPUnparser:
 
 def cppunparse(node, expr_semicolon=True, locals=None):
     strio = StringIO()
-    CPPUnparser(
-        node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon)
+    CPPUnparser(node,
+                0,
+                locals or CPPLocals(),
+                strio,
+                expr_semicolon=expr_semicolon)
     return strio.getvalue().strip()
 
 

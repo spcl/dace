@@ -76,8 +76,8 @@ if __name__ == "__main__":
     b[:] = dace.float32(0)
 
     # Setup regression
-    A_sparse = scipy.sparse.csr_matrix(
-        (A_val, A_col, A_row), shape=(H.get(), W.get()))
+    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
+                                       shape=(H.get(), W.get()))
 
     spmv(A_row, A_col, A_val, x, b)
 
