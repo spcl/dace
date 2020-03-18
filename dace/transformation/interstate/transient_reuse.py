@@ -35,49 +35,113 @@ class TransientReuse(pattern_matching.Transformation):
 
     def apply(self, sdfg):
         for state in sdfg.nodes():
-            '''#find all nodes with no outward edges
-            sink_nodes = state.sink_nodes()
+            transients = []
+            memory_before = 0
+            for a in sdfg.arrays:
+                memory_before += sdfg.arrays[a].total_size
+                if sdfg.arrays[a].transient == True:
+                    transients.append(a)
 
-            #for all nodes define use and define
-            self.use = {}
-            self.define = {}
-            self.node_out = {}
-            self.node_in = {}
+            # Step 1: Define ancestors for all nodes:
+            ancestors = {}
+            successors = {}
             for n in state.nodes():
-                self.use[n] = set()
-                self.define[n] = set()
-                self.node_out[n] = set()
-                self.node_in[n] = set()
-                if hasattr(n, 'data'):
-                    self.use[n].add(n.data)
-                else:
-                    for e in state.all_edges(n):
-                        if e.dst == n:
-                            self.use[n].add(e.data.data)
-                        else:
-                            self.define[n].add(e.data.data)
-                #print(n, self.use[n], self.define[n])
+                ancestors[n] = set()
+                if isinstance(n, nodes.AccessNode):
+                    successors[n] = set()
 
-            def live_variable(node):
-                print(node)
-                for s in state.successors(node):
-                    self.node_out[node] = self.node_out[node].union(self.node_in[s])
-                    print(self.node_out[node], self.node_in[s])
-                self.node_in[node] = self.use[node].union(self.node_out[node]-self.define[node])
-                for p in state.predecessors(node):
-                    live_variable(p)
+            def ancestor(n, anc):
+                ancestors[n] = ancestors[n].union(anc)
+                anc_new = anc.copy()
+                anc_new.add(n)
+                for s in state.successors(n):
+                    ancestor(s, anc_new)
+            for n in state.source_nodes():
+                ancestor(n, set())
+            print("ancestors: \n", ancestors, "\n")
 
-            #Recursively define in and out beginning from the sink nodes
-            for s in sink_nodes:
-                self.node_in[s].add(s.data)
-                for e in state.in_edges(s):
-                    live_variable(e.src)
-
+            # Step 2: For all AccessNodes for each outgoing edge, find first accessNode
             for n in state.nodes():
-                print(n, self.use[n], self.define[n], self.node_out[n], self.node_in[n])'''
+                if isinstance(n, nodes.AccessNode):
+                    for e in state.bfs_edges(n):
+                        if isinstance(e.dst, nodes.AccessNode):
+                            successors[n].add(e.dst)
+                        if len(successors[n]) == len(state.out_edges(n)):
+                            break
+            mappings = {}
+            for t in transients:
+                mappings[t] = set()
+            # Step 3: Find valid mappings
+            for n in successors:
+                for m in ancestors:
+                    if isinstance(m, nodes.AccessNode) and successors[n].issubset(ancestors[m]) and \
+                            sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient:
+                        if n.data == m.data:
+                            raise NotImplementedError('Two transients using the same array')
+                        mappings[n.data].add(m.data)
 
+            print("mappings: \n", mappings)
 
-            # Step 1: Find all transients.
+            # Step 4: find a final mapping
+            buckets = [] # unfinished!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            for i in range(len(transients)):
+                buckets.append([])
+
+            for n in transients:
+                for i in range(len(mappings)):
+                    if buckets[i] == []:
+                        buckets[i].append(n)
+                        break
+                    temp = True
+                    for j in range(len(buckets[i])):
+                         temp = temp and n in mappings[buckets[i][j]] and sdfg.arrays[n].shape == sdfg.arrays[buckets[i][j]].shape
+                    if temp:
+                        buckets[i].append(n)
+                        break
+                    temp2 = True
+                    for j in range(len(buckets[i])):
+                        temp2 = temp2 and buckets[i][j] in mappings[n] and sdfg.arrays[n].shape == sdfg.arrays[buckets[i][j]].shape
+                    if temp2:
+                        buckets[i].insert(0, n)
+                        break
+            print(buckets)
+
+            for i in range(len(transients)):
+                if len(buckets[i]) > 1:
+                    local_ctr = str(next(_atomic_count))
+                    temp = sdfg.add_transient(name="transient_reuse_" + local_ctr, shape=sdfg.arrays[buckets[i][0]].shape,
+                                              dtype=sdfg.arrays[buckets[i][0]].dtype)
+                    buckets[i].insert(0, "transient_reuse_" + local_ctr)
+
+            mapping = set()
+            for i in range(len(buckets)):
+                for j in range(1, len(buckets[i])):
+                    mapping.add((buckets[i][0], buckets[i][j]))
+            print(mapping)
+
+            # Step 5: For each mapping redirect edges and rename memlets in the whole tree.
+            for (new, old) in list(mapping):
+                sdfg.arrays[new].shape = max(sdfg.arrays[new].shape, sdfg.arrays[old].shape)
+                for n in state.nodes():
+                    if isinstance(n, nodes.AccessNode) and n.data == old:
+                        n.data = new
+                        for e in state.all_edges(n):
+                            for edge in state.memlet_tree(e):
+                                if edge.data.data == old:
+                                    edge.data.data = new
+                sdfg.remove_data(old)
+
+            # Analyze memory savings
+            memory_after = 0
+            for a in sdfg.arrays:
+                memory_after += sdfg.arrays[a].total_size
+
+            print('memory before: ', memory_before, 'B')
+            print('memory after: ', memory_after, 'B')
+            print('memory savings: ', memory_before - memory_after, 'B ,',
+                  100 - N((100 / memory_before) * memory_after, 2), "%")
+
+            '''# Step 1: Find all transients.
             transients = []
             memory_before = 0
             for a in sdfg.arrays:
@@ -209,4 +273,4 @@ class TransientReuse(pattern_matching.Transformation):
     def payoff(shapes):
         numpy = np.array(shapes)
         prod = np.prod(numpy)
-        return np.prod(numpy) < np.sum(numpy)
+        return np.prod(numpy) < np.sum(numpy)'''
