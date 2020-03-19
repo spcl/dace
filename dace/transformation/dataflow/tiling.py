@@ -20,7 +20,7 @@ class MapTiling(pattern_matching.Transformation):
 
     # Properties
     prefix = Property(dtype=str,
-                      default="tile",
+                      default="tile_",
                       desc="Prefix for new range symbols")
     tile_sizes = ShapeProperty(dtype=tuple,
                                default=(128, 128, 128),

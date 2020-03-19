@@ -134,7 +134,7 @@ class StripMining(pattern_matching.Transformation):
                        default=-1,
                        desc="Index of dimension to be strip-mined")
     new_dim_prefix = Property(dtype=str,
-                              default="tile",
+                              default="tile_",
                               desc="Prefix for new dimension name")
     tile_size = Property(dtype=str,
                          default="64",
@@ -210,7 +210,7 @@ class StripMining(pattern_matching.Transformation):
         stree = state.scope_tree()
         if len(prefix) == 0:
             return target_dim
-        candidate = '%s_%s' % (prefix, target_dim)
+        candidate = '%s%s' % (prefix, target_dim)
         index = 1
         while candidate in map(str, stree[entry].defined_vars):
             candidate = '%s%d_%s' % (prefix, index, target_dim)
@@ -245,10 +245,16 @@ class StripMining(pattern_matching.Transformation):
         if symbolic.pystr_to_symbolic(tile_stride) == 1:
             nd_to = td_to
         else:
-            nd_to = symbolic.pystr_to_symbolic(
-                'int_ceil(%s + 1 - %s, %s) - 1' %
-                (symbolic.symstr(td_to), symbolic.symstr(td_from),
-                 tile_stride))
+            if divides_evenly:
+                nd_to = symbolic.pystr_to_symbolic(
+                    '(%s + 1 - %s) / (%s) - 1' %
+                    (symbolic.symstr(td_to), symbolic.symstr(td_from),
+                     tile_stride))
+            else:
+                nd_to = symbolic.pystr_to_symbolic(
+                    'int_ceil(%s + 1 - %s, %s) - 1' %
+                    (symbolic.symstr(td_to), symbolic.symstr(td_from),
+                    tile_stride))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
         new_map = nodes.Map(new_dim + '_' + map_entry.map.label, [new_dim],
