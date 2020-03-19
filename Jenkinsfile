@@ -24,9 +24,9 @@ pipeline {
           steps {
             sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
             export COVERAGE_RCFILE=`pwd`/.coveragerc
-            export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-export PATH=/usr/local/cuda/bin:~/.local/bin:$PATH
-export CUDA_ROOT=/usr/local/cuda
+            export LD_LIBRARY_PATH=/usr/local/cuda-10.0/lib64:$LD_LIBRARY_PATH
+export PATH=/usr/local/cuda-10.0/bin:~/.local/bin:$PATH
+export CUDA_ROOT=/usr/local/cuda-10.0
 export DACE_debugprint=1
 tests/cuda_test.sh
                 '''
