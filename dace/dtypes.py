@@ -33,8 +33,9 @@ class DataDistributionType(aenum.AutoNumberEnum):
     """ Available data distribution types in the SDFG. """
 
     Custom = ()
-    Root = ()
-    Grid = ()
+    Replication = ()
+    Block = ()
+    BlockCyclic = ()
 
 
 @extensible_enum
