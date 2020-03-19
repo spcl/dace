@@ -1619,7 +1619,7 @@ subgraph cluster_state_{state} {{
             inv_location: Callable[[sbs.Subset], sbs.Subset] = None):
         data = self.arrays[data_name]
 
-        if dist_type == dtypes.DataDistributionType.Root:
+        if dist_type == dtypes.DataDistributionType.Replication:
             data.dist_shape = (1, )
             data.dist_location = 'lambda s, d, x: set([0])'
 
@@ -1648,19 +1648,17 @@ subgraph cluster_state_{state} {{
                                 #         [(0, 0, 1)])
                                 visited_edges.add(e2)
 
-        elif dist_type == dtypes.DataDistributionType.Grid:
-            if len(dist_shape) != len(data.shape):
+        elif dist_type == dtypes.DataDistributionType.Block:
+            if len(local_shape) != len(data.shape):
                 raise ValueError("Distributed shape must have the same length"
                                  " as the shape of the data.")
-            
-            # data.dist_shape = dist_shape
-            # data.shape = [
-            #     symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, d))
-            #     for s, d in zip(data.shape, dist_shape)]
-            data.dist_shape = [
-                symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, t))
-                for s, t in zip(data.shape, dist_shape)]
-            data.shape = dist_shape
+            if dist_shape:
+                data.dist_shape = dist_shape
+            else:
+                data.dist_shape = [
+                    symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, t))
+                    for s, t in zip(data.shape, local_shape)]
+            data.shape = local_shape
             data.dist_location = 'lambda s, d, x: s.grid_dist_location(d, x)'
 
             visited_edges = set()
@@ -1680,36 +1678,37 @@ subgraph cluster_state_{state} {{
                                     continue
                                 dist_ranges = []
                                 local_ranges = []
-                                for r, s in zip(e2.data.subset, data.shape):
+                                for i, (r, s) in enumerate(zip(e2.data.subset,
+                                                               data.shape)):
                                     if isinstance(r, (list, tuple)):
                                         dist_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "int_floor({}, {})".format(
+                                                "({}) // ({})".format(
                                                     r[0], s)
                                             ), symbolic.pystr_to_symbolic(
-                                                "int_floor({}, {})".format(
+                                                "({}) // ({})".format(
                                                     r[1], s)
                                             ), 1))
                                         local_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "{} % {}".format(r[0], s)
+                                                "{a}-r{a}*{b}".format(a=r[0], b=s)
                                             ), symbolic.pystr_to_symbolic(
-                                                "{} % {}".format(r[1], s)
+                                                "{a}-r{a}*{b}".format(a=r[1], b=s)
                                             ), 1))
                                     else:
                                         dist_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "int_floor({}, {})".format(
+                                                "({}) // ({})".format(
                                                     r, s)
                                             ), symbolic.pystr_to_symbolic(
-                                                "int_floor({}, {})".format(
+                                                "({}) // ({})".format(
                                                     r, s)
                                             ), 1))
                                         local_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "{} % {}".format(r, s)
+                                                "{}-r{}*{}".format(r, r, s)
                                             ), symbolic.pystr_to_symbolic(
-                                                "{} % {}".format(r, s)
+                                                "{}-r{}*{}".format(r, r, s)
                                             ), 1))
                                 e2.data.dist_subset = sbs.Range(dist_ranges)
                                 e2.data.subset = sbs.Range(local_ranges)
