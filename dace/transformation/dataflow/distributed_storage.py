@@ -31,7 +31,7 @@ class DataDistribution(pattern_matching.Transformation):
     dist_type = Property(
         dtype=dtypes.DataDistributionType,
         desc="Distribution type",
-        default=dtypes.DataDistributionType.Grid)
+        default=dtypes.DataDistributionType.Block)
 
     dist_shape = ShapeProperty(
         desc="Distributed shape",
@@ -74,10 +74,17 @@ class DataDistribution(pattern_matching.Transformation):
         graph = sdfg.nodes()[self.state_id]
         node = graph.nodes()[self.subgraph[DataDistribution._access_node]]
 
-        if self.dist_type == dtypes.DataDistributionType.Grid:
+        if self.array:
+            for n in graph.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == self.array:
+                    node = n
+                    break
+
+        if (self.dist_type == dtypes.DataDistributionType.Block
+                 and not self.local_shape):
             data = sdfg.arrays[node.data]
-            self.dist_shape = [symbolic.pystr_to_symbolic("N{}".format(i))
-                               for i in range(len(data.shape))]
+            self.local_shape = [symbolic.pystr_to_symbolic("T{}".format(i))
+                                for i in range(len(data.shape))]
 
         sdfg.distribute_data(node.data, self.dist_type, self.dist_shape,
                              self.local_shape, self.dist_location)
