@@ -388,6 +388,7 @@ class TFSession:
                 Config.append('compiler', 'cpu', 'args', value=' -I%s/include ' % os.environ['CUDA_ROOT'])
             else:
                 warnings.warn('CUDA_ROOT environment variable not set, compilation may fail.')
+            Config.append('compiler', 'cpu', 'args', value=' -DWITH_CUDA ')
 
         # Create a unique name for this session
         if name is None:
