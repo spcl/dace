@@ -16,7 +16,7 @@ def _get_matmul_inputs(node, state, sdfg):
     for edge in state.in_edges(node):
         if edge.dst_conn in ["_a", "_b"]:
             subset = dc(edge.data.subset)
-            subset.squeeze()
+            #subset.squeeze()
             size = subset.size()
             outer_array = sdfg.data(
                 dace.sdfg.find_input_arraynode(state, edge).data)
@@ -413,11 +413,11 @@ class MatMul(dace.graph.nodes.LibraryNode):
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
-                subset.squeeze()
+                #subset.squeeze()
                 size0 = subset.size()
             if dst_conn == '_b':
                 subset = dc(memlet.subset)
-                subset.squeeze()
+                #subset.squeeze()
                 size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
@@ -440,7 +440,7 @@ class MatMul(dace.graph.nodes.LibraryNode):
                 "Inputs to matrix-matrix product must agree in the k-dimension"
             )
         out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
+        #out_subset.squeeze()
         size2 = out_subset.size()
         if len(size2) not in [2, 3]:
             raise ValueError(

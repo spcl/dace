@@ -2,6 +2,7 @@ import numpy as np
 from dace.data import Array
 from typing import Any, Dict
 
+
 def to_blastype(dtype):
     """ Returns a BLAS character that corresponds to the input type.
         Used in MKL/CUBLAS calls. """
@@ -125,10 +126,10 @@ def get_gemm_opts(a: Array, b: Array, c: Array) -> Dict[str, Any]:
     else:
         raise Exception("sAM or sAK should be 1")
 
-    if sBK == 1:
-        optB = 'k'
-    elif sBN == 1:
+    if sBN == 1:
         optB = 'n'
+    elif sBK == 1:
+        optB = 'k'
     else:
         raise Exception("sBK or sBN should be 1")
 

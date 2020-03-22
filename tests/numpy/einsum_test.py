@@ -74,4 +74,5 @@ if __name__ == '__main__':
     test_general_einsum()
     test_matmul()
     test_batch_matmul()
+    test_opteinsum_sym()
     test_opteinsum()

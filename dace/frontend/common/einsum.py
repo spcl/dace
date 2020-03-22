@@ -113,10 +113,12 @@ def create_batch_gemm_sdfg(dtype, strides):
     #########################
     sdfg = SDFG('einsum')
     state = sdfg.add_state()
-    BATCH, M, K, N, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (
-        symbolic.symbol(s) for s in [
-            'BATCH', 'M', 'K', 'N', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB',
-            'sCM', 'sCN', 'sCB'
+    M, K, N = (symbolic.symbol(s) for s in ['M', 'K', 'N'])
+    BATCH, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (
+        symbolic.symbol(s) if symbolic.issymbolic(strides[s]) else strides[s]
+        for s in [
+            'BATCH', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB', 'sCM', 'sCN',
+            'sCB'
         ])
 
     batched = strides['BATCH'] != 1
@@ -325,6 +327,18 @@ def _create_einsum_internal(sdfg: SDFG,
                              1:]) if einsum.c_b_only else 1,
             sCB=prod(c_shape[einsum.c_batch[-1] +
                              1:]) if einsum.c_batch else 1)
+
+        # Complement strides to make matrices as necessary
+        if len(a_shape) == 1 and len(einsum.a_sum) == 1:
+            strides['sAK'] = 1
+            strides['sAB'] = strides['sAM'] = strides['K']
+        if len(b_shape) == 1 and len(einsum.b_sum) == 1:
+            strides['sBN'] = 1
+            strides['sBK'] = 1
+            strides['sBB'] = strides['K']
+        if len(c_shape) == 1 and len(einsum.a_sum) == len(einsum.b_sum):
+            strides['sCN'] = 1
+            strides['sCB'] = strides['sCM'] = strides['N']
 
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides)
