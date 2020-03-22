@@ -71,6 +71,41 @@ def get_batchmm_opts(a: Array, b: Array, c: Optional[Array]) -> Dict[str, Any]:
     return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch}
 
 
+def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
+                           cdtype, func) -> Dict[str, Any]:
+    """ Get option map for GEMM code generation (with column-major order). """
+    (_, _, ashape), (_, _, bshape) = _get_matmul_inputs(node, state, sdfg)
+    opt = get_gemm_opts(adesc, bdesc, cdesc)
+    bopt = get_batchmm_opts(adesc, bdesc, cdesc)
+    opt['x'] = '_a'
+    opt['y'] = '_b'
+    opt['M'] = ashape[-2]
+    opt['N'] = bshape[-1]
+    opt['K'] = ashape[-1]
+
+    if opt['swap']:
+        if bopt:
+            bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
+        opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
+        opt['x'], opt['y'] = opt['y'], opt['x']
+        opt['ta'], opt['tb'] = opt['tb'], opt['ta']
+        opt['M'], opt['N'] = opt['N'], opt['M']
+
+    opt['alpha'] = alpha
+    opt['beta'] = beta
+    opt['dtype'] = cdtype
+    opt['func'] = func
+    if bopt:
+        opt['stride_a'] = bopt['sa']
+        opt['stride_b'] = bopt['sb']
+        opt['stride_c'] = bopt['sc']
+        opt['BATCH'] = bopt['b']
+    else:
+        opt['BATCH'] = None
+
+    return opt
+
+
 @dace.library.expansion
 class ExpandMatMulPure(ExpandTransformation):
 
@@ -191,15 +226,30 @@ class ExpandMatMulMKL(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
-        (_, _, ashape), (_, _, bshape) = _get_matmul_inputs(node, state, sdfg)
-        m, k = ashape[-2:]
-        n = bshape[-1]
-        # TODO: Use strides instead of shape
-        # TODO: Use gemm opts
-        # TODO: Use batch gemm opts
-        code = ("cblas_{f}(CblasRowMajor, CblasNoTrans, CblasNoTrans, "
-                "{m}, {n}, {k}, {a}, _a, {k}, _b, {n}, {b}, _c, {n});").format(
-                    f=func, m=m, n=n, k=k, a=alpha, b=beta)
+        (_, adesc, ashape), (_, bdesc,
+                             bshape) = _get_matmul_inputs(node, state, sdfg)
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
+                                     alpha, beta, cdesc.dtype.ctype, func)
+
+        # Adaptations for MKL/BLAS API
+        opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
+        opt['tb'] = 'CblasNoTrans' if opt['tb'] == 'N' else 'CblasTrans'
+
+        if not opt['BATCH']:
+            code = ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
+                    "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
+                    "_c, {ldc});").format_map(opt)
+        else:
+            code = '''
+            for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+                cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
+                             (({dtype}*){x}) + __ib*{stride_a}, {lda}, 
+                             (({dtype}*){y}) + __ib*{stride_b}, {ldb}, 
+                             {beta},
+                             (({dtype}*)_c) + __ib*{stride_c}, {ldc});
+            }}'''.format_map(opt)
+
         tasklet = dace.graph.nodes.Tasklet(node.name,
                                            node.in_connectors,
                                            node.out_connectors,
@@ -259,34 +309,11 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
             raise ValueError('Unsupported input/output arrays')
 
         # Set up options for code formatting
-        (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
-        opt = get_gemm_opts(adesc, bdesc, cdesc)
-        bopt = get_batchmm_opts(adesc, bdesc, cdesc)
-        opt['x'] = '_a'
-        opt['y'] = '_b'
-        opt['M'] = m
-        opt['N'] = n
-        if opt['swap']:
-            if bopt:
-                bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
-            opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
-            opt['x'], opt['y'] = opt['y'], opt['x']
-            opt['ta'], opt['tb'] = opt['tb'], opt['ta']
-            opt['M'], opt['N'] = opt['N'], opt['M']
-
-        opt['K'] = k
-        opt['alpha'] = alpha
-        opt['beta'] = beta
-        opt['dtype'] = cdtype
-        opt['func'] = func
-        if bopt:
-            opt['stride_a'] = bopt['sa']
-            opt['stride_b'] = bopt['sb']
-            opt['stride_c'] = bopt['sc']
-            opt['BATCH'] = bopt['b']
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
+                                     alpha, beta, cdtype, func)
 
         # Matrix multiplication
-        if not bopt:
+        if not opt['BATCH']:
             call = '''cublas{func}(__dace_cublas_handle, 
                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                 {M}, {N}, {K},
