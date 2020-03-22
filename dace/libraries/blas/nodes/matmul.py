@@ -1,5 +1,4 @@
 from copy import deepcopy as dc
-import numpy as np
 from typing import Any, Dict, Optional
 from dace.data import Array
 import dace.library
@@ -74,14 +73,20 @@ def get_batchmm_opts(a: Array, b: Array, c: Optional[Array]) -> Dict[str, Any]:
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
                            cdtype, func) -> Dict[str, Any]:
     """ Get option map for GEMM code generation (with column-major order). """
+    # Avoid import loops
+    from dace.codegen.targets.common import sym2cpp
+
     (_, _, ashape), (_, _, bshape) = _get_matmul_inputs(node, state, sdfg)
     opt = get_gemm_opts(adesc, bdesc, cdesc)
     bopt = get_batchmm_opts(adesc, bdesc, cdesc)
     opt['x'] = '_a'
     opt['y'] = '_b'
-    opt['M'] = ashape[-2]
-    opt['N'] = bshape[-1]
-    opt['K'] = ashape[-1]
+    opt['M'] = sym2cpp(ashape[-2])
+    opt['N'] = sym2cpp(bshape[-1])
+    opt['K'] = sym2cpp(ashape[-1])
+    opt['lda'] = sym2cpp(opt['lda'])
+    opt['ldb'] = sym2cpp(opt['ldb'])
+    opt['ldc'] = sym2cpp(opt['ldc'])
 
     if opt['swap']:
         if bopt:
@@ -96,10 +101,10 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     opt['dtype'] = cdtype
     opt['func'] = func
     if bopt:
-        opt['stride_a'] = bopt['sa']
-        opt['stride_b'] = bopt['sb']
-        opt['stride_c'] = bopt['sc']
-        opt['BATCH'] = bopt['b']
+        opt['stride_a'] = sym2cpp(bopt['sa'])
+        opt['stride_b'] = sym2cpp(bopt['sb'])
+        opt['stride_c'] = sym2cpp(bopt['sc'])
+        opt['BATCH'] = sym2cpp(bopt['b'])
     else:
         opt['BATCH'] = None
 
@@ -295,16 +300,16 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
             if e.dst_conn == '_a':
                 anode = state.memlet_path(e)[0].src
                 if isinstance(anode, dace.graph.nodes.AccessNode):
-                    adesc = sdfg.arrays[anode.data]
+                    adesc: Array = sdfg.arrays[anode.data]
             elif e.dst_conn == '_b':
                 bnode = state.memlet_path(e)[0].src
                 if isinstance(bnode, dace.graph.nodes.AccessNode):
-                    bdesc = sdfg.arrays[bnode.data]
+                    bdesc: Array = sdfg.arrays[bnode.data]
         for e in state.out_edges(node):
             if e.src_conn == '_c':
                 cnode = state.memlet_path(e)[-1].dst
                 if isinstance(cnode, dace.graph.nodes.AccessNode):
-                    cdesc = sdfg.arrays[cnode.data]
+                    cdesc: Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
