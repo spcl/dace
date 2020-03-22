@@ -10,7 +10,9 @@ import warnings
 ###############################################################################
 
 
-def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
+def make_sdfg(implementation,
+              dtype,
+              storage=dace.StorageType.Default,
               data_layout='CCC'):
     m = dace.symbol("m")
     n = dace.symbol("n")
@@ -27,7 +29,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
     xstrides = (k, 1) if data_layout[0] == 'C' else (1, m)
     ystrides = (n, 1) if data_layout[1] == 'C' else (1, k)
     zstrides = (n, 1) if data_layout[2] == 'C' else (1, m)
-
 
     sdfg.add_array("x" + suffix, [m, k],
                    dtype,
@@ -79,12 +80,10 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
         y_device = init_state.add_write("y" + suffix)
         init_state.add_memlet_path(x_host,
                                    x_device,
-                                   memlet=Memlet.simple(x_host,
-                                                        "0:m, 0:k"))
+                                   memlet=Memlet.simple(x_host, "0:m, 0:k"))
         init_state.add_memlet_path(y_host,
                                    y_device,
-                                   memlet=Memlet.simple(y_host,
-                                                        "0:k, 0:n"))
+                                   memlet=Memlet.simple(y_host, "0:k, 0:n"))
 
         finalize_state = sdfg.add_state("copy_to_host")
         sdfg.add_edge(state, finalize_state, dace.InterstateEdge())
@@ -93,8 +92,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
         result_host = finalize_state.add_read("result")
         finalize_state.add_memlet_path(result_device,
                                        result_host,
-                                       memlet=Memlet.simple(result_device,
-                                                            "0:m, 0:n"))
+                                       memlet=Memlet.simple(
+                                           result_device, "0:m, 0:n"))
 
     return sdfg
 
@@ -102,8 +101,12 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default,
 ###############################################################################
 
 
-def _test_matmul(implementation, dtype, impl_name, storage,
-                 data_layout='CCC', eps=1e-4):
+def _test_matmul(implementation,
+                 dtype,
+                 impl_name,
+                 storage,
+                 data_layout='CCC',
+                 eps=1e-4):
     sdfg = make_sdfg(impl_name, dtype, storage, data_layout)
     csdfg = sdfg.compile(optimizer=False)
 
@@ -137,26 +140,72 @@ def _test_matmul(implementation, dtype, impl_name, storage,
 
 def test_types():
     # Try different data types
-    _test_matmul('cuBLAS double', dace.float64, 'cuBLAS',
-                 dace.StorageType.GPU_Global, eps=1e-6)
-    _test_matmul('cuBLAS half', dace.float16, 'cuBLAS',
-                 dace.StorageType.GPU_Global, eps=1)
+    _test_matmul('cuBLAS double',
+                 dace.float64,
+                 'cuBLAS',
+                 dace.StorageType.GPU_Global,
+                 eps=1e-6)
+    _test_matmul('cuBLAS half',
+                 dace.float16,
+                 'cuBLAS',
+                 dace.StorageType.GPU_Global,
+                 eps=1)
     _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
                  dace.StorageType.GPU_Global)
-    _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS',
-                 dace.StorageType.GPU_Global, eps=1e-6)
+    _test_matmul('cuBLAS dcmplx',
+                 dace.complex128,
+                 'cuBLAS',
+                 dace.StorageType.GPU_Global,
+                 eps=1e-6)
+
 
 def test_layouts():
     # Try all data layouts
-    for dl in map(lambda t: ''.join(t), itertools.product(*([['C', 'F']]*3))):
-        _test_matmul('cuBLAS float ' + dl, dace.float32, 'cuBLAS',
-                     dace.StorageType.GPU_Global, data_layout=dl)
+    for dl in map(lambda t: ''.join(t),
+                  itertools.product(*([['C', 'F']] * 3))):
+        _test_matmul('cuBLAS float ' + dl,
+                     dace.float32,
+                     'cuBLAS',
+                     dace.StorageType.GPU_Global,
+                     data_layout=dl)
+
+
+def test_batchmm():
+    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+
+    @dace.program
+    def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n],
+                C: dace.float64[b, m, n]):
+        C[:] = A @ B
+
+    sdfg = bmmtest.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    for state in sdfg.nodes():
+        for node in state.nodes():
+            if isinstance(node, blas.nodes.matmul.MatMul):
+                node.implementation = 'cuBLAS'
+    csdfg = sdfg.compile(optimizer=False)
+
+    b, m, n, k = 3, 32, 31, 30
+
+    x = np.random.rand(b, m, k)
+    y = np.random.rand(b, k, n)
+    z = np.zeros([b, m, n], np.float64)
+    csdfg(A=x, B=y, C=z, b=b, m=m, n=n, k=k)
+
+    ref = x @ y
+
+    diff = np.linalg.norm(ref - z)
+    print('Difference:', diff)
+    assert diff < 1e-6
+
 
 ###############################################################################
 
 if __name__ == '__main__':
     import os
     try:
+        test_batchmm()
         test_types()
         test_layouts()
     except SystemExit as ex:
