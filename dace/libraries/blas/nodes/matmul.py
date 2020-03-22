@@ -21,7 +21,7 @@ def _get_matmul_inputs(node, state, sdfg):
             size = subset.size()
             outer_array = sdfg.data(
                 dace.sdfg.find_input_arraynode(state, edge).data)
-            res = edge, outer_array, (size[-2], size[-1])
+            res = edge, outer_array, size
             if edge.dst_conn == "_a":
                 res_a = res
             else:
@@ -85,16 +85,19 @@ class ExpandMatMulPure(ExpandTransformation):
         ((edge_a, outer_array_a, shape_a),
          (edge_b, outer_array_b,
           shape_b)) = _get_matmul_inputs(node, parent_state, parent_sdfg)
+        cdesc = parent_sdfg.arrays[parent_state.out_edges(node)[0].data.data]
+        bopt = get_batchmm_opts(outer_array_a, outer_array_b, cdesc)
 
-        if (len(shape_a) != 2 or len(shape_b) != 2
-                or shape_a[1] != shape_b[0]):
+        if shape_a[-1] != shape_b[-2]:
             raise SyntaxError('Matrix sizes must match')
-        shape_c = (shape_a[0], shape_b[1])
+        if bopt:
+            shape_c = (bopt['b'], shape_a[-2], shape_b[-1])
+        else:
+            shape_c = (shape_a[-2], shape_b[-1])
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a,
-                                                         dtype_b).type]
+        dtype_c = cdesc.dtype.type
 
         if outer_array_a.storage != outer_array_b.storage:
             raise ValueError("Input matrices must have same storage")
@@ -104,23 +107,50 @@ class ExpandMatMulPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, storage=storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, storage=storage)
 
-        state.add_mapped_tasklet(
-            '_MatMult_', {
+        if not bopt:
+            state.add_mapped_tasklet('_MatMult_', {
                 '__i%d' % i: '0:%s' % s
                 for i, s in enumerate(
-                    [array_a.shape[0], array_b.shape[1], array_a.shape[1]])
+                    [array_a.shape[-2], array_b.shape[-1], array_a.shape[-1]])
             }, {
-                '__a': dace.Memlet.simple("_a", '__i0, __i2'),
-                '__b': dace.Memlet.simple("_b", '__i2, __i1')
+                '__a':
+                dace.Memlet.simple("_a", '__i0, __i2'),
+                '__b':
+                dace.Memlet.simple("_b", '__i2, __i1')
             },
-            '__c = __a * __b', {
-                '__c':
-                dace.Memlet.simple("_c",
-                                   '__i0, __i1',
-                                   wcr_str='lambda x, y: x + y',
-                                   wcr_identity=0)
-            },
-            external_edges=True)
+                                     '__c = __a * __b', {
+                                         '__c':
+                                         dace.Memlet.simple(
+                                             "_c",
+                                             '__i0, __i1',
+                                             wcr_str='lambda x, y: x + y',
+                                             wcr_identity=0)
+                                     },
+                                     external_edges=True)
+        else:  # Batched matrix multiplication
+            state.add_mapped_tasklet(
+                '_BatchedMatMult_', {
+                    '__i%d' % i: '0:%s' % s
+                    for i, s in enumerate([
+                        bopt['b'], array_a.shape[-2], array_b.shape[-1],
+                        array_a.shape[-1]
+                    ])
+                }, {
+                    '__a':
+                    dace.Memlet.simple("_a", ('__i1, __i3' if len(
+                        array_a.shape) == 2 else '__i0, __i1, __i3')),
+                    '__b':
+                    dace.Memlet.simple("_b", ('__i3, __i2' if len(
+                        array_b.shape) == 2 else '__i0, __i3, __i2'))
+                },
+                '__c = __a * __b', {
+                    '__c':
+                    dace.Memlet.simple("_c",
+                                       '__i0, __i1, __i2',
+                                       wcr_str='lambda x, y: x + y',
+                                       wcr_identity=0)
+                },
+                external_edges=True)
 
         sdfg.parent = parent_sdfg
         sdfg.parent_sdfg = parent_sdfg
@@ -161,44 +191,12 @@ class ExpandMatMulMKL(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
-        (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
-        code = ("cblas_{f}(CblasRowMajor, CblasNoTrans, CblasNoTrans, "
-                "{m}, {n}, {k}, {a}, _a, {k}, _b, {n}, {b}, _c, {n});").format(
-                    f=func, m=m, n=n, k=k, a=alpha, b=beta)
-        tasklet = dace.graph.nodes.Tasklet(node.name,
-                                           node.in_connectors,
-                                           node.out_connectors,
-                                           code,
-                                           language=dace.dtypes.Language.CPP)
-        return tasklet
-
-
-@dace.library.expansion
-class ExpandMatMulMKL(ExpandTransformation):
-
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        dtype = node.dtype
-        func = to_blastype(dtype.type).lower() + 'gemm'
-        if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
-        elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
-        elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
-        elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
-        else:
-            raise ValueError("Unsupported type for BLAS dot product: " +
-                             str(dtype))
-        (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
+        (_, _, ashape), (_, _, bshape) = _get_matmul_inputs(node, state, sdfg)
+        m, k = ashape[-2:]
+        n = bshape[-1]
+        # TODO: Use strides instead of shape
+        # TODO: Use gemm opts
+        # TODO: Use batch gemm opts
         code = ("cblas_{f}(CblasRowMajor, CblasNoTrans, CblasNoTrans, "
                 "{m}, {n}, {k}, {a}, _a, {k}, _b, {n}, {b}, _c, {n});").format(
                     f=func, m=m, n=n, k=k, a=alpha, b=beta)
@@ -217,7 +215,6 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        gpuid = node.location or '0'
         node.validate(sdfg, state)
         dtype = node.dtype
         func = '%sgemm' % to_blastype(dtype.type)
@@ -359,6 +356,7 @@ class MatMul(dace.graph.nodes.LibraryNode):
             raise ValueError(
                 "Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
+        # Function is symmetric, edge order does not matter
         bopt = get_batchmm_opts(sdfg.arrays[in_edges[0].data.data],
                                 sdfg.arrays[in_edges[1].data.data],
                                 sdfg.arrays[out_edges[0].data.data])
