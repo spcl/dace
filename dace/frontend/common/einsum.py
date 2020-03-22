@@ -109,147 +109,48 @@ class EinsumParser(object):
         return str(self)
 
 
-# TODO: Remove once library nodes are used
-cublas_initialized = False
-
-
 def create_batch_gemm_sdfg(dtype, strides):
-    # TODO: Use MatMult library node
     #########################
     sdfg = SDFG('einsum')
     state = sdfg.add_state()
     BATCH, M, K, N, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (
-        #symbolic.symbol(s) for s in [
-        strides[s] for s in [
+        symbolic.symbol(s) for s in [
             'BATCH', 'M', 'K', 'N', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB',
             'sCM', 'sCN', 'sCB'
         ])
 
     batched = strides['BATCH'] != 1
 
-    _, xarr = sdfg.add_array('X',
-                             dtype=dtype,
-                             shape=[BATCH, M, K] if batched else [M, K],
-                             strides=[sAB, sAM, sAK] if batched else [
-                                 sAM, sAK],
-                             storage=dtypes.StorageType.GPU_Global)
-    _, yarr = sdfg.add_array('Y',
-                             dtype=dtype,
-                             shape=[BATCH, K, N] if batched else [K, N],
-                             strides=[sBB, sBK, sBN] if batched else [
-                                 sBK, sBN],
-                             storage=dtypes.StorageType.GPU_Global)
-    _, zarr = sdfg.add_array('Z',
-                             dtype=dtype,
-                             shape=[BATCH, M, N] if batched else [M, N],
-                             strides=[sCB, sCM, sCN] if batched else [
-                                 sCM, sCN],
-                             storage=dtypes.StorageType.GPU_Global)
+    _, xarr = sdfg.add_array(
+        'X',
+        dtype=dtype,
+        shape=[BATCH, M, K] if batched else [M, K],
+        strides=[sAB, sAM, sAK] if batched else [sAM, sAK],
+        storage=dtypes.StorageType.GPU_Global)
+    _, yarr = sdfg.add_array(
+        'Y',
+        dtype=dtype,
+        shape=[BATCH, K, N] if batched else [K, N],
+        strides=[sBB, sBK, sBN] if batched else [sBK, sBN],
+        storage=dtypes.StorageType.GPU_Global)
+    _, zarr = sdfg.add_array(
+        'Z',
+        dtype=dtype,
+        shape=[BATCH, M, N] if batched else [M, N],
+        strides=[sCB, sCM, sCN] if batched else [sCM, sCN],
+        storage=dtypes.StorageType.GPU_Global)
 
     gX = state.add_read('X')
     gY = state.add_read('Y')
-    gZ = state.add_access('Z')
+    gZ = state.add_write('Z')
 
-    opt = get_gemm_opts(xarr, yarr, zarr)
+    import dace.libraries.blas as blas  # Avoid import loop
 
-    opt['sta'] = sAB
-    opt['stb'] = sBB
-    opt['stc'] = sCB
-    opt['x'] = 'x'
-    opt['y'] = 'y'
-    opt['M'] = M
-    opt['N'] = N
-    if opt['swap']:
-        opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
-        opt['sta'], opt['stb'] = opt['stb'], opt['sta']
-        opt['x'], opt['y'] = opt['y'], opt['x']
-        opt['ta'], opt['tb'] = opt['tb'], opt['ta']
-        opt['M'], opt['N'] = opt['N'], opt['M']
-
-    global cublas_initialized
-    if not cublas_initialized:
-        code_global = '''
-        #include <cublas_v2.h>
-        cublasHandle_t handle;
-        '''
-        code_init = 'cublasCreate(&handle);'
-        code_exit = 'cublasDestroy(handle);'
-        cublas_initialized = True
-    else:
-        code_global = ''
-        code_init = ''
-        code_exit = ''
-
-    cublas_gemm = 'cublas%sgemm' % to_blastype(dtype.type)
-
-    if not batched:
-        code = '''
-            cublasSetStream(handle, __dace_current_stream);
-            {c_dtype} alpha_unused = 1.0, beta_unused = 0.0;
-            {cublas_gemm}(handle, CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                        {M}, {N}, {K},
-                        &alpha_unused,
-                        {x}, {lda},
-                        {y}, {ldb},
-                        &beta_unused,
-                        z, {ldc});
-            '''.format(BATCH=BATCH,
-                       M=opt['M'],
-                       N=opt['N'],
-                       K=K,
-                       lda=opt['lda'],
-                       ldb=opt['ldb'],
-                       ldc=opt['ldc'],
-                       x=opt['x'],
-                       y=opt['y'],
-                       ta=opt['ta'],
-                       tb=opt['tb'],
-                       c_dtype=dtype.ctype,
-                       cublas_gemm=cublas_gemm)
-    else:
-        code = '''
-            cublasSetStream(handle, __dace_current_stream);
-            {c_dtype} alpha_unused = 1.0, beta_unused = 0.0;
-            {cublas_gemm}StridedBatched(handle, CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                        {M}, {N}, {K},
-                        &alpha_unused,
-                        {x}, {lda}, {stride_a},
-                        {y}, {ldb}, {stride_b},
-                        &beta_unused,
-                        z, {ldc}, {stride_c},
-                        {BATCH});
-            '''.format(BATCH=BATCH,
-                       M=opt['M'],
-                       N=opt['N'],
-                       K=K,
-                       lda=opt['lda'],
-                       ldb=opt['ldb'],
-                       ldc=opt['ldc'],
-                       stride_a=opt['sta'],
-                       stride_b=opt['stb'],
-                       stride_c=opt['stc'],
-                       x=opt['x'],
-                       y=opt['y'],
-                       ta=opt['ta'],
-                       tb=opt['tb'],
-                       c_dtype=dtype.ctype,
-                       cublas_gemm=cublas_gemm)
-
-    cublas_tasklet = state.add_tasklet(name="cublas_tasklet",
-                                       inputs={'x', 'y'},
-                                       outputs={'z'},
-                                       code=code,
-                                       code_global=code_global,
-                                       code_init=code_init,
-                                       code_exit=code_exit,
-                                       language=dtypes.Language.CPP)
-
-    state.add_edge(gX, None, cublas_tasklet, 'x',
-                   Memlet.from_array(gX, gX.desc(sdfg)))
-    state.add_edge(gY, None, cublas_tasklet, 'y',
-                   Memlet.from_array(gY, gY.desc(sdfg)))
-    state.add_edge(cublas_tasklet, 'z', gZ, None,
-                   Memlet.from_array(gZ, gZ.desc(sdfg)))
+    libnode = blas.MatMul('einsum_gemm', zarr.dtype)
+    state.add_node(libnode)
+    state.add_edge(gX, None, libnode, '_a', Memlet.from_array(gX.data, xarr))
+    state.add_edge(gY, None, libnode, '_b', Memlet.from_array(gY.data, yarr))
+    state.add_edge(libnode, '_c', gZ, None, Memlet.from_array(gZ.data, zarr))
 
     return sdfg
 
@@ -266,8 +167,12 @@ def create_einsum_sdfg(sdfg: SDFG,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
                        output: Optional[str] = None):
-    return _create_einsum_internal(sdfg, state, einsum_string, *arrays,
-                                   dtype=dtype, optimize=optimize,
+    return _create_einsum_internal(sdfg,
+                                   state,
+                                   einsum_string,
+                                   *arrays,
+                                   dtype=dtype,
+                                   optimize=optimize,
                                    output=output)[0]
 
 
@@ -320,9 +225,15 @@ def _create_einsum_internal(sdfg: SDFG,
 
         # Follow path and create a chain of operation SDFG states
         for pair, nonfree, expr, after, blas in path_info.contraction_list:
-            result, result_node = _create_einsum_internal(
-                sdfg, state, expr, arrays[pair[0]], arrays[pair[1]],
-                dtype=dtype, optimize=False, output=None, nodes=input_nodes)
+            result, result_node = _create_einsum_internal(sdfg,
+                                                          state,
+                                                          expr,
+                                                          arrays[pair[0]],
+                                                          arrays[pair[1]],
+                                                          dtype=dtype,
+                                                          optimize=False,
+                                                          output=None,
+                                                          nodes=input_nodes)
             arrays = ([a for i, a in enumerate(arrays) if i not in pair] +
                       [result])
             input_nodes[result] = result_node
@@ -355,12 +266,13 @@ def _create_einsum_internal(sdfg: SDFG,
             if len(einsum.output) > 0:
                 init_state.add_mapped_tasklet(
                     'einsum_reset',
-                    {k: '0:%s' % chardict[k] for k in einsum.output},
-                    {}, 'out_%s = 0' % output,
+                    {k: '0:%s' % chardict[k]
+                     for k in einsum.output}, {},
+                    'out_%s = 0' % output,
                     {'out_%s' % output: Memlet.simple(output, output_index)},
                     external_edges=True)
             else:  # Scalar output
-                t = init_state.add_tasklet('einsum_reset', {},
+                t = init_state.add_tasklet('einsum_reset', set(),
                                            {'out_%s' % output},
                                            'out_%s = 0' % output)
                 onode = init_state.add_write(output)
@@ -370,20 +282,21 @@ def _create_einsum_internal(sdfg: SDFG,
         # Pure einsum map
         state.add_mapped_tasklet(
             'einsum', {k: '0:%s' % v
-                       for k, v in chardict.items()},
+                       for k, v in chardict.items()}, {
+                           'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
+                           for inp, arr in zip(einsum.inputs, arrays)
+                       },
+            'out_%s = %s' % (output, ' * '.join('inp_%s' % arr
+                                                for arr in arrays)),
             {
-                'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
-                for inp, arr in zip(einsum.inputs, arrays)
+                'out_%s' % output:
+                Memlet.simple(output, output_index, wcr_str='lambda a,b: a+b')
             },
-            'out_%s = %s' % (output, ' * '.join('inp_%s' % arr for arr in arrays)),
-            {'out_%s' % output: Memlet.simple(output, output_index,
-                                              wcr_str='lambda a,b: a+b')},
             input_nodes=input_nodes,
             output_nodes={output: c},
             external_edges=True)
     else:
-        # TODO: Only CUDA is supported
-        # Represent einsum as a GEMM or batched GEMM
+        # Represent einsum as a GEMM or batched GEMM (using library nodes)
         a_shape = sdfg.arrays[arrays[0]].shape
         b_shape = sdfg.arrays[arrays[1]].shape
         c_shape = output_shape
