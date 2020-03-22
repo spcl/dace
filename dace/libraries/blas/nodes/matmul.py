@@ -1,6 +1,7 @@
 from copy import deepcopy as dc
 import numpy as np
-from dace.config import Config
+from typing import Any, Dict, Optional
+from dace.data import Array
 import dace.library
 import dace.properties
 import dace.graph.nodes
@@ -20,7 +21,7 @@ def _get_matmul_inputs(node, state, sdfg):
             size = subset.size()
             outer_array = sdfg.data(
                 dace.sdfg.find_input_arraynode(state, edge).data)
-            res = edge, outer_array, (size[0], size[1])
+            res = edge, outer_array, (size[-2], size[-1])
             if edge.dst_conn == "_a":
                 res_a = res
             else:
@@ -29,6 +30,45 @@ def _get_matmul_inputs(node, state, sdfg):
         raise ValueError("Matrix multiplication input connectors \"_a\" and "
                          "\"_b\" not found.")
     return res_a, res_b
+
+
+def get_batchmm_opts(a: Array, b: Array, c: Optional[Array]) -> Dict[str, Any]:
+    """
+    Detects whether a matrix multiplication is a batched matrix multiplication
+    and returns its parameters (strides, batch size), or an empty dictionary if
+    batched multiplication is not detected.
+    :param a: Data descriptor for the first tensor.
+    :param b: Data descriptor for the second tensor.
+    :param c: Data descriptor for the output tensor (optional).
+    :return: A dictionary with the following keys: sa,sb,sc (strides for a, b,
+             and c); and b (batch size).
+    """
+    if len(a.shape) > 3 or len(b.shape) > 3 or (c and len(c.shape) > 3):
+        raise ValueError('Tensor dimensions too large for (batched) matrix '
+                         'multiplication')
+    if len(a.shape) <= 2 and len(b.shape) <= 2:
+        return {}
+
+    batch = None
+    stride_a, stride_b, stride_c = 0, 0, 0
+    if len(a.shape) == 3:
+        batch = a.shape[0]
+        stride_a = a.strides[0]
+    if len(b.shape) == 3:
+        if batch and batch != b.shape[0]:
+            raise ValueError('Batch size mismatch for matrix multiplication')
+        batch = b.shape[0]
+        stride_b = b.strides[0]
+    if c and len(c.shape) == 3:
+        if batch and batch != c.shape[0]:
+            raise ValueError('Batch size mismatch for matrix multiplication')
+        batch = c.shape[0]
+        stride_c = c.strides[0]
+
+    if batch is None:
+        return {}
+
+    return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch}
 
 
 @dace.library.expansion
@@ -220,42 +260,57 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                     cdesc = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
-        
+
+        # Set up options for code formatting
         (_, _, (m, k)), (_, _, (_, n)) = _get_matmul_inputs(node, state, sdfg)
         opt = get_gemm_opts(adesc, bdesc, cdesc)
+        bopt = get_batchmm_opts(adesc, bdesc, cdesc)
         opt['x'] = '_a'
         opt['y'] = '_b'
         opt['M'] = m
         opt['N'] = n
         if opt['swap']:
+            if bopt:
+                bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
             opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
             opt['x'], opt['y'] = opt['y'], opt['x']
             opt['ta'], opt['tb'] = opt['tb'], opt['ta']
             opt['M'], opt['N'] = opt['N'], opt['M']
 
-        
-        code = environments.cublas.cuBLAS.handle_setup_code(node) + '''
-            cublas{func}(__dace_cublas_handle, CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                        {M}, {N}, {K},
-                        {alpha},
-                        ({dtype}*){x}, {lda},
-                        ({dtype}*){y}, {ldb},
-                        {beta},
-                        ({dtype}*)_c, {ldc});
-            '''.format(M=opt['M'],
-                       N=opt['N'],
-                       K=k,
-                       lda=opt['lda'],
-                       ldb=opt['ldb'],
-                       ldc=opt['ldc'],
-                       x=opt['x'],
-                       y=opt['y'],
-                       ta=opt['ta'],
-                       tb=opt['tb'],
-                       alpha=alpha,
-                       beta=beta,
-                       dtype=cdtype,
-                       func=func)
+        opt['K'] = k
+        opt['alpha'] = alpha
+        opt['beta'] = beta
+        opt['dtype'] = cdtype
+        opt['func'] = func
+        if bopt:
+            opt['stride_a'] = bopt['sa']
+            opt['stride_b'] = bopt['sb']
+            opt['stride_c'] = bopt['sc']
+            opt['BATCH'] = bopt['b']
+
+        # Matrix multiplication
+        if not bopt:
+            call = '''cublas{func}(__dace_cublas_handle, 
+                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                {M}, {N}, {K},
+                {alpha},
+                ({dtype}*){x}, {lda},
+                ({dtype}*){y}, {ldb},
+                {beta},
+                ({dtype}*)_c, {ldc});'''
+        else:  # Batched matrix multiplication
+            call = '''cublas{func}StridedBatched(__dace_cublas_handle, 
+                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                {M}, {N}, {K},
+                {alpha},
+                ({dtype}*){x}, {lda}, {stride_a},
+                ({dtype}*){y}, {ldb}, {stride_b},
+                {beta},
+                ({dtype}*)_c, {ldc}, {stride_c},
+                {BATCH});'''
+
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                call.format_map(opt))
         tasklet = dace.graph.nodes.Tasklet(node.name,
                                            node.in_connectors,
                                            node.out_connectors,
@@ -268,8 +323,11 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
 class MatMul(dace.graph.nodes.LibraryNode):
 
     # Global properties
-    implementations = {"pure": ExpandMatMulPure, "MKL": ExpandMatMulMKL,
-                       "cuBLAS": ExpandMatMulCuBLAS}
+    implementations = {
+        "pure": ExpandMatMulPure,
+        "MKL": ExpandMatMulMKL,
+        "cuBLAS": ExpandMatMulCuBLAS
+    }
     default_implementation = None
 
     # Object fields
@@ -301,23 +359,31 @@ class MatMul(dace.graph.nodes.LibraryNode):
             raise ValueError(
                 "Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
-        if len(size0) != 2:
-            raise ValueError(
-                "matrix-matrix product only supported on matrices")
-        if len(size1) != 2:
-            raise ValueError(
-                "matrix-matrix product only supported on matrices")
-        if size0[1] != size1[0]:
+        bopt = get_batchmm_opts(sdfg.arrays[in_edges[0].data.data],
+                                sdfg.arrays[in_edges[1].data.data],
+                                sdfg.arrays[out_edges[0].data.data])
+        if not bopt:
+            if len(size0) != 2:
+                raise ValueError(
+                    "matrix-matrix product only supported on matrices")
+            if len(size1) != 2:
+                raise ValueError(
+                    "matrix-matrix product only supported on matrices")
+        if size0[-1] != size1[-2]:
             raise ValueError(
                 "Inputs to matrix-matrix product must agree in the k-dimension"
             )
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size2 = out_subset.size()
-        if len(size2) != 2:
+        if len(size2) not in [2, 3]:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
-        if list(size2) != [size0[0], size1[1]]:
+        if not bopt and list(size2) != [size0[-2], size1[-1]]:
             raise ValueError(
-                "Output to matrix-matrix product must agree in the m and n dimensions"
-            )
+                "Output to matrix-matrix product must agree in the m and n "
+                "dimensions")
+        if bopt and list(size2) != [bopt['b'], size0[-2], size1[-1]]:
+            raise ValueError(
+                "Output to batch matrix-matrix product must agree in the b, "
+                "m, and n dimensions")
