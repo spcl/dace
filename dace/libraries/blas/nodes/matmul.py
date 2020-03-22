@@ -345,6 +345,42 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                                            node.out_connectors,
                                            code,
                                            language=dace.dtypes.Language.CPP)
+
+        # If buffers are not on the GPU, copy them
+        # TODO: This creates variable shadowing
+        if any(desc.storage not in
+               [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
+               for desc in [adesc, bdesc, cdesc]):
+            nsdfg = dace.SDFG('nested_matmul')
+            for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
+                dcopy = dc(desc)
+                dcopy.transient = False
+                nsdfg.add_datadesc(name, dcopy)
+                dcopy_gpu = dc(desc)
+                dcopy_gpu.transient = True
+                dcopy_gpu.storage = dace.StorageType.GPU_Global
+                nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
+            nstate = nsdfg.add_state()
+            a = nstate.add_read('_a')
+            ga = nstate.add_access('_a_gpu')
+            b = nstate.add_read('_b')
+            gb = nstate.add_access('_b_gpu')
+            c = nstate.add_write('_c')
+            gc = nstate.add_access('_c_gpu')
+            nstate.add_node(tasklet)
+            nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
+            nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
+            nstate.add_edge(ga, None, tasklet, '_a',
+                            dace.Memlet.from_array('_a_gpu', adesc))
+            nstate.add_edge(gb, None, tasklet, '_b',
+                            dace.Memlet.from_array('_b_gpu', bdesc))
+            nstate.add_edge(tasklet, '_c', gc, None,
+                            dace.Memlet.from_array('_c_gpu', cdesc))
+            nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
+
+            return nsdfg
+        # End of copy to GPU
+
         return tasklet
 
 
