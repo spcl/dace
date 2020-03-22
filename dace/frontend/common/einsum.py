@@ -127,20 +127,17 @@ def create_batch_gemm_sdfg(dtype, strides):
         'X',
         dtype=dtype,
         shape=[BATCH, M, K] if batched else [M, K],
-        strides=[sAB, sAM, sAK] if batched else [sAM, sAK],
-        storage=dtypes.StorageType.GPU_Global)
+        strides=[sAB, sAM, sAK] if batched else [sAM, sAK])
     _, yarr = sdfg.add_array(
         'Y',
         dtype=dtype,
         shape=[BATCH, K, N] if batched else [K, N],
-        strides=[sBB, sBK, sBN] if batched else [sBK, sBN],
-        storage=dtypes.StorageType.GPU_Global)
+        strides=[sBB, sBK, sBN] if batched else [sBK, sBN])
     _, zarr = sdfg.add_array(
         'Z',
         dtype=dtype,
         shape=[BATCH, M, N] if batched else [M, N],
-        strides=[sCB, sCM, sCN] if batched else [sCM, sCN],
-        storage=dtypes.StorageType.GPU_Global)
+        strides=[sCB, sCM, sCN] if batched else [sCM, sCN])
 
     gX = state.add_read('X')
     gY = state.add_read('Y')
