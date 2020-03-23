@@ -668,24 +668,37 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 @oprepo.replaces_operator('Array', 'MatMult')
 def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
-
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
-    if (len(arr1.shape) != 2 or len(arr2.shape) != 2
-            or arr1.shape[1] != arr2.shape[0]):
-        raise SyntaxError('Matrix sizes must match')
+    # TODO: Apply numpy broadcast rules
+    if len(arr1.shape) > 3 or len(arr2.shape) > 3:
+        raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
+                          'not supported')
+    if arr1.shape[-1] != arr2.shape[-2]:
+        raise SyntaxError('Matrix dimension mismatch %s != %s' %
+                          (arr1.shape[-1], arr2.shape[-2]))
+
+    import dace.libraries.blas as blas  # Avoid import loop
+    from dace.libraries.blas.nodes.matmul import get_batchmm_opts
+
+    # Determine batched multiplication
+    bopt = get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides,
+                            None, None)
+    if bopt:
+        output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
+    else:
+        output_shape = (arr1.shape[-2], arr2.shape[-1])
 
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
     restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
 
-    op3, arr3 = sdfg.add_temp_transient((arr1.shape[0], arr2.shape[1]),
-                                        restype, arr1.storage)
+    op3, arr3 = sdfg.add_temp_transient(output_shape, restype, arr1.storage)
 
     acc1 = state.add_read(op1)
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
-    import dace.libraries.blas as blas  # Avoid import loop
+
     tasklet = blas.MatMul('_MatMult_', restype)
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_a',
@@ -1453,7 +1466,8 @@ class TaskletTransformer(ExtNodeTransformer):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
-    def parse_tasklet(self, tasklet_ast: TaskletType,
+    def parse_tasklet(self,
+                      tasklet_ast: TaskletType,
                       name: Optional[str] = None):
         """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
             :param tasklet_ast: The Tasklet's Python AST to parse.

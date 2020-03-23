@@ -1284,6 +1284,44 @@ subgraph cluster_state_{state} {{
         self.add_node(state, is_start_state=is_start_state)
         return state
 
+    def add_state_before(self, state: 'SDFGState', label=None,
+                         is_start_state=False) -> 'SDFGState':
+        """ Adds a new SDFG state before an existing state, reconnecting
+            predecessors to it instead.
+            :param state: The state to prepend the new state before.
+            :param label: State label.
+            :param is_start_state: If True, resets SDFG starting state to this
+                                   state.
+            :return: A new SDFGState object.
+        """
+        new_state = self.add_state(label, is_start_state)
+        # Reconnect
+        for e in self.in_edges(state):
+            self.remove_edge(e)
+            self.add_edge(e.src, new_state, e.data)
+        # Add unconditional connection between the new state and the current
+        self.add_edge(new_state, state, ed.InterstateEdge())
+        return new_state
+
+    def add_state_after(self, state: 'SDFGState', label=None,
+                         is_start_state=False) -> 'SDFGState':
+        """ Adds a new SDFG state after an existing state, reconnecting
+            it to the successors instead.
+            :param state: The state to append the new state after.
+            :param label: State label.
+            :param is_start_state: If True, resets SDFG starting state to this
+                                   state.
+            :return: A new SDFGState object.
+        """
+        new_state = self.add_state(label, is_start_state)
+        # Reconnect
+        for e in self.out_edges(state):
+            self.remove_edge(e)
+            self.add_edge(new_state, e.dst, e.data)
+        # Add unconditional connection between the current and the new state
+        self.add_edge(state, new_state, ed.InterstateEdge())
+        return new_state
+
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
@@ -3070,16 +3108,22 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self.add_nodes_from([map_entry, tasklet, map_exit])
 
         # Create access nodes
+        inpdict = {}
+        outdict = {}
         if external_edges:
+            input_nodes = input_nodes or {}
+            output_nodes = output_nodes or {}
             input_data = set(memlet.data for memlet in inputs.values())
             output_data = set(memlet.data for memlet in outputs.values())
-            inpdict = input_nodes or {}
-            outdict = output_nodes or {}
-            if not input_nodes:
-                for inp in input_data:
+            for inp in input_data:
+                if inp in input_nodes:
+                    inpdict[inp] = input_nodes[inp]
+                else:
                     inpdict[inp] = self.add_read(inp)
-            if not output_nodes:
-                for out in output_data:
+            for out in output_data:
+                if out in output_nodes:
+                    outdict[out] = output_nodes[out]
+                else:
                     outdict[out] = self.add_write(out)
 
         # Connect inputs from map to tasklet
