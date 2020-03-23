@@ -160,7 +160,7 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
             for (let attr of Object.entries(elem.attributes())) {
                 if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
                 html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
             }
 
             // If access node, add array information too
@@ -170,7 +170,7 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
                 for (let attr of Object.entries(sdfg_array.attributes)) {
                     if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
                     html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                    html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                    html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
                 }
             }
 
