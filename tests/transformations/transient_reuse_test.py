@@ -11,7 +11,19 @@ N = dace.symbol('N')
 
 @dace.program
 def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 100], D: dace.float64[5, 100]):
-    C[:] = A @ (A @ B) @ (A @ B) @ (B @ D)
+    tmp = dace.define_local([5, 5, 5], dtype=A.dtype)
+    E = dace.define_local([5,5], dtype=A.dtype)
+    @dace.map(_[0:5, 0:5, 0:5])
+    def multiplication(i, j, k):
+        in_A << A[i, k]
+        in_B << B[k, j]
+        out >> tmp[i, j, k]
+
+        out = in_A * in_B
+
+    dace.reduce(lambda a, b: a + b, tmp, E, axis=2, identity=0)
+
+    C[:] = A @ E @ (A @ B) @ (B @ D)
 
 
 
