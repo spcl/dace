@@ -71,7 +71,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         except ValueError:
             sdaccel_dir = ''
 
-        kernel_file_name = "DACE_BINARY_DIR \"{}".format("/" + self._program_name)
+        kernel_file_name = "DACE_BINARY_DIR \"/{}".format(self._program_name)
         if execution_mode == "software_emulation":
             kernel_file_name += "_sw_emu.xclbin\""
             xcl_emulation_mode = "sw_emu"
