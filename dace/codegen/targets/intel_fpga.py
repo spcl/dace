@@ -156,7 +156,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                    CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
                    {kernel_file_name};
                    __dace_fpga_context = {context};
-                   hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram(kernel_path);                   
+                   hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram(kernel_path);
                    return 0;
                }}
 
@@ -729,10 +729,15 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         # Add kernel call host function
         if unrolled_loops == 0:
-            host_body_stream.write(
-                "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".format(
-                    module_function_name, ", ".join([""] + kernel_args_call)
-                    if len(kernel_args_call) > 0 else ""), sdfg, state_id)
+            # Kernels without arguments can be autorun kernels, and do not need
+            # to be launched from the host
+            if len(kernel_args_call) > 0:
+                host_body_stream.write(
+                    "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
+                    format(
+                        module_function_name,
+                        ", ".join([""] + kernel_args_call)
+                        if len(kernel_args_call) > 0 else ""), sdfg, state_id)
         else:
             # We will generate a separate kernel for each PE. Adds host call
             for ul in self._unrolled_pes:
@@ -765,6 +770,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         module_body_stream = CodeIOStream()
 
         if unrolled_loops == 0:
+            if len(kernel_args_opencl) == 0:
+                # If the kernel doesn't need to interact with the host, make it
+                # autorun
+                module_body_stream.write(
+                    "__attribute__((max_global_work_dim(0)))\n"
+                    "__attribute__((autorun))")
             module_body_stream.write(
                 "__kernel void {}({}) {{".format(
                     module_function_name, ", ".join(kernel_args_opencl)), sdfg,
