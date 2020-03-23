@@ -590,30 +590,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream.write(
             "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
 
-    @staticmethod
-    def all_nodes_between(graph, begin, end):
-        """Finds all nodes between begin and end. Returns None if there is any
-           path starting at begin that does not reach end."""
-        to_visit = [begin]
-        seen = set()
-        while len(to_visit) > 0:
-            n = to_visit.pop()
-            if n == end:
-                continue  # We've reached the end node
-            if n in seen:
-                continue  # We've already visited this node
-            seen.add(n)
-            # Keep chasing all paths to reach the end node
-            node_out_edges = graph.out_edges(n)
-            if len(node_out_edges) == 0:
-                # We traversed to the end without finding the end
-                return None
-            for e in node_out_edges:
-                next_node = e.dst
-                if next_node != end and next_node not in seen:
-                    to_visit.append(next_node)
-        return seen
-
     def generate_code(self,
                       sdfg: SDFG,
                       schedule: Optional[dtypes.ScheduleType],
@@ -864,13 +840,11 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                 # Now traverse from the source and verify that all possible paths
                 # pass through the dominator
-                left_nodes = DaCeCodeGenerator.all_nodes_between(
-                    sdfg, left, dominator)
+                left_nodes = sdfg.all_nodes_between(left, dominator)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                right_nodes = DaCeCodeGenerator.all_nodes_between(
-                    sdfg, right, dominator)
+                right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue

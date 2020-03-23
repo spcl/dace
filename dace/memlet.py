@@ -108,7 +108,7 @@ class Memlet(object):
     def to_json(self, parent_graph=None):
         attrs = dace.serialize.all_properties_to_json(self)
 
-        retdict = {"type": "Memlet", "label": str(self), "attributes": attrs}
+        retdict = {"type": "Memlet", "attributes": attrs}
 
         return retdict
 

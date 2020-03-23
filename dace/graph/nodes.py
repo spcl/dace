@@ -619,6 +619,10 @@ class Map(object):
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
+    collapse = Property(dtype=int,
+                        default=1,
+                        desc="How many dimensions to"
+                        " collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool,
                             desc="Show this node/scope/state as collapsed",
@@ -637,6 +641,7 @@ class Map(object):
                  unroll=False,
                  is_async=False,
                  flatten=False,
+                 collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
         super(Map, self).__init__()
@@ -647,6 +652,7 @@ class Map(object):
         self.unroll = unroll
         self.is_async = is_async
         self.flatten = flatten
+        self.collapse = 1
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo

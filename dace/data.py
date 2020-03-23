@@ -58,9 +58,9 @@ class Data(object):
                        default=dace.dtypes.StorageType.Default,
                        from_string=lambda x: dtypes.StorageType[x])
     location = Property(
-        dtype=str,  # Dict[str, symbolic]
+        dtype=dict,
         desc='Full storage location identifier (e.g., rank, GPU ID)',
-        default='')
+        default={})
     dist_location = LambdaProperty(allow_none=True)
     toplevel = Property(dtype=bool,
                         desc="Allocate array outside of state",
@@ -138,12 +138,13 @@ class Scalar(Data):
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
-                 location='',
+                 location=None,
                  dist_location=None,
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
+        location = location or {}
         super(Scalar, self).__init__(dtype, shape, dist_shape,
                                      transient, storage, location,
                                      dist_location,toplevel, debuginfo)
@@ -289,7 +290,7 @@ class Array(Data):
                  transient=False,
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location=None,
                  dist_location=None,
                  strides=None,
                  offset=None,
@@ -298,6 +299,7 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
+        location = location or {}
         super(Array, self).__init__(dtype, shape, dist_shape, transient,
                                     storage, location, dist_location, toplevel,
                                     debuginfo)
@@ -501,10 +503,11 @@ class Stream(Data):
                  dist_shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location=None,
                  dist_location=None,
                  offset=None,
                  toplevel=False,
+                 remote = False,
                  debuginfo=None):
 
         if shape is None:
@@ -512,6 +515,7 @@ class Stream(Data):
 
         self.veclen = veclen
         self.buffer_size = buffer_size
+        location = location or {}
 
         if offset is not None:
             if len(offset) != len(shape):
@@ -582,7 +586,7 @@ class Stream(Data):
         for dim, otherdim in zip(self.shape, other.shape):
             if dim != otherdim:
                 return False
-        
+
         # Test dist shape
         if (self.dist_shape and not other.dist_shape or
                 not self.dist_shape and other.dist_shape):

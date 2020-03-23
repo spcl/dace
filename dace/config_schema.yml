@@ -343,6 +343,19 @@ required:
                         title: Kernel flags 
                         description: High-level synthesis C++ flags 
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant"
+
+                    smi_ranks:
+                        type: int
+                        default: 2
+                        title: Number of ranks
+                        description: >
+                             Number of ranks to use for emulation of SMI based programs
+
+                    smi_rendezvous:
+                        type: bool
+                        default: true
+                        title: Enable rendezvous in SMI programs
+                        description: Boolean flag indicating whether rendezvous must be used in point-to-point communications
             #############################################
             # MPI compiler
             mpi:

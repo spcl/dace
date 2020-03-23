@@ -558,6 +558,27 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
+def simplify_ext(expr):
+    """
+    An extended version of simplification with expression fixes for sympy.
+    :param expr: A sympy expression.
+    :return: Simplified version of the expression.
+    """
+    a = sympy.Wild('a')
+    b = sympy.Wild('b')
+    c = sympy.Wild('c')
+
+    # Push expressions into both sides of min/max.
+    # Example: Min(N, 4) + 1 => Min(N + 1, 5)
+    dic = expr.match(sympy.Min(a, b) + c)
+    if dic:
+        return sympy.Min(dic[a] + dic[c], dic[b] + dic[c])
+    dic = expr.match(sympy.Max(a, b) + c)
+    if dic:
+        return sympy.Max(dic[a] + dic[c], dic[b] + dic[c])
+    return expr
+
+
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     if isinstance(expr, SymExpr):

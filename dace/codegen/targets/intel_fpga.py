@@ -43,12 +43,20 @@ REDUCTION_TYPE_TO_PYEXPR = {
     dace.dtypes.ReductionType.Bitwise_Xor: "^"
 }
 
+TYPE_TO_SMI_TYPE = {
+    dace.dtypes.uint8: "SMI_CHAR",
+    dace.dtypes.int32: "SMI_INT",
+    dace.dtypes.float32: "SMI_FLOAT",
+    dace.dtypes.float64: "SMI_DOUBLE"
+}
 
-@registry.autoregister_params(name='intel_fpga')
+
+@registry.autoregister_params(name=['intel_fpga', 'intel_fpga_smi'])
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'
     language = 'hls'
+    enable_smi = False  # indicates whether or not smi is used
 
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga_vendor")
@@ -56,6 +64,10 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             # Don't register this code generator
             return
         super().__init__(*args, **kwargs)
+
+    @property
+    def has_finalizer(self):
+        return self.enable_smi
 
     @staticmethod
     def cmake_options():
@@ -68,6 +80,10 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
+        #Here we have to get also SMI related options (even if we don't use them)
+        smi_ranks = Config.get("compiler", "intel_fpga", "smi_ranks")
+        smi_rendezvous = ("ON" if Config.get_bool(
+            "compiler", "intel_fpga", "smi_rendezvous") else "OFF")
         options = [
             "-DINTELFPGAOCL_ROOT_DIR={}".format(
                 os.path.dirname(os.path.dirname(compiler))),
@@ -76,14 +92,30 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             "-DDACE_INTELFPGA_MODE={}".format(mode),
             "-DDACE_INTELFPGA_TARGET_BOARD=\"{}\"".format(target_board),
             "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_INTELFPGA_SMI_NUM_RANKS={}".format(smi_ranks),
+            "-DDACE_INTELFPGA_SMI_RENDEZVOUS={}".format(smi_rendezvous),
         ]
         return options
 
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "intel_fpga", "mode")
-        kernel_file_name = "DACE_BINARY_DIR \"/{}".format(self._program_name)
+        # TODO: SMI names the produced binary according to the kernel name, that we don't have here
+        # This could be useful when different programs will be generated from the same SDFG
+        # For the moment being, emulation binary will have the same name of the program (handled in CMake).
+        # The sdfg symbols smi_rank and smi_num_ranks, will be used to load the proper bitstream
+        if self.enable_smi:
+            if execution_mode == "emulator":
+                kernel_file_name = "std::string kernel_path = DACE_BINARY_DIR \"/emulator_\"+std::to_string(__dace_comm_rank)+\"/{}".format(
+                    self._program_name)
+            elif execution_mode == "hardware":
+                kernel_file_name = "std::string kernel_path = DACE_BINARY_DIR \"/{}".format(
+                    self._program_name)
+        else:
+            kernel_file_name = "DACE_BINARY_DIR \"/{}".format(
+                self._program_name)
         emulation_flag = ""
+
         if execution_mode == "emulator":
             kernel_file_name += "_emulator.aocx\""
             emulation_flag = (
@@ -100,32 +132,77 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         host_code = CodeIOStream()
         host_code.write("""\
 #include "dace/intel_fpga/host.h"
-#include <iostream>\n\n""")
+#include <iostream>\n""")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
+        host_code.write("unsigned int __dace_fpga_context=0;")
+        if self.enable_smi:
+            # add MPI and SMI init calls
+            # TODO: handle different contexts. Possibile solution: define it as global variable and allow
+            # move operator (if it works in OpenCL)
+            # TODO: handle routing dir
+            host_code.write("""
+            #include "dace/intel_fpga/smi.h"
+            #include "smi_generated_host.c"
+            #define ROUTING_DIR DACE_BINARY_DIR "/smi-routes/"
+            int __dace_comm_size = 1;
+            int __dace_comm_rank = 0;
+            """)
+            # TODO: understand if we want to generate MPI_Init/Calls
+            host_code.write("""
+               DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
+                   //CHECK_MPI(MPI_Init(NULL, NULL));
+                   CHECK_MPI(MPI_Comm_size(MPI_COMM_WORLD, &__dace_comm_size));
+                   CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
+                   {kernel_file_name};
+                   __dace_fpga_context = {context};
+                   hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram(kernel_path);                   
+                   return 0;
+               }}
 
-        host_code.write("""
-DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-    hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
-    return 0;
-}}
+               {host_code}""".format(
+                signature=self._global_sdfg.signature(),
+                emulation_flag=emulation_flag,
+                kernel_file_name=kernel_file_name,
+                context = 0 if execution_mode == "emulator" else "__dace_comm_rank%2",
+                host_code="".join([
+                    "{separator}\n// Kernel: {kernel_name}"
+                    "\n{separator}\n\n{code}\n\n".format(separator="/" * 79,
+                                                         kernel_name=name,
+                                                         code=code)
+                    for (name, code) in self._host_codes
+                ])))
+            host_code.write("""DACE_EXPORTED void __dace_exit_intel_fpga() {{
+    //CHECK_MPI(MPI_Barrier(MPI_COMM_WORLD));
+    //CHECK_MPI(MPI_Finalize());
+}}""")
+        else:
+            host_code.write("""
+    DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
+        hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram({kernel_file_name});
+        return 0;
+    }}
 
-{host_code}""".format(signature=self._global_sdfg.signature(),
-                      emulation_flag=emulation_flag,
-                      kernel_file_name=kernel_file_name,
-                      host_code="".join([
-                          "{separator}\n// Kernel: {kernel_name}"
-                          "\n{separator}\n\n{code}\n\n".format(
-                              separator="/" * 79, kernel_name=name, code=code)
-                          for (name, code) in self._host_codes
-                      ])))
-
-        host_code_obj = CodeObject(self._program_name,
-                                   host_code.getvalue(),
-                                   "cpp",
-                                   IntelFPGACodeGen,
-                                   "Intel FPGA",
-                                   target_type="host")
+    {host_code}""".format(signature=self._global_sdfg.signature(),
+                          emulation_flag=emulation_flag,
+                          kernel_file_name=kernel_file_name,
+                          host_code="".join([
+                              "{separator}\n// Kernel: {kernel_name}"
+                              "\n{separator}\n\n{code}\n\n".format(
+                                  separator="/" * 79,
+                                  kernel_name=name,
+                                  code=code)
+                              for (name, code) in self._host_codes
+                          ])))
+        # Since CodeObject defines target_name, I have to explicitely indicate intel_fpga_smi if remote streams are used
+        host_code_obj = CodeObject(
+            self._program_name,
+            host_code.getvalue(),
+            "cpp",
+            IntelFPGACodeGen,
+            "Intel FPGA",
+            target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
+            target_type="host")
 
         kernel_code_objs = [
             CodeObject(kernel_name,
@@ -133,14 +210,21 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                        "cl",
                        IntelFPGACodeGen,
                        "Intel FPGA",
-                       target_type="device")
+                       target_name="intel_fpga_smi"
+                       if self.enable_smi else "intel_fpga",
+                       target_type="device",
+                       additional_compiler_kwargs={"smi": self.enable_smi})
             for (kernel_name, code) in self._kernel_codes
         ]
 
         return [host_code_obj] + kernel_code_objs
 
     def define_stream(self, dtype, vector_length, buffer_size, var_name,
-                      array_size, function_stream, kernel_stream):
+                      array_size, function_stream, kernel_stream, storage,
+                      sdfg, dfg, node):
+        """
+        Defines a stream.
+        """
         vec_type = self.make_vector_type(dtype, vector_length, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
@@ -150,8 +234,63 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:
             size_str = ""
-        kernel_stream.write("channel {} {}{}{};".format(
-            vec_type, var_name, size_str, depth_attribute))
+        if storage == dace.dtypes.StorageType.FPGA_Remote:
+            # remote streams (SMI transient channels) are not defined as global entities
+            # TODO: a remote stream access node should have one input or one ouput edge.
+            if dfg.in_edges(node):
+                # remote output stream: it is the first time that it appears, open the corresponding transient channel
+                connector = dfg.in_edges(node)[0].src_conn
+                memlet = dfg.in_edges(node)[0].data
+                rcv_rank = node.desc(sdfg).location["rcv_rank"]
+                port = node.desc(sdfg).location["port"]
+                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdigit(
+                ):
+                    raise dace.codegen.codegen.CodegenError(
+                        "Receiver rank for remote stream {} must be a constant, a symbol or a number"
+                        .format(dst_node.label))
+                if not isinstance(port, int) and (port not in sdfg.constants
+                                                  and not port.isdigit()):
+                    raise dace.codegen.codegen.CodegenError(
+                        "Port for remote stream {} must be a constant or a number"
+                        .format(dst_node.label))
+                # TODO handle dynamic number of accesses in SMI
+                kernel_stream.write(
+                    "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);"
+                    .format(var_name, memlet.num_accesses,
+                            TYPE_TO_SMI_TYPE[dtype], rcv_rank, port))
+
+                self._dispatcher.defined_vars.add(var_name,
+                                                  DefinedType.RemoteStream)
+                pass
+            else:
+                # input stream
+                connector = dfg.out_edges(node)[0].dst_conn
+                memlet = dfg.out_edges(node)[0].data
+                snd_rank = node.desc(sdfg).location["snd_rank"]
+                port = node.desc(sdfg).location["port"]
+                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdigit(
+                ):
+                    raise dace.codegen.codegen.CodegenError(
+                        "Sender rank for remote stream {} must be a constant, a symbol or a number"
+                        .format(node.label))
+
+                if not isinstance(port, int) and (port not in sdfg.constants
+                                                  and not port.isdigit()):
+                    raise dace.codegen.codegen.CodegenError(
+                        "Port for remote stream {} must be a constant or a number"
+                        .format(node.label))
+                kernel_stream.write(
+                    "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);"
+                    .format(var_name, memlet.num_accesses,
+                            TYPE_TO_SMI_TYPE[dtype], snd_rank, port))
+
+                # add this as defined vars of type Remote Stream, so that we will no further open it in the following
+                self._dispatcher.defined_vars.add(var_name,
+                                                  DefinedType.RemoteStream)
+
+        else:
+            kernel_stream.write("channel {} {}{}{};".format(
+                vec_type, var_name, size_str, depth_attribute))
 
     def define_local_array(self, dtype, vector_length, var_name, array_size,
                            storage, shape, function_stream, kernel_stream,
@@ -216,10 +355,17 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         pass
 
     @staticmethod
-    def make_read(defined_type, type_str, var_name, vector_length, expr,
-                  index):
+    def make_read(defined_type,
+                  type_str,
+                  var_name,
+                  vector_length,
+                  expr,
+                  index,
+                  src_node_desc=None):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "read_channel_intel({})".format(expr)
+        elif defined_type == DefinedType.RemoteStream:
+            return "{}".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
             expr = expr.replace("[0]", "")
@@ -232,16 +378,29 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             "Unimplemented read type: {}".format(defined_type))
 
     @staticmethod
-    def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr):
+    def make_write(defined_type,
+                   type_str,
+                   var_name,
+                   vector_length,
+                   write_expr,
+                   index,
+                   read_expr,
+                   wcr,
+                   data_desc=None,
+                   src_node_desc=None):
         """
-        Creates write expression, taking into account wcr if present
+        Creates write expression, taking into account wcr if present.
+        Optional parameters are useful if remote streams are used:
+        :param data_desc: desc of target data
+        :param src_node_desc: desc of source node
         """
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             return "write_channel_intel({}, {});".format(write_expr, read_expr)
+        elif defined_type == DefinedType.RemoteStream:
+            return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
         elif defined_type == DefinedType.StreamArray:
             if index != "0":
                 return "write_channel_intel({}[{}], {});".format(
@@ -265,7 +424,18 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
-                return "{}[{}] = {};".format(write_expr, index, read_expr)
+                result = ""
+                if isinstance(
+                        src_node_desc, dace.data.Stream
+                ) is True and src_node_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
+                    # If the data to write comes from a remote stream, we have to do a Pop
+                    # A temporary variable is created to avoid problems with different address spaces (__global, ...)
+                    result += "{} __dace_smi_{};\nSMI_Pop(&{},(void *)&__dace_smi_{});\n".format(
+                        type_str, var_name, read_expr, var_name)
+                    read_expr = " __dace_smi_{}".format(var_name)
+                return result + "{}[{}] = {};".format(write_expr, index,
+                                                      read_expr)
+
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -280,7 +450,13 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
-                return "{} = {};".format(var_name, read_expr)
+                if isinstance(
+                        src_node_desc, dace.data.Stream
+                ) is False or src_node_desc.storage != dace.dtypes.StorageType.FPGA_Remote:
+                    return "{} = {};".format(var_name, read_expr)
+                else:
+                    return "SMI_Pop(&{},(void *)&{})".format(
+                        read_expr, var_name)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
 
@@ -364,10 +540,14 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                                  callsite_stream):
 
         state_id = sdfg.node_id(state)
+        kernel_stream_header = CodeIOStream()
+        kernel_stream_body = CodeIOStream()
 
-        kernel_stream.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
-        self.generate_constants(sdfg, kernel_stream)
-        kernel_stream.write("\n", sdfg)
+        kernel_stream_header.write("#include <dace/intel_fpga/device.h>\n\n",
+                                   sdfg)
+        self.generate_constants(sdfg, kernel_stream_header)
+
+        kernel_stream_header.write("\n", sdfg)
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
@@ -382,14 +562,25 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         host_code_body_stream = CodeIOStream()
 
         # Emit allocations of inter-kernel memories
+        # Remote stream are handled here
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream, kernel_stream)
+                                               callsite_stream,
+                                               kernel_stream_body)
             self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
                                                  callsite_stream,
-                                                 kernel_stream)
+                                                 kernel_stream_body)
 
-        kernel_stream.write("\n")
+        kernel_stream_body.write("\n")
+
+        # Check if we are going to use any remote stream. If yes, enable SMI
+        for node in state.data_nodes():
+            if node.desc(sdfg).storage == dace.dtypes.StorageType.FPGA_Remote:
+                self.enable_smi = True
+
+        # Scalar parameters are never output
+        sc_parameters = [(False, pname, param)
+                         for pname, param in scalar_parameters]
 
         # Generate host code
         self.generate_host_function_boilerplate(
@@ -397,15 +588,40 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             symbol_parameters, nested_global_transients, host_code_body_stream,
             function_stream, callsite_stream)
 
+        # Generate SMI init if needed
+        # TODO: fin a more stable solution for this. Currently it is an hack
+        # If SMI is used, for the sake of easy emulation we add two additional parameters for indicating
+        # the rank number that we want to execute and the total number of ranks. This will allow us to load
+        # the correct bitstream and routing tables
+        # We impose specialization where we define the two used variables smi_rank and smi_num_ranks
+        # TODO: we should synchronize across different programs in the case of separate SDFGs (needed if we have one
+        # program per SDFG)
+        if self.enable_smi:
+            host_code_body_stream.write(
+                "std::vector < hlslib::ocl::Buffer < char, hlslib::ocl::Access::read >> buffers;"
+            )
+            host_code_body_stream.write(
+                "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
+                "hlslib::ocl::GlobalContext(__dace_fpga_context), program, buffers);".format(
+                    kernel_name))
+            host_code_body_stream.write(
+                "MPI_Barrier(MPI_COMM_WORLD);")
+
+
         self.generate_host_function_prologue(sdfg, state,
                                              host_code_body_stream)
-
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
-                              symbol_parameters, kernel_stream,
+                              symbol_parameters, kernel_stream_body,
                               host_code_header_stream, host_code_body_stream)
 
-        kernel_stream.write("\n")
+        kernel_stream_body.write("\n")
+
+        if self.enable_smi:
+            kernel_stream_header.write("#include <smi.h>\n")
+
+        kernel_stream.write(kernel_stream_header.getvalue() +
+                            kernel_stream_body.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state,
                                              host_code_body_stream)
@@ -443,6 +659,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
+        smi_args = False  # True if smi_args (if needed) have been already added
 
         # Treat scalars and symbols the same, assuming there are no scalar
         # outputs
@@ -472,12 +689,21 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 kernel_args_host.append(p.signature(True, name=pname))
                 kernel_args_call.append(pname)
 
+        # If a remote stream is used, add the communicator
+        for node in state.data_nodes():
+            if node.desc(sdfg).storage == dace.dtypes.StorageType.FPGA_Remote:
+                smi_args = True
+                break
+        if smi_args:
+            kernel_args_opencl.append("const SMI_Comm smi_comm")
+            kernel_args_call.append("smi_comm")
+            kernel_args_host.append("smi_comm")
+
         kernel_args_opencl += symbol_sigs
         kernel_args_host += symbol_sigs
         kernel_args_call += symbol_names
 
         module_function_name = "module_" + name
-
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_dict = subgraph.scope_dict(node_to_children=True)
@@ -554,6 +780,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         data_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
+        # TODO: stream should be in both top level transient and parameters
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.graph.nodes.AccessNode):
@@ -825,7 +1052,7 @@ __kernel void \\
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     result += "{} {} = read_channel_intel({});".format(
-                        memlet_type, connector, data_name)
+                            memlet_type, connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Scalar)
             else:
@@ -834,6 +1061,20 @@ __kernel void \\
                     connector, data_name)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Stream)
+        elif def_type == DefinedType.RemoteStream:
+            if memlet.num_accesses == 1:
+                if is_output:
+                    result += "{} {};".format(memlet_type, connector)
+                else:
+                    result += "{} {};\n".format(memlet_type, connector)
+                    result += "SMI_Pop(&{}, &{});".format(data_name, connector)
+            else:
+                # Here we are referring to an already opened remote stream, we don't need to re-open it
+                # Desperate times call for desperate measures
+                result += "#define {} {} // God save us".format(
+                    connector, data_name)
+            self._dispatcher.defined_vars.add(connector,
+                                              DefinedType.RemoteStream)
         elif def_type == DefinedType.StreamArray:
             if memlet.num_accesses == 1:
                 if is_output:
@@ -890,12 +1131,12 @@ __kernel void \\
                                        self._memory_widths[data_name],
                                        connector, None)
 
+            # TODO: it could be a problem if this comes out from a map connected to a stream
             # create write expression
             write_expr = self.make_write(dst_def_type, memlet_type, data_name,
                                          self._memory_widths[data_name],
                                          data_name, offset, read_expr,
-                                         memlet.wcr)
-
+                                         memlet.wcr, data_desc)
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
                     # The value will be written during the tasklet, and will be
@@ -936,6 +1177,8 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
 
+            defined_type = self._dispatcher.defined_vars.get_if_defined(
+                memlet.data)
             if edge.src == node:
                 memlet_name = edge.src_conn
             elif edge.dst == node:
@@ -945,8 +1188,12 @@ __kernel void \\
                 data_desc = sdfg.arrays[data_name]
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.num_accesses != 1):
-                    callsite_stream.write("#undef {}".format(memlet_name),
-                                          sdfg, sdfg.node_id(dfg), node)
+                    if not data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
+                        callsite_stream.write("#undef {}".format(memlet_name),
+                                              sdfg, sdfg.node_id(dfg), node)
+                    elif defined_type == DefinedType.RemoteStream:
+                        callsite_stream.write("#undef {}".format(memlet_name),
+                                              sdfg, sdfg.node_id(dfg), node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):
@@ -1129,8 +1376,16 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                     code_str = "{} = {}; ".format(target_str, unparse(value))
                 updated = ast.Name(id=code_str)
             else:  # target has no subscript
-                updated = ast.Name(
-                    id="{} = {};".format(target, unparse(value)))
+                # If the value is a Name, we should check whether it is a remote stream and the number of accesses
+                if isinstance(node.value,
+                              ast.Name) and self.defined_vars.get_if_defined(
+                                  node.value.id) == DefinedType.RemoteStream and self.memlets[node.value.id][0].num_accesses != 1:
+                    # read from a remote stream in the right part of the assignment
+                    updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(
+                         unparse(value), target))
+                else:
+                    updated = ast.Name(
+                        id="{} = {};".format(target, unparse(value)))
 
         elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
             if memlet.num_accesses != 1:
@@ -1145,8 +1400,15 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                     target, cppunparse.cppunparse(value,
                                                   expr_semicolon=False)))
         elif memlet is not None and memlet.num_accesses != 1:
-            newnode = ast.Name(id="*{} = {}; ".format(
-                target, cppunparse.cppunparse(value, expr_semicolon=False)))
+            # if the target is a Remote Stream, perform a push
+            if self.defined_vars.get(target) == DefinedType.RemoteStream:
+                newnode = ast.Name(id="SMI_Push(&{}, &{}); ".format(
+                    target, cppunparse.cppunparse(value,
+                                                  expr_semicolon=False)))
+            else:
+                newnode = ast.Name(id="*{} = {}; ".format(
+                    target, cppunparse.cppunparse(value,
+                                                  expr_semicolon=False)))
             return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)

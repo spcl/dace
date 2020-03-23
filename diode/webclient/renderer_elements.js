@@ -252,7 +252,11 @@ class Edge extends SDFGElement {
             if (attr.wcr)
                 contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr) +'</b>';
 
-            contents += '<br />Volume: ' + sdfg_property_to_string(attr.num_accesses);
+            let num_accesses = sdfg_property_to_string(attr.num_accesses);
+            if (num_accesses == -1)
+                num_accesses = "<b>Dynamic</b>";
+
+            contents += '<br /><font style="font-size: 14px">Volume: ' + num_accesses + '</font>';
             container.innerHTML = contents;
         } else {  // Interstate edge
             container.style.background = '#0000aabb';

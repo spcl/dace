@@ -53,10 +53,23 @@ tests/xilinx_test.sh 0
             export COVERAGE_RCFILE=`pwd`/.coveragerc
             source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
 export DACE_debugprint=1
-tests/intel_fpga_test.sh 
+tests/intel_fpga_test.sh
 '''
           }
         }
+
+//         stage('Test Intel FPGA SMI') {
+//           steps {
+//             sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
+//             export COVERAGE_RCFILE=`pwd`/.coveragerc
+//             export PATH=/opt/mpich3.2.11/bin:$PATH
+//             source /opt/rh/llvm-toolset-7.0/enable
+//             source /opt/intelFPGA_pro/19.1/hld/init_stratix.sh
+// export DACE_debugprint=1
+// tests/intel_fpga_smi_test.sh
+// '''
+//           }
+//         }
 
         stage('Test MPI') {
           steps {
@@ -67,7 +80,6 @@ export DACE_debugprint=1
 tests/mpi_test.sh'''
           }
         }
-
       }
     }
     stage('Report') {

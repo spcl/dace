@@ -59,7 +59,7 @@ void __dace_exit_mpi({params}) {{
            __dace_comm_size);
 }}
 """.format(params=sdfg.signature(), file_header=fileheader.getvalue()), 'cpp',
-            MPICodeGen, 'MPI')
+            MPICodeGen, 'MPI', target_name=self.target_name)
 
         # Register dispatchers
         dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)

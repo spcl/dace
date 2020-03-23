@@ -26,6 +26,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Global = ()  # Off-chip global memory (DRAM)
     FPGA_Local = ()  # On-chip memory (bulk storage)
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
+    FPGA_Remote = ()    # Remote object (remote stream)
 
 
 @extensible_enum

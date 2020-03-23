@@ -64,7 +64,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 n.desc(sdfg).storage in [
                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
                     StorageType.FPGA_Local, dace.dtypes.StorageType.
-                    FPGA_Registers
+                    FPGA_Registers, dace.dtypes.StorageType.FPGA_Remote
                 ] for n in state.data_nodes()
             ]))
 
@@ -75,6 +75,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
             dace.dtypes.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.FPGA_Remote,
         ]
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
@@ -272,6 +273,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             # Resolve the data to some corresponding node to be
                             # passed to the allocator
                             top_level_local_data.append(dataname)
+                    elif data.storage == dace.dtypes.StorageType.FPGA_Remote:
+                        continue
                     else:
                         raise ValueError("Unsupported storage type: {}".format(
                             data.storage))
@@ -404,13 +407,16 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.defined_vars.add(dataname,
                                                   DefinedType.StreamArray)
             else:
-                # Single stream
-                self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
+                # Single stream: add to defined vars if not remote
+                if nodedesc.storage is not dace.dtypes.StorageType.FPGA_Remote:
+                    self._dispatcher.defined_vars.add(dataname,
+                                                      DefinedType.Stream)
 
             # Language-specific implementation
             self.define_stream(nodedesc.dtype, nodedesc.veclen,
                                nodedesc.buffer_size, dataname, arrsize,
-                               function_stream, result)
+                               function_stream, result, nodedesc.storage, sdfg,
+                               dfg, node)
 
         elif isinstance(nodedesc, dace.data.Array):
 
@@ -516,6 +522,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
             dace.dtypes.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.FPGA_Remote,
         ]
 
         # Determine directionality
@@ -709,14 +716,23 @@ class FPGACodeGen(TargetCodeGenerator):
             dst_expr, dst_index = sanitize_index(dst_expr, dst_index)
 
             # Language specific
-            read_expr = self.make_read(src_def_type, ctype, src_node.label,
-                                       memlet.veclen, src_expr, src_index)
-
+            read_expr = self.make_read(src_def_type,
+                                       ctype,
+                                       src_node.label,
+                                       memlet.veclen,
+                                       src_expr,
+                                       src_index,
+                                       src_node_desc=src_node.desc(sdfg))
             # Language specific
-            write_expr = self.make_write(dst_def_type, ctype, dst_node.label,
-                                         memlet.veclen, dst_expr, dst_index,
-                                         read_expr, memlet.wcr)
-
+            write_expr = self.make_write(dst_def_type,
+                                         ctype,
+                                         dst_node.label,
+                                         memlet.veclen,
+                                         dst_expr,
+                                         dst_index,
+                                         read_expr,
+                                         memlet.wcr,
+                                         src_node_desc=src_node.desc(sdfg))
             callsite_stream.write(write_expr)
 
             # Inject dependence pragmas (DACE semantics implies no conflict)
@@ -1252,6 +1268,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         seen = set(nested_transient_set)
         kernel_args_call_host = []
+
         for is_output, argname, arg in parameters:
             # Only pass each array once from the host code
             if arg in seen:
@@ -1282,13 +1299,14 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = hlslib::ocl::GlobalContext().CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = hlslib::ocl::GlobalContext(__dace_fpga_context).CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 
         header_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
             host_function_name, ", ".join(kernel_args_opencl)))
 
+        # callsite represents the main CPU program for Intel FPGA
         callsite_stream.write("{}({});".format(
             host_function_name, ", ".join(kernel_args_call_host)))
 

@@ -644,3 +644,15 @@ table.diode_property_table tr:nth-child(even) {
 .gmat-playlist_play::after {
     content: "playlist_play"
 }
+
+.tooltip {
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    font-size: 16px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    padding: 2px 5px 2px 5px;
+    border-radius: 4px;
+    user-select: none;
+    position: absolute;
+    display: none;
+}
