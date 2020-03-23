@@ -10,7 +10,6 @@ from dace.graph.edges import InterstateEdge
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
 
 
 def _is_sequential(index_list):

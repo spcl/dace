@@ -682,7 +682,8 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     from dace.libraries.blas.nodes.matmul import get_batchmm_opts
 
     # Determine batched multiplication
-    bopt = get_batchmm_opts(arr1, arr2, None)
+    bopt = get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides,
+                            None, None)
     if bopt:
         output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
     else:

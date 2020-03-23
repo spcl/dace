@@ -22,7 +22,7 @@ def to_blastype(dtype):
                         dtype.__name__)
 
 
-def get_gemm_opts(a: Array, b: Array, c: Array) -> Dict[str, Any]:
+def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     """ 
     Returns GEMM argument order, transposition, and leading dimensions
     based on column-major storage from dace arrays. 
@@ -48,9 +48,9 @@ def get_gemm_opts(a: Array, b: Array, c: Array) -> Dict[str, Any]:
     #       |    |      |
     #     use these 3 to detect correct option
 
-    sAM, sAK = a.strides[-2:]
-    sBK, sBN = b.strides[-2:]
-    sCM, sCN = c.strides[-2:]
+    sAM, sAK = a_strides[-2:]
+    sBK, sBN = b_strides[-2:]
+    sCM, sCN = c_strides[-2:]
 
     opts = {
         'mkm': {
