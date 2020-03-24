@@ -72,9 +72,14 @@ function sdfg_range_elem_to_string(range, settings=null) {
         } else {
             let endp1 = sdfg_property_to_string(range.end, settings) + ' + 1';
             // Try to simplify using math.js
+            var mathjs = null;
             try {
-                endp1 = math.simplify(endp1).toString();
-            } catch(e) {}
+                mathjs = window.math;
+            } catch(e) {
+                try { mathjs = math; } catch(e) {}
+            }
+            if (mathjs !== null)
+                endp1 = mathjs.simplify(endp1).toString();
 
             preview += sdfg_property_to_string(range.start, settings) + ':' +
                 endp1;
