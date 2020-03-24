@@ -342,7 +342,7 @@ required:
                         type: str
                         title: Kernel flags 
                         description: High-level synthesis C++ flags 
-                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -fno-burst-interleaving=default"
+                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
 
                     launch_async:
                         type: bool
