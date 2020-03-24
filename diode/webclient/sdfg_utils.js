@@ -78,9 +78,9 @@ function sdfg_range_elem_to_string(range, settings=null) {
             } catch(e) {
                 try { mathjs = math; } catch(e) {}
             }
-            if (mathjs !== undefined)
+            try {
                 endp1 = mathjs.simplify(endp1).toString();
-
+            } catch(e) {}
             preview += sdfg_property_to_string(range.start, settings) + ':' +
                 endp1;
         }
