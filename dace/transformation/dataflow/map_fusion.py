@@ -17,7 +17,7 @@ class MapFusion(pattern_matching.Transformation):
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
         based on the following rules, fuse them and remove the transient in
         between. There are several possibilities of what it does to this
-        transient in between. 
+        transient in between.
 
         Essentially, if there is some other place in the
         sdfg where it is required, or if it is not a transient, then it will
@@ -192,12 +192,12 @@ class MapFusion(pattern_matching.Transformation):
 
     def apply(self, sdfg):
         """
-            This method applies the mapfusion transformation. 
+            This method applies the mapfusion transformation.
             Other than the removal of the second map entry node (SME), and the first
             map exit (FME) node, it has the following side effects:
 
-            1.  Any transient adjacent to both FME and SME with degree = 2 will be removed. 
-                The tasklets that use/produce it shall be connected directly with a 
+            1.  Any transient adjacent to both FME and SME with degree = 2 will be removed.
+                The tasklets that use/produce it shall be connected directly with a
                 scalar/new transient (if the dataflow is more than a single scalar)
 
             2.  If this transient is adjacent to FME and SME and has other

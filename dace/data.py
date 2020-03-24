@@ -57,9 +57,9 @@ class Data(object):
                        default=dace.dtypes.StorageType.Default,
                        from_string=lambda x: dtypes.StorageType[x])
     location = Property(
-        dtype=str,  # Dict[str, symbolic]
+        dtype=dict,
         desc='Full storage location identifier (e.g., rank, GPU ID)',
-        default='')
+        default={})
     toplevel = Property(dtype=bool,
                         desc="Allocate array outside of state",
                         default=False)
@@ -133,7 +133,7 @@ class Scalar(Data):
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
-                 location='',
+                 location={},
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
@@ -268,7 +268,7 @@ class Array(Data):
                  transient=False,
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location={},
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -461,7 +461,7 @@ class Stream(Data):
                  shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location={},
                  offset=None,
                  toplevel=False,
                  debuginfo=None):
