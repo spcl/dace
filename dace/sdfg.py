@@ -2475,7 +2475,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         desc='Full storage location identifier (e.g., rank, GPU ID)',
         default={})
 
-    def __init__(self, label=None, sdfg=None, debuginfo=None):
+    def __init__(self, label=None, sdfg=None, debuginfo=None, location={}):
         """ Constructs an SDFG state.
             :param label: Name for the state (optional).
             :param sdfg: A reference to the parent SDFG.
@@ -2489,6 +2489,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self._debuginfo = debuginfo
         self.is_collapsed = False
         self.nosync = False
+        self.location = location
 
     @property
     def parent(self):
