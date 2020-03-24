@@ -101,6 +101,8 @@ class MapTiling(pattern_matching.Transformation):
                 stripmine.divides_evenly = self.divides_evenly
                 stripmine.apply(sdfg)
 
+            map_entry.schedule = original_schedule
+
             if last_map_entry:
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
