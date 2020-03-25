@@ -26,3 +26,4 @@ if __name__ == "__main__":
         sdfg.specialize({"P": P.get(), "N": N.get()})
         # We don't care about the result, as long as it compiles and runs
         sdfg(A=A)
+
