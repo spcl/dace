@@ -766,7 +766,7 @@ class SDFGRenderer {
         // Tooltip HTML container
         this.tooltip_container = document.createElement('div');
         this.tooltip_container.innerHTML = '';
-        this.tooltip_container.className = 'tooltip';
+        this.tooltip_container.className = 'sdfvtooltip';
         this.tooltip_container.onmouseover = () => this.tooltip_container.style.display = "none";
         this.container.appendChild(this.tooltip_container);
 
