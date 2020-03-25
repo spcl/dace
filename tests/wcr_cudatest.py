@@ -19,7 +19,7 @@ def my_add_mapped_tasklet(
         code_global="",
         code_init="",
         code_exit="",
-        location={},
+        location=None,
         language=dace.dtypes.Language.Python,
         debuginfo=None,
         external_edges=True,
