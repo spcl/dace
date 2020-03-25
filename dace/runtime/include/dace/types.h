@@ -46,6 +46,13 @@
 #endif
 
 
+// Workaround so that half is defined as a scalar (for reductions)
+#ifdef __CUDACC__
+namespace std {
+     template<> struct is_scalar<half> : std::integral_constant<bool, true> {};
+}
+#endif
+
 
 namespace dace
 {
