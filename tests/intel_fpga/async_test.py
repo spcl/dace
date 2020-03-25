@@ -24,13 +24,5 @@ if __name__ == "__main__":
         name = "async_test_{}".format(v)
         sdfg = make_sdfg(name)
         sdfg.specialize({"P": P.get(), "N": N.get()})
-        sdfg.compile()
-
-        # Compile the emulation kernel
-        build_folder = os.path.join(".dacecache", name, "build")
-        sp.run(["make", "intelfpga_compile_" + name + "_emulator"],
-               cwd=build_folder,
-               check=True)
-
         # We don't care about the result, as long as it compiles and runs
         sdfg(A=A)
