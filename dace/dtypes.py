@@ -759,6 +759,7 @@ TYPECLASS_STRINGS = [
 _CONSTANT_TYPES = [
     int,
     float,
+    complex,
     str,
     numpy.intc,
     numpy.intp,

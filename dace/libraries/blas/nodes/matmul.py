@@ -257,8 +257,8 @@ class ExpandMatMulMKL(ExpandTransformation):
             code = '''
             for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
                 cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
-                             (({dtype}*){x}) + __ib*{stride_a}, {lda}, 
-                             (({dtype}*){y}) + __ib*{stride_b}, {ldb}, 
+                             (({dtype}*){x}) + __ib*{stride_a}, {lda},
+                             (({dtype}*){y}) + __ib*{stride_b}, {ldb},
                              {beta},
                              (({dtype}*)_c) + __ib*{stride_c}, {ldc});
             }}'''.format_map(opt)
@@ -327,7 +327,7 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
 
         # Matrix multiplication
         if not opt['BATCH']:
-            call = '''cublas{func}(__dace_cublas_handle, 
+            call = '''cublas{func}(__dace_cublas_handle,
                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                 {M}, {N}, {K},
                 {alpha},
@@ -336,7 +336,7 @@ class ExpandMatMulCuBLAS(ExpandTransformation):
                 {beta},
                 ({dtype}*)_c, {ldc});'''
         else:  # Batched matrix multiplication
-            call = '''cublas{func}StridedBatched(__dace_cublas_handle, 
+            call = '''cublas{func}StridedBatched(__dace_cublas_handle,
                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                 {M}, {N}, {K},
                 {alpha},
