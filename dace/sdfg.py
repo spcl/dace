@@ -30,7 +30,7 @@ from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
-                             OrderedDictProperty)
+                             DictProperty, OrderedDictProperty)
 
 
 def getcaller() -> Tuple[str, int]:
@@ -186,7 +186,6 @@ class SDFG(OrderedDiGraph):
         the `Memlet` class documentation.
     """
 
-    #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(dtype=dict,
                               default={},
@@ -2470,12 +2469,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
-    location = Property(
-        dtype=dict,
-        desc='Full storage location identifier (e.g., rank, GPU ID)',
-        default={})
+    location = DictProperty(
+        key_type=str,
+        value_type=None,
+        desc='Full storage location identifier (e.g., rank, GPU ID)')
 
-    def __init__(self, label=None, sdfg=None, debuginfo=None, location={}):
+    def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
             :param label: Name for the state (optional).
             :param sdfg: A reference to the parent SDFG.
@@ -2489,7 +2488,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self._debuginfo = debuginfo
         self.is_collapsed = False
         self.nosync = False
-        self.location = location
+        self.location = location if location is not None else {}
 
     @property
     def parent(self):
@@ -2887,7 +2886,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         code_global: str = "",
         code_init: str = "",
         code_exit: str = "",
-        location: dict = {},
+        location: dict = None,
         debuginfo=None,
     ):
         """ Adds a tasklet to the SDFG state. """
@@ -2916,7 +2915,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         symbol_mapping: Dict[str, Any] = None,
         name=None,
         schedule=dtypes.ScheduleType.Default,
-        location={},
+        location=None,
         debuginfo=None,
     ):
         """ Adds a nested SDFG to the SDFG state. """
@@ -3061,7 +3060,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             code_global="",
             code_init="",
             code_exit="",
-            location={},
+            location=None,
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,

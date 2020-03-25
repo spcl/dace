@@ -257,20 +257,20 @@ class CodeNode(Node):
         denoted by an octagonal shape. """
 
     label = Property(dtype=str, desc="Name of the CodeNode")
-    location = Property(
-        dtype=dict,
-        desc='Full storage location identifier (e.g., rank, GPU ID)',
-        default={})
+    location = DictProperty(
+        key_type=str,
+        value_type=None,
+        desc='Full storage location identifier (e.g., rank, GPU ID)')
     environments = SetProperty(
         str,
         desc="Environments required by CMake to build and run this code node.",
         default=set())
 
-    def __init__(self, label="", location={}, inputs=None, outputs=None):
+    def __init__(self, label="", location=None, inputs=None, outputs=None):
         super(CodeNode, self).__init__(inputs or set(), outputs or set())
         # Properties
         self.label = label
-        self.location = location
+        self.location = location if location is not None else {}
 
 
 @make_properties
@@ -306,7 +306,7 @@ class Tasklet(CodeNode):
                  code_global="",
                  code_init="",
                  code_exit="",
-                 location={},
+                 location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -418,7 +418,7 @@ class NestedSDFG(CodeNode):
                  outputs: Set[str],
                  symbol_mapping: Dict[str, Any] = None,
                  schedule=dtypes.ScheduleType.Default,
-                 location={},
+                 location=None,
                  debuginfo=None):
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 

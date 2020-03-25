@@ -1,4 +1,5 @@
-from dace.properties import Property, SetProperty, make_properties
+from dace.properties import (Property, DictProperty, SetProperty,
+                             make_properties)
 
 
 @make_properties
@@ -16,9 +17,10 @@ class CodeObject(object):
         desc="Sub-target within target (e.g., host or device code)",
         default="")
     title = Property(dtype=str, desc="Title of code for GUI")
-    extra_compiler_kwargs = Property(dtype=dict,
-                                     desc="Additional compiler argument "
-                                     "variables to add to template")
+    extra_compiler_kwargs = DictProperty(key_type=str,
+                                         value_type=str,
+                                         desc="Additional compiler argument "
+                                         "variables to add to template")
     linkable = Property(dtype=bool,
                         desc='Should this file participate in '
                         'overall linkage?')
