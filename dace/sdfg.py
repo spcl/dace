@@ -30,7 +30,7 @@ from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
-                             OrderedDictProperty)
+                             DictProperty, OrderedDictProperty)
 
 
 def getcaller() -> Tuple[str, int]:
@@ -186,7 +186,6 @@ class SDFG(OrderedDiGraph):
         the `Memlet` class documentation.
     """
 
-    #arg_types = Property(dtype=dict, default={}, desc="Formal parameter list")
     arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
     constants_prop = Property(dtype=dict,
                               default={},
@@ -1284,6 +1283,48 @@ subgraph cluster_state_{state} {{
         self.add_node(state, is_start_state=is_start_state)
         return state
 
+    def add_state_before(self,
+                         state: 'SDFGState',
+                         label=None,
+                         is_start_state=False) -> 'SDFGState':
+        """ Adds a new SDFG state before an existing state, reconnecting
+            predecessors to it instead.
+            :param state: The state to prepend the new state before.
+            :param label: State label.
+            :param is_start_state: If True, resets SDFG starting state to this
+                                   state.
+            :return: A new SDFGState object.
+        """
+        new_state = self.add_state(label, is_start_state)
+        # Reconnect
+        for e in self.in_edges(state):
+            self.remove_edge(e)
+            self.add_edge(e.src, new_state, e.data)
+        # Add unconditional connection between the new state and the current
+        self.add_edge(new_state, state, ed.InterstateEdge())
+        return new_state
+
+    def add_state_after(self,
+                        state: 'SDFGState',
+                        label=None,
+                        is_start_state=False) -> 'SDFGState':
+        """ Adds a new SDFG state after an existing state, reconnecting
+            it to the successors instead.
+            :param state: The state to append the new state after.
+            :param label: State label.
+            :param is_start_state: If True, resets SDFG starting state to this
+                                   state.
+            :return: A new SDFGState object.
+        """
+        new_state = self.add_state(label, is_start_state)
+        # Reconnect
+        for e in self.out_edges(state):
+            self.remove_edge(e)
+            self.add_edge(new_state, e.dst, e.data)
+        # Add unconditional connection between the current and the new state
+        self.add_edge(state, new_state, ed.InterstateEdge())
+        return new_state
+
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
@@ -1518,15 +1559,15 @@ subgraph cluster_state_{state} {{
         return name
 
     def add_loop(
-            self,
-            before_state,
-            loop_state,
-            after_state,
-            loop_var: str,
-            initialize_expr: str,
-            condition_expr: str,
-            increment_expr: str,
-            loop_end_state=None,
+        self,
+        before_state,
+        loop_state,
+        after_state,
+        loop_var: str,
+        initialize_expr: str,
+        condition_expr: str,
+        increment_expr: str,
+        loop_end_state=None,
     ):
         """ Helper function that adds a looping state machine around a
             given state (or sequence of states).
@@ -1906,15 +1947,15 @@ subgraph cluster_state_{state} {{
                                             strict=True,
                                             validate_all=validate_all)
 
-    def apply_transformations(
-            self,
-            xforms: Union[Type, List[Type]],
-            options: Optional[
-                Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            validate: bool = True,
-            validate_all: bool = False,
-            strict: bool = False,
-            states: Optional[List[Any]] = None) -> int:
+    def apply_transformations(self,
+                              xforms: Union[Type, List[Type]],
+                              options: Optional[Union[Dict[str, Any],
+                                                      List[Dict[str,
+                                                                Any]]]] = None,
+                              validate: bool = True,
+                              validate_all: bool = False,
+                              strict: bool = False,
+                              states: Optional[List[Any]] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
             :param xforms: A Transformation class or a sequence.
@@ -1983,8 +2024,8 @@ subgraph cluster_state_{state} {{
     def apply_transformations_repeated(
             self,
             xforms: Union[Type, List[Type]],
-            options: Optional[
-                Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            options: Optional[Union[Dict[str, Any], List[Dict[str,
+                                                              Any]]]] = None,
             validate: bool = True,
             validate_all: bool = False,
             strict: bool = False,
@@ -2347,7 +2388,9 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
             return _scope_dict_to_ids(self, result)
         return result
 
-    def scope_subgraph(self, entry_node, include_entry=True,
+    def scope_subgraph(self,
+                       entry_node,
+                       include_entry=True,
                        include_exit=True):
         """ Returns a subgraph that only contains the scope, defined by the
             given entry node.
@@ -2428,7 +2471,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
-    def __init__(self, label=None, sdfg=None, debuginfo=None):
+    location = DictProperty(
+        key_type=str,
+        value_type=None,
+        desc='Full storage location identifier (e.g., rank, GPU ID)')
+
+    def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
             :param label: Name for the state (optional).
             :param sdfg: A reference to the parent SDFG.
@@ -2442,6 +2490,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self._debuginfo = debuginfo
         self.is_collapsed = False
         self.nosync = False
+        self.location = location if location is not None else {}
 
     @property
     def parent(self):
@@ -2751,7 +2800,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             return _scope_dict_to_ids(self, result)
         return result
 
-    def scope_subgraph(self, entry_node, include_entry=True,
+    def scope_subgraph(self,
+                       entry_node,
+                       include_entry=True,
                        include_exit=True):
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
@@ -2785,7 +2836,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     # Dynamic SDFG creation API
     ##############################
-    def add_read(self, array_or_stream_name: str,
+    def add_read(self,
+                 array_or_stream_name: str,
                  debuginfo=None) -> nd.AccessNode:
         """ Adds a read-only access node to this SDFG state.
             :param array_or_stream_name: The name of the array/stream.
@@ -2798,7 +2850,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self.add_node(node)
         return node
 
-    def add_write(self, array_or_stream_name: str,
+    def add_write(self,
+                  array_or_stream_name: str,
                   debuginfo=None) -> nd.AccessNode:
         """ Adds a write-only access node to this SDFG state.
             :param array_or_stream_name: The name of the array/stream.
@@ -2811,7 +2864,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self.add_node(node)
         return node
 
-    def add_access(self, array_or_stream_name: str,
+    def add_access(self,
+                   array_or_stream_name: str,
                    debuginfo=None) -> nd.AccessNode:
         """ Adds a general (read/write) access node to this SDFG state.
             :param array_or_stream_name: The name of the array/stream.
@@ -2825,17 +2879,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return node
 
     def add_tasklet(
-            self,
-            name: str,
-            inputs: Set[str],
-            outputs: Set[str],
-            code: str,
-            language: dtypes.Language = dtypes.Language.Python,
-            code_global: str = "",
-            code_init: str = "",
-            code_exit: str = "",
-            location: str = "-1",
-            debuginfo=None,
+        self,
+        name: str,
+        inputs: Set[str],
+        outputs: Set[str],
+        code: str,
+        language: dtypes.Language = dtypes.Language.Python,
+        code_global: str = "",
+        code_init: str = "",
+        code_exit: str = "",
+        location: dict = None,
+        debuginfo=None,
     ):
         """ Adds a tasklet to the SDFG state. """
         debuginfo = getdebuginfo(debuginfo)
@@ -2855,16 +2909,16 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return tasklet
 
     def add_nested_sdfg(
-            self,
-            sdfg: SDFG,
-            parent,
-            inputs: Set[str],
-            outputs: Set[str],
-            symbol_mapping: Dict[str, Any] = None,
-            name=None,
-            schedule=dtypes.ScheduleType.Default,
-            location="-1",
-            debuginfo=None,
+        self,
+        sdfg: SDFG,
+        parent,
+        inputs: Set[str],
+        outputs: Set[str],
+        symbol_mapping: Dict[str, Any] = None,
+        name=None,
+        schedule=dtypes.ScheduleType.Default,
+        location=None,
+        debuginfo=None,
     ):
         """ Adds a nested SDFG to the SDFG state. """
         if name is None:
@@ -3008,7 +3062,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             code_global="",
             code_init="",
             code_exit="",
-            location="-1",
+            location=None,
             language=dtypes.Language.Python,
             debuginfo=None,
             external_edges=False,
@@ -3072,16 +3126,22 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self.add_nodes_from([map_entry, tasklet, map_exit])
 
         # Create access nodes
+        inpdict = {}
+        outdict = {}
         if external_edges:
+            input_nodes = input_nodes or {}
+            output_nodes = output_nodes or {}
             input_data = set(memlet.data for memlet in inputs.values())
             output_data = set(memlet.data for memlet in outputs.values())
-            inpdict = input_nodes or {}
-            outdict = output_nodes or {}
-            if not input_nodes:
-                for inp in input_data:
+            for inp in input_data:
+                if inp in input_nodes:
+                    inpdict[inp] = input_nodes[inp]
+                else:
                     inpdict[inp] = self.add_read(inp)
-            if not output_nodes:
-                for out in output_data:
+            for out in output_data:
+                if out in output_nodes:
+                    outdict[out] = output_nodes[out]
+                else:
                     outdict[out] = self.add_write(out)
 
         # Connect inputs from map to tasklet
@@ -3153,12 +3213,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-            self,
-            wcr,
-            axes,
-            wcr_identity=None,
-            schedule=dtypes.ScheduleType.Default,
-            debuginfo=None,
+        self,
+        wcr,
+        axes,
+        wcr_identity=None,
+        schedule=dtypes.ScheduleType.Default,
+        debuginfo=None,
     ):
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
@@ -3180,15 +3240,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return result
 
     def add_edge_pair(
-            self,
-            scope_node,
-            internal_node,
-            external_node,
-            internal_memlet,
-            external_memlet=None,
-            scope_connector=None,
-            internal_connector=None,
-            external_connector=None,
+        self,
+        scope_node,
+        internal_node,
+        external_node,
+        internal_memlet,
+        external_memlet=None,
+        scope_connector=None,
+        internal_connector=None,
+        external_connector=None,
     ):
         """ Adds two edges around a scope node (e.g., map entry, consume
             exit).
@@ -3429,17 +3489,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return self.add_access(name, debuginfo)
 
     def add_stream(
-            self,
-            name,
-            dtype,
-            veclen=1,
-            buffer_size=1,
-            shape=(1, ),
-            storage=dtypes.StorageType.Default,
-            transient=False,
-            offset=None,
-            toplevel=False,
-            debuginfo=None,
+        self,
+        name,
+        dtype,
+        veclen=1,
+        buffer_size=1,
+        shape=(1, ),
+        storage=dtypes.StorageType.Default,
+        transient=False,
+        offset=None,
+        toplevel=False,
+        debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
         warnings.warn(
@@ -3464,13 +3524,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return self.add_access(name, debuginfo)
 
     def add_scalar(
-            self,
-            name,
-            dtype,
-            storage=dtypes.StorageType.Default,
-            transient=False,
-            toplevel=False,
-            debuginfo=None,
+        self,
+        name,
+        dtype,
+        storage=dtypes.StorageType.Default,
+        transient=False,
+        toplevel=False,
+        debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
         warnings.warn(
@@ -4595,9 +4655,8 @@ def _get_optimizer_class(class_override):
     return result
 
 
-def consolidate_edges_scope(state: SDFGState,
-                            scope_node: Union[nd.EntryNode, nd.ExitNode]
-                            ) -> int:
+def consolidate_edges_scope(
+        state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """
         Union scope-entering memlets relating to the same data node in a scope.
         This effectively reduces the number of connectors and allows more

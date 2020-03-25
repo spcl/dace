@@ -7,10 +7,10 @@ import numpy
 import dace, dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic
-from dace.properties import (Property, make_properties, ReferenceProperty,
-                             ShapeProperty, SubsetProperty, SymbolicProperty,
-                             TypeClassProperty, DebugInfoProperty,
-                             CodeProperty, ListProperty)
+from dace.properties import (Property, make_properties, DictProperty,
+                             ReferenceProperty, ShapeProperty, SubsetProperty,
+                             SymbolicProperty, TypeClassProperty,
+                             DebugInfoProperty, CodeProperty, ListProperty)
 
 
 def validate_name(name):

@@ -293,7 +293,7 @@ class CompiledSDFG(object):
                 self._return_arrays.append(
                     np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
                                arr.dtype.type,
-                               buffer=np.ndarray(
+                               buffer=np.zeros(
                                    [symbolic.evaluate(arr.total_size, syms)],
                                    arr.dtype.type),
                                strides=[
