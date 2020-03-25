@@ -908,7 +908,7 @@ class Reduce(Node):
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty(default='lambda a,b: a')
-    identity = Property(dtype=object, allow_none=True)
+    identity = Property(allow_none=True)
     schedule = Property(dtype=dtypes.ScheduleType,
                         desc="Reduction execution policy",
                         choices=dtypes.ScheduleType,

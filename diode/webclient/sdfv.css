@@ -41,6 +41,7 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
     -moz-user-select: none;
     -ms-user-select: none;
     user-select: none;
+    z-index: 999;
 }
 
 .context_menu_option {
@@ -62,7 +63,7 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
   width: 0;
 }
 
-.tooltip {
+.sdfvtooltip {
     background: rgba(0, 0, 0, 0.8);
     color: white;
     font-size: 16px;

@@ -72,10 +72,15 @@ function sdfg_range_elem_to_string(range, settings=null) {
         } else {
             let endp1 = sdfg_property_to_string(range.end, settings) + ' + 1';
             // Try to simplify using math.js
+            var mathjs = undefined;
             try {
-                endp1 = math.simplify(endp1).toString();
+                mathjs = window.math;
+            } catch(e) {
+                try { mathjs = math; } catch(e) {}
+            }
+            try {
+                endp1 = mathjs.simplify(endp1).toString();
             } catch(e) {}
-
             preview += sdfg_property_to_string(range.start, settings) + ':' +
                 endp1;
         }
