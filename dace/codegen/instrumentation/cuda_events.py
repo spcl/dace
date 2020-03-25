@@ -59,8 +59,9 @@ dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
         state_id = sdfg.node_id(state)
         # Create CUDA events for each instrumented scope in the state
         for node in state.nodes():
-            if isinstance(node, nodes.EntryNode):
-                s = self._get_sobj(node)
+            if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
+                s = (self._get_sobj(node) 
+                     if isinstance(node, nodes.EntryNode) else node)
                 if s.instrument == dtypes.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(self._create_event('b' + idstr), sdfg,
@@ -93,8 +94,9 @@ dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
 
         # Destroy CUDA events for scopes in the state
         for node in state.nodes():
-            if isinstance(node, nodes.EntryNode):
-                s = self._get_sobj(node)
+            if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
+                s = (self._get_sobj(node) 
+                     if isinstance(node, nodes.EntryNode) else node)
                 if s.instrument == dtypes.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(self._destroy_event('b' + idstr), sdfg,
@@ -127,3 +129,27 @@ dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
             outer_stream.write(
                 self._report('%s %s' % (type(s).__name__, s.label), sdfg,
                              state, entry_node), sdfg, state_id, node)
+
+    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
+                      global_stream):
+        if not isinstance(node, nodes.Tasklet) or node.language != dtypes.Language.CPP:
+            return
+        if node.instrument == dtypes.InstrumentationType.CUDA_Events:
+            state_id = sdfg.node_id(state)
+            idstr = 'b' + self._idstr(sdfg, state, node)
+            outer_stream.write(self._record_event(idstr, node._cuda_stream),
+                               sdfg, state_id, node)
+
+    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
+                    global_stream):
+        if not isinstance(node, nodes.Tasklet) or node.language != dtypes.Language.CPP:
+            return
+        if node.instrument == dtypes.InstrumentationType.CUDA_Events:
+            state_id = sdfg.node_id(state)
+            idstr = 'e' + self._idstr(sdfg, state, node)
+            outer_stream.write(self._record_event(idstr, node._cuda_stream),
+                               sdfg, state_id, node)
+            outer_stream.write(
+                self._report('%s %s' % (type(node).__name__, node.label), sdfg,
+                             state, node), sdfg, state_id, node)
+
