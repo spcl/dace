@@ -138,7 +138,7 @@ class Transpose(dace.graph.nodes.LibraryNode):
 
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
-    def __init__(self, name, dtype=None, location={}):
+    def __init__(self, name, dtype=None, location=None):
         super().__init__(name,
                          location=location,
                          inputs={'_inp'},
