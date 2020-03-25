@@ -249,6 +249,20 @@ if(DACE_ENABLE_XILINX)
 
   set(DACE_XILINX_SYNTHESIS_FLAGS "${DACE_XILINX_SYNTHESIS_FLAGS} -DDACE_SYNTHESIS -DDACE_XILINX -DDACE_XILINX_DEVICE_CODE -DHLSLIB_SYNTHESIS -std=c++11")
 
+  string(REPLACE " " ";" DACE_XILINX_BUILD_FLAGS_INTERNAL
+         "${DACE_XILINX_BUILD_FLAGS}")
+
+  set(VITIS_BUILD_FLAGS
+    -s
+    -O3
+    -I${CMAKE_SOURCE_DIR}/include
+    -I${CMAKE_SOURCE_DIR}/../external/hlslib/include
+    -I${CMAKE_SOURCE_DIR}/../runtime/include
+    -I${CMAKE_BINARY_DIR}
+    --platform ${DACE_XILINX_TARGET_PLATFORM}
+    ${DACE_XILINX_BUILD_FLAGS_INTERNAL}
+    --kernel_frequency ${DACE_XILINX_TARGET_CLOCK})
+
   # Add synthesis and build commands
   set(DACE_SYNTHESIS_TARGETS)
   foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
@@ -261,32 +275,21 @@ if(DACE_ENABLE_XILINX)
     configure_file(${CMAKE_SOURCE_DIR}/Xilinx_HLS.tcl.in Synthesize_${DACE_KERNEL_NAME}.tcl)
     add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${Vitis_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl) 
     set(DACE_SYNTHESIS_TARGETS ${DACE_SYNTHESIS_TARGETS} xilinx_synthesis_${DACE_KERNEL_NAME})
+
+    if(Vitis_IS_LEGACY)
+      set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
+      --xp prop:kernel.${DACE_KERNEL_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
+    else()
+      set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
+          --advanced.prop kernel.${DACE_KERNEL_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
+    endif()
   endforeach()
+  set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} "${DACE_VITIS_KERNELS}")
 
   add_custom_target(xilinx_synthesis DEPENDS ${DACE_SYNTHESIS_TARGETS})
 
-  string(REPLACE " " ";" DACE_XILINX_BUILD_FLAGS_INTERNAL
-         "${DACE_XILINX_BUILD_FLAGS}")
-
-  set(VITIS_BUILD_FLAGS
-    -s
-    -O3
-    -I${CMAKE_SOURCE_DIR}/include
-    -I${CMAKE_SOURCE_DIR}/../external/hlslib/include
-    -I${CMAKE_SOURCE_DIR}/../runtime/include
-    -I${CMAKE_BINARY_DIR}
-    "${DACE_VITIS_KERNELS}"
-    --platform ${DACE_XILINX_TARGET_PLATFORM}
-    ${DACE_XILINX_BUILD_FLAGS_INTERNAL}
-    --kernel_frequency ${DACE_XILINX_TARGET_CLOCK})
-
   if(Vitis_IS_LEGACY)
-    set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
-    --xp prop:kernel.${DACE_PROGRAM_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}"
-    --max_memory_ports all)
-  else()
-    set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
-        --advanced.prop kernel.${DACE_PROGRAM_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
+    set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} --max_memory_ports all)
   endif()
 
   if((NOT (DACE_XILINX_MODE STREQUAL "hardware")) OR DACE_XILINX_ENABLE_DEBUGGING)
@@ -419,16 +422,6 @@ if(DACE_ENABLE_XILINX)
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
 
-    if(DACE_XILINX_MODE STREQUAL "hardware")
-        add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_hardware DEPENDS
-                          ALL ${DACE_PROGRAM_NAME}_hw.xclbin) 
-    else()
-        add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_hardware DEPENDS
-                          ${DACE_PROGRAM_NAME}_hw.xclbin) 
-    endif()
-    add_custom_target(xilinx_link_hardware DEPENDS
-                      xilinx_link_${DACE_PROGRAM_NAME}_hardware)
-
   endif()
 
 endif() # DACE_ENABLE_XILINX
@@ -516,7 +509,6 @@ if(DACE_ENABLE_INTELFPGA)
   endif()
 endif()
 if(DACE_ENABLE_XILINX)
-
     if(DACE_XILINX_MODE STREQUAL "software_emulation")
       add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_software_emulation
                         ALL DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xclbin)
@@ -536,6 +528,15 @@ if(DACE_ENABLE_XILINX)
   endif()
   add_custom_target(xilinx_link_hardware_emulation DEPENDS
                     xilinx_link_${DACE_PROGRAM_NAME}_hardware_emulation)
+  if(DACE_XILINX_MODE STREQUAL "hardware")
+      add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_hardware
+                        ALL DEPENDS ${DACE_PROGRAM_NAME}_hw.xclbin) 
+  else()
+      add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_hardware
+                        DEPENDS ${DACE_PROGRAM_NAME}_hw.xclbin) 
+  endif()
+  add_custom_target(xilinx_link_hardware DEPENDS
+                    xilinx_link_${DACE_PROGRAM_NAME}_hardware)
 endif()
 
 # Create DaCe loader stub
