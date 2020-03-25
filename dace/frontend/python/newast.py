@@ -113,10 +113,10 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
-        sdfg: SDFG,
-        state: SDFGState,
-        dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+    sdfg: SDFG,
+    state: SDFGState,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True, storage=storage)
@@ -968,8 +968,8 @@ MemletExpr = namedtuple('MemletExpr',
 
 
 def _parse_memlet_subset(array: data.Data,
-                         node: Union[ast.Name, ast.Subscript],
-                         das: Dict[str, Any]):
+                         node: Union[ast.Name, ast.Subscript], das: Dict[str,
+                                                                         Any]):
     array_dependencies = {}
 
     # Get memlet range
@@ -1417,20 +1417,19 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
-    def __init__(
-            self,
-            defined,
-            sdfg: SDFG,
-            state: SDFGState,
-            filename: str,
-            lang=dtypes.Language.Python,
-            location: str = '-1',
-            nested: bool = False,
-            scope_arrays: Dict[str, data.Data] = dict(),
-            scope_vars: Dict[str, str] = dict(),
-            variables: Dict[str, str] = dict(),
-            accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict()
-    ):
+    def __init__(self,
+                 defined,
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 filename: str,
+                 lang=dtypes.Language.Python,
+                 location: dict = {},
+                 nested: bool = False,
+                 scope_arrays: Dict[str, data.Data] = dict(),
+                 scope_vars: Dict[str, str] = dict(),
+                 variables: Dict[str, str] = dict(),
+                 accesses: Dict[Tuple[str, dace.subsets.Subset, str],
+                                str] = dict()):
         """ Creates an AST parser for tasklets.
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
@@ -1755,19 +1754,18 @@ class ProgramVisitor(ExtNodeVisitor):
         constructs an SDFG.
     """
     def __init__(
-            self,
-            name: str,
-            filename: str,
-            line_offset: int,
-            col_offset: int,
-            global_vars: Dict[str, Any],
-            constants: Dict[str, Any],
-            scope_arrays: Dict[str, data.Data],
-            scope_vars: Dict[str, str],
-            other_sdfgs: Dict[str,
-                              SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
-            nested: bool = False,
-            tmp_idx: int = 0):
+        self,
+        name: str,
+        filename: str,
+        line_offset: int,
+        col_offset: int,
+        global_vars: Dict[str, Any],
+        constants: Dict[str, Any],
+        scope_arrays: Dict[str, data.Data],
+        scope_vars: Dict[str, str],
+        other_sdfgs: Dict[str, SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
+        nested: bool = False,
+        tmp_idx: int = 0):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1843,7 +1841,8 @@ class ProgramVisitor(ExtNodeVisitor):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
-    def parse_program(self, program: ast.FunctionDef,
+    def parse_program(self,
+                      program: ast.FunctionDef,
                       is_tasklet: bool = False):
         """ Parses a DaCe program or tasklet
 
@@ -1945,8 +1944,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return arg
 
-    def _decorator_or_annotation_params(self, node: ast.FunctionDef
-                                        ) -> List[Tuple[str, Any]]:
+    def _decorator_or_annotation_params(
+            self, node: ast.FunctionDef) -> List[Tuple[str, Any]]:
         """ Returns a list of parameters, either from the function parameters
             and decorator arguments or parameters and their annotations (type
             hints).
@@ -2249,9 +2248,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (iterator, ranges)
 
-    def _parse_map_inputs(self, name: str, params: List[Tuple[str, str]],
-                          node: ast.AST
-                          ) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
+    def _parse_map_inputs(
+            self, name: str, params: List[Tuple[str, str]],
+            node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
             parameter dictionary and returning relevant memlets.
             :return: A 2-tuple of (parameter dictionary, mapping from connector
@@ -2298,8 +2297,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return new_params, map_inputs
 
-    def _parse_consume_inputs(self, node: ast.FunctionDef
-                              ) -> Tuple[str, str, Tuple[str, str], str, str]:
+    def _parse_consume_inputs(
+        self, node: ast.FunctionDef
+    ) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
             :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
@@ -2805,8 +2805,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
                             rtarget: Union[str, Tuple[str, subsets.Range]],
                             wtarget: Union[str, Tuple[str, subsets.Range]],
-                            operand: Union[str, Tuple[str, subsets.Range]],
-                            op: str):
+                            operand: Union[str,
+                                           Tuple[str,
+                                                 subsets.Range]], op: str):
 
         if isinstance(rtarget, tuple):
             rtarget_name, rtarget_subset = rtarget

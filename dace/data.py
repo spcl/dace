@@ -7,10 +7,10 @@ import numpy
 import dace, dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic
-from dace.properties import (Property, make_properties, ReferenceProperty,
-                             ShapeProperty, SubsetProperty, SymbolicProperty,
-                             TypeClassProperty, DebugInfoProperty,
-                             CodeProperty, ListProperty)
+from dace.properties import (Property, make_properties, DictProperty,
+                             ReferenceProperty, ShapeProperty, SubsetProperty,
+                             SymbolicProperty, TypeClassProperty,
+                             DebugInfoProperty, CodeProperty, ListProperty)
 
 
 def validate_name(name):
@@ -56,10 +56,10 @@ class Data(object):
                        choices=dace.dtypes.StorageType,
                        default=dace.dtypes.StorageType.Default,
                        from_string=lambda x: dtypes.StorageType[x])
-    location = Property(
-        dtype=str,  # Dict[str, symbolic]
-        desc='Full storage location identifier (e.g., rank, GPU ID)',
-        default='')
+    location = DictProperty(
+        key_type=str,
+        value_type=None,
+        desc='Full storage location identifier (e.g., rank, GPU ID)')
     toplevel = Property(dtype=bool,
                         desc="Allocate array outside of state",
                         default=False)
@@ -71,7 +71,7 @@ class Data(object):
         self.shape = shape
         self.transient = transient
         self.storage = storage
-        self.location = location
+        self.location = location if location is not None else {}
         self.toplevel = toplevel
         self.debuginfo = debuginfo
         self._validate()
@@ -133,7 +133,7 @@ class Scalar(Data):
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
-                 location='',
+                 location=None,
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
@@ -268,7 +268,7 @@ class Array(Data):
                  transient=False,
                  allow_conflicts=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -461,7 +461,7 @@ class Stream(Data):
                  shape=None,
                  transient=False,
                  storage=dace.dtypes.StorageType.Default,
-                 location='',
+                 location=None,
                  offset=None,
                  toplevel=False,
                  debuginfo=None):

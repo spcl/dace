@@ -44,20 +44,20 @@ def add_cublas_cusolver(sdfg: dace.SDFG):
 # Make sure C_memlet has a wcr if map_exit is used
 # Matrix multiplication with one matrix as constant
 def mm_small(
-        state,
-        A_node,
-        B_node,
-        C_node,
-        A_subset=None,
-        B_subset=None,
-        C_subset=None,
-        A_memlet=None,
-        B_memlet=None,
-        C_memlet=None,
-        map_entry=None,
-        map_exit=None,
-        A_direct=True,
-        B_direct=True,
+    state,
+    A_node,
+    B_node,
+    C_node,
+    A_subset=None,
+    B_subset=None,
+    C_subset=None,
+    A_memlet=None,
+    B_memlet=None,
+    C_memlet=None,
+    map_entry=None,
+    map_exit=None,
+    A_direct=True,
+    B_direct=True,
 ):
     # C = A@B
     sdfg = state.parent
@@ -185,25 +185,25 @@ def mm_small(
 # takes input and stores output in column major order. give swapped input (B, A)
 # instead of (A, B)
 def mm(
-        state,
-        A_node,
-        B_node,
-        C_node,
-        A_mode: str = "N",
-        B_mode: str = "N",
-        label: str = None,
-        A_subset=None,
-        B_subset=None,
-        C_subset=None,
-        A_memlet=None,
-        B_memlet=None,
-        C_memlet=None,
-        map_entry=None,
-        map_exit=None,
-        shadow_a=False,
-        shadow_b=False,
-        buffer_a=False,
-        buffer_c=False,
+    state,
+    A_node,
+    B_node,
+    C_node,
+    A_mode: str = "N",
+    B_mode: str = "N",
+    label: str = None,
+    A_subset=None,
+    B_subset=None,
+    C_subset=None,
+    A_memlet=None,
+    B_memlet=None,
+    C_memlet=None,
+    map_entry=None,
+    map_exit=None,
+    shadow_a=False,
+    shadow_b=False,
+    buffer_a=False,
+    buffer_c=False,
 ):
     sdfg = state.parent
     Adesc = A_node.desc(sdfg)
@@ -255,7 +255,6 @@ def mm(
             ldb=ldb,
             ldc=ldc,
         ),
-        location="cpu",
         #     code_global="""
         # #include <cublas_v2.h>
         # """,
@@ -399,7 +398,7 @@ def printer(*inp):
 
 
 def string_builder(string):
-    """ To match DaCe variable naming conventions, replaces all undesired 
+    """ To match DaCe variable naming conventions, replaces all undesired
         characters with "_".
     """
     newstring = string
@@ -804,7 +803,6 @@ def winograd_convolution(dace_session, tf_node):
         {},
         string_builder(tf_node.name) + "_printer" + "(" +
         ",".join(taskletInputs) + ");",
-        location="cpu",
         language=dace.dtypes.Language.CPP,
     )
     for _n, _conn in zip(debugNodes, taskletInputs):
