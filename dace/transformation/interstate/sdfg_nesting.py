@@ -103,6 +103,8 @@ class InlineSDFG(pattern_matching.Transformation):
                 edge = InlineSDFG._find_edge(graph, nested_sdfg, aname)
                 if len(array.shape) > len(edge.data.subset):
                     return False
+                if array.strides != sdfg.arrays[edge.data.data].strides:
+                    return False
 
         return True
 
