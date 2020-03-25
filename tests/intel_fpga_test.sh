@@ -41,21 +41,7 @@ run_sample() {
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
-    #1: generate the opencl
-    # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
     echo -e ${3} | $PYTHON_BINARY ${1}.py ${@:4}
-
-    #2: compile for emulation
-    cd .dacecache/$2/build
-    make intelfpga_compile_$2_emulator
-    if [ $? -ne 0 ]; then
-      bail "$1 (${RED}high-level synthesis failed${NC})"
-      return 1
-    fi
-
-    #3: execute the emulation
-    cd ../../../
-    echo -e $3 | $PYTHON_BINARY $1.py ${@:4}
 
     if [ $? -ne 0 ]; then
         bail "$1 (${RED}Wrong emulation result${NC})"
