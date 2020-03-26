@@ -43,6 +43,39 @@ function file_read_complete() {
     close_menu();
 }
 
+// https://stackoverflow.com/a/901144/6489142
+function getParameterByName(name) {
+    let url = window.location.href;
+    name = name.replace(/[\[\]]/g, '\\$&');
+    var regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)'),
+        results = regex.exec(url);
+    if (!results) return null;
+    if (!results[2]) return '';
+    return decodeURIComponent(results[2].replace(/\+/g, ' '));
+}
+
+function load_sdfg_from_url(url) {
+    let request = new XMLHttpRequest();
+    request.responseType = 'text'; // Will be parsed as JSON by parse_sdfg
+    request.onload = () => {
+        if (request.status == 200) {
+            let sdfg = parse_sdfg(request.response);
+            if (renderer)
+                renderer.destroy();
+            init_sdfv(sdfg);
+        } else {
+            alert("Failed to load SDFG from URL");
+            init_sdfv(null);
+        }
+    };
+    request.onerror = () => {
+        alert("Failed to load SDFG from URL: " + request.status);
+        init_sdfv(null);
+    };
+    request.open('GET', url + ((/\?/).test(url) ? "&" : "?") + (new Date()).getTime(), true);
+    request.send();
+}
+
 function find_recursive(graph, query, results, case_sensitive) {
     for (let nodeid of graph.nodes()) {
         let node = graph.node(nodeid);
@@ -58,10 +91,12 @@ function find_recursive(graph, query, results, case_sensitive) {
     for (let edgeid of graph.edges()) {
         let edge = graph.edge(edgeid);
         let label = edge.label();
-        if (!case_sensitive)
-            label = label.toLowerCase();
-        if (label.indexOf(query) !== -1)
-            results.push(edge);
+        if (label !== undefined) {
+            if (!case_sensitive)
+                label = label.toLowerCase();
+            if (label.indexOf(query) !== -1)
+                results.push(edge);
+        }
     }
 }
 
@@ -160,7 +195,7 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
             for (let attr of Object.entries(elem.attributes())) {
                 if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
                 html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
             }
 
             // If access node, add array information too
@@ -170,7 +205,7 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
                 for (let attr of Object.entries(sdfg_array.attributes)) {
                     if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
                     html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                    html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                    html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
                 }
             }
 

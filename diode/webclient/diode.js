@@ -472,17 +472,31 @@ class DIODE_Context_SDFG extends DIODE_Context {
                 });
             this.highlighted_elements = [];
 
-            let graph = this.renderer_pane.graph;
-
             // The input contains a list of multiple elements
             for (let x of msg.elements) {
-                let sid = x[0], nid = x[1];
+                let sdfg_id = x[0], sid = x[1], nid = x[2];
                 let elem = null;
+                let graph = null;
+                if (sdfg_id >= 0)
+                    graph = this.renderer_pane.sdfg_list[sdfg_id];
+                else
+                    graph = this.renderer_pane.graph;
+
+                // If graph is hidden, skip
+                if (graph === undefined)
+                    continue;
+                    
                 if (sid == -1)
                     elem = graph.node(nid);
-                else
-                    elem = graph.node(sid).data.graph.node(nid);
-                this.highlighted_elements.push(elem);
+                else {
+                    let state = graph.node(sid);
+                    // If state is hidden, skip
+                    if (state === undefined)
+                        continue;
+                    elem = state.data.graph.node(nid);
+                }
+                if (elem !== undefined)
+                    this.highlighted_elements.push(elem);
             }
             this.highlighted_elements.forEach(e => {
                 if (e) e.stroke_color = "#D35400";
@@ -591,7 +605,7 @@ class DIODE_Context_SDFG extends DIODE_Context {
             o = JSON.parse(o);
         }
         while (typeof o.sdfg == 'string') {
-            o.sdfg = JSON.parse(o.sdfg);
+            o.sdfg = parse_sdfg(o.sdfg);
         }
         return o;
     }
@@ -704,10 +718,10 @@ class DIODE_Context_SDFG extends DIODE_Context {
             into the state.
         */
         let nref = node.element;
-        let sdfg = node.sdfg;
 
         nref.attributes[name] = value;
 
+        let sdfg = this.renderer_pane.sdfg;
         let old = this.getState();
         if (old.type == "SDFG")
             old = sdfg;
@@ -1394,31 +1408,34 @@ class DIODE_Context_AvailableTransformations extends DIODE_Context {
             }
         }];
 
-        let tmp = () => {
+        let tmp = (x) => {
             // Compile after the transformation has been saved
             this.diode.gatherProjectElementsAndCompile(this, {
                 optpath: named
             }, {
                 sdfg_over_code: true
+            }, () => {
+               this.project().saveSnapshot(x['sdfg_object'], named);
+
+               this.project().request(['update-tfh'], x => {
+                    this.operation_running = false;
+                }, {
+                    on_timeout: () => {
+                        this.operation_running = false;
+                    }
+                });
+            }, () => {
+                // On failure
+                this.operation_running = false;
             });
         };
 
         this.project().request(['sdfg_object'], x => {
             console.log("Got snapshot", x);
-            if (typeof (x.sdfg_object) == 'string')
+            if(typeof(x.sdfg_object) == 'string')
                 x.sdfg_object = JSON.parse(x.sdfg_object);
 
-            this.project().saveSnapshot(x['sdfg_object'], named);
-
-            this.project().request(['update-tfh'], x => {
-                this.operation_running = false;
-            }, {
-                on_timeout: () => {
-                    this.operation_running = false;
-                }
-            });
-
-            setTimeout(tmp, 10);
+            setTimeout(tmp, 10, x);
         }, {});
     }
 
@@ -2811,6 +2828,8 @@ class DIODE_Project {
         this._listeners = {};
 
         this._closed_windows = [];
+
+        this._blob = null;
     }
 
     clearTransformationHistory() {
@@ -3012,41 +3031,47 @@ class DIODE_Project {
         return JSON.parse(tmp);
     }
 
+    createblob(data) {
+      var blob = new Blob([data], {
+        type: 'text/plain'
+      });
+
+      // If we are replacing a previously generated file we need to
+      // manually revoke the object URL to avoid memory leaks.
+      if (this._blob !== null) {
+        window.URL.revokeObjectURL(this._blob);
+      }
+
+      this._blob = window.URL.createObjectURL(blob);
+
+      return this._blob;
+    }
+
     save() {
-        /*
-            Saves all elements of this project to its own slot in the local storage
-            (such that it can be opened again even if the window was closed).
-            
-        */
+        // Save current open file as SDFG
+        this.request(['sdfg_object'], x => {
+            let sdfg = x.sdfg_object;
+            let filename = null;
+            if (typeof (sdfg) != 'string') {
+                filename = Object.keys(x.sdfg_object)[0];
+                sdfg = stringify_sdfg(Object.values(x.sdfg_object)[0]);
+            } else {
+                let sdfg_obj = parse_sdfg(sdfg);
+                filename = sdfg_obj.attributes.name;
+            }
+            filename += '.sdfg';
 
-        let snapshots = this.getTransformationSnapshots();
-        if (typeof (snapshots) == 'string')
-            snapshots = JSON.parse(snapshots);
-        let y = {
-            project_id: this._project_id,
-            data: this._diode.goldenlayout.toConfig(),
-            snapshots: snapshots,
-            last_saved: new Date().toLocaleDateString(),
-            description: "<No description>"
-        };
-        let save_val = JSON.stringify(y);
-
-        // The sdfg is not sufficiently unique.
-        let save_name = prompt("Enter project name");
-
-        window.localStorage.setItem("project_" + save_name, save_val);
-
-        let sp = window.localStorage.getItem("saved_projects");
-        if (sp == null) {
-            sp = [];
-        } else {
-            sp = JSON.parse(sp);
-        }
-
-        sp = [save_name, ...sp];
-        window.localStorage.setItem("saved_projects", JSON.stringify(sp));
-
-
+            var link = document.createElement('a');
+            link.setAttribute('download', filename);
+            link.href = this.createblob(sdfg);
+            document.body.appendChild(link);
+            // wait for the link to be added to the document
+            window.requestAnimationFrame(function () {
+                var event = new MouseEvent('click');
+                link.dispatchEvent(event);
+                document.body.removeChild(link);
+            });
+        });
     }
 
     request(list, callback, options = {}) {
@@ -5030,7 +5055,7 @@ class DIODE {
                             // Expand library node
                             REST_request("/dace/api/v1.0/expand/", {
                                     sdfg: node.sdfg,
-                                    nodeid: [0, node.element.parent_id, node.element.id]
+                                    nodeid: [node.sdfg.sdfg_list_id, node.element.parent_id, node.element.id]
                                 }, (xhr) => {
                                     if (xhr.readyState === 4 && xhr.status === 200) {
                                         let resp = parse_sdfg(xhr.response);
@@ -5178,6 +5203,9 @@ class DIODE {
             }, x.options, x.value);
         } else if (x.metatype == "font") {
             console.warn("Ignoring property type ", x.metatype);
+            return elem;
+        } else if(x.metatype == "SDFGReferenceProperty") {
+            // Nothing to display
             return elem;
         } else if (x.metatype == "SubsetProperty") {
             if (x.value == null) {
@@ -5734,7 +5762,8 @@ class DIODE {
         }
     }
 
-    gatherProjectElementsAndCompile(calling_context, direct_passing = {}, options = {}) {
+    gatherProjectElementsAndCompile(calling_context, direct_passing = {}, options = {},
+                                    on_success = undefined, on_failure = undefined) {
         /*
             This method collects all available elements that can be used for compilation.
 
@@ -5786,7 +5815,7 @@ class DIODE {
             let cval = values['input_code'];
 
             // Assuming SDFG files start with {
-            if (cval[0] == '{') {
+            if (!cis && cval[0] == '{') {
                 let sd = parse_sdfg(cval);
                 values['sdfg_object'] = {};
                 values['sdfg_object'][sd.attributes.name] = cval;
@@ -5811,7 +5840,7 @@ class DIODE {
                 runopts['repetitions'] = 5; // TODO(later): Allow users to configure number
                 runopts['code_is_sdfg'] = cis;
                 runopts['runnercode'] = values['input_code'];
-                this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts);
+                this.compile_and_run(calling_context, options.term_id, cval, values['optpath'], values['sdfg_props'], runopts, on_success, on_failure);
             } else {
                 let cb = (resp) => {
                     this.replaceOrCreate(['extend-optgraph'], 'AvailableTransformationsComponent', resp, (_) => {
@@ -5826,7 +5855,7 @@ class DIODE {
                     {
                         optpath_cb: cb,
                         code_is_sdfg: cis,
-                    });
+                }, on_success, on_failure);
 
             }
         }
@@ -5834,7 +5863,8 @@ class DIODE {
         calling_context.project().request(reqlist, on_collected, {timeout: 500, on_timeout: on_collected});
     }
 
-    compile(calling_context, code, optpath = undefined, sdfg_node_properties = undefined, options = {}) {
+    compile(calling_context, code, optpath = undefined, sdfg_node_properties = undefined, options = {},
+            on_success = undefined, on_failure = undefined) {
         /*
             options:
                 .code_is_sdfg: If true, the code parameter is treated as a serialized SDFG
@@ -5864,6 +5894,8 @@ class DIODE {
                 if (peek['error'] != undefined) {
                     // There was at least one error - handle all of them
                     this.handleErrors(calling_context, peek);
+                    if (on_failure !== undefined)
+                        on_failure();
                 } else {
                     // Data is no longer stale
                     this.removeStaleDataButton();
@@ -5875,6 +5907,8 @@ class DIODE {
                     } else {
                         options.optpath_cb(o['compounds']);
                     }
+                    if (on_success !== undefined)
+                        on_success();
                 }
             }
         });
@@ -5997,7 +6031,9 @@ class DIODE {
         this.addContentItem(newconf);
     }
 
-    compile_and_run(calling_context, terminal_identifier, code, optpath = undefined, sdfg_node_properties = undefined, options = {}) {
+    compile_and_run(calling_context, terminal_identifier, code, optpath = undefined,
+                    sdfg_node_properties = undefined, options={}, on_success = undefined,
+                    on_failure = undefined) {
         /*
             .runnercode: [opt] Code provided with SDFG to invoke the SDFG program. 
         */
@@ -6026,6 +6062,8 @@ class DIODE {
             } else {
                 alert("Error! Check console");
                 console.error("Unknown instrumentation mode", remaining_settings['Instrumentation']);
+                if(on_failure !== undefined) on_failure();
+                return;
             }
             //post_params['perfmodes'] = ["default", "vectorize", "memop", "cacheop"];
             let not = remaining_settings['Number of threads'];
@@ -6044,7 +6082,10 @@ class DIODE {
                     if (tmp['error']) {
                         // Normal, users should poll on a different channel now.
                         this.display_current_execution_status(calling_context, terminal_identifier, client_id);
-                    }
+                        if (on_failure !== undefined)
+                            on_failure();
+                    } else if (on_success !== undefined)
+                        on_success();
                 }
             });
         });

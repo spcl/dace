@@ -257,9 +257,10 @@ class CodeNode(Node):
         denoted by an octagonal shape. """
 
     label = Property(dtype=str, desc="Name of the CodeNode")
-    location = Property(dtype=str,
-                        desc="CodeNode execution location descriptor",
-                        allow_none=True)
+    location = DictProperty(
+        key_type=str,
+        value_type=None,
+        desc='Full storage location identifier (e.g., rank, GPU ID)')
     environments = SetProperty(
         str,
         desc="Environments required by CMake to build and run this code node.",
@@ -269,7 +270,7 @@ class CodeNode(Node):
         super(CodeNode, self).__init__(inputs or set(), outputs or set())
         # Properties
         self.label = label
-        self.location = location
+        self.location = location if location is not None else {}
 
 
 @make_properties
@@ -305,7 +306,7 @@ class Tasklet(CodeNode):
                  code_global="",
                  code_init="",
                  code_exit="",
-                 location="-1",
+                 location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -417,7 +418,7 @@ class NestedSDFG(CodeNode):
                  outputs: Set[str],
                  symbol_mapping: Dict[str, Any] = None,
                  schedule=dtypes.ScheduleType.Default,
-                 location="-1",
+                 location=None,
                  debuginfo=None):
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
@@ -639,6 +640,10 @@ class Map(object):
     is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
+    collapse = Property(dtype=int,
+                        default=1,
+                        desc="How many dimensions to"
+                        " collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool,
                             desc="Show this node/scope/state as collapsed",
@@ -657,6 +662,7 @@ class Map(object):
                  unroll=False,
                  is_async=False,
                  flatten=False,
+                 collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
         super(Map, self).__init__()
@@ -667,6 +673,7 @@ class Map(object):
         self.unroll = unroll
         self.is_async = is_async
         self.flatten = flatten
+        self.collapse = 1
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
@@ -902,7 +909,7 @@ class Reduce(Node):
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty(default='lambda a,b: a')
-    identity = Property(dtype=object, allow_none=True)
+    identity = Property(allow_none=True)
     schedule = Property(dtype=dtypes.ScheduleType,
                         desc="Reduction execution policy",
                         choices=dtypes.ScheduleType,

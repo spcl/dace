@@ -385,7 +385,7 @@ function calculateNodeSize(sdfg_state, node, ctx) {
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-function relayout_sdfg(ctx, sdfg) {
+function relayout_sdfg(ctx, sdfg, sdfg_list) {
     let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
@@ -404,7 +404,7 @@ function relayout_sdfg(ctx, sdfg) {
             stateinfo.height = LINEHEIGHT;
         }
         else {
-            state_g = relayout_state(ctx, state, sdfg);
+            state_g = relayout_state(ctx, state, sdfg, sdfg_list);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 2*STATE_MARGIN;
@@ -464,10 +464,13 @@ function relayout_sdfg(ctx, sdfg) {
     g.width = bb.width;
     g.height = bb.height;
 
+    // Add SDFG to global store
+    sdfg_list[sdfg.sdfg_list_id] = g;
+
     return g;
 }
 
-function relayout_state(ctx, sdfg_state, sdfg) {
+function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({multigraph: true});
 
@@ -504,7 +507,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
-            nested_g = relayout_sdfg(ctx, node.attributes.sdfg);
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list);
             let sdfginfo = calculateBoundingBox(nested_g);
             node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
             node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
@@ -653,6 +656,7 @@ class SDFGRenderer {
     constructor(sdfg, container, on_mouse_event = null) {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
+        this.sdfg_list = {};
 
         // Rendering-related fields
         this.container = container;
@@ -665,6 +669,9 @@ class SDFGRenderer {
         this.last_clicked_elements = null;
         this.tooltip = null;
         this.tooltip_container = null;
+
+        // View options
+        this.inclusive_ranges = false;
 
         // Mouse-related fields
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
@@ -687,6 +694,10 @@ class SDFGRenderer {
         } catch (ex) {
             // Do nothing
         }
+    }
+
+    view_settings() {
+        return {inclusive_ranges: this.inclusive_ranges};
     }
 
     // Initializes the DOM
@@ -715,10 +726,13 @@ class SDFGRenderer {
                 let rect = this.getBoundingClientRect();
                 let cmenu = new ContextMenu();
                 cmenu.addOption("Save view as PNG", x => that.save_as_png());
-                cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
-                cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                if (that.has_pdf()) {
+                    cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
+                    cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                }
+                cmenu.addCheckableOption("Inclusive ranges", that.inclusive_ranges, (x, checked) => {that.inclusive_ranges = checked;});
                 that.menu = cmenu;
-                cmenu.show(rect.left, rect.bottom);
+                that.menu.show(rect.left, rect.bottom);
             };
             d.title = 'Menu';
             this.toolbar.appendChild(d);
@@ -754,7 +768,7 @@ class SDFGRenderer {
         // Tooltip HTML container
         this.tooltip_container = document.createElement('div');
         this.tooltip_container.innerHTML = '';
-        this.tooltip_container.className = 'tooltip';
+        this.tooltip_container.className = 'sdfvtooltip';
         this.tooltip_container.onmouseover = () => this.tooltip_container.style.display = "none";
         this.container.appendChild(this.tooltip_container);
 
@@ -822,7 +836,8 @@ class SDFGRenderer {
 
     // Re-layout graph and nested graphs
     relayout() {
-        this.graph = relayout_sdfg(this.ctx, this.sdfg);
+        this.sdfg_list = {};
+        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list);
         this.onresize();
 
         return this.graph;
@@ -875,6 +890,16 @@ class SDFGRenderer {
 
     save_as_png() {
         this.save('sdfg.png', this.canvas.toDataURL('image/png'));
+    }
+
+    has_pdf() {
+        try {
+            blobStream;
+            canvas2pdf.PdfContext;
+            return true;
+        } catch(e) {
+            return false;
+        }
     }
 
     save_as_pdf(save_all=false) {

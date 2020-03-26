@@ -199,7 +199,7 @@ class Edge extends SDFGElement {
 
         let style = this.strokeStyle();
         if (style !== 'black')
-            renderer.tooltip = (c) => this.tooltip(c);
+            renderer.tooltip = (c) => this.tooltip(c, renderer);
         if (this.parent_id == null && style === 'black') {  // Interstate edge
             style = 'blue';
         }
@@ -224,7 +224,8 @@ class Edge extends SDFGElement {
         ctx.strokeStyle = "black";
     }
 
-    tooltip(container) {
+    tooltip(container, renderer) {
+        let dsettings = renderer.view_settings();
         let attr = this.attributes();
         // Memlet
         if (attr.subset !== undefined) {
@@ -233,15 +234,15 @@ class Edge extends SDFGElement {
                 return;
             }
             let contents = attr.data;
-            contents += sdfg_property_to_string(attr.subset);
+            contents += sdfg_property_to_string(attr.subset, dsettings);
             
             if (attr.other_subset)
-                contents += ' -> ' + sdfg_property_to_string(attr.other_subset);
+                contents += ' -> ' + sdfg_property_to_string(attr.other_subset, dsettings);
 
             if (attr.wcr)
-                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr) +'</b>';
+                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr, dsettings) +'</b>';
 
-            let num_accesses = sdfg_property_to_string(attr.num_accesses);
+            let num_accesses = sdfg_property_to_string(attr.num_accesses, dsettings);
             if (num_accesses == -1)
                 num_accesses = "<b>Dynamic</b>";
 
@@ -324,13 +325,13 @@ class AccessNode extends Node {
 
         let nodedesc = this.sdfg.attributes._arrays[this.data.node.attributes.data];
         // Streams have dashed edges
-        if (nodedesc.type === "Stream") {
+        if (nodedesc && nodedesc.type === "Stream") {
             ctx.setLineDash([5, 3]);
         } else {
             ctx.setLineDash([1, 0]);
         }
 
-        if (nodedesc.attributes.transient === false) {
+        if (nodedesc && nodedesc.attributes.transient === false) {
             ctx.lineWidth = 3.0;
         } else {
             ctx.lineWidth = 1.0;
@@ -378,23 +379,54 @@ class ScopeNode extends Node {
         ctx.fill();
         ctx.fillStyle = "black";
 
-        let far_label = this.attributes().label;
+        let far_label = this.far_label();
+        drawAdaptiveText(ctx, renderer, far_label,
+                         this.close_label(renderer), this.x, this.y, 
+                         this.width, this.height, 
+                         SCOPE_LOD);
+    }
+
+    far_label() {
+        let result = this.attributes().label;
         if (this.scopeend()) {  // Get label from scope entry
             let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
             if (entry !== undefined)
-                far_label = entry.attributes.label;
+                result = entry.attributes.label;
             else {
-                far_label = this.label();
-                let ind = far_label.indexOf('[');
+                result = this.data.node.label;
+                let ind = result.indexOf('[');
                 if (ind > 0)
-                    far_label = far_label.substring(0, ind);
+                    result = result.substring(0, ind);
             }
         }
+        return result;
+    }
 
-        drawAdaptiveText(ctx, renderer, far_label,
-                         this.label(), this.x, this.y, 
-                         this.width, this.height, 
-                         SCOPE_LOD);
+    close_label(renderer) {
+        if (!renderer.inclusive_ranges)
+            return this.label();
+
+        let result = this.far_label();
+        let attrs = this.attributes();
+        if (this.scopeend()) {
+            let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
+            if (entry !== undefined)
+                attrs = entry.attributes;
+            else
+                return this.label();
+        }
+        result += ' [';
+
+        if (this instanceof ConsumeEntry || this instanceof ConsumeExit) {
+            result += attrs.pe_index + '=' + '0..' + (attrs.num_pes - 1).toString();
+        } else {
+            for (let i = 0; i < attrs.params.length; ++i) {
+                result += attrs.params[i] + '=';
+                result += sdfg_range_elem_to_string(attrs.range.ranges[i], renderer.view_settings()) + ', ';
+            }
+            result = result.substring(0, result.length-2); // Remove trailing comma
+        }
+        return result + ']';
     }
 }
 

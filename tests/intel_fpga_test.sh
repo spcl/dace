@@ -41,21 +41,7 @@ run_sample() {
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
-    #1: generate the opencl
-    # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
     echo -e ${3} | $PYTHON_BINARY ${1}.py ${@:4}
-
-    #2: compile for emulation
-    cd .dacecache/$2/build
-    make intelfpga_compile_$2_emulator
-    if [ $? -ne 0 ]; then
-      bail "$1 (${RED}high-level synthesis failed${NC})"
-      return 1
-    fi
-
-    #3: execute the emulation
-    cd ../../../
-    echo -e $3 | $PYTHON_BINARY $1.py ${@:4}
 
     if [ $? -ne 0 ]; then
         bail "$1 (${RED}Wrong emulation result${NC})"
@@ -63,7 +49,7 @@ run_sample() {
 
     #4 cleanup
     cd .dacecache/$2/build
-    rm -fr $1_*
+    make clean
     cd -
 
 
@@ -72,12 +58,20 @@ run_sample() {
 }
 
 run_all() {
+
+
     # #### VECTORIZATION ####
     #Vectorization 1: first vectorize and then transform for FPGA
-    run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0\nFPGATransformSDFG\$0\n"
+    run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True)\nFPGATransformSDFG\$0\n"
     #Vectorization 2: first transform for FPGA then vectorize
-    run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0\n"
+    run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
     #Vectorization 3: TODO non vectorizable N
+
+    # ### MAP TILING ####
+    # First tile then transform
+    run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"
+    # Other way around
+    run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
     # #### WCR ####
     #simple WCR (accumulates on scalar)

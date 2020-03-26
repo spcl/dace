@@ -3,7 +3,7 @@
 from copy import deepcopy as dc
 import itertools
 import networkx as nx
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 
 from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
 from dace.graph import nodes, nxutil
@@ -47,6 +47,18 @@ class InlineSDFG(pattern_matching.Transformation):
         return [nxutil.node_path_graph(InlineSDFG._nested_sdfg)]
 
     @staticmethod
+    def _find_edge(state: SDFGState, node: nodes.Node,
+                   connector: str) -> Optional[MultiConnectorEdge]:
+        for edge in state.in_edges(node):
+            if edge.dst_conn == connector:
+                return edge
+        for edge in state.out_edges(node):
+            if edge.src_conn == connector:
+                return edge
+        raise NameError('Edge with connector %s not found on node %s' %
+                        (connector, node))
+
+    @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
         if len(nested_sdfg.sdfg.nodes()) != 1:
@@ -81,6 +93,16 @@ class InlineSDFG(pattern_matching.Transformation):
                                     for e in nstate.out_edges(node)
                                     if isinstance(e.dst, nodes.AccessNode))):
                         return False
+
+        # If some reshaping that cannot be inlined / unsqueezed is happening,
+        # do not match transformation in strict mode.
+        if strict:
+            for aname, array in nested_sdfg.sdfg.arrays.items():
+                if array.transient:
+                    continue
+                edge = InlineSDFG._find_edge(graph, nested_sdfg, aname)
+                if len(array.shape) > len(edge.data.subset):
+                    return False
 
         return True
 
