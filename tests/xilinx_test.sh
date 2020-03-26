@@ -39,19 +39,17 @@ run_sample() {
       bail "$1 (${RED}simulation failed${NC})"
       return 1
     fi
-    cd .dacecache/$2/build
-    make xilinx_compile_hardware
+    (cd .dacecache/$2/build && make xilinx_compile_hardware)
     if [ $? -ne 0 ]; then
       bail "$1 (${RED}high-level synthesis failed${NC})"
       return 1
     fi
     if [ $3 -ne 0 ]; then
-      grep -n xocc_*_hw.log -e "Final II = \([2-9]\|1[0-9]+\)"
+      grep -n .dacecache/$2/build/xocc_*_hw.log -e "Final II = \([2-9]\|1[0-9]+\)"
       if [ $? == 0 ]; then
         bail "$1 (${RED}design was not fully pipelined${NC})"
       fi
     fi
-    cd ../../../
     return 0
 }
 

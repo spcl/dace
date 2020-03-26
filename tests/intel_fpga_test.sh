@@ -47,26 +47,19 @@ run_sample() {
         bail "$1 (${RED}Wrong emulation result${NC})"
     fi
 
-    #4 cleanup
-    cd .dacecache/$2/build
-    rm -fr $1_*
-    cd -
-
-
-
     return 0
 }
 
 run_all() {
-    # #### VECTORIZATION ####
-    #Vectorization 1: first vectorize and then transform for FPGA
+    #### VECTORIZATION ####
+    # Vectorization 1: first vectorize and then transform for FPGA
     run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True)\nFPGATransformSDFG\$0\n"
-    #Vectorization 2: first transform for FPGA then vectorize
+    # Vectorization 2: first transform for FPGA then vectorize
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
-    #Vectorization 3: TODO non vectorizable N
+    # Vectorization 3: TODO non vectorizable N
 
     # #### WCR ####
-    #simple WCR (accumulates on scalar)
+    # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 
     # histogram (WCR on array)
