@@ -35,11 +35,12 @@ class TransientReuse(pattern_matching.Transformation):
         pass
 
     def apply(self, sdfg):
-        for state in sdfg.nodes():
 
-            memory_before = 0
-            for a in sdfg.arrays:
-                memory_before += sdfg.arrays[a].total_size
+        memory_before = 0
+        for a in sdfg.arrays:
+            memory_before += sdfg.arrays[a].total_size
+
+        for state in sdfg.nodes():
 
             # Copy the whole graph
             G = nx.DiGraph()
@@ -82,11 +83,12 @@ class TransientReuse(pattern_matching.Transformation):
                     mappings[n.data] = set()
 
             # Find valid mappings. A mapping (n, m) is only valid if the successors of n
-            # are a subset of the ancestors of m.
+            # are a subset of the ancestors of m and n is also an ancestor of m.
             for n in successors:
                 for m in ancestors:
-                    if isinstance(m, nodes.AccessNode) and successors[n].issubset(ancestors[m]) and \
-                            sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient:
+                    if (isinstance(m, nodes.AccessNode) and successors[n].issubset(ancestors[m]) and n in ancestors[m] and
+                            sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient):
+                        print(successors[n], ancestors[m])
                         mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
@@ -149,7 +151,7 @@ class TransientReuse(pattern_matching.Transformation):
                 for j in range(1, len(buckets[i])):
                     mapping.add((buckets[i][0], buckets[i][j]))
 
-            # For each mapping redirect edges, rename memlets in the whole tree and remove the old array
+            # For each mapping redirect edges, rename memlets in the state
             for (new, old) in sorted(list(mapping)):
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:
@@ -158,14 +160,24 @@ class TransientReuse(pattern_matching.Transformation):
                             for edge in state.memlet_tree(e):
                                 if edge.data.data == old:
                                     edge.data.data = new
-                sdfg.remove_data(old)
 
-            # Analyze memory savings
-            memory_after = 0
-            for a in sdfg.arrays:
-                memory_after += sdfg.arrays[a].total_size
+        #clean up the arrays
+        for a in list(sdfg.arrays):
+            used = False
+            for s in sdfg.states():
+                for n in s.nodes():
+                    if isinstance(n, nodes.AccessNode) and n.data == a:
+                        used = True
+                        break
+            if not used:
+                sdfg.remove_data(a)
 
-            print('memory before: ', memory_before, 'B')
-            print('memory after: ', memory_after, 'B')
-            print('memory savings: ', memory_before - memory_after, 'B ,',
-                  100 - N((100 / memory_before) * memory_after, 2), "%")
+        # Analyze memory savings
+        memory_after = 0
+        for a in sdfg.arrays:
+            memory_after += sdfg.arrays[a].total_size
+
+        print('memory before: ', memory_before, 'B')
+        print('memory after: ', memory_after, 'B')
+        print('memory savings: ', memory_before - memory_after, 'B ,',
+              100 - N((100 / memory_before) * memory_after, 2), "%")
