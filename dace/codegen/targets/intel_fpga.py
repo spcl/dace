@@ -690,10 +690,11 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 kernel_args_call.append(pname)
 
         # If a remote stream is used, add the communicator
-        for node in state.data_nodes():
-            if node.desc(sdfg).storage == dace.dtypes.StorageType.FPGA_Remote:
+        for node in subgraph.source_nodes() + subgraph.sink_nodes():
+            if isinstance(node,dace.nodes.AccessNode) and node.desc(sdfg).storage == dace.dtypes.StorageType.FPGA_Remote:
                 smi_args = True
                 break
+
         if smi_args:
             kernel_args_opencl.append("const SMI_Comm smi_comm")
             kernel_args_call.append("smi_comm")
