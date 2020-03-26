@@ -60,8 +60,10 @@ def generate_dummy(sdfg) -> str:
     sdfg_call = '''
   __dace_init_{name}({params});
   __program_{name}({params});
-  __dace_exit_{name}({params});\n\n'''.format(
-        name=sdfg.name, params=sdfg.signature(with_types=False, for_call=True))
+  __dace_exit_{name}({params});\n\n'''.format(name=sdfg.name,
+                                              params=sdfg.signature(
+                                                  with_types=False,
+                                                  for_call=True))
 
     res = includes
     res += header
@@ -100,7 +102,12 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
-    targets = {'cpu': cpu.CPUCodeGen(frame, sdfg)}
+    default_target = cpu.CPUCodeGen
+    for k, v in target.TargetCodeGenerator.extensions().items():
+        # If another target has already been registered as CPU, use it instead
+        if v['name'] == 'cpu':
+            default_target = k
+    targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
     targets.update({
@@ -129,10 +136,15 @@ def generate_code(sdfg) -> List[CodeObject]:
     }
 
     # Generate frame code (and the rest of the code)
-    global_code, frame_code, used_targets = frame.generate_code(sdfg, None)
+    (global_code, frame_code, used_targets,
+     used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
-        CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
-                   'Frame')
+        CodeObject(sdfg.name,
+                   global_code + frame_code,
+                   'cpp',
+                   cpu.CPUCodeGen,
+                   'Frame',
+                   environments=used_environments)
     ]
 
     # Create code objects for each target
@@ -140,23 +152,21 @@ def generate_code(sdfg) -> List[CodeObject]:
         target_objects.extend(tgt.get_generated_codeobjects())
 
     # add a header file for calling the SDFG
-    dummy = CodeObject(
-        sdfg.name,
-        generate_headers(sdfg),
-        'h',
-        cpu.CPUCodeGen,
-        'CallHeader',
-        linkable=False)
+    dummy = CodeObject(sdfg.name,
+                       generate_headers(sdfg),
+                       'h',
+                       cpu.CPUCodeGen,
+                       'CallHeader',
+                       linkable=False)
     target_objects.append(dummy)
 
     # add a dummy main function to show how to call the SDFG
-    dummy = CodeObject(
-        sdfg.name + "_main",
-        generate_dummy(sdfg),
-        'cpp',
-        cpu.CPUCodeGen,
-        'DummyMain',
-        linkable=False)
+    dummy = CodeObject(sdfg.name + "_main",
+                       generate_dummy(sdfg),
+                       'cpp',
+                       cpu.CPUCodeGen,
+                       'DummyMain',
+                       linkable=False)
     target_objects.append(dummy)
 
     return target_objects

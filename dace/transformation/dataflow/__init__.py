@@ -7,6 +7,7 @@ from .map_collapse import MapCollapse
 from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_fusion import MapFusion
+from .map_fission import MapFission
 
 # Data movement
 from .strip_mining import StripMining
@@ -20,9 +21,10 @@ from .reduce_expansion import ReduceExpansion
 from .double_buffering import DoubleBuffering
 
 # Complexity reduction
-from .redundant_array import RedundantArray
-from .redundant_array_copying import (
-    RedundantArrayCopying, RedundantArrayCopying2, RedundantArrayCopying3)
+from .redundant_array import RedundantArray, RedundantSecondArray
+from .redundant_array_copying import (RedundantArrayCopying,
+                                      RedundantArrayCopying2,
+                                      RedundantArrayCopying3)
 from .merge_arrays import MergeArrays
 
 # Device-related
@@ -30,3 +32,6 @@ from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
+
+# Algorithmic
+from .matrix_product_transpose import MatrixProductTranspose

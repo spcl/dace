@@ -12,6 +12,15 @@ function init_sdfv(sdfg) {
     $('#reload').click(function(e){
         reload_file();
     });
+    $('#outline').click(function(e){
+        if (renderer)
+            setTimeout(() => outline(renderer, renderer.graph), 1);
+    });
+    $('#search-btn').click(function(e){
+        if (renderer)
+            setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
+                                                    $('#search-case')[0].checked);}, 1);
+    });
 
     if (sdfg !== null)
         renderer = new SDFGRenderer(sdfg, document.getElementById('contents'),
@@ -31,10 +40,145 @@ function file_read_complete() {
     if (renderer)
         renderer.destroy();
     renderer = new SDFGRenderer(sdfg, document.getElementById('contents'), mouse_event);
+    close_menu();
+}
+
+// https://stackoverflow.com/a/901144/6489142
+function getParameterByName(name) {
+    let url = window.location.href;
+    name = name.replace(/[\[\]]/g, '\\$&');
+    var regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)'),
+        results = regex.exec(url);
+    if (!results) return null;
+    if (!results[2]) return '';
+    return decodeURIComponent(results[2].replace(/\+/g, ' '));
+}
+
+function load_sdfg_from_url(url) {
+    let request = new XMLHttpRequest();
+    request.responseType = 'text'; // Will be parsed as JSON by parse_sdfg
+    request.onload = () => {
+        if (request.status == 200) {
+            let sdfg = parse_sdfg(request.response);
+            if (renderer)
+                renderer.destroy();
+            init_sdfv(sdfg);
+        } else {
+            alert("Failed to load SDFG from URL");
+            init_sdfv(null);
+        }
+    };
+    request.onerror = () => {
+        alert("Failed to load SDFG from URL: " + request.status);
+        init_sdfv(null);
+    };
+    request.open('GET', url + ((/\?/).test(url) ? "&" : "?") + (new Date()).getTime(), true);
+    request.send();
+}
+
+function find_recursive(graph, query, results, case_sensitive) {
+    for (let nodeid of graph.nodes()) {
+        let node = graph.node(nodeid);
+        let label = node.label();
+        if (!case_sensitive)
+            label = label.toLowerCase();
+        if (label.indexOf(query) !== -1)
+            results.push(node);
+        // Enter states or nested SDFGs recursively
+        if (node.data.graph)
+            find_recursive(node.data.graph, query, results, case_sensitive);
+    }
+    for (let edgeid of graph.edges()) {
+        let edge = graph.edge(edgeid);
+        let label = edge.label();
+        if (label !== undefined) {
+            if (!case_sensitive)
+                label = label.toLowerCase();
+            if (label.indexOf(query) !== -1)
+                results.push(edge);
+        }
+    }
+}
+
+function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
+    // Modify sidebar header
+    document.getElementById("sidebar-header").innerText = 'Search Results for "' + query + '"';
+
+    let results = [];
+    if (!case_sensitive)
+        query = query.toLowerCase();
+    find_recursive(sdfg, query, results, case_sensitive);
+
+    // Zoom to bounding box of all results first
+    if (results.length > 0)
+        renderer.zoom_to_view(results);
+
+    // Show clickable results in sidebar
+    let sidebar = document.getElementById("sidebar-contents");
+    sidebar.innerHTML = '';
+    for (let result of results) {
+        let d = document.createElement('div');
+        d.className = 'context_menu_option';
+        d.innerHTML = result.type() + ' ' + result.label();
+        d.onclick = () => {renderer.zoom_to_view([result])};
+        sidebar.appendChild(d);
+    }
+
+    // Open sidebar if closed
+    document.getElementById("sidebar").style.display = "flex";
+}
+
+function outline_recursive(renderer, graph, elements) {
+    for (let nodeid of graph.nodes()) {
+        let node = graph.node(nodeid);
+        let d = document.createElement('div');
+        d.className = 'context_menu_option';
+        let is_collapsed = node.attributes().is_collapsed;
+        is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
+        d.innerHTML = node.type() + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
+        d.onclick = (e) => {
+            renderer.zoom_to_view([node]);
+
+            // Ensure that the innermost div is the one that handles the event
+            if (!e) e = window.event;
+            e.cancelBubble = true;
+            if (e.stopPropagation) e.stopPropagation();
+        };
+
+        // Traverse states or nested SDFGs
+        if (node.data.graph && !is_collapsed)
+            outline_recursive(renderer, node.data.graph, d);
+
+        elements.appendChild(d);
+    }
+}
+
+function outline(renderer, sdfg) {
+    // Modify sidebar header
+    document.getElementById("sidebar-header").innerText = 'SDFG Outline';
+
+    let sidebar = document.getElementById("sidebar-contents");
+    sidebar.innerHTML = '';
+
+    // Entire SDFG
+    let d = document.createElement('div');
+    d.className = 'context_menu_option';
+    d.innerHTML = '<i class="material-icons" style="font-size: inherit">filter_center_focus</i> SDFG ' +
+        renderer.sdfg.attributes.name;
+    d.onclick = () => renderer.zoom_to_view();
+    sidebar.appendChild(d);
+
+    // Add elements to tree view in sidebar
+    outline_recursive(renderer, sdfg, sidebar);
+
+    // Open sidebar if closed
+    document.getElementById("sidebar").style.display = "flex";
 }
 
 function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
     if (evtype === 'click' || evtype === 'dblclick') {
+        if (renderer.menu)
+            renderer.menu.destroy();
         if (elem) {
             // Change header
             document.getElementById("sidebar-header").innerText = elem.type() + " " + elem.label();
@@ -49,9 +193,9 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
             html += "<hr />";
 
             for (let attr of Object.entries(elem.attributes())) {
-                if (attr[0] === "layout" || attr[0] === "sdfg") continue;
+                if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
                 html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
             }
 
             // If access node, add array information too
@@ -59,9 +203,9 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
                 let sdfg_array = elem.sdfg.attributes._arrays[elem.attributes().data];
                 html += "<br /><h4>Array properties:</h4>";
                 for (let attr of Object.entries(sdfg_array.attributes)) {
-                    if (attr[0] === "layout" || attr[0] === "sdfg") continue;
+                    if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
                     html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                    html += sdfg_property_to_string(attr[1], attr[0]) + "</p>";
+                    html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
                 }
             }
 

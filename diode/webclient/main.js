@@ -335,6 +335,15 @@ class FormBuilder {
         elem.id = id;
         return $(elem);
     }
+
+    static createButton(id, onclick, label) {
+        let elem = document.createElement("button");
+        elem.onclick = () => {
+            onclick(elem);
+        };
+        elem.innerHTML = label;
+        return $(elem);
+    }
 }
 
 function start_DIODE() {
@@ -855,6 +864,7 @@ function start_DIODE() {
         diode.open_diode_settings();
     });
     diode.addKeyShortcut('r', () => { diode.gatherProjectElementsAndCompile(diode, {}, { sdfg_over_code: true }); });
+    diode.addKeyShortcut('s', () => { diode.project().save(); }, false, true);
 
     diode.setupEvents();
 

@@ -19,8 +19,9 @@ For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
 Tutorials
 ---------
 
-* [Data-Centric Python Programs with NumPy](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb)
+* [Getting Started](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/getting_started.ipynb)
 * [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb)
+* [NumPy API Reference](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb)
 * [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
 * [Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)
 
@@ -77,7 +78,7 @@ Useful environment variable configurations include:
 * `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
 
 Context configuration:
- * `DACE_use_cache` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
+ * `DACE_compiler_use_cache` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
  * `DACE_debugprint` (default: True): Print debugging information.
  
 SDFG processing:

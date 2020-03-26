@@ -4,8 +4,11 @@ import aenum
 import dace
 import dace.serialize
 import dace.frontend.octave.parse as octave_frontend
+from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
+from dace.transformation.pattern_matching import Transformation
+from dace.graph.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -16,6 +19,7 @@ from diode.remote_execution import AsyncExecutor
 
 import traceback
 import os
+import pydoc
 import threading
 import queue
 import time
@@ -41,7 +45,6 @@ class ConfigCopy:
     """
         Copied Config for passing by-value
     """
-
     def __init__(self, config_values):
         self._config = config_values
 
@@ -78,7 +81,6 @@ class ExecutorServer:
     """
        Implements a server scheduling execution of dace programs
     """
-
     def __init__(self):
 
         self._command_queue = queue.Queue(
@@ -453,9 +455,57 @@ def getEnum(name):
         print("Enum type '" + str(name) + "' is not in Whitelist")
         abort(400)
 
-    return jsonify({
-        'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]
-    })
+    return jsonify(
+        {'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]})
+
+
+@app.route('/dace/api/v1.0/getLibImpl/<string:name>', methods=['GET'])
+def get_library_implementations(name):
+    """
+        Helper function to enumerate available implementations for a given
+        library node.
+
+        Returns:
+            enum: List of string-representations of implementations
+    """
+
+    cls = pydoc.locate(name)
+    if cls is None:
+        return jsonify([])
+
+    return jsonify(list(cls.implementations.keys()))
+
+
+@app.route('/dace/api/v1.0/expand/', methods=['POST'])
+def expand_node_or_sdfg():
+    """
+        Performs expansion of a single library node or an entire SDFG.
+        Fields:
+        sdfg (required): SDFG as JSON
+        nodeid (not required): A list of: [SDFG ID, state ID, node ID]
+    """
+
+    try:
+        sdfg = dace.SDFG.from_json(request.json['sdfg'])
+    except KeyError:
+        return jsonify({'error': 'SDFG not given'})
+
+    try:
+        sdfg_id, state_id, node_id = request.json['nodeid']
+    except KeyError:
+        sdfg_id, state_id, node_id = None, None, None
+
+    if sdfg_id is None:
+        sdfg.expand_library_nodes()
+    else:
+        context_sdfg = sdfg.sdfg_list[sdfg_id]
+        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        if isinstance(node, LibraryNode):
+            node.expand(context_sdfg)
+        else:
+            return jsonify({'error': 'The given node is not a library node'})
+
+    return jsonify({'sdfg': sdfg.to_json()})
 
 
 def collect_all_SDFG_nodes(sdfg):
@@ -560,20 +610,27 @@ def applySDFGProperties(sdfg, properties, step=None):
     return sdfg
 
 
-def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
+def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
     # Iterate over the path, applying the transformations
     global_counter = {}
-    if sdfg_props is None: sdfg_props = []
+    sdfg_props = sdfg_props or []
     step = 0
     for x in optpath:
         optimizer = SDFGOptimizer(sdfg, inplace=True)
-        matching = optimizer.get_pattern_matches()
+
+        name = x['name']
+        classname = name[:name.index('$')] if name.find('$') >= 0 else name
+
+        transformation = next(t for t in Transformation.extensions().keys() if
+                              t.__name__ == classname)
+        matching = optimizer.get_pattern_matches(patterns=[transformation])
 
         # Apply properties (will automatically apply by step-matching)
         sdfg = applySDFGProperties(sdfg, sdfg_props, step)
 
         for pattern in matching:
             name = type(pattern).__name__
+            tsdfg = sdfg.sdfg_list[pattern.sdfg_id]
 
             if useGlobalSuffix:
                 if name in global_counter:
@@ -590,9 +647,10 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
                 #if prop['name'] == 'subgraph': continue
                 #set_properties_from_json(pattern, prop, sdfg)
 
-                dace.serialize.set_properties_from_json(
-                    pattern, x['params']['props'], context=sdfg)
-                pattern.apply_pattern(sdfg)
+                dace.serialize.set_properties_from_json(pattern,
+                                                        x['params']['props'],
+                                                        context=sdfg)
+                pattern.apply_pattern(tsdfg)
 
                 if not useGlobalSuffix:
                     break
@@ -759,23 +817,34 @@ def compileProgram(request, language, perfopts=None):
                         sp = None
                     print("Applying opts for " + sdfg_name)
                     print("Dict: " + str(sdfg_dict.keys()))
-                    sdfg_dict[sdfg_name] = applyOptPath(
-                        sdfg_dict[sdfg_name], op, sdfg_props=sp)
+                    sdfg_dict[sdfg_name] = applyOptPath(sdfg_dict[sdfg_name],
+                                                        op,
+                                                        sdfg_props=sp)
 
         code_tuple_dict = {}
         # Deep-copy the SDFG (codegen may change the SDFG it operates on)
         codegen_sdfgs = copy.deepcopy(sdfg_dict)
         codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
-            from dace.codegen import codegen
-            if sdfg_eval_order != []:
-                sdfg_eval_order.reverse()
-                for x in sdfg_eval_order:
-                    s = codegen_sdfgs[x]
-                    code_tuple_dict[x] = codegen.generate_code(s)
+            if sdfg_eval_order:
+                sdfg_eval = [(n, codegen_sdfgs[n])
+                             for n in reversed(sdfg_eval_order)]
             else:
-                for n, s in codegen_sdfgs.items():
+                sdfg_eval = codegen_sdfgs.items()
+
+            for n, s in sdfg_eval:
+                try:
+                    if Config.get_bool('diode', 'general',
+                                       'library_autoexpand'):
+                        s.expand_library_nodes()
+
                     code_tuple_dict[n] = codegen.generate_code(s)
+                except dace.sdfg.NodeNotExpandedError as ex:
+                    code_tuple_dict[n] = [str(ex)]
+                except Exception:  # Forward exception to output code
+                    code_tuple_dict[n] = [
+                        'Code generation failed:\n' + traceback.format_exc()
+                    ]
 
         if dace_state is None:
             if "code" in request.json:
@@ -816,10 +885,11 @@ def get_transformations(sdfgs):
             nodeids = []
             properties = []
             if p is not None:
+                sdfg_id = p.sdfg_id
                 sid = p.state_id
                 nodes = list(p.subgraph.values())
                 for n in nodes:
-                    nodeids.append([sid, n])
+                    nodeids.append([sdfg_id, sid, n])
 
                 properties = dace.serialize.all_properties_to_json(p)
             optimizations.append({
@@ -1023,9 +1093,12 @@ def compile(language):
         compounds = {}
         for n, s in sdfgs.items():
             compounds[n] = {
-                "sdfg": s.to_json(),
-                "matching_opts": opts[n]['matching_opts'],
-                "generated_code": [*map(lambda x: x.code, code_tuples[n])]
+                "sdfg":
+                s.to_json(),
+                "matching_opts":
+                opts[n]['matching_opts'],
+                "generated_code":
+                [*map(lambda x: getattr(x, 'code', str(x)), code_tuples[n])]
             }
         return jsonify({"compounds": compounds})
 
@@ -1124,11 +1197,10 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-l",
-        "--localhost",
-        action="store_true",
-        help="Bind to localhost only")
+    parser.add_argument("-l",
+                        "--localhost",
+                        action="store_true",
+                        help="Bind to localhost only")
 
     parser.add_argument(
         "-r",
@@ -1136,11 +1208,10 @@ if __name__ == '__main__':
         action="store_true",
         help="Use ssh commands instead of locally running dace")
 
-    parser.add_argument(
-        "-rd",
-        "--restoredace",
-        action="store_true",
-        help="Restore the backup file")
+    parser.add_argument("-rd",
+                        "--restoredace",
+                        action="store_true",
+                        help="Restore the backup file")
 
     parser.add_argument(
         "-e",
@@ -1163,11 +1234,10 @@ if __name__ == '__main__':
     es_ref.append(es)
 
     if not args.executor:
-        app.run(
-            host='localhost' if args.localhost else "0.0.0.0",
-            debug=True,
-            port=args.port,
-            use_reloader=False)
+        app.run(host='localhost' if args.localhost else "0.0.0.0",
+                debug=True,
+                port=args.port,
+                use_reloader=False)
 
         es.stop()
     else:

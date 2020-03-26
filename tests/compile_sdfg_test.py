@@ -26,10 +26,7 @@ if __name__ == '__main__':
 
     # Easy way to add a tasklet
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
-        'mytasklet',
-        dict(i='0:N'),
-        dict(a=Memlet.simple(A_, 'i')),
-        'b = 5*a',
+        'mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A_, 'i')), 'b = 5*a',
         dict(b=Memlet.simple(B_, 'i')))
     # Alternatively (the explicit way):
     #map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))

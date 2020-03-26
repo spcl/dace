@@ -72,8 +72,8 @@ if __name__ == '__main__':
         assert relerr < 1e-5
 
     for p, f in {('exponent', 'exp'), ('sine', 'sin'), ('cosine', 'cos'),
-                 ('square_root', 'sqrt'), ('logarithm', 'log'), ('conjugate',
-                                                                 'conj')}:
+                 ('square_root', 'sqrt'), ('logarithm', 'log'),
+                 ('conjugate', 'conj')}:
         validate(p, f, A)
 
     for p, f in {('real_part', 'real'), ('imag_part', 'imag')}:

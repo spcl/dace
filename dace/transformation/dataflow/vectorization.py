@@ -17,6 +17,10 @@ class Vectorization(pattern_matching.Transformation):
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
+    propagate_parent = Property(desc="Propagate vector length through "
+                                "parent SDFGs",
+                                dtype=bool,
+                                default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _tasklet = nodes.Tasklet('_')
@@ -138,7 +142,7 @@ class Vectorization(pattern_matching.Transformation):
                     sink_edge = graph.memlet_path(edge)[-1]
 
                     # propagate to the parent (TODO: handle multiple level of nestings)
-                    if sdfg.parent is not None:
+                    if self.propagate_parent and sdfg.parent is not None:
                         # Find parent Nested SDFG node
                         parent_node = next(n for n in sdfg.parent.nodes()
                                            if isinstance(n, nodes.NestedSDFG)
@@ -149,7 +153,7 @@ class Vectorization(pattern_matching.Transformation):
                         for pe in sdfg.parent.all_edges(parent_node):
                             if str(pe.dst_conn) == str(source_edge.src) or str(
                                     pe.src_conn) == str(sink_edge.dst):
-                                for ppe in graph.memlet_path(pe):
+                                for ppe in sdfg.parent.memlet_path(pe):
                                     ppe.data.veclen = vector_size
 
                 except AttributeError:

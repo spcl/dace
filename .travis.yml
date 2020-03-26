@@ -14,7 +14,7 @@ before_install:
   - sudo apt-get install libpapi-dev papi-tools
 
 install:
-  - pip install ".[test]" .
+  - pip install ".[testing]" .
   - pip install coverage codecov
   - if [ $DACE_optimizer_automatic_strict_transformations -eq 1 ]; then pip install tensorflow==1.15.0; fi
 

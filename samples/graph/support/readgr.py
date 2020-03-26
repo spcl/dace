@@ -12,8 +12,8 @@ class cnbr_t(Structure):
 
 
 class ckrinfo_t(Structure):
-    _fields_ = [('id', idx_t), ('ed', idx_t), ('nnbrs', idx_t), ('inbr',
-                                                                 idx_t)]
+    _fields_ = [('id', idx_t), ('ed', idx_t), ('nnbrs', idx_t),
+                ('inbr', idx_t)]
 
 
 class vnbr_t(Structure):

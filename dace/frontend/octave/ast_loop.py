@@ -46,9 +46,8 @@ class AST_ForLoop(AST_Node):
             lhs_node = self.initializer.lhs.get_datanode(sdfg, state)
             self.initializer.rhs.generate_code(sdfg, state)
             rhs_node = self.initializer.rhs.get_datanode(sdfg, state)
-            sdfg.add_transient(
-                self.var.get_name_in_sdfg(sdfg), [1],
-                self.initializer.lhs.get_basetype())
+            sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1],
+                               self.initializer.lhs.get_basetype())
             var_node = s.add_access(self.var.get_name_in_sdfg(sdfg))
             s.add_edge(
                 lhs_node, None, var_node, None,
@@ -65,9 +64,8 @@ class AST_ForLoop(AST_Node):
                                        "out=" + loop_guard_var)
 
             if self.var.get_name_in_sdfg(sdfg) not in sdfg.arrays:
-                sdfg.add_transient(
-                    self.var.get_name_in_sdfg(sdfg), [1],
-                    self.initializer.lhs.get_basetype())
+                sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1],
+                                   self.initializer.lhs.get_basetype())
             trans = s_guard.add_access(self.var.get_name_in_sdfg(sdfg))
             # Workaround until "condition for putting a variable as top-level
             # doesn't take inter-state edges into account" is solved.
@@ -90,8 +88,9 @@ class AST_ForLoop(AST_Node):
             prev = s_guard
             for s in self.stmts.statements:
                 state = len(sdfg.nodes())
-                newstate = dace.SDFGState(
-                    "s" + str(state), sdfg, debuginfo=s.context)
+                newstate = dace.SDFGState("s" + str(state),
+                                          sdfg,
+                                          debuginfo=s.context)
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
                 if last_state is None: last_state = state
@@ -113,8 +112,9 @@ class AST_ForLoop(AST_Node):
 
             # Create the loop exit state
             state = len(sdfg.nodes())
-            s_lexit = dace.SDFGState(
-                "s" + str(state), sdfg, debuginfo=s.context)
+            s_lexit = dace.SDFGState("s" + str(state),
+                                     sdfg,
+                                     debuginfo=s.context)
             lend_val = str(self.initializer.get_dims()[-1])
             for_exit = dace.graph.edges.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
@@ -173,8 +173,9 @@ class AST_ForLoop(AST_Node):
         prev = s_getinit
         for s in self.stmts.statements:
             state = len(sdfg.nodes())
-            newstate = dace.SDFGState(
-                "s" + str(state), sdfg, debuginfo=s.context)
+            newstate = dace.SDFGState("s" + str(state),
+                                      sdfg,
+                                      debuginfo=s.context)
             sdfg.add_node(newstate)
             last_state = s.generate_code(sdfg, state)
             if last_state is None: last_state = state

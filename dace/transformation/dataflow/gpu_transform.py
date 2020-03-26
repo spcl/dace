@@ -16,21 +16,22 @@ class GPUTransformMap(pattern_matching.Transformation):
         outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    fullcopy = Property(
-        desc="Copy whole arrays rather than used subset",
-        dtype=bool,
-        default=False)
+    fullcopy = Property(desc="Copy whole arrays rather than used subset",
+                        dtype=bool,
+                        default=False)
 
-    toplevel_trans = Property(
-        desc="Make all GPU transients top-level", dtype=bool, default=False)
+    toplevel_trans = Property(desc="Make all GPU transients top-level",
+                              dtype=bool,
+                              default=False)
 
     register_trans = Property(
         desc="Make all transients inside GPU maps registers",
         dtype=bool,
         default=False)
 
-    sequential_innermaps = Property(
-        desc="Make all internal maps Sequential", dtype=bool, default=False)
+    sequential_innermaps = Property(desc="Make all internal maps Sequential",
+                                    dtype=bool,
+                                    default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _reduce = nodes.Reduce('lambda: None', None)
@@ -109,11 +110,11 @@ class GPUTransformMap(pattern_matching.Transformation):
                 full_data=self.fullcopy)
         else:
             cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
-            nsdfg_node = helpers.nest_state_subgraph(
-                sdfg,
-                graph,
-                SubgraphView(graph, [cnode]),
-                full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg,
+                                                     graph,
+                                                     SubgraphView(
+                                                         graph, [cnode]),
+                                                     full_data=self.fullcopy)
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG

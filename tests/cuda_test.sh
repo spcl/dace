@@ -12,7 +12,7 @@ ERRORS=0
 FAILED_TESTS=""
 TESTS=0
 
-TEST_TIMEOUT=60
+TEST_TIMEOUT=600
 
 RED='\033[0;31m'
 NC='\033[0m'
@@ -184,6 +184,7 @@ runall() {
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
     
     runtestargs instrumentation_test.py gpu
+    runtestargs library/matmul_cudatest.py
 }
 
 

@@ -61,14 +61,48 @@ function stringify_sdfg(sdfg) {
     return JSON.stringify(sdfg, (name, val) => replacer(name, val, sdfg));
 }
 
+function sdfg_range_elem_to_string(range, settings=null) {
+    let preview = '';
+    if (range.start == range.end && range.step == 1 && range.tile == 1)
+        preview += sdfg_property_to_string(range.start, settings);
+    else {
+        if (settings && settings.inclusive_ranges) {
+            preview += sdfg_property_to_string(range.start, settings) + '..' +
+                sdfg_property_to_string(range.end, settings);
+        } else {
+            let endp1 = sdfg_property_to_string(range.end, settings) + ' + 1';
+            // Try to simplify using math.js
+            var mathjs = undefined;
+            try {
+                mathjs = window.math;
+            } catch(e) {
+                try { mathjs = math; } catch(e) {}
+            }
+            try {
+                endp1 = mathjs.simplify(endp1).toString();
+            } catch(e) {}
+            preview += sdfg_property_to_string(range.start, settings) + ':' +
+                endp1;
+        }
+        if (range.step != 1) {
+            preview += ':' + sdfg_property_to_string(range.step, settings);
+            if (range.tile != 1)
+                preview += ':' + sdfg_property_to_string(range.tile, settings);
+        } else if (range.tile != 1) {
+            preview += '::' + sdfg_property_to_string(range.tile, settings);
+        }
+    }
+    return preview;
+}
+
 // Includes various properties and returns their string representation
-function sdfg_property_to_string(prop) {
+function sdfg_property_to_string(prop, settings=null) {
     if (prop === null) return prop;
-    if (prop.type === "subsets.Indices") {
+    if (prop.type === "Indices" || prop.type === "subsets.Indices") {
         let indices = prop.indices;
         let preview = '[';
         for (let index of indices) {
-            preview += sdfg_property_to_string(index) + ', ';
+            preview += sdfg_property_to_string(index, settings) + ', ';
         }
         return preview.slice(0, -2) + ']';
     } else if (prop.type === "Range" || prop.type === "subsets.Range") {
@@ -77,16 +111,7 @@ function sdfg_property_to_string(prop) {
         // Generate string from range
         let preview = '[';
         for (let range of ranges) {
-            preview += sdfg_property_to_string(range.start) + ':' +
-                sdfg_property_to_string(range.end);
-            if (range.step != 1) {
-                preview += ':' + sdfg_property_to_string(range.step);
-                if (range.tile != 1)
-                    preview += ':' + sdfg_property_to_string(range.tile);
-            } else if (range.tile != 1) {
-                preview += '::' + sdfg_property_to_string(range.tile);
-            }
-            preview += ', ';
+            preview += sdfg_range_elem_to_string(range, settings) + ', ';
         }
         return preview.slice(0, -2) + ']';
     } else if (prop.language !== undefined && prop.string_data !== undefined) {
@@ -98,6 +123,17 @@ function sdfg_property_to_string(prop) {
     } else if (prop.constructor == Object) {
         // General dictionary
         return JSON.stringify(prop);
+    } else if (prop.constructor == Array) {
+        // General array
+        let result = '[ ';
+        let first = true;
+        for (let subprop of prop) {
+            if (!first)
+                result += ', ';
+            result += sdfg_property_to_string(subprop, settings);
+            first = false;
+        }
+        return result + ' ]';
     } else {
         return prop;
     }
