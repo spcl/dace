@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SDFG Viewer</title>
+    <title>SDFV: SDFG Viewer</title>
     <link rel="stylesheet" type="text/css" href="./webclient/external_lib/material/material-icons.css">
     <link rel="stylesheet" type="text/css" href="./webclient/sdfv.css">
 
@@ -43,7 +43,11 @@
 <script src="./webclient/sdfv.js"></script>
 <script>
 $(document).ready(function(){
-    init_sdfv(null);
+    let url = getParameterByName('url');
+    if (url)
+        load_sdfg_from_url(url);
+    else
+        init_sdfv(null);
 });
 </script>
 </body>
