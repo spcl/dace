@@ -194,6 +194,7 @@ class Memlet(object):
             :param datadesc: The data descriptor object.
             :param wcr: The conflict resolution lambda.
             @type datadesc: Data.
+            :param wcr: The write conflict resolution lambda.
         """
         range = subsets.Range.from_array(datadesc)
         return Memlet(dataname, range.num_elements(), range, 1, wcr=wcr)

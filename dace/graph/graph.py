@@ -305,28 +305,30 @@ class Graph(object):
                     queue.append(next_node)
                 yield e
 
-    def dfs_edges(G, source, condition=None):
+    def dfs_edges(G, source, condition=None, reverse=False):
         """Traverse a graph (DFS) with an optional condition to filter out nodes
         """
         if isinstance(source, list): nodes = source
         else: nodes = [source]
         visited = set()
+        edge_getter = G.out_edges if not reverse else G.in_edges
         for start in nodes:
             if start in visited:
                 continue
             visited.add(start)
-            stack = [(start, G.out_edges(start).__iter__())]
+            stack = [(start, edge_getter(start).__iter__())]
             while stack:
                 parent, children = stack[-1]
                 try:
                     e = next(children)
-                    if e.dst not in visited:
+                    next_node = e.dst if not reverse else e.src
+                    if next_node not in visited:
                         visited.add(e.dst)
                         if condition is None or condition(
                                 e.src, e.dst, e.data):
                             yield e
                             stack.append(
-                                (e.dst, G.out_edges(e.dst).__iter__()))
+                                (next_node, edge_getter(next_node).__iter__()))
                 except StopIteration:
                     stack.pop()
 
