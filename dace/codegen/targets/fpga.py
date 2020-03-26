@@ -872,7 +872,6 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
                                                    node)
-
             # Generate nested loops
             if not isinstance(node, PipelineEntry):
                 for i, r in enumerate(node.map.range):
@@ -906,9 +905,16 @@ class FPGACodeGen(TargetCodeGenerator):
                                         np.dtype(end_type.dtype.type),
                                         np.unsignedinteger):
                                     loop_var_type = "size_t"
-                    except (UnboundLocalError, TypeError):
+                    except (UnboundLocalError):
                         raise UnboundLocalError('Pipeline scopes require '
                                                 'specialized bound values')
+                    except (TypeError):
+                        # Raised when the evaluation of begin or skip fails.
+                        # This could occur, for example, if they are defined in terms of other symbols, which
+                        # is the case in a tiled map
+                        pass
+
+
 
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(

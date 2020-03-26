@@ -67,6 +67,9 @@ class MapTiling(pattern_matching.Transformation):
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         last_map_entry = None
         removed_maps = 0
+
+        original_schedule = map_entry.schedule
+
         for dim_idx in range(len(map_entry.map.params)):
             if dim_idx >= len(self.tile_sizes):
                 tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[-1])
@@ -100,6 +103,9 @@ class MapTiling(pattern_matching.Transformation):
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
                 stripmine.apply(sdfg)
+
+            # apply to the new map the schedule of the original one
+            map_entry.schedule = original_schedule
 
             if last_map_entry:
                 new_map_entry = graph.in_edges(map_entry)[0].src
