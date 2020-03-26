@@ -59,13 +59,24 @@ class TransientReuse(pattern_matching.Transformation):
                             G.add_edges_from([(n, x) for (y, x) in G.out_edges(m)])
                         G.remove_node(m)
 
-            # Remove all nodes that are not AccessNodes and connect their predecessors and successors
+
             for n in state.nodes():
-                if not isinstance(n, nodes.AccessNode) and n in G.nodes():
-                    for p in G.predecessors(n):
-                        for c in G.successors(n):
-                            G.add_edge(p,c)
-                    G.remove_node(n)
+                if n in G.nodes():
+                    # Remove all nodes that are not AccessNodes and connect their predecessors and successors
+                    if not isinstance(n, nodes.AccessNode):
+                        for p in G.predecessors(n):
+                            for c in G.successors(n):
+                                G.add_edge(p,c)
+                        G.remove_node(n)
+                    else:
+                        # Remove all AccessNodes with incoming wcr edges
+                        for e in state.all_edges(n):
+                            if e.data.wcr is not None:
+                                for p in G.predecessors(n):
+                                    for s in G.successors(n):
+                                        G.add_edge(p,s)
+                                G.remove_node(n)
+                                break
 
             # Setup the ancestors and successors arrays
             ancestors = {}
@@ -88,7 +99,6 @@ class TransientReuse(pattern_matching.Transformation):
                 for m in ancestors:
                     if (isinstance(m, nodes.AccessNode) and successors[n].issubset(ancestors[m]) and n in ancestors[m] and
                             sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient):
-                        print(successors[n], ancestors[m])
                         mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
