@@ -111,7 +111,7 @@ class StreamTransient(pattern_matching.Transformation):
         dataname = memlet.data
 
         # Create the new node: Temporary stream and an access node
-        newname, _ = sdfg.add_stream('tile_' + dataname,
+        newname, _ = sdfg.add_stream('trans_' + dataname,
                                      sdfg.arrays[memlet.data].dtype,
                                      1,
                                      bbox_approx[0], [1],
@@ -125,8 +125,8 @@ class StreamTransient(pattern_matching.Transformation):
 
         # Reconnect, assuming one edge to the stream
         graph.remove_edge(edge)
-        graph.add_edge(map_exit, None, snode, None, to_stream_mm)
-        graph.add_edge(snode, None, outer_map_exit, None, memlet)
+        graph.add_edge(map_exit, edge.src_conn, snode, None, to_stream_mm)
+        graph.add_edge(snode, None, outer_map_exit, edge.dst_conn, memlet)
 
         return
 
