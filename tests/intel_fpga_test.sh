@@ -51,12 +51,19 @@ run_sample() {
 }
 
 run_all() {
+
     #### VECTORIZATION ####
     # Vectorization 1: first vectorize and then transform for FPGA
     run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True)\nFPGATransformSDFG\$0\n"
     # Vectorization 2: first transform for FPGA then vectorize
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
     # Vectorization 3: TODO non vectorizable N
+
+    # ### MAP TILING ####
+    # First tile then transform
+    run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"
+    # Other way around
+    run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
     # #### WCR ####
     # simple WCR (accumulates on scalar)
