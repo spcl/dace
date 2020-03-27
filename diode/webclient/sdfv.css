@@ -37,6 +37,11 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
     position: absolute;
     background-color: #fdfdfd;
     box-shadow: 0 4px 5px 3px rgba(0, 0, 0, 0.2);
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    z-index: 999;
 }
 
 .context_menu_option {
@@ -50,14 +55,68 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
     background: rgba(0, 0, 0, 0.1);
 }
 
-.tooltip {
+.context_menu_option input {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+  height: 0;
+  width: 0;
+}
+
+.sdfvtooltip {
     background: rgba(0, 0, 0, 0.8);
     color: white;
     font-size: 16px;
     font-family: "Segoe UI", Arial, sans-serif;
     padding: 2px 5px 2px 5px;
     border-radius: 4px;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
     user-select: none;
     position: absolute;
     display: none;
 }
+
+/* Checkmarks for context menu items */
+.checkmark {
+  position: absolute;
+  right: 5px;
+  height: 20px;
+  width: 20px;
+  background-color: #eee;
+}
+
+.checkmark_checked {
+  position: absolute;
+  right: 5px;
+  height: 20px;
+  width: 20px;
+  background-color: #2196F3;
+}
+
+.context_menu_option:hover .checkmark {
+  background-color: #ccc;
+}
+
+.checkmark:after {
+  content: "";
+  position: absolute;
+  display: none;
+}
+
+.context_menu_option .checkmark_checked:after {
+  content: "";
+  position: absolute;
+  display: block;
+  left: 6px;
+  top: 2px;
+  width: 5px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 3px 3px 0;
+  -webkit-transform: rotate(45deg);
+  -ms-transform: rotate(45deg);
+  transform: rotate(45deg);
+}
+

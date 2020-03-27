@@ -113,7 +113,7 @@ class RedundantArrayCopying(pm.Transformation):
 
 @registry.autoregister_params(singlestate=True)
 class RedundantArrayCopying2(pm.Transformation):
-    """ Implements the redundant array removal transformation. Removes 
+    """ Implements the redundant array removal transformation. Removes
         multiples of array B in pattern A -> B.
     """
     _arrays_removed = 0

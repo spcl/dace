@@ -94,7 +94,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-def test_dot(implementation, dtype, sdfg):
+def _test_dot(implementation, dtype, sdfg):
     try:
         dot = sdfg.compile()
     except (CompilerConfigurationError, CompilationError):
@@ -126,17 +126,19 @@ def test_dot(implementation, dtype, sdfg):
     print("Test ran successfully for {}.".format(implementation))
 
 
+def test_dot():
+    _test_dot("32-bit pure SDFG", np.float32, make_sdfg("pure", dace.float32))
+    _test_dot("64-bit pure SDFG", np.float64, make_sdfg("pure", dace.float64))
+    _test_dot("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
+    _test_dot("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
+    _test_dot("32-bit cuBLAS", np.float32,
+              make_sdfg("cuBLAS", dace.float32, dace.StorageType.GPU_Global))
+    _test_dot("64-bit cuBLAS", np.float64,
+              make_sdfg("cuBLAS", dace.float64, dace.StorageType.GPU_Global))
+
+
 ###############################################################################
 
 if __name__ == "__main__":
-
-    test_dot("32-bit pure SDFG", np.float32, make_sdfg("pure", dace.float32))
-    test_dot("64-bit pure SDFG", np.float64, make_sdfg("pure", dace.float64))
-    test_dot("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
-    test_dot("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
-    test_dot("32-bit cuBLAS", np.float32,
-             make_sdfg("cuBLAS", dace.float32, dace.StorageType.GPU_Global))
-    test_dot("64-bit cuBLAS", np.float64,
-             make_sdfg("cuBLAS", dace.float64, dace.StorageType.GPU_Global))
-
+    test_dot()
 ###############################################################################

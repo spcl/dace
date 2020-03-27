@@ -670,6 +670,9 @@ class SDFGRenderer {
         this.tooltip = null;
         this.tooltip_container = null;
 
+        // View options
+        this.inclusive_ranges = false;
+
         // Mouse-related fields
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
         this.realmousepos = null; // Last position of the mouse pointer (in pixel coordinates)
@@ -691,6 +694,10 @@ class SDFGRenderer {
         } catch (ex) {
             // Do nothing
         }
+    }
+
+    view_settings() {
+        return {inclusive_ranges: this.inclusive_ranges};
     }
 
     // Initializes the DOM
@@ -719,10 +726,13 @@ class SDFGRenderer {
                 let rect = this.getBoundingClientRect();
                 let cmenu = new ContextMenu();
                 cmenu.addOption("Save view as PNG", x => that.save_as_png());
-                cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
-                cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                if (that.has_pdf()) {
+                    cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
+                    cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                }
+                cmenu.addCheckableOption("Inclusive ranges", that.inclusive_ranges, (x, checked) => {that.inclusive_ranges = checked;});
                 that.menu = cmenu;
-                cmenu.show(rect.left, rect.bottom);
+                that.menu.show(rect.left, rect.bottom);
             };
             d.title = 'Menu';
             this.toolbar.appendChild(d);
@@ -758,7 +768,7 @@ class SDFGRenderer {
         // Tooltip HTML container
         this.tooltip_container = document.createElement('div');
         this.tooltip_container.innerHTML = '';
-        this.tooltip_container.className = 'tooltip';
+        this.tooltip_container.className = 'sdfvtooltip';
         this.tooltip_container.onmouseover = () => this.tooltip_container.style.display = "none";
         this.container.appendChild(this.tooltip_container);
 
@@ -880,6 +890,16 @@ class SDFGRenderer {
 
     save_as_png() {
         this.save('sdfg.png', this.canvas.toDataURL('image/png'));
+    }
+
+    has_pdf() {
+        try {
+            blobStream;
+            canvas2pdf.PdfContext;
+            return true;
+        } catch(e) {
+            return false;
+        }
     }
 
     save_as_pdf(save_all=false) {

@@ -36,7 +36,7 @@ def in_path(path, edge, nodetype, forward=True):
 class GPUTransformLocalStorage(pattern_matching.Transformation):
     """Implements the GPUTransformLocalStorage transformation.
 
-        Similar to GPUTransformMap, but takes multiple maps leading from the 
+        Similar to GPUTransformMap, but takes multiple maps leading from the
         same data node into account, creating a local storage for each range.
 
         @see: GPUTransformMap
