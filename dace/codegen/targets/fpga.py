@@ -31,6 +31,8 @@ class FPGACodeGen(TargetCodeGenerator):
     title = None
     language = None
 
+    allocated_host_device_buffers = 0
+
     def __init__(self, frame_codegen, sdfg):
 
         # The inheriting class must set target_name, title and language.
@@ -435,12 +437,14 @@ class FPGACodeGen(TargetCodeGenerator):
                     if isinstance(nodedesc, dace.data.Array):
                         # TODO: Distinguish between read, write, and read+write
                         # TODO: Handle memory banks
+                        # TODO: temporary solution for memory bank for the sake of executing on the Stratix10/Stenciflow
                         self._allocated_global_arrays.add(node.data)
                         result.write(
                             "auto {} = hlslib::ocl::GlobalContext()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({});".format(dataname, nodedesc.dtype.ctype,
-                                           sym2cpp(arrsize)))
+                            "(hlslib::ocl::MemoryBank::bank{},{});".format(dataname, nodedesc.dtype.ctype,
+                                           self.allocated_host_device_buffers%4, sym2cpp(arrsize)))
+                        self.allocated_host_device_buffers = self.allocated_host_device_buffers + 1
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 

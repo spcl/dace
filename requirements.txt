@@ -27,4 +27,4 @@ tqdm==4.31.1
 urllib3==1.25.7
 websockets==8.1
 Werkzeug==0.16.0
-mpi4py
+
