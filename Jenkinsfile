@@ -61,9 +61,9 @@ tests/intel_fpga_test.sh
         stage('Test Intel FPGA SMI') {
           steps {
             sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
-            pip3 install --user mpi4py
             export COVERAGE_RCFILE=`pwd`/.coveragerc
             export PATH=/opt/mpich3.2.11/bin:$PATH
+            pip3 install --user mpi4py
             source /opt/intelFPGA_pro/19.1/hld/init_stratix.sh
 export DACE_debugprint=1
 (source /opt/rh/llvm-toolset-7.0/enable && tests/intel_fpga_smi_test.sh)
