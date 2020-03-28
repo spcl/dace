@@ -40,13 +40,13 @@ Running
 
 **Python scripts:** Run DaCe programs (in implicit, explicit, or TensorFlow syntax) using Python directly.
 
-**DIODE interactive development (experimental):**: Either run the installed script `diode`, or call `python3 -m diode.diode_server` from the shell. Then, follow the printed instructions to enter the web interface.
+**[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `diode/sdfv.html` directly and choose a file in the browser.
+
+**DIODE interactive development (experimental):**: Either run the installed script `diode`, or call `python3 -m diode` from the shell. Then, follow the printed instructions to enter the web interface.
 
 **Octave scripts (experimental):** `.m` files can be run using the installed script `dacelab`, which will create the appropriate SDFG file.
 
 **Jupyter Notebooks:** DaCe is Jupyter-compatible. If a result is an SDFG or a state, it will show up directly in the notebook. See the [tutorials](tutorials) for examples.
-
-**[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `diode/sdfv.html` directly and choose a file in the browser.
 
 **Note for Windows/Visual C++ users:** If compilation fails in the linkage phase, try setting the following environment variable to force Visual C++ to use Multi-Threaded linkage:
 ```
