@@ -6,10 +6,12 @@ import os
 import platform
 
 import dace
+import diode
 import tempfile
 import jinja2
 
-if __name__ == '__main__':
+
+def main():
     if len(sys.argv) != 2:
         print('USAGE: sdfv <PATH TO SDFG FILE>')
         exit(1)
@@ -36,7 +38,7 @@ if __name__ == '__main__':
         sdfg = dace.SDFG.from_file(filename)
         sdfg_json = sdfg.to_json()
 
-    basepath = os.path.dirname(os.path.realpath(__file__))
+    basepath = os.path.dirname(os.path.realpath(diode.__file__))
     template_loader = jinja2.FileSystemLoader(
         searchpath=os.path.join(basepath, 'templates'))
     template_env = jinja2.Environment(loader=template_loader)
@@ -58,3 +60,7 @@ if __name__ == '__main__':
         os.system('open %s' % html_filename)
     else:
         os.system('xdg-open %s' % html_filename)
+
+
+if __name__ == '__main__':
+    main()
