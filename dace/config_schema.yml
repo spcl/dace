@@ -132,7 +132,7 @@ required:
 
             allow_shadowing:
                 type: str
-                default: false 
+                default: true 
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
