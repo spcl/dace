@@ -36,7 +36,7 @@ class Context {
   std::unordered_map<int, hlslib::ocl::Context> contexts_;
 };
 
-extern Context _context;
+extern Context *_context;
 
 }  // namespace fpga
 
