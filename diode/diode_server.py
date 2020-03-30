@@ -1192,8 +1192,7 @@ def status():
     return "OK"
 
 
-if __name__ == '__main__':
-
+def main():
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -1251,3 +1250,6 @@ if __name__ == '__main__':
         # Wait for an event that will never arrive (passive wait)
         event = threading.Event()
         event.wait()
+
+if __name__ == '__main__':
+    main()

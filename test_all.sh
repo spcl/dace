@@ -94,7 +94,7 @@ runtest_cu() {
 
 runtest_octave() {
     test_start $1
-    testcmd $PYTHON_BINARY $SCRIPTPATH/scripts/dacelab $1
+    testcmd $PYTHON_BINARY $SCRIPTPATH/dace/frontend/octave/dacelab.py $1
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
