@@ -225,15 +225,18 @@ required:
                         title: Compilation mode 
                         description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware) 
 
-                    executable:
+                    path:
                         type: str
-                        default: v++ 
-                        title: Vitis compiler executable path 
-                        description: File path or name of Vitis binary (v++) 
+                        default: '' 
+                        title: Vitis installation override 
+                        description: >
+                            Path to specific Vitis/SDx/SDAccel installation to
+                            use instead of just searching PATH and environment
+                            variables.
 
                     platform:
                         type: str
-                        default: xilinx_u280_xdma_201920_1 
+                        default: xilinx_u250_xdma_201830_2 
                         title: Target platform for Xilinx 
                         description: Platform name of Vitis/SDx/SDAccel target.
 
@@ -281,12 +284,14 @@ required:
                           Target of FPGA kernel build
                           (emulator/simulator/hardware).
 
-                    executable:
+                    path:
                         type: str
-                        default: aoc 
-                        title: Compiler path 
+                        default: ''
+                        title: Intel FPGA OpenCL SDK installation override 
                         description: >
-                          Intel Offline Compiler (aoc) executable path. 
+                            Path to specific Intel FPGA OpenCL SDK installation
+                            to use instead of just searching PATH and
+                            environment variables.
 
                     board:
                         type: str
@@ -310,6 +315,7 @@ required:
                         title: Kernel flags 
                         description: High-level synthesis C++ flags 
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant"
+
             #############################################
             # MPI compiler
             mpi:
