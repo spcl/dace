@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
         Config.set("compiler", "intel_fpga", "launch_async", value=v)
 
-        name = "async_test_{}".format(v)
+        name = "async_test"
         sdfg = make_sdfg(name)
         sdfg.specialize({"P": P.get(), "N": N.get()})
         # We don't care about the result, as long as it compiles and runs
