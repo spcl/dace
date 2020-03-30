@@ -638,19 +638,34 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def generate_host_function_epilogue(sdfg, state, host_stream):
+        # For the sake of testing Stencilflow, measure also the enqueueing time
         host_stream.write(
             """\
   const auto start = std::chrono::high_resolution_clock::now();
-  std::vector<std::future<std::pair<double, double>>> futures;
+  cl::Event events[kernels.size()];
+  for (int i = 0; i<kernels.size();i++) {
+    kernels[i].commandQueue().enqueueTask(kernels[i].kernel(), nullptr,&events[i]);
+  }
+  const auto enq_time = std::chrono::high_resolution_clock::now();
+                                                                                                                                                                                            
   for (auto &k : kernels) {
-    futures.emplace_back(k.ExecuteTaskAsync());
+    k.commandQueue().finish();
   }
-  for (auto &f : futures) {
-    f.wait();
-  }
+
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
+  const double enqueuingChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(enq_time - start).count();
+  /*
+  //Enable if needed
+  for(int i=0;i<kernels.size();i++)
+  {
+    long start, end;
+    events[i].getProfilingInfo(CL_PROFILING_COMMAND_START,&start);
+    events[i].getProfilingInfo(CL_PROFILING_COMMAND_END,&end);
+    printf("Kernel %d, execution time %f (s)\n",i, ((double)(end-start))/1000000000.0);
+  }
+  */
+  std::cout << "Kernel executed in " << elapsedChrono << " seconds (Enqueuing time "<<enqueuingChrono<<" seconds). \\n" << std::flush;
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
