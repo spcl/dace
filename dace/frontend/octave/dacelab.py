@@ -34,7 +34,7 @@ def compile(inputfile):
     return sdfg
 
 
-def run_main():
+def main():
     argparser = argparse.ArgumentParser(
         description="dacelab: An Octave to SDFG compiler"
     )
@@ -53,5 +53,5 @@ def run_main():
     print("SDFG Generation finished")
 
 if __name__ == "__main__":
-    run_main()
+    main()
 

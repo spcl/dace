@@ -74,7 +74,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             Config.append(
                 'compiler',
                 'cpu',
-                'additional_args',
+                'args',
                 value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt '
             )
 

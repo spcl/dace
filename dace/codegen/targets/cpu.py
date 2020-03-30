@@ -91,14 +91,17 @@ class CPUCodeGen(TargetCodeGenerator):
 
     @staticmethod
     def cmake_options():
-        compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
-        flags = Config.get("compiler", "cpu", "args")
-        flags += Config.get("compiler", "cpu", "additional_args")
+        options = []
 
-        options = [
-            '-DCMAKE_CXX_COMPILER="{}"'.format(compiler),
-            '-DCMAKE_CXX_FLAGS="{}"'.format(flags),
-        ]
+        if Config.get('compiler', 'cpu', 'executable'):
+            compiler = make_absolute(
+                Config.get('compiler', 'cpu', 'executable'))
+            options.append('-DCMAKE_CXX_COMPILER="{}"'.format(compiler))
+
+        if Config.get('compiler', 'cpu', 'args'):
+            flags = Config.get('compiler', 'cpu', 'args')
+            options.append('-DCMAKE_CXX_FLAGS="{}"'.format(flags))
+
         return options
 
     def get_generated_codeobjects(self):

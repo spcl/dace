@@ -254,27 +254,28 @@ void __dace_exit_cuda({params}) {{
 
     @staticmethod
     def cmake_options():
+        options = []
 
-        host_compiler = make_absolute(
-            Config.get("compiler", "cpu", "executable"))
-        compiler = make_absolute(Config.get("compiler", "cuda", "executable"))
-        flags = Config.get("compiler", "cuda", "args")
-        flags += Config.get("compiler", "cuda", "additional_args")
+        # Override CUDA toolkit
+        if Config.get('compiler', 'cuda', 'path'):
+            options.append("-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
+                Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
 
         # Get CUDA architectures from configuration
         cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
         cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
 
+        flags = Config.get("compiler", "cuda", "args")
         flags += ' ' + ' '.join(
             '-gencode arch=compute_{arch},code=sm_{arch}'.format(arch=arch)
             for arch in cuda_arch)
 
-        options = [
-            "-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler),
-            "-DCUDA_NVCC_FLAGS=\"{}\"".format(flags),
-            "-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
-                os.path.dirname(os.path.dirname(compiler).replace('\\', '/')))
-        ]
+        options.append("-DCUDA_NVCC_FLAGS=\"{}\"".format(flags))
+
+        if Config.get('compiler', 'cpu', 'executable'):
+            host_compiler = make_absolute(
+                Config.get("compiler", "cpu", "executable"))
+            options.append("-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler))
 
         return options
 

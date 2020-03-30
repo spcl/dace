@@ -2,6 +2,7 @@ import aenum
 import os
 import shutil  # which
 from typing import Dict
+import warnings
 
 import dace
 from dace import dtypes
@@ -648,5 +649,6 @@ def make_absolute(path):
         # as "g++". Try to find it on the PATH
         executable = shutil.which(path)
         if not executable:
-            raise ValueError("Could not find executable \"{}\"".format(path))
+            executable = path
+            warnings.warn("Could not find executable \"{}\"".format(path))
         return executable.replace('\\', '/')

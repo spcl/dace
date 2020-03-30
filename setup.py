@@ -13,6 +13,7 @@ runtime_files = [
 diode_files = [
     f[len(diode_path):]
     for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
+              glob.glob(diode_path + 'templates/**/*', recursive=True) +
               glob.glob(diode_path + '**/LICENSE', recursive=True))
 ]
 cub_files = [
@@ -62,4 +63,10 @@ setup(name='dace',
           'scikit-build', 'cmake', 'aenum'
       ],
       extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},
-      scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
+      entry_points={
+        'console_scripts': [
+            'dacelab = dace.frontend.octave.dacelab:main',
+            'diode = diode.diode_server:main',
+            'sdfv = diode.sdfv:main'
+        ],
+      })

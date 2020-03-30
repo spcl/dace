@@ -326,7 +326,10 @@ class StripMining(pattern_matching.Transformation):
                     entry_out_conn.add('OUT_' + conn)
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
-                    new_memlet.num_accesses = new_memlet.num_elements()
+                    if memlet.num_accesses == -1:
+                        new_memlet.num_accesses = memlet.num_accesses
+                    else:
+                        new_memlet.num_accesses = new_memlet.num_elements()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -370,7 +373,10 @@ class StripMining(pattern_matching.Transformation):
                     exit_out_conn.add('OUT_' + conn)
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
-                    new_memlet.num_accesses = new_memlet.num_elements()
+                    if memlet.num_accesses == -1:
+                        new_memlet.num_accesses = memlet.num_accesses
+                    else:
+                        new_memlet.num_accesses = new_memlet.num_elements()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':

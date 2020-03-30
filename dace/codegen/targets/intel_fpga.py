@@ -72,8 +72,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     @staticmethod
     def cmake_options():
 
-        compiler = make_absolute(
-            Config.get("compiler", "intel_fpga", "executable"))
         host_flags = Config.get("compiler", "intel_fpga", "host_flags")
         kernel_flags = Config.get("compiler", "intel_fpga", "kernel_flags")
         mode = Config.get("compiler", "intel_fpga", "mode")
@@ -85,8 +83,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         smi_rendezvous = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "smi_rendezvous") else "OFF")
         options = [
-            "-DINTELFPGAOCL_ROOT_DIR={}".format(
-                os.path.dirname(os.path.dirname(compiler))),
             "-DDACE_INTELFPGA_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_INTELFPGA_KERNEL_FLAGS=\"{}\"".format(kernel_flags),
             "-DDACE_INTELFPGA_MODE={}".format(mode),
@@ -95,6 +91,11 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             "-DDACE_INTELFPGA_SMI_NUM_RANKS={}".format(smi_ranks),
             "-DDACE_INTELFPGA_SMI_RENDEZVOUS={}".format(smi_rendezvous),
         ]
+        # Override Intel FPGA OpenCL installation directory
+        if Config.get("compiler", "intel_fpga", "path"):
+            options.append("-DINTELFPGAOCL_ROOT_DIR=\"{}\"".format(
+                Config.get("compiler", "intel_fpga", "path").replace("\\",
+                                                                    "/")))
         return options
 
     def get_generated_codeobjects(self):
