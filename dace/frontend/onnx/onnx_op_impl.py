@@ -8,37 +8,6 @@ from dace.libraries.blas.nodes import Gemm
 from dace.memlet import Memlet
 
 
-def _connect_nested(sdfg: dace.SDFG, state: dace.SDFGState,
-                    nested_A: dace.nodes.NestedSDFG,
-                    nested_B: dace.nodes.NestedSDFG, mapping: dict):
-    """Connect two nested SDFG nodes together using transient arrays.
-       :param sdfg: the sdfg to connect the two nested nodes in.
-       :param state: the state to connect the two nested nodes in.
-       :param nested_A: the first nested SDFG to connect.
-       :param nested_B: the second nested SDFG to connect.
-       :param mapping: a mapping from outputs of nested_A to inputs of nested_B. A transient array
-                       will be added for each entry in the mapping.
-    """
-    sdfg_A = nested_A.sdfg
-    sdfg_B = nested_B.sdfg
-    for out_A, in_B in mapping.items():
-        out_A_arr = sdfg_A.arrays[out_A]
-
-        temp, temp_arr = sdfg.add_temp_transient(out_A_arr.shape,
-                                                 out_A_arr.dtype)
-
-        access_temp = state.add_access(temp)
-
-        state.add_memlet_path(nested_A,
-                              access_temp,
-                              src_conn=out_A,
-                              memlet=Memlet.from_array(temp, temp_arr))
-        state.add_memlet_path(access_temp,
-                              nested_B,
-                              dst_conn=in_B,
-                              memlet=Memlet.from_array(temp, temp_arr))
-
-
 @onnx_op
 def Transpose(sdfg: dace.SDFG, state: dace.SDFGState, inputs: List[str],
               outputs: List[str], *, perm):
@@ -74,7 +43,7 @@ def Transpose(sdfg: dace.SDFG, state: dace.SDFGState, inputs: List[str],
 
 @onnx_op_with_name("Gemm")
 def GemmOp(sdfg: dace.SDFG, state: dace.SDFGState, inputs: List[str],
-         outputs: List[str], *, alpha, beta, transA, transB):
+           outputs: List[str], *, alpha, beta, transA, transB):
 
     A, B = inputs[0:2]
     C = None
@@ -89,12 +58,10 @@ def GemmOp(sdfg: dace.SDFG, state: dace.SDFGState, inputs: List[str],
     if C is not None:
         C_arr = sdfg.arrays[C]
 
-
     rA = state.add_read(A)
     rB = state.add_read(B)
     if C is not None:
         rC = state.add_read(C)
-    
 
     tasklet = Gemm('_Gemm_',
                    dtype,
@@ -109,7 +76,8 @@ def GemmOp(sdfg: dace.SDFG, state: dace.SDFGState, inputs: List[str],
     state.add_edge(rA, None, tasklet, '_a', dace.Memlet.from_array(A, A_arr))
     state.add_edge(rB, None, tasklet, '_b', dace.Memlet.from_array(B, B_arr))
     if C is not None:
-        state.add_edge(rC, None, tasklet, '_c', dace.Memlet.from_array(C, C_arr))
+        state.add_edge(rC, None, tasklet, '_c',
+                       dace.Memlet.from_array(C, C_arr))
 
     Y_shape = tasklet.infer_output_shapes(sdfg, state)["_y"]
 

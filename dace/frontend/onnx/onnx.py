@@ -7,7 +7,7 @@ from google.protobuf.json_format import MessageToDict
 
 import dace
 from dace import SDFG, Memlet
-from dace.frontend.onnx.onnx_op_repository import OnnxOps
+from dace.frontend.onnx.onnx_op_repository import ONNXOps
 
 
 class AttributeProtoConverter:
@@ -206,7 +206,7 @@ class OnnxModel:
 
             self._add_state(label='_read_outputs')
             # add the op to the graph
-            OnnxOps.get(op.op_type)(self.sdfg, self.last_state, inputs,
+            ONNXOps.get(op.op_type)(self.sdfg, self.last_state, inputs,
                                     outputs, **attributes)
 
         # Add outputs
