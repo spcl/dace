@@ -10,6 +10,7 @@ from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.memlet_parser import parse_memlet_subset
+from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
@@ -89,20 +90,19 @@ def _define_streamarray(sdfg: SDFG,
 def _reduce(sdfg: SDFG,
             state: SDFGState,
             redfunction: Callable[[Any, Any], Any],
-            input: str,
-            output=None,
+            in_array: str,
+            out_array=None,
             axis=None,
             identity=None):
-    # TODO(later): If output is None, derive the output size from the input and create a new node
-    if output is None:
-        inarr = input
+    if out_array is None:
+        inarr = in_array
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                            ast.parse(input).body[0].value, {})
+                                            ast.parse(in_array).body[0].value, {})
         input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
                               1)
         output_shape = None
@@ -117,8 +117,8 @@ def _reduce(sdfg: SDFG,
                                               sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
-        inarr = input
-        outarr = output
+        inarr = in_array
+        outarr = out_array
 
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
@@ -128,11 +128,11 @@ def _reduce(sdfg: SDFG,
 
         # Compute memlets
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                            ast.parse(input).body[0].value, {})
+                                            ast.parse(in_array).body[0].value, {})
         input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
                               1)
         output_subset = parse_memlet_subset(sdfg.arrays[outarr],
-                                             ast.parse(output).body[0].value,
+                                             ast.parse(out_array).body[0].value,
                                              {})
         output_memlet = Memlet(outarr, output_subset.num_elements(),
                                output_subset, 1)
@@ -144,7 +144,7 @@ def _reduce(sdfg: SDFG,
     state.add_nedge(inpnode, rednode, input_memlet)
     state.add_nedge(rednode, outnode, output_memlet)
 
-    if output is None:
+    if out_array is None:
         return outarr
     else:
         return []
@@ -163,6 +163,65 @@ def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
 
     return name
 
+@oprepo.replaces('elementwise')
+@oprepo.replaces('dace.elementwise')
+def _elementwise(sdfg: SDFG, state: SDFGState, func: str, in_array: str, out_array=None):
+    """Apply a lambda function to each element in the input"""
+
+    inparr = sdfg.arrays[in_array]
+    restype = sdfg.arrays[in_array].dtype
+    if out_array is None:
+        out_array, outarr = sdfg.add_temp_transient(inparr.shape, restype,
+                                                inparr.storage)
+    else:
+        outarr = sdfg.arrays[out_array]
+
+    func_ast = ast.parse(func)
+    try:
+        lambda_ast = func_ast.body[0].value
+        if len(lambda_ast.args.args) != 1:
+            raise SyntaxError(
+                "Expected lambda with one arg, but {} has {}".format(
+                    func, len(lambda_ast.args.arrgs)))
+        arg = lambda_ast.args.args[0].arg
+        body = astutils.unparse(lambda_ast.body)
+    except AttributeError:
+        raise SyntaxError("Could not parse func {}".format(func))
+
+    code = "__out = {}".format(body)
+
+    num_elements = reduce(lambda x, y: x * y, inparr.shape)
+    if num_elements == 1:
+        inp = state.add_read(in_array)
+        out = state.add_write(out_array)
+        tasklet = state.add_tasklet("_elementwise_", {arg}, {'__out'}, code)
+        state.add_edge(inp, None, tasklet, arg,
+                       Memlet.from_array(in_array, inparr))
+        state.add_edge(tasklet, '__out', out, None,
+                       Memlet.from_array(out_array, outarr))
+    else:
+        state.add_mapped_tasklet(
+            name="_elementwise_",
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
+            },
+            inputs={
+                arg:
+                Memlet.simple(
+                    in_array,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
+            },
+            code=code,
+            outputs={
+                '__out':
+                Memlet.simple(
+                    out_array,
+                    ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
+            },
+            external_edges=True)
+
+    return out_array
 
 def _simple_call(sdfg: SDFG,
                  state: SDFGState,
