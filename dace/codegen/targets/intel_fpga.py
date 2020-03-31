@@ -106,9 +106,16 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
         host_code.write("""
+dace::fpga::Context *dace::fpga::_context;
+
 DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-    hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
+    dace::fpga::_context = new dace::fpga::Context();
+    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
     return 0;
+}}
+
+DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
+    delete dace::fpga::_context;
 }}
 
 {host_code}""".format(signature=self._global_sdfg.signature(),
@@ -423,16 +430,35 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
     @staticmethod
     def generate_host_function_epilogue(sdfg, state, host_stream):
+        state_id = sdfg.node_id(state)
         host_stream.write(
-            """\
-  const auto start = std::chrono::high_resolution_clock::now();
+            "const auto start = std::chrono::high_resolution_clock::now();", sdfg, state_id)
+        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+        if launch_async:
+            # hlslib uses std::async to launch each kernel launch as an
+            # asynchronous task in a separate C++ thread. This seems to cause
+            # problems with some versions of the Intel FPGA runtime, despite it
+            # supposedly being thread-safe, so we allow disabling this.
+            host_stream.write(
+                """\
   std::vector<std::future<std::pair<double, double>>> futures;
   for (auto &k : kernels) {
     futures.emplace_back(k.ExecuteTaskAsync());
   }
   for (auto &f : futures) {
     f.wait();
+  }""", sdfg, state_id)
+        else:
+            # Launch one-by-one and wait for the cl::Events
+            host_stream.write(
+                """\
+  std::vector<cl::Event> events;
+  for (auto &k : kernels) {
+    events.emplace_back(k.ExecuteTaskFork());
   }
+  cl::Event::waitForEvents(events);""", sdfg, state_id)
+        host_stream.write(
+            """\
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;

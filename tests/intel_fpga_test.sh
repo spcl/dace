@@ -47,25 +47,17 @@ run_sample() {
         bail "$1 (${RED}Wrong emulation result${NC})"
     fi
 
-    #4 cleanup
-    cd .dacecache/$2/build
-    make clean
-    cd -
-
-
-
     return 0
 }
 
 run_all() {
 
-
-    # #### VECTORIZATION ####
-    #Vectorization 1: first vectorize and then transform for FPGA
+    #### VECTORIZATION ####
+    # Vectorization 1: first vectorize and then transform for FPGA
     run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True)\nFPGATransformSDFG\$0\n"
-    #Vectorization 2: first transform for FPGA then vectorize
+    # Vectorization 2: first transform for FPGA then vectorize
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
-    #Vectorization 3: TODO non vectorizable N
+    # Vectorization 3: TODO non vectorizable N
 
     # ### MAP TILING ####
     # First tile then transform
@@ -74,7 +66,7 @@ run_all() {
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
     # #### WCR ####
-    #simple WCR (accumulates on scalar)
+    # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 
     # histogram (WCR on array)
@@ -93,16 +85,15 @@ run_all() {
     # type inference for statements with annotation
     run_sample intel_fpga/type_inference type_inference "FPGATransformSDFG\$0\n"
 
-
     # #### SYSTOLIC ARRAY ###
     run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
     run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
     run_sample ../samples/fpga/jacobi_fpga_systolic jacobi_fpga_systolic_8_Hx8192xT "\n"
 
-
     # #### MISCELLANEA ####
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
+    run_sample intel_fpga/async async_test "\n" 
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
     run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
