@@ -4214,14 +4214,22 @@ def concurrent_subgraphs(graph):
                     to_search.append(e.dst)
         # If this component overlaps with any previously determined components,
         # fuse them
-        for other in subgraphs:
+        to_delete = []
+        for i, other in enumerate(subgraphs):
             if len(other & seen) > 0:
-                # Add both traversed node and potential data source nodes
-                other |= seen | components[start_node]
-                break
-        else:
+                to_delete.append(i)
+        if len(to_delete) == 0:
             # If there was no overlap, this is a concurrent subgraph
             subgraphs.append(seen | components[start_node])
+        else:
+            # Merge overlapping subgraphs
+            new_subgraph = seen | components[start_node]
+
+            for i, index in enumerate(reversed(to_delete)):
+                new_subgraph |= subgraphs.pop(index - i)
+
+            subgraphs.append(new_subgraph)
+
     # Now stick each of the found components in a ScopeSubgraphView and return
     # them. Sort according to original order of nodes
     all_nodes = graph.nodes()
