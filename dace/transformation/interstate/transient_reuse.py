@@ -7,7 +7,6 @@ from dace.sdfg import SDFG, SDFGState
 from sympy import Symbol, N
 import numpy as np
 import networkx as nx
-from dace.subsets import Range
 
 def _atomic_counter_generator():
     ctr = 0
