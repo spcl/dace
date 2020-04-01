@@ -1,1 +1,1 @@
-from .onnx import OnnxModel
+from .onnx_frontend import OnnxModel

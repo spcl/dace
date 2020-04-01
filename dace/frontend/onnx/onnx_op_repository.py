@@ -10,9 +10,8 @@ from dace.graph.nodes import Node
 
 class InvalidONNXGraphError(Exception):
     """ A class of exceptions thrown when ONNX validation fails. """
-    def __init__(self, message: str, graph):
+    def __init__(self, message: str):
         self.message = message
-        self.graph = graph
 
     def __str__(self):
         return self.message
@@ -20,9 +19,8 @@ class InvalidONNXGraphError(Exception):
 
 class InvalidONNXOpError(Exception):
     """ A class of exceptions thrown when ONNX op validation fails. """
-    def __init__(self, message: str, graph, op_type: str, inputs: List[str]):
+    def __init__(self, message: str, op_type: str, inputs: List[str]):
         self.message = message
-        self.graph = graph
         self.op_type = op_type
         self.inputs = inputs
 
@@ -72,7 +70,8 @@ def _register_onnx_op(func: Callable[
 
         # Check the dtypes of the inputs
         for i, inp in enumerate(inputs):
-            _, type_class = map(str.strip, signature["inputs"][i].split(":"))
+
+            type_class = signature["inputs"][i][1]
 
             assert type_class in signature["types"]  # not a user error
 
@@ -98,12 +97,23 @@ def _register_onnx_op(func: Callable[
                                 sdfg.arrays[inp].dtype, op_name, inputs))
 
         if "attributes" in signature:
-            # Check that there are no unknown/unsupported attributes
-            if len(set(attributes).difference(signature["attributes"])) != 0:
+            all_attributes = set(signature["required_attributes"]) | set(
+                signature["attributes"])
+
+            # check that all required attributes are present
+            if len(set(signature["required_attributes"]).difference(
+                    attributes)) != 0:
                 raise InvalidONNXOpError(
-                    "Unsupported or Unknown attribute(s) {}".format(
-                        set(attributes).difference(signature["attributes"]),
-                        op_name, inputs))
+                    "No value was passed for required attributes {}".format(
+                        signature["required_attributes"].difference(
+                            attributes)), op_name, inputs)
+
+            # Check that there are no unknown attributes
+            if len(set(attributes).difference(all_attributes)) != 0:
+                raise InvalidONNXOpError(
+                    "Unknown attributes {}".format(
+                        set(attributes).difference(all_attributes), ), op_name,
+                    inputs)
 
             # add default values
             missing = {

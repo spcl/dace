@@ -20,14 +20,18 @@ class AttributeProtoConverter:
             for k, v in onnx.AttributeProto.AttributeType.items()
         }
 
-    def __call__(self, attribute: onnx.AttributeProto):
-        dtype = attribute.type
+    def get_type_str(self, dtype):
         if dtype not in self.inv_dtype_map:
             # shouldn't happen, but it doesn't hurt to check
             raise ValueError(
                 "Model contains unsupported attribute type {}".format(dtype))
 
         dtype_str = self.inv_dtype_map[dtype]
+        return dtype_str
+
+    def __call__(self, attribute: onnx.AttributeProto):
+        dtype = attribute.type
+        dtype_str = self.get_type_str(dtype)
 
         if not hasattr(self, "_conv_" + dtype_str):
             raise ValueError(
