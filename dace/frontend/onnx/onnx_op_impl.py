@@ -98,5 +98,4 @@ def MatMul(A: "D[M, K]", B: "D[K, N]", C: "D[M, N]"):
 
 @onnx_op_program
 def Relu(X: "D[M]", Y: "D[M]"):
-    # TODO @orausch replace the dtype during type instantiation
-    Y[:] = elementwise(X, "lambda x: max(x, dace.float32(0))")
+    Y[:] = elementwise(X, lambda x: max(x, __dtype_D(0)))

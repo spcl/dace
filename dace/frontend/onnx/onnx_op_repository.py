@@ -267,10 +267,18 @@ def onnx_op_program(program):
             for name, annot in zip(outputs, output_annotations)
         ]
 
-        dace_program = dace.program(program)
+        # overwrite dtypes incase they are used in the program
+        overwrite_dtypes = {
+            '__dtype_' + name: value
+            for name, value in variable_instantiations.items()
+            if type(value) is dace.dtypes.typeclass
+        }
+        dace_program = dace.parser.DaceProgram(
+            program, (), {}, overwrite_globals=overwrite_dtypes)
 
         nsdfg = dace_program.to_sdfg()
 
+        # reset the signature back to the parameterized one
         program.__signature__ = program_signature
         program.__annotations__ = program_annotations
 

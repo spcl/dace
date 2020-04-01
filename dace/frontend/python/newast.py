@@ -575,7 +575,7 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                return ast.copy_location(ast.Num(n=self.globals[node.id]),
+                return ast.copy_location(ast.Num(n=self.globals[node.id], kind=''),
                                          node)
         return node
 

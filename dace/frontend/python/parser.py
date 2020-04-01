@@ -220,7 +220,7 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-    def __init__(self, f, args, kwargs):
+    def __init__(self, f, args, kwargs, overwrite_globals=None):
         self.f = f
         self.args = args
         self.kwargs = kwargs
@@ -229,6 +229,9 @@ class DaceProgram:
 
         # NOTE: Important to call this outside list/dict comprehensions
         global_vars = _get_locals_and_globals()
+
+        if overwrite_globals is not None:
+            global_vars.update(overwrite_globals)
 
         self.global_vars = {
             k: v
