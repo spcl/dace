@@ -1,3 +1,5 @@
+import inspect
+import ast
 from typing import Callable, List, Union
 
 import yaml
@@ -101,8 +103,9 @@ def _register_onnx_op(func: Callable[
                 signature["attributes"])
 
             # check that all required attributes are present
-            if len(set(signature["required_attributes"]).difference(
-                    attributes)) != 0:
+            if len(
+                    set(signature["required_attributes"]).difference(
+                        attributes)) != 0:
                 raise InvalidONNXOpError(
                     "No value was passed for required attributes {}".format(
                         signature["required_attributes"].difference(
@@ -142,6 +145,162 @@ def onnx_op_with_name(name):
         return _register_onnx_op(func, name)
 
     return wrapper
+
+
+def _parse_annotation(annot):
+    try:
+        subscript = ast.parse(annot).body[0].value
+        array_type = subscript.value.id
+
+        if type(subscript.slice.value) is ast.Tuple:
+            dims = [elt.id for elt in subscript.slice.value.elts]
+        else:
+            dims = subscript.slice.value.id
+
+        return array_type, dims
+    except (AttributeError, IndexError):
+        raise SyntaxError("Could not parse type annotation {}".format(annot))
+
+
+def _instantiate_annotation(variable_instantiations, annot):
+    array_type, dims = _parse_annotation(annot)
+    if type(dims) is list:
+        return variable_instantiations[array_type][[
+            variable_instantiations[dim] for dim in dims
+        ]]
+    else:
+        return variable_instantiations[array_type][
+            variable_instantiations[dims]]
+
+
+def _instantiate_and_add_transient(sdfg, name, variable_instantiations, annot):
+    array_type, dims = _parse_annotation(annot)
+    return sdfg.add_transient(
+        name,
+        shape=[variable_instantiations[dim] for dim in dims]
+        if type(dims) is list else variable_instantiations[dims],
+        dtype=variable_instantiations[array_type])
+
+
+def onnx_op_program(program):
+    """Register a @dace.program annotated function"""
+
+    op_name = program.__name__
+    op_signature = ONNXOps._signatures[op_name]
+
+    if len(op_signature["attributes"]) + len(
+            op_signature["required_attributes"]) != 0:
+        raise NotImplementedError(
+            "Using @onnx_op_program with ops that have attributes is not supported"
+        )
+
+    def op(sdfg: dace.SDFG, state: dace.SDFGState, inputs: List[str],
+           outputs: List[str]):  # attributes not allowed
+
+        program_signature = inspect.signature(program)
+        program_annotations = program.__annotations__
+        params = program_signature.parameters
+        input_names = [name for name, type_str in op_signature["inputs"]]
+        output_names = [name for name, type_str in op_signature["outputs"]]
+
+        input_arrs = [sdfg.arrays[name] for name in inputs]
+
+        # do type pattern matching for the inputs and outputs
+        input_annotations = [params[name].annotation for name in input_names]
+        output_annotations = [params[name].annotation for name in output_names]
+
+        assert all(type(annot) is str for annot in input_annotations)
+        assert all(type(annot) is str for annot in output_annotations)
+
+        variable_instantiations = {}
+
+        # instantiate variables with values from input
+        for input_arr, annot in zip(input_arrs, input_annotations):
+            array_type, dims = _parse_annotation(annot)
+
+            if array_type in variable_instantiations:
+                # variable has already been instantiated;
+                # check that it matches
+                assert variable_instantiations[array_type] is input_arr.dtype
+            else:
+                # instantiate the variable
+                variable_instantiations[array_type] = input_arr.dtype
+
+            if type(dims) is list:
+                for dim, arr_dim in zip(dims, input_arr.shape):
+                    if dim in variable_instantiations:
+                        # variable has already been instantiated;
+                        # check that it matches
+
+                        # == works for both ints and symbols
+                        assert variable_instantiations[dim] == arr_dim
+                    else:
+                        # instantiate the variable
+                        variable_instantiations[dim] = arr_dim
+            else:
+                if dims in variable_instantiations:
+                    # variable has already been instantiated;
+                    # check that it matches
+                    assert variable_instantiations[dims] == list(
+                        input_arr.shape)
+                else:
+                    # instantiate the variable
+                    variable_instantiations[dims] = list(input_arr.shape)
+
+        new_params = [
+            param.replace(annotation=_instantiate_annotation(
+                variable_instantiations, param.annotation))
+            for _, param in params.items()
+        ]
+
+        program.__signature__ = program_signature.replace(
+            parameters=new_params)
+        program.__annotations__ = {
+            name: _instantiate_annotation(variable_instantiations, annot)
+            for name, annot in program.__annotations__.items()
+        }
+
+        # add output arrays using instantiated types
+        output_arrs = [
+            _instantiate_and_add_transient(sdfg, name, variable_instantiations,
+                                           annot)[1]
+            for name, annot in zip(outputs, output_annotations)
+        ]
+
+        dace_program = dace.program(program)
+
+        nsdfg = dace_program.to_sdfg()
+
+        program.__signature__ = program_signature
+        program.__annotations__ = program_annotations
+
+        nsdfg_node = state.add_nested_sdfg(nsdfg, None, set(input_names),
+                                           set(output_names))
+
+        read_inputs = [state.add_read(inp) for inp in inputs]
+        write_outputs = [state.add_write(outp) for outp in outputs]
+
+        # connect inputs
+        for input_conn, read_input, input_arr_name, input_arr in zip(
+                input_names, read_inputs, inputs, input_arrs):
+            state.add_edge(read_input,
+                           None,
+                           nsdfg_node,
+                           input_conn,
+                           memlet=dace.Memlet.from_array(
+                               input_arr_name, input_arr))
+
+        # connect outputs
+        for output_conn, write_output, output_arr_name, output_arr in zip(
+                output_names, write_outputs, outputs, output_arrs):
+            state.add_edge(nsdfg_node,
+                           output_conn,
+                           write_output,
+                           None,
+                           memlet=dace.Memlet.from_array(
+                               output_arr_name, output_arr))
+
+    return _register_onnx_op(op, op_name)
 
 
 # this import will register all the ops

@@ -70,6 +70,7 @@ class Dense(nn.Module):
         x = F.relu(self.dense3(x))
         return x
 
+
 @CorrectnessCheck(
     OrderedDict([('x', np.random.rand(32, 784).astype(np.float32)),
                  ('y', np.random.rand(784, 32).astype(np.float32))]))
