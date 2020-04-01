@@ -611,7 +611,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             )
             host_code_body_stream.write(
                 "SMI_Comm smi_comm = SmiInit_{}(__dace_comm_rank, __dace_comm_size, ROUTING_DIR, "
-                "hlslib::ocl::GlobalContext(__dace_fpga_context), program, buffers);".format(
+                "dace::fpga::_context->Get(), program, buffers);".format(
                     kernel_name))
             host_code_body_stream.write(
                 "MPI_Barrier(MPI_COMM_WORLD);")
