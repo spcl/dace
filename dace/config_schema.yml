@@ -73,26 +73,6 @@ required:
                     "for" and "while" from state transitions, allowing 
                     code generators to generate appropriate code. 
 
-    renderer:
-        type: dict
-        title: Renderer
-        description: Preferences of the SDFG Renderer
-        required:
-            fulledges:
-                type: bool
-                default: false
-                title: Show full edges
-                description: >
-                    If enabled, prints out the full edge labels (which may be 
-                    long due to complex indexing).
-            html5renderer:
-                type: bool
-                default: false
-                title: (EXPERIMENTAL) HTML5 Rendering Engine
-                description: >
-                    If enabled, uses an HTML5-based renderer to display SDFGs. 
-                    This allows to visualize performance data, but is still experimental. 
-
     compiler:
         type: dict
         title: Compiler
@@ -132,7 +112,7 @@ required:
 
             allow_shadowing:
                 type: str
-                default: false 
+                default: true 
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
@@ -154,9 +134,8 @@ required:
                 required:
                     executable:
                         type: str
-                        default: g++
-                        default_Windows: cl
-                        title: Compiler executable name
+                        default: ''
+                        title: Compiler executable override
                         description: File path or name of compiler executable
 
                     args:
@@ -165,12 +144,6 @@ required:
                         description: Compiler argument flags
                         default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
-
-                    additional_args:
-                        type: str
-                        title: Extra Arguments
-                        description: Additional arguments provided by users
-                        default: ''
 
                     libs:
                         type: str
@@ -185,11 +158,11 @@ required:
                 title: GPU
                 description: GPU (CUDA) compiler preferences
                 required:
-                    executable:
+                    path:
                         type: str
-                        default: nvcc
-                        title: Compiler executable name
-                        description: File path or name of compiler executable
+                        default: ''
+                        title: CUDA path override
+                        description: Path to CUDA toolkit root directory
 
                     args:
                         type: str
@@ -232,12 +205,6 @@ required:
                             is followed by full-device synchronization and error checking.
                         default: false
 
-                    additional_args:
-                        type: str
-                        title: Extra Arguments
-                        description: Additional arguments provided by users
-                        default: ''
-
                     libs:
                         type: str
                         title: Additional libraries
@@ -258,15 +225,18 @@ required:
                         title: Compilation mode 
                         description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware) 
 
-                    executable:
+                    path:
                         type: str
-                        default: v++ 
-                        title: Vitis compiler executable path 
-                        description: File path or name of Vitis binary (v++) 
+                        default: '' 
+                        title: Vitis installation override 
+                        description: >
+                            Path to specific Vitis/SDx/SDAccel installation to
+                            use instead of just searching PATH and environment
+                            variables.
 
                     platform:
                         type: str
-                        default: xilinx_u280_xdma_201920_1 
+                        default: xilinx_u250_xdma_201830_2 
                         title: Target platform for Xilinx 
                         description: Platform name of Vitis/SDx/SDAccel target.
 
@@ -314,12 +284,14 @@ required:
                           Target of FPGA kernel build
                           (emulator/simulator/hardware).
 
-                    executable:
+                    path:
                         type: str
-                        default: aoc 
-                        title: Compiler path 
+                        default: ''
+                        title: Intel FPGA OpenCL SDK installation override 
                         description: >
-                          Intel Offline Compiler (aoc) executable path. 
+                            Path to specific Intel FPGA OpenCL SDK installation
+                            to use instead of just searching PATH and
+                            environment variables.
 
                     board:
                         type: str
@@ -342,7 +314,16 @@ required:
                         type: str
                         title: Kernel flags 
                         description: High-level synthesis C++ flags 
-                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant"
+                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
+
+                    launch_async:
+                        type: bool
+                        default: false
+                        title: Launch kernels asynchronously
+                        description: >
+                            Instead of launching kernels one-by-one, spawn a separate C++ thread using std::async and
+                            std::future. This also allows each kernel to measure its own runtime from the host code.
+
             #############################################
             # MPI compiler
             mpi:
@@ -352,8 +333,8 @@ required:
                 required:
                     executable:
                         type: str
-                        default: mpicxx
-                        title: Compiler executable name
+                        default: ''
+                        title: Compiler executable override
                         description: File path or name of compiler executable
             
             #############################################
@@ -365,9 +346,8 @@ required:
                 required:
                     executable:
                         type: str
-                        default: g++
-                        default_Windows: cl
-                        title: Linker executable name
+                        default: ''
+                        title: Linker executable override
                         description: File path or name of linker executable
 
                     args:
@@ -378,30 +358,6 @@ required:
                         # FPGA programs fail to find certain libraries at
                         # runtime with runpath.
                         default: '-Wl,--disable-new-dtags'
-
-                    additional_args:
-                        type: str
-                        title: Extra Arguments
-                        description: Additional arguments provided by users
-                        default: ''
-                        template_envvars:
-                            - CUDA_PATH
-
-                    library_prefix:
-                        type: str
-                        title: Library argument prefix
-                        description: >
-                            Argument prefix to add before each added library.
-                        default: '-l'
-                        default_Windows: ''
-
-                    library_suffix:
-                        type: str
-                        title: Library argument suffix
-                        description: >
-                            Argument suffix to add after each added library.
-                        default: ''
-                        default_Windows: '.lib'
 
     execution:
         type: dict
@@ -501,65 +457,6 @@ required:
         title: DIODE
         description: DIODE GUI preferences
         required:
-            layout:
-                type: dict
-                title: Layout
-                description: Window layout preferences
-                required:
-                    window_width:
-                        default: 800
-                        title: Window Width
-                        type: float
-                        description: Window width (in pixels)
-
-                    window_height:
-                        default: 600
-                        title: Window Height
-                        type: float
-                        description: Window height (in pixels)
-
-                    window_maximized:
-                        default: True
-                        title: Window Maximized
-                        type: bool
-                        description: >
-                            If True, DIODE starts with a maximized window
-            
-                    toppane_height:
-                        default: 20
-                        type: float
-                        title: Top-Pane Height
-                        description: >
-                            Height of top pane in Optimizer view (in percentage)
-           
-                    pypane_width:
-                        default: 30
-                        title: Python Pane Width
-                        type: float
-                        description: >
-                            Width of the Python Editor pane (in percentage)
-            
-                    optpane_width:
-                        default: 30
-                        title: Transformation Pane Width
-                        type: float
-                        description: >
-                            Width of the Transformation pane (in percentage)
-            
-                    codepane_width:
-                        default: 30
-                        title: Generated Code Pane Width
-                        type: float
-                        description: >
-                            Width of the Generated Code pane (in percentage)
-
-                    perfpane_width:
-                        default: 30
-                        title: Performance Pane Width
-                        type: float
-                        description: >
-                            Width of the Performance graph pane (in percentage)
-
             general:
                 type: dict
                 title: General
@@ -572,29 +469,6 @@ required:
                         description: >
                             Automatically expand library nodes upon compilation, rather than
                             expecting the nodes be expanded manually to the chosen implementation.
-
-            fonts:
-                type: dict
-                title: Fonts
-                description: Fonts used in editors
-                required:
-                    python:
-                        default: ''
-                        title: Python
-                        type: font
-                        description: Font used to render Python code.
-
-                    codegen:
-                        default: ''
-                        title: Generated Code
-                        type: font
-                        description: Font used to render generated code.
-
-                    pated:
-                        default: ''
-                        title: Transformation Editor
-                        type: font
-                        description: Font used to render pattern match code.
 
     instrumentation:
         type: dict
@@ -668,15 +542,6 @@ required:
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
-
-            blas_implementation:
-                type: str
-                default: pure
-                title: Default BLAS Implementation
-                description: >
-                    Default library to use when implementing BLAS library nodes
-                    encountered in an SDFG, if no other implementation has been
-                    explicitly specified.
 
     #############################################
     # DaCe library settings 

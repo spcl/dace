@@ -180,7 +180,7 @@ endif()
 if(DACE_ENABLE_XILINX)
   find_package(Vitis REQUIRED)
   include_directories(SYSTEM ${Vitis_INCLUDE_DIRS})
-  add_definitions(-DDACE_XILINX)
+  add_definitions(-DDACE_XILINX -DDACE_VITIS_DIR=\"${VITIS_ROOT_DIR}\")
   set(DACE_LIBS ${DACE_LIBS} ${Vitis_LIBRARIES})
 endif()
 if(DACE_ENABLE_INTELFPGA)
@@ -195,7 +195,7 @@ if(DACE_ENABLE_CUDA)
 
   # Get local CUDA architectures
   if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
-      execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "--run"
+      execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "-ccbin" "${CMAKE_CXX_COMPILER}" "--run"
                       "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
                       OUTPUT_VARIABLE _arch_out RESULT_VARIABLE _arch_res
                       ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)

@@ -69,11 +69,14 @@ void __dace_exit_mpi({params}) {{
 
     @staticmethod
     def cmake_options():
-        compiler = make_absolute(Config.get("compiler", "mpi", "executable"))
-        return [
-            "-DMPI_CXX_COMPILER=\"{}\"".format(compiler),
-            "-DDACE_ENABLE_MPI=ON",
-        ]
+        options = ['-DDACE_ENABLE_MPI=ON']
+
+        if Config.get("compiler", "mpi", "executable"):
+            compiler = make_absolute(
+                Config.get("compiler", "mpi", "executable"))
+            options.append("-DMPI_CXX_COMPILER=\"{}\"".format(compiler))
+
+        return options
 
     @property
     def has_initializer(self):

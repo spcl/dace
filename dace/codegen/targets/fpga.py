@@ -431,7 +431,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Handle memory banks
                         self._allocated_global_arrays.add(node.data)
                         result.write(
-                            "auto {} = hlslib::ocl::GlobalContext()."
+                            "auto {} = dace::fpga::_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({});".format(dataname, nodedesc.dtype.ctype,
                                            sym2cpp(arrsize)))
@@ -1288,7 +1288,7 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = hlslib::ocl::GlobalContext().CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = dace::fpga::_context->Get().CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 

@@ -610,17 +610,17 @@ def configure_and_compile(program_folder,
         except ValueError as ex:  # Cannot find compiler executable
             raise CompilerConfigurationError(str(ex))
 
-    # TODO: it should be possible to use the default arguments/compilers
-    #       found by CMake
-    cmake_command += [
-        "-DDACE_LIBS=\"{}\"".format(" ".join(libraries)),
-        "-DCMAKE_LINKER=\"{}\"".format(
-            make_absolute(Config.get('compiler', 'linker', 'executable'))),
-        "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
-            Config.get('compiler', 'linker', 'args') + " " +
-            Config.get('compiler', 'linker', 'additional_args') +
-            " ".join(cmake_link_flags)),
-    ]
+    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
+
+    # Override linker and linker arguments
+    if Config.get('compiler', 'linker', 'executable'):
+        cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
+            make_absolute(Config.get('compiler', 'linker', 'executable'))))
+    if Config.get('compiler', 'linker', 'args'):
+        cmake_command.append(
+            "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
+                Config.get('compiler', 'linker', 'args') + " " +
+                " ".join(cmake_link_flags)), )
     cmake_command = ' '.join(cmake_command)
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
