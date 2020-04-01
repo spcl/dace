@@ -5,14 +5,19 @@ import argparse
 import dace
 import numpy as np
 from dace.transformation.interstate.transient_reuse import TransientReuse
+from dace.codegen.targets.transientpool import extend_dace, MPCodeGen
 
 M = dace.symbol('M')
 N = dace.symbol('N')
 
 @dace.program
 def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 100], D: dace.float64[5, 100]):
-    tmp = dace.define_local([5, 5, 5], dtype=A.dtype)
+    tmp = dace.define_local([5, 5, 5], dtype=A.dtype, storage=dace.StorageType.CPU_Pool)
     E = dace.define_local([5,5], dtype=A.dtype)
+    test = dace.ndarray(
+        [16, 16],
+        dtype=np.float64,
+        storage=dace.StorageType.CPU_Pool)
     @dace.map(_[0:5, 0:5, 0:5])
     def multiplication(i, j, k):
         in_A << A[i, k]
@@ -29,6 +34,7 @@ def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 1
 
 if __name__ == "__main__":
     print("==== Program start ====")
+    extend_dace()
 
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=5)

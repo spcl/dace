@@ -7,6 +7,7 @@ from dace.sdfg import SDFG, SDFGState
 from sympy import Symbol, N
 import numpy as np
 import networkx as nx
+from dace.subsets import Range
 
 def _atomic_counter_generator():
     ctr = 0
@@ -98,7 +99,7 @@ class TransientReuse(pattern_matching.Transformation):
             for n in successors:
                 for m in ancestors:
                     if (isinstance(m, nodes.AccessNode) and successors[n].issubset(ancestors[m]) and n in ancestors[m] and
-                            sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient):
+                            sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient and sdfg.arrays[n.data].shape == sdfg.arrays[m.data].shape):
                         mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
@@ -117,8 +118,6 @@ class TransientReuse(pattern_matching.Transformation):
                     temp = True
                     for j in range(len(buckets[i])):
                         temp = (temp and n in mappings[buckets[i][j]]
-                                and sdfg.arrays[n].shape == sdfg.arrays[buckets[i][j]].shape
-                                and sdfg.arrays[n].strides == sdfg.arrays[buckets[i][j]].strides
                                 )
                     if temp:
                         buckets[i].append(n)
@@ -126,9 +125,7 @@ class TransientReuse(pattern_matching.Transformation):
 
                     temp2 = True
                     for j in range(len(buckets[i])):
-                        temp2 = (temp2 and buckets[i][j] in mappings[n]
-                                 and sdfg.arrays[n].shape == sdfg.arrays[buckets[i][j]].shape
-                                 and sdfg.arrays[n].strides == sdfg.arrays[buckets[i][j]].strides)
+                        temp2 = (temp2 and buckets[i][j] in mappings[n])
                     if temp2:
                         buckets[i].insert(0, n)
                         break
@@ -154,7 +151,7 @@ class TransientReuse(pattern_matching.Transformation):
                       find_new_name=False
                     )
                     buckets[i].insert(0, name)
-
+            print(buckets)
             # Construct final mapping (transient_reuse_i, some_transient)
             mapping = set()
             for i in range(len(buckets)):
@@ -170,6 +167,7 @@ class TransientReuse(pattern_matching.Transformation):
                             for edge in state.memlet_tree(e):
                                 if edge.data.data == old:
                                     edge.data.data = new
+
 
         #clean up the arrays
         for a in list(sdfg.arrays):
