@@ -440,7 +440,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: temporary solution for memory bank for the sake of executing on the Stratix10/Stenciflow
                         self._allocated_global_arrays.add(node.data)
                         result.write(
-                            "auto {} = hlslib::ocl::GlobalContext()."
+                            "auto {} = dace::fpga::_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "(hlslib::ocl::MemoryBank::bank{},{});".format(dataname, nodedesc.dtype.ctype,
                                            self.allocated_host_device_buffers%4, sym2cpp(arrsize)))
@@ -1309,7 +1309,7 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = hlslib::ocl::GlobalContext(__dace_fpga_context).CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = dace::fpga::_context->Get().CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 

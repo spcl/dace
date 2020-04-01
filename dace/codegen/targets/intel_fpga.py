@@ -151,13 +151,15 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             """)
             # TODO: understand if we want to generate MPI_Init/Calls
             host_code.write("""
+               dace::fpga::Context *dace::fpga::_context;
                DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                    //CHECK_MPI(MPI_Init(NULL, NULL));
                    CHECK_MPI(MPI_Comm_size(MPI_COMM_WORLD, &__dace_comm_size));
                    CHECK_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &__dace_comm_rank));
                    {kernel_file_name};
                    __dace_fpga_context = {context};
-                   hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram(kernel_path);
+                   dace::fpga::_context = new dace::fpga::Context();
+                   dace::fpga::_context->Get(__dace_fpga_context).MakeProgram(kernel_path);
                    return 0;
                }}
 
@@ -179,22 +181,28 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 }}""")
         else:
             host_code.write("""
-    DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-        hlslib::ocl::GlobalContext(__dace_fpga_context).MakeProgram({kernel_file_name});
-        return 0;
-    }}
+            dace::fpga::Context *dace::fpga::_context;
 
-    {host_code}""".format(signature=self._global_sdfg.signature(),
-                          emulation_flag=emulation_flag,
-                          kernel_file_name=kernel_file_name,
-                          host_code="".join([
-                              "{separator}\n// Kernel: {kernel_name}"
-                              "\n{separator}\n\n{code}\n\n".format(
-                                  separator="/" * 79,
-                                  kernel_name=name,
-                                  code=code)
-                              for (name, code) in self._host_codes
-                          ])))
+            DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
+                dace::fpga::_context = new dace::fpga::Context();
+                dace::fpga::_context->Get().MakeProgram({kernel_file_name});
+                return 0;
+            }}
+
+DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
+    delete dace::fpga::_context;
+}}
+
+{host_code}""".format(signature=self._global_sdfg.signature(),
+                      emulation_flag=emulation_flag,
+                      kernel_file_name=kernel_file_name,
+                      host_code="".join([
+                          "{separator}\n// Kernel: {kernel_name}"
+                          "\n{separator}\n\n{code}\n\n".format(
+                              separator="/" * 79, kernel_name=name, code=code)
+                          for (name, code) in self._host_codes
+                      ])))
+
         # Since CodeObject defines target_name, I have to explicitely indicate intel_fpga_smi if remote streams are used
         host_code_obj = CodeObject(
             self._program_name,
@@ -639,35 +647,54 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def generate_host_function_epilogue(sdfg, state, host_stream):
-        # For the sake of testing Stencilflow, measure also the enqueueing time
+        state_id = sdfg.node_id(state)
         host_stream.write(
-            """\
-  const auto start = std::chrono::high_resolution_clock::now();
-  cl::Event events[kernels.size()];
-  for (int i = 0; i<kernels.size();i++) {
-    kernels[i].commandQueue().enqueueTask(kernels[i].kernel(), nullptr,&events[i]);
-  }
-  const auto enq_time = std::chrono::high_resolution_clock::now();
-                                                                                                                                                                                            
+            "const auto start = std::chrono::high_resolution_clock::now();", sdfg, state_id)
+        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+        if launch_async:
+            # hlslib uses std::async to launch each kernel launch as an
+            # asynchronous task in a separate C++ thread. This seems to cause
+            # problems with some versions of the Intel FPGA runtime, despite it
+            # supposedly being thread-safe, so we allow disabling this.
+            host_stream.write(
+                """\
+  std::vector<std::future<std::pair<double, double>>> futures;
   for (auto &k : kernels) {
-    k.commandQueue().finish();
+    futures.emplace_back(k.ExecuteTaskAsync());
   }
+  for (auto &f : futures) {
+    f.wait();
+  }""", sdfg, state_id)
+        else:
+            # Launch one-by-one and wait for the cl::Events
+            # For the sake of testing Stencilflow, measure also the enqueueing time
+            host_stream.write(
+                """\
+      cl::Event events[kernels.size()];
+      for (int i = 0; i<kernels.size();i++) {
+        kernels[i].commandQueue().enqueueTask(kernels[i].kernel(), nullptr,&events[i]);
+      }
+      const auto enq_time = std::chrono::high_resolution_clock::now();
 
-  const auto end = std::chrono::high_resolution_clock::now();
-  const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  const double enqueuingChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(enq_time - start).count();
-  /*
-  //Enable if needed
-  for(int i=0;i<kernels.size();i++)
-  {
-    long start, end;
-    events[i].getProfilingInfo(CL_PROFILING_COMMAND_START,&start);
-    events[i].getProfilingInfo(CL_PROFILING_COMMAND_END,&end);
-    printf("Kernel %d, execution time %f (s)\n",i, ((double)(end-start))/1000000000.0);
-  }
-  */
-  std::cout << "Kernel executed in " << elapsedChrono << " seconds (Enqueuing time "<<enqueuingChrono<<" seconds). \\n" << std::flush;
-}""", sdfg, sdfg.node_id(state))
+      for (auto &k : kernels) {
+        k.commandQueue().finish();
+      }
+
+      const auto end = std::chrono::high_resolution_clock::now();
+      const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+      const double enqueuingChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(enq_time - start).count();
+      /*
+      //Enable if needed
+      for(int i=0;i<kernels.size();i++)
+      {
+        long start, end;
+        events[i].getProfilingInfo(CL_PROFILING_COMMAND_START,&start);
+        events[i].getProfilingInfo(CL_PROFILING_COMMAND_END,&end);
+        printf("Kernel %d, execution time %f (s)\n",i, ((double)(end-start))/1000000000.0);
+      }
+      */
+      std::cout << "Kernel executed in " << elapsedChrono << " seconds (Enqueuing time "<<enqueuingChrono<<" seconds). \\n" << std::flush;
+    }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
                         symbol_parameters, module_stream, host_header_stream,
