@@ -6,16 +6,6 @@ from sympy import N
 import networkx as nx
 
 
-def _atomic_counter_generator():
-    ctr = 0
-    while True:
-        ctr += 1
-        yield ctr
-
-
-_atomic_count = _atomic_counter_generator()
-
-
 @registry.autoregister
 @make_properties
 class TransientReuse(pattern_matching.Transformation):
@@ -71,14 +61,14 @@ class TransientReuse(pattern_matching.Transformation):
                     if not isinstance(n, nodes.AccessNode):
                         for p in G.predecessors(n):
                             for c in G.successors(n):
-                                G.add_edge(p,c)
+                                G.add_edge(p, c)
                         G.remove_node(n)
                     else:
                         for e in state.all_edges(n):
                             if e.data.wcr is not None:
                                 for p in G.predecessors(n):
                                     for s in G.successors(n):
-                                        G.add_edge(p,s)
+                                        G.add_edge(p, s)
                                 G.remove_node(n)
                                 break
 
@@ -118,7 +108,7 @@ class TransientReuse(pattern_matching.Transformation):
 
             for n in transients:
                 for i in range(len(transients)):
-                    if buckets[i] == []:
+                    if not buckets[i]:
                         buckets[i].append(n)
                         break
 
@@ -139,11 +129,8 @@ class TransientReuse(pattern_matching.Transformation):
             # Build new custom transient to replace the other transients
             for i in range(len(buckets)):
                 if len(buckets[i]) > 1:
-                    local_ctr = str(next(_atomic_count))
                     array = sdfg.arrays[buckets[i][0]]
-                    name = "transient_reuse_" + local_ctr
-                    datadesc = array.clone()
-                    sdfg.add_datadesc(name, datadesc)
+                    name = sdfg.add_datadesc("transient_reuse", array.clone(), find_new_name=True)
                     buckets[i].insert(0, name)
 
             # Construct final mapping (transient_reuse_i, some_transient)
