@@ -19,7 +19,15 @@ function init_sdfv(sdfg) {
     $('#search-btn').click(function(e){
         if (renderer)
             setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
-                                                    $('#search-case')[0].checked);}, 1);
+                                            $('#search-case')[0].checked);}, 1);
+    });
+    $('#search').on('keydown', function(e) {
+        if (e.key == 'Enter' || e.which == 13) {
+            if (renderer)
+                setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
+                                                $('#search-case')[0].checked);}, 1);
+            e.preventDefault();
+        }
     });
 
     if (sdfg !== null)
