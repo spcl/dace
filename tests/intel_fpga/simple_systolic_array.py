@@ -314,9 +314,12 @@ def make_fpga_state(sdfg):
     return state
 
 
-def make_sdfg(specialized):
+def make_sdfg(name=None):
 
-    sdfg = dace.SDFG("simple_systolic_array_{}".format(P.get()))
+    if name is None:
+        name = "simple_systolic_array_{}".format(P.get())
+
+    sdfg = dace.SDFG(name)
 
     pre_state = make_copy_to_fpga_state(sdfg)
     compute_state = make_fpga_state(sdfg)
@@ -339,7 +342,7 @@ if __name__ == "__main__":
 
     P.set(args["P"])
     N.set(args["N"])
-    sdfg = make_sdfg(False)
+    sdfg = make_sdfg()
     sdfg.specialize(dict(P=P, N=N))
 
     print("Simple Systolic array")

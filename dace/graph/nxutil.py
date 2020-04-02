@@ -261,10 +261,6 @@ def range_to_str(ranges, limit_length=50):
         s.append(convert_index(r))
 
     res = ', '.join(s)
-    if limit_length is not None:
-        if not Config.get_bool('renderer', 'fulledges') and \
-           len(res) > limit_length:
-            res = '...'
 
     return "[" + res + "]"
 
