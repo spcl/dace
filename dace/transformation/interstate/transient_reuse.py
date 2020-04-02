@@ -32,11 +32,23 @@ class TransientReuse(pattern_matching.Transformation):
     def apply(self, sdfg):
 
         memory_before = 0
+        arrays = {}
         for a in sdfg.arrays:
+            if sdfg.arrays[a].transient:
+                arrays[a] = 0
             memory_before += sdfg.arrays[a].total_size
 
-        for state in sdfg.nodes():
+        # only consider transients appearing in one single state
+        for state in sdfg.states():
+            for a in state.all_transients():
+                arrays[a] += 1
 
+        transients = set()
+        for a in arrays:
+            if arrays[a] == 1:
+                transients.add(a)
+
+        for state in sdfg.nodes():
             # Copy the whole graph
             G = nx.DiGraph()
             for n in state.nodes():
@@ -72,20 +84,15 @@ class TransientReuse(pattern_matching.Transformation):
                                 G.remove_node(n)
                                 break
 
-            # Setup the ancestors and successors arrays
+            # Setup the ancestors and successors arrays as well as the mappings dict
             ancestors = {}
             successors = {}
             for n in G.nodes():
                 successors[n] = set(G.successors(n))
                 ancestors[n] = set(nx.ancestors(G, n))
-
-            # Find all transients and set up the mappings dict
-            transients = set()
             mappings = {}
-            for n in G.nodes():
-                if sdfg.arrays[n.data].transient:
-                    transients.add(n.data)
-                    mappings[n.data] = set()
+            for n in transients:
+                mappings[n] = set()
 
             # Find valid mappings. A mapping (n, m) is only valid if the successors of n
             # are a subset of the ancestors of m and n is also an ancestor of m.
@@ -93,9 +100,8 @@ class TransientReuse(pattern_matching.Transformation):
             # Assumption: Arrays are never used in two AccessNodes
             for n in G.nodes():
                 for m in G.nodes():
-                    n_array = sdfg.arrays[n.data]
-                    m_array = sdfg.arrays[m.data]
-                    if (n_array.transient and m_array.transient and n_array.is_equivalent(m_array)
+                    if (n.data in transients and m.data in transients
+                            and sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
                             and n in ancestors[m] and successors[n].issubset(ancestors[m])):
                         mappings[n.data].add(m.data)
 
