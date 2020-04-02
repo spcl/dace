@@ -1,23 +1,28 @@
-from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.graph import nodes, nxutil, edges as ed
+from dace import registry, sdfg as sd
+from dace.graph import nodes
 from dace.transformation import pattern_matching
-from dace.properties import Property, make_properties, SubsetProperty
-from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState
-from sympy import Symbol, N
-import numpy as np
+from dace.properties import make_properties
+from sympy import N
 import networkx as nx
+
 
 def _atomic_counter_generator():
     ctr = 0
     while True:
         ctr += 1
         yield ctr
+
+
 _atomic_count = _atomic_counter_generator()
+
 
 @registry.autoregister
 @make_properties
 class TransientReuse(pattern_matching.Transformation):
+    """ Implements the TransientReuse transformation.
+        Finds all possible reuses of arrays,
+        decides for a valid combination and changes sdfg accordingly.
+    """
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -59,17 +64,16 @@ class TransientReuse(pattern_matching.Transformation):
                             G.add_edges_from([(n, x) for (y, x) in G.out_edges(m)])
                         G.remove_node(m)
 
-
+            # Remove all nodes that are not AccessNodes or have incoming wcr edges
+            # and connect their predecessors and successors
             for n in state.nodes():
                 if n in G.nodes():
-                    # Remove all nodes that are not AccessNodes and connect their predecessors and successors
                     if not isinstance(n, nodes.AccessNode):
                         for p in G.predecessors(n):
                             for c in G.successors(n):
                                 G.add_edge(p,c)
                         G.remove_node(n)
                     else:
-                        # Remove all AccessNodes with incoming wcr edges
                         for e in state.all_edges(n):
                             if e.data.wcr is not None:
                                 for p in G.predecessors(n):
@@ -95,29 +99,32 @@ class TransientReuse(pattern_matching.Transformation):
 
             # Find valid mappings. A mapping (n, m) is only valid if the successors of n
             # are a subset of the ancestors of m and n is also an ancestor of m.
-            for n in successors:
-                for m in ancestors:
-                    if (isinstance(m, nodes.AccessNode) and successors[n].issubset(ancestors[m]) and n in ancestors[m] and
-                            sdfg.arrays[n.data].transient and sdfg.arrays[m.data].transient and sdfg.arrays[n.data].shape == sdfg.arrays[m.data].shape):
+            # Further the arrays have to be equivalent.
+            # Assumption: Arrays are never used in two AccessNodes
+            for n in G.nodes():
+                for m in G.nodes():
+                    n_array = sdfg.arrays[n.data]
+                    m_array = sdfg.arrays[m.data]
+                    if (n_array.transient and m_array.transient and n_array.is_equivalent(m_array)
+                            and n in ancestors[m] and successors[n].issubset(ancestors[m])):
                         mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
-            # Only add a transient to a bucket if either there is a mapping from it to all other elements
-            # or there is a mapping from all nodes to it.
+            # Only add a transient to a bucket if either there is a mapping from it to
+            # all other elements of that bucket or there is a mapping from each element in the bucket to it.
             buckets = []
             for i in range(len(transients)):
                 buckets.append([])
 
             for n in transients:
-                for i in range(len(mappings)):
+                for i in range(len(transients)):
                     if buckets[i] == []:
                         buckets[i].append(n)
                         break
 
                     temp = True
                     for j in range(len(buckets[i])):
-                        temp = (temp and n in mappings[buckets[i][j]]
-                                )
+                        temp = (temp and n in mappings[buckets[i][j]])
                     if temp:
                         buckets[i].append(n)
                         break
@@ -130,34 +137,22 @@ class TransientReuse(pattern_matching.Transformation):
                         break
 
             # Build new custom transient to replace the other transients
-            for i in range(len(transients)):
+            for i in range(len(buckets)):
                 if len(buckets[i]) > 1:
                     local_ctr = str(next(_atomic_count))
                     array = sdfg.arrays[buckets[i][0]]
                     name = "transient_reuse_" + local_ctr
-                    sdfg.add_transient(
-                      name,
-                      array.shape,
-                      array.dtype,
-                      storage=dtypes.StorageType.Default,
-                      materialize_func=array.materialize_func,
-                      strides=array.strides,
-                      offset=array.offset,
-                      toplevel=array.toplevel,
-                      debuginfo=array.debuginfo,
-                      allow_conflicts=array.allow_conflicts,
-                      total_size=array.total_size,
-                      find_new_name=False
-                    )
+                    datadesc = array.clone()
+                    sdfg.add_datadesc(name, datadesc)
                     buckets[i].insert(0, name)
-            print(buckets)
+
             # Construct final mapping (transient_reuse_i, some_transient)
             mapping = set()
             for i in range(len(buckets)):
                 for j in range(1, len(buckets[i])):
                     mapping.add((buckets[i][0], buckets[i][j]))
 
-            # For each mapping redirect edges, rename memlets in the state
+            # For each mapping redirect edges and rename memlets in the state
             for (new, old) in sorted(list(mapping)):
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:
@@ -167,8 +162,7 @@ class TransientReuse(pattern_matching.Transformation):
                                 if edge.data.data == old:
                                     edge.data.data = new
 
-
-        #clean up the arrays
+        # clean up the arrays
         for a in list(sdfg.arrays):
             used = False
             for s in sdfg.states():
@@ -179,12 +173,12 @@ class TransientReuse(pattern_matching.Transformation):
             if not used:
                 sdfg.remove_data(a)
 
-        # Analyze memory savings
+        # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
             memory_after += sdfg.arrays[a].total_size
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')
-        print('memory savings: ', memory_before - memory_after, 'B ,',
+        print('memory savings: ', memory_before - memory_after, 'B -',
               100 - N((100 / memory_before) * memory_after, 2), "%")
