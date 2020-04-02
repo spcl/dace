@@ -4,8 +4,6 @@
 import tensorflow as tf
 import numpy as np
 from dace.frontend.tensorflow import TFSession
-from dace.transformation.interstate.transient_reuse import TransientReuse
-
 
 IMAGE_SIZE = 28
 NUM_CHANNELS = 1
@@ -95,8 +93,8 @@ if __name__ == "__main__":
 
     # DaCe
     with TFSession(seed=SEED) as sess:
-        sess.run(init, transformations=[TransientReuse])
-        dace_gradients = sess.run(gradients, transformations=[TransientReuse])
+        sess.run(init)
+        dace_gradients = sess.run(gradients)
 
     # Compare
     for tfgrad, dacegrad in zip(tf_gradients, dace_gradients):
