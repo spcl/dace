@@ -183,7 +183,22 @@ def _instantiate_and_add_transient(sdfg, name, variable_instantiations, annot):
 
 
 def onnx_op_program(program):
-    """Register a @dace.program annotated function"""
+    """Register a @dace.program annotated function.
+
+       This method of registering an op is the most compact.  The annotated function will be parsed
+       as a dace program using the python frontend. The parameters of the function must be named
+       according to the names in the op signature; inputs and outputs will be routed accordingly.
+       
+       The inputs must be annotated with strings, e.g. "D[M, N]". The variables (in this case, D, M
+       and N) will be pattern matched with the array descriptor of the input. For example, if an input
+       with annotation "D[M, N]" is called with an array with shape [10, 5] and dtype dace.float32, D will
+       be instantiated with dace.float32, M with 10 and N with 5. Once a variable has been instantiated for
+       the first time, the value of that variable must be the same in other arguments (this is a way
+       to enforce shape contraints). 
+
+       Additionally, the instantiations of the variables will be used to create the output arrays,
+       according to their annotations.
+    """
 
     op_name = program.__name__
     op_signature = ONNXOps._signatures[op_name]
