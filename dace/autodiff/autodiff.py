@@ -7,53 +7,132 @@ import ast
 import itertools
 from collections import deque
 from copy import deepcopy as dc
-from typing import Iterator, Tuple, Deque
+from typing import Iterator, Tuple, Deque, Dict, Set
 
 import sympy as sp
 from sympy.parsing.sympy_parser import parse_expr
 from astunparse import unparse
 
 
-def symbolically_diff_tasklet(tasklet: nd.Tasklet, x: str) -> nd.Tasklet:
-    """Symbolically differentiate the value of an assignment tasklet with respect to a given
-       in_connector.
+class AutoDiffException(Exception):
+    pass
+
+
+def _strings_to_symbols(strings: Set[str]) -> Set[sp.Symbol]:
+    return {sp.symbols(string) for string in strings}
+
+
+def _symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
+    return {str(symb) for symb in symbs}
+
+
+def code_to_exprs(code: str, inputs: Set[str],
+                  outputs: Set[str]) -> Dict[str, sp.Expr]:
+    """Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
+       supports only code consisting of assignment statements.
+       :param code: the code to convert
+       :param code: the inputs (i.e. the defined variables) for the code
+       :param code: the outputs to generate simplified expressions for
+       :return: map from outputs to symbolic expressions
     """
 
-    if len(tasklet.code) != 1 or type(tasklet.code[0]) is not ast.Assign:
-        raise ValueError(
-            "Differentiating tasklets more complex than assign statements is not supported"
-        )
-    assign: ast.Assign = tasklet.code[0]
-    if len(assign.targets) != 1:
-        raise ValueError(
-            "Expected assignment statement with at most one target")
-    target = assign.targets[0].id
+    inputs = list(inputs)
+    outputs = list(outputs)
 
-    input_vars = set(tasklet.in_connectors)
-    if x not in input_vars:
-        raise ValueError("Unknown connector {}".format(x))
+    if type(code) is str:
+        # clean up the code
+        cleaned_code = unparse(ast.parse(code))
+    else:
+        # should be an ast
+        cleaned_code = unparse(code)
 
-    sp_expr: sp.Expr = parse_expr(unparse(assign.value))
+    code_fn = """
+def symbolic_execution({}):
+    from sympy import exp, log
+    def log2(x):
+        return log(x, 2)
 
-    def symbs_to_strings(symbs):
-        return {str(symb) for symb in symbs}
+    def log10(x):
+        return log(x, 10)
 
-    free_symbs = symbs_to_strings(sp_expr.free_symbols)
+    # mostly taken from cmath.h
+    from sympy import sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh
+    from sympy import sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh
+
+    from sympy import Pow as pow, sqrt
+
+    from sympy import sign, floor, ceiling as ceil, Abs as abs, Abs as fabs
+    from sympy import Max as max, Min as min
+    from sympy import Max as fmax, Min as fmin
+    {}
+    return {}
+    """
+    code_fn = code_fn.format(
+        ", ".join(inputs),
+        "\n".join("    " + line.strip() for line in cleaned_code.split("\n")),
+        ", ".join(outputs))
+
+    try:
+        exec(code_fn)
+
+        # no idea why, but simply calling symbolic_execution doesn't work
+        results = vars()['symbolic_execution'](
+            *[sp.symbols(inp) for inp in inputs])
+
+        if len(outputs) > 1:
+            return dict(zip(outputs, results))
+        else:
+            return {outputs[0]: results}
+    except Exception as e:
+        raise AutoDiffException(
+            "Exception occured while attempting to symbolically execute code:\n{}\n{}"
+            .format(cleaned_code, code_fn)) from e
+
+
+def symbolically_diff_tasklet(tasklet: nd.Tasklet, target: str,
+                              x: str) -> nd.Tasklet:
+    """Symbolically differentiate the value of an output of a tasklet (target) with respect to an
+       input x.
+    """
+
+    if tasklet.language is not dace.dtypes.Language.Python:
+        raise AutoDiffException(
+            "Expected tasklet with language Python, got language {}".format(
+                tasklet.language))
+
+    code_str = tasklet.code
+    if type(code_str) is ast.Module:
+        # unparse the tree
+        code_str = unparse(code_str)
+
+    if x not in tasklet.in_connectors:
+        raise AutoDiffException("Unknown connector {}".format(x))
+
+    if target not in tasklet.out_connectors:
+        raise AutoDiffException("Unknown connector {}".format(x))
+
+    output_exprs = code_to_exprs(code_str, tasklet.in_connectors,
+                                 tasklet.out_connectors)
+
+    target_expr = output_exprs[target]
+
+    free_symbs = _symbols_to_strings(target_expr.free_symbols)
 
     if target in free_symbs:
-        raise ValueError("Inplace operations are currently not supported")
+        raise AutoDiffException(
+            "Inplace operations are currently not supported for autodiff")
 
-    if input_vars != free_symbs:
-        print(input_vars)
-        print(sp_expr.free_symbols)
-        raise ValueError(
-            "Expected all in_connectors to be used in the tasklet code")
+    diff_expr = target_expr.diff(sp.symbols(x))
 
-    diff_expr = sp_expr.diff(sp.symbols(x))
+    if diff_expr.atoms(sp.Derivative):
+        # the final result contains a call to sp.Derivative
+        raise AutoDiffException(
+            "Unable to differentiate expression: {}".format(diff_expr.expr))
 
     return nd.Tasklet(
-        tasklet.label + "_backward",
-        inputs=symbs_to_strings(diff_expr.free_symbols) | {target + "_grad"},
+        "_" + tasklet.label + "_backward_",
+        inputs=_symbols_to_strings(diff_expr.free_symbols)
+        | {target + "_grad"},
         outputs={x + "_grad"},
         code=x + "_grad = {}_grad * ({})".format(
             target, str(diff_expr))  # this should be valid python code
@@ -64,8 +143,8 @@ def _check_volume_one(memlet: dace.Memlet):
     elems = memlet.subset.num_elements()
 
     if len(elems.free_symbols) > 0 or int(memlet.subset.num_elements()) != 1:
-        raise ValueError(
-            "Autodiff only supported for tasklets that operate on memlets with volume 1"
+        raise AutoDiffException(
+            "Autodiff only supported for scalar tasklets (tasklets with input memlets with volume 1)"
         )
 
 
@@ -83,14 +162,15 @@ def diff_mapped_tasklet(sdfg: dace.SDFG, forward_state: dace.SDFGState,
     X_conn = None
     for _, _, map_tasklet, conn, memlet in forward_state.out_edges(map_entry):
         if map_tasklet is not tasklet:
-            raise ValueError(
+            raise AutoDiffException(
                 "Expected tasklet to be connected directly to the map exit and entry"
             )
         _check_volume_one(memlet)
 
         if memlet.data in in_arrays:
-            raise ValueError(
-                "Using the same array for multiple memlets is not supported")
+            raise AutoDiffException(
+                "Using the same array for multiple memlets is currently not supported in autodiff"
+            )
 
         in_arrays.add(memlet.data)
 
@@ -98,20 +178,21 @@ def diff_mapped_tasklet(sdfg: dace.SDFG, forward_state: dace.SDFGState,
             X_conn = conn
 
     if len(forward_state.out_edges(tasklet)) != 1:
-        raise ValueError(
+        raise AutoDiffException(
             "Tasklets with more than one output are not supported")
 
     target_conn = None
     target_memlet: Memlet = None
     for map_tasklet, conn, _, _, memlet in forward_state.in_edges(map_exit):
         if map_tasklet is not tasklet:
-            raise ValueError(
+            raise AutoDiffException(
                 "Expected tasklet to be connected directly to the map exit and entry"
             )
         _check_volume_one(memlet)
 
         if memlet.data in in_arrays:
-            raise ValueError("Inplace operations are not supported")
+            raise AutoDiffException(
+                "Inplace operations are currently not supported in autodiff")
 
         out_arrays.add(memlet.data)
 
@@ -120,19 +201,21 @@ def diff_mapped_tasklet(sdfg: dace.SDFG, forward_state: dace.SDFGState,
             target_memlet = dc(memlet)
 
     if target_conn is None:
-        raise ValueError(
+        raise AutoDiffException(
             "target ({}) not found in tasklet outputs".format(target))
 
     if X_conn is None:
-        raise ValueError("X_array ({}) not found in tasklet inputs".format(X))
+        raise AutoDiffException(
+            "X_array ({}) not found in tasklet inputs".format(X))
 
     target_grad = sdfg.arrays[target + "_grad"]
 
     # allocate an array for the gradient of x
     X_arr = sdfg.arrays[X]
     if X_arr.dtype not in [dace.float16, dace.float32, dace.float64]:
-        raise ValueError("Expected dtype of x to be float, got {}".format(
-            X_arr.dtype.to_string()))
+        raise AutoDiffException(
+            "Expected dtype of x to be float, got {}".format(
+                X_arr.dtype.to_string()))
 
     # TODO @orausch grad arrays should be zero at the start of execution; how should that be handled?
     _, X_grad_arr = sdfg.add_array(X + "_grad",
@@ -147,7 +230,11 @@ def diff_mapped_tasklet(sdfg: dace.SDFG, forward_state: dace.SDFGState,
     diff_map_entry, diff_map_exit = backward_state.add_map(
         X + "_diff", ndrange)
 
-    diff_tasklet = symbolically_diff_tasklet(tasklet, X_conn)
+    diff_tasklet = symbolically_diff_tasklet(
+        tasklet,
+        target_conn,
+        X_conn,
+    )
     backward_state.add_node(diff_tasklet)
 
     diff_map_entry.add_in_connector("IN_1")
@@ -185,7 +272,8 @@ def diff_mapped_tasklet(sdfg: dace.SDFG, forward_state: dace.SDFGState,
             X_memlet = dc(memlet)
 
     if X_memlet is None:
-        raise ValueError("X_array ({}) not found in tasklet inputs".format(X))
+        raise AutoDiffException(
+            "X_array ({}) not found in tasklet inputs".format(X))
 
     # TODO @orausch this isn't always necessary; maybe we can add a transform to remove this if possible?
     X_memlet.wcr = "lambda x, y: x + y"
@@ -209,12 +297,15 @@ def add_backward_pass(sdfg: dace.SDFG, forward_state: dace.SDFGState,
 
     target_arr = sdfg.arrays[target.data]
     if target_arr.dtype not in [dace.float16, dace.float32, dace.float64]:
-        raise ValueError("Expected dtype of x to be float, got {}".format(
-            target_arr.dtype.to_string()))
+        raise AutoDiffException(
+            "Expected dtype of x to be float, got {}".format(
+                target_arr.dtype.to_string()))
 
     if len(target_arr.total_size.free_symbols) > 0 or int(
             target_arr.total_size) != 1:
-        raise ValueError("Targets with more than one element are unsupported")
+        raise AutoDiffException(
+            "Targets with more than one element are currently unsupported in autodiff"
+        )
 
     target_grad, target_grad_arr = sdfg.add_array(target.data + "_grad",
                                                   target_arr.shape,
@@ -224,7 +315,7 @@ def add_backward_pass(sdfg: dace.SDFG, forward_state: dace.SDFGState,
         in_edges = state.in_edges(node)
         preds = {edge.src for edge in in_edges}
         if len(preds) > 1:
-            raise ValueError("Unsupported graph structure")
+            raise AutoDiffException("Unsupported graph structure for autodiff")
         return next(iter(preds))
 
     # this is a breath first search along collapsed maps
@@ -234,7 +325,7 @@ def add_backward_pass(sdfg: dace.SDFG, forward_state: dace.SDFGState,
         current = queue.popleft()
 
         if type(current) is not nd.AccessNode:
-            raise ValueError("Unsupported graph structure")
+            raise AutoDiffException("Unsupported graph structure for autodiff")
 
         try:
             map_x = getpred(forward_state, current)
@@ -244,13 +335,15 @@ def add_backward_pass(sdfg: dace.SDFG, forward_state: dace.SDFGState,
             if (type(map_e) is not nd.MapEntry or  #
                     type(task) is not nd.Tasklet or  #
                     type(map_x) is not nd.MapExit):
-                raise ValueError("Unsupported graph structure")
+                raise AutoDiffException(
+                    "Unsupported graph structure for autodiff")
 
             input_edges = forward_state.in_edges(map_e)
             inputs = list({edge.src for edge in input_edges})
             for inp in inputs:
                 if type(inp) is not nd.AccessNode:
-                    raise ValueError("Unsupported graph structure")
+                    raise AutoDiffException(
+                        "Unsupported graph structure for autodiff")
                 # generate the backward pass for this map
                 backward_state = sdfg.add_state()
                 diff_mapped_tasklet(sdfg, forward_state, backward_state, map_e,
@@ -266,4 +359,4 @@ def add_backward_pass(sdfg: dace.SDFG, forward_state: dace.SDFGState,
                     queue.append(inp)
 
         except StopIteration:
-            raise ValueError("Unsupported graph structure")
+            raise AutoDiffException("Unsupported graph structure")

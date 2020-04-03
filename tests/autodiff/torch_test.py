@@ -132,6 +132,41 @@ def test_sum():
 
 
 @correctness_test
+def test_complex_tasklet():
+    def torch_sum(*, X, Y):
+        Z = X + Y
+        Z = Z * Z
+        S = Z.sum()
+        S.backward()
+        return dict(X_grad=X.grad, Y_grad=Y.grad)
+
+    @dace.program
+    def dace_sum(X: dace.float32[3, 3], Y: dace.float32[3, 3],
+                 Z: dace.float32[3, 3], S: dace.float32[1]):
+
+        Z[:] = X + Y
+
+        @dace.map(_[0:3, 0:3])
+        def summap(i, j):
+            s >> S(1, lambda x, y: x + y)[0]
+            z << Z[i, j]
+
+            z1 = z
+            # this is a complicated tasklet...
+            log(3) # random expr
+            z2 = z
+            s = z1 * z2
+
+    sdfg = dace_sum.to_sdfg()
+    state = sdfg.nodes()[0]
+
+    return SDFGBackwardRunner(sdfg, "S"), torch_sum, dict(
+        X=np.random.rand(3, 3).astype(np.float32),
+        Y=np.random.rand(3, 3).astype(np.float32))
+
+
+
+@correctness_test
 def test_add_mmul_transpose_log():
     def torch_func(*, X, Y, W):
 
