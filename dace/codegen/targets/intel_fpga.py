@@ -64,7 +64,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
-        default_channel_depth = Config.get("compiler", "intel_fpga", "default_channel_depth")
+        self.default_channel_depth = Config.get("compiler", "intel_fpga", "default_channel_depth")
         super().__init__(*args, **kwargs)
 
     @property
