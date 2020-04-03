@@ -126,8 +126,8 @@ class FPGATransformState(pattern_matching.Transformation):
         state = sdfg.nodes()[self.subgraph[FPGATransformState._state]]
 
         # Find source/sink (data) nodes
-        input_nodes = nxutil.find_source_nodes(state)
-        output_nodes = nxutil.find_sink_nodes(state)
+        input_nodes = [(n, sdfg) for n in nxutil.find_source_nodes(state)]
+        output_nodes = [(n, sdfg) for n in nxutil.find_sink_nodes(state)]
 
         fpga_data = {}
 
@@ -136,7 +136,10 @@ class FPGATransformState(pattern_matching.Transformation):
         wcr_input_nodes = set()
         stack = []
 
+        parent_sdfg = {state: sdfg}  # Map states to their parent SDFG
         for node, graph in state.all_nodes_recursive():
+            if isinstance(graph, dace.SDFG):
+                parent_sdfg[node] = graph
             if isinstance(node, dace.graph.nodes.AccessNode):
                 for e in graph.all_edges(node):
                     if e.data.wcr is not None:
@@ -154,40 +157,42 @@ class FPGATransformState(pattern_matching.Transformation):
                                         and
                                         e.dst.data == parent_edges.dst.data):
                                     # This must be copied to device
-                                    input_nodes.append(parent_edges.dst)
+                                    input_nodes.append(
+                                        (parent_edges.dst,
+                                         parent_sdfg[parent_state]))
                                     wcr_input_nodes.add(parent_edges.dst)
 
         if input_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
 
-            for node in input_nodes:
-                if (not isinstance(node, dace.graph.nodes.AccessNode)
-                        or not isinstance(node.desc(sdfg), dace.data.Array)):
-                    # Only transfer array nodes
+            for node, parent_sdfg in input_nodes:
+
+                if not isinstance(node, dace.graph.nodes.AccessNode):
+                    continue
+                desc = node.desc(parent_sdfg)
+                if not isinstance(desc, dace.data.Array):
                     # TODO: handle streams
                     continue
 
-                array = node.desc(sdfg)
                 if node.data in fpga_data:
                     fpga_array = fpga_data[node.data]
                 elif node not in wcr_input_nodes:
                     fpga_array = sdfg.add_array(
                         'fpga_' + node.data,
-                        array.shape,
-                        array.dtype,
-                        materialize_func=array.materialize_func,
+                        desc.shape,
+                        desc.dtype,
+                        materialize_func=desc.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.FPGA_Global,
-                        allow_conflicts=array.allow_conflicts,
-                        strides=array.strides,
-                        offset=array.offset)
+                        allow_conflicts=desc.allow_conflicts,
+                        strides=desc.strides,
+                        offset=desc.offset)
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1)
-                                            for s in array.shape])
+                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
                 mem = memlet.Memlet(node.data, full_range.num_elements(),
                                     full_range, 1)
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
@@ -205,34 +210,34 @@ class FPGATransformState(pattern_matching.Transformation):
 
             post_state = sd.SDFGState('post_' + state.label, sdfg)
 
-            for node in output_nodes:
-                if (not isinstance(node, dace.graph.nodes.AccessNode)
-                        or not isinstance(node.desc(sdfg), dace.data.Array)):
-                    # Only transfer array nodes
+            for node, parent_sdfg in output_nodes:
+
+                if not isinstance(node, dace.graph.nodes.AccessNode):
+                    continue
+                desc = node.desc(parent_sdfg)
+                if not isinstance(desc, dace.data.Array):
                     # TODO: handle streams
                     continue
 
-                array = node.desc(sdfg)
                 if node.data in fpga_data:
                     fpga_array = fpga_data[node.data]
                 else:
                     fpga_array = sdfg.add_array(
                         'fpga_' + node.data,
-                        array.shape,
-                        array.dtype,
-                        materialize_func=array.materialize_func,
+                        desc.shape,
+                        desc.dtype,
+                        materialize_func=desc.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.FPGA_Global,
-                        allow_conflicts=array.allow_conflicts,
-                        strides=array.strides,
-                        offset=array.offset)
+                        allow_conflicts=desc.allow_conflicts,
+                        strides=desc.strides,
+                        offset=desc.offset)
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1)
-                                            for s in array.shape])
+                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
                 mem = memlet.Memlet('fpga_' + node.data,
                                     full_range.num_elements(), full_range, 1)
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
