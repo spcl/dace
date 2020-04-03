@@ -57,12 +57,14 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     title = 'Intel FPGA'
     language = 'hls'
     enable_smi = False  # indicates whether or not smi is used
+    default_channel_depth = 1
 
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga_vendor")
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
+        default_channel_depth = Config.get("compiler", "intel_fpga", "default_channel_depth")
         super().__init__(*args, **kwargs)
 
     @property
@@ -238,7 +240,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
         else:
-            depth_attribute = ""
+            depth_attribute = " __attribute__((depth({})))".format(self.default_channel_depth)
         if cpp.sym2cpp(array_size) != "1":
             size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:

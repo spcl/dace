@@ -316,6 +316,13 @@ required:
                         description: High-level synthesis C++ flags 
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
 
+                    default_channel_depth:
+                        type: int
+                        default: 1
+                        title: Default channel depth
+                        description: >
+                            If no buffer space is indicated, FIFO channels are created using this as depth value
+
                     launch_async:
                         type: bool
                         default: false
