@@ -2169,6 +2169,15 @@ subgraph cluster_state_{state} {{
 
         return program_code
 
+    def get_array_memlet(self, array: str):
+        """Convenience method to generate a Memlet that transfers a full array.
+
+           :param array: the name of the array
+           :return: a Memlet that fully transfers array
+        """
+        return dace.Memlet.from_array(array, self.arrays[array])
+
+
 
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """

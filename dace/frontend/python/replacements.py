@@ -361,6 +361,16 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
     return outname
 
 
+@oprepo.replaces('numpy.sum')
+def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis)
+
+
+@oprepo.replaces('numpy.max')
+def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(sdfg, state, "lambda x, y: max(x, y)", a, axis=axis)
+
+
 ##############################################################################
 # Python operation replacements ##############################################
 ##############################################################################
