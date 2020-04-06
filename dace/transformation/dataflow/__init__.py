@@ -16,7 +16,7 @@ from .vectorization import Vectorization
 
 # Data-related
 from. distributed_storage import DataDistribution
-from .stream_transient import StreamTransient
+from .stream_transient import AccumulateTransient, StreamTransient
 from .local_storage import InLocalStorage, OutLocalStorage
 from .reduce_expansion import ReduceExpansion
 from .double_buffering import DoubleBuffering
