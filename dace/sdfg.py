@@ -1681,14 +1681,26 @@ subgraph cluster_state_{state} {{
                                 for i, (r, s) in enumerate(zip(e2.data.subset,
                                                                data.shape)):
                                     if isinstance(r, (list, tuple)):
+                                        # dist_ranges.append((
+                                        #     symbolic.pystr_to_symbolic(
+                                        #         "({}) // ({})".format(
+                                        #             r[0], s)
+                                        #     ), symbolic.pystr_to_symbolic(
+                                        #         "({}) // ({})".format(
+                                        #             r[1], s)
+                                        #     ), 1))
                                         dist_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "({}) // ({})".format(
-                                                    r[0], s)
+                                                "r{}".format(r[0])
                                             ), symbolic.pystr_to_symbolic(
-                                                "({}) // ({})".format(
-                                                    r[1], s)
+                                                "r{}".format(r[1])
                                             ), 1))
+                                        # local_ranges.append((
+                                        #     symbolic.pystr_to_symbolic(
+                                        #         "{a}%{b}".format(a=r[0], b=s)
+                                        #     ), symbolic.pystr_to_symbolic(
+                                        #         "{a}%{b}".format(a=r[1], b=s)
+                                        #     ), 1))
                                         local_ranges.append((
                                             symbolic.pystr_to_symbolic(
                                                 "{a}-r{a}*{b}".format(a=r[0], b=s)
@@ -1696,14 +1708,26 @@ subgraph cluster_state_{state} {{
                                                 "{a}-r{a}*{b}".format(a=r[1], b=s)
                                             ), 1))
                                     else:
+                                        # dist_ranges.append((
+                                        #     symbolic.pystr_to_symbolic(
+                                        #         "({}) // ({})".format(
+                                        #             r, s)
+                                        #     ), symbolic.pystr_to_symbolic(
+                                        #         "({}) // ({})".format(
+                                        #             r, s)
+                                        #     ), 1))
                                         dist_ranges.append((
                                             symbolic.pystr_to_symbolic(
-                                                "({}) // ({})".format(
-                                                    r, s)
+                                                "r{}".format(r)
                                             ), symbolic.pystr_to_symbolic(
-                                                "({}) // ({})".format(
-                                                    r, s)
+                                                "r{}".format(r)
                                             ), 1))
+                                        # local_ranges.append((
+                                        #     symbolic.pystr_to_symbolic(
+                                        #         "{}%{}".format(r, s)
+                                        #     ), symbolic.pystr_to_symbolic(
+                                        #         "{}%{}".format(r, s)
+                                        #     ), 1))
                                         local_ranges.append((
                                             symbolic.pystr_to_symbolic(
                                                 "{}-r{}*{}".format(r, r, s)
@@ -4026,12 +4050,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         raise InvalidSDFGEdgeError(
                             "Memlet subset negative out-of-bounds", sdfg,
                             state_id, eid)
-                    if any(((maxel + off) >= s) == True
-                           for maxel, s, off in zip(
-                               e.data.subset.max_element(), arr.shape,
-                               arr.offset)):
-                        raise InvalidSDFGEdgeError(
-                            "Memlet subset out-of-bounds", sdfg, state_id, eid)
+                    try:
+                        if any(((maxel + off) >= s) == True
+                            for maxel, s, off in zip(
+                                e.data.subset.max_element(), arr.shape,
+                                arr.offset)):
+                            raise InvalidSDFGEdgeError(
+                                "Memlet subset out-of-bounds", sdfg, state_id, eid)
+                    except TypeError:
+                        pass
                 # Test other_subset as well
                 if e.data.other_subset is not None and isinstance(
                         other_subset_node, nd.AccessNode):
