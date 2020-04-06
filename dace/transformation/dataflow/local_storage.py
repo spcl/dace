@@ -99,11 +99,15 @@ class LocalStorage(pattern_matching.Transformation, ABC):
         if propagate_forward:
             graph.add_edge(node_a, original_edge.src_conn, data_node, None,
                            to_data_mm)
+            from_data_mm.dist_subset = None
+            from_data_mm.other_dist_subset = None
             new_edge = graph.add_edge(data_node, None, node_b,
                                       original_edge.dst_conn, from_data_mm)
         else:
             new_edge = graph.add_edge(node_a, original_edge.src_conn,
                                       data_node, None, to_data_mm)
+            to_data_mm.dist_subset = None
+            to_data_mm.other_dist_subset = None
             graph.add_edge(data_node, None, node_b, original_edge.dst_conn,
                            from_data_mm)
 
@@ -111,6 +115,8 @@ class LocalStorage(pattern_matching.Transformation, ABC):
         for edge in graph.memlet_tree(new_edge):
             edge.data.subset.offset(offset, True)
             edge.data.data = new_data
+            edge.data.dist_subset = None
+            edge.data.other_dist_subset = None
 
 
 @registry.autoregister_params(singlestate=True)
