@@ -152,7 +152,7 @@ function traverse_sdfg_scopes(sdfg, func, post_subscope_func=null, skip_exit_nod
 
         for (let nodeid of nodes) {
             let node = graph.node(nodeid);
-            if (node !== undefined && processed_nodes.has(node.id.toString()))
+            if (node === undefined || processed_nodes.has(node.id.toString()))
                 continue;
             // Skip exit nodes when scopes are known
             if (skip_exit_nodes && node.type().endsWith('Exit') && node.data.node.scope_entry >= 0)

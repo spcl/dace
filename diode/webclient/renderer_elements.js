@@ -357,10 +357,14 @@ class AccessNode extends Node {
 class ScopeNode extends Node {
     draw(renderer, ctx, mousepos) {
         let draw_shape;
+        let height = this.height;
         if (this.data.node.attributes.is_collapsed) {
-            draw_shape = () => drawHexagon(ctx, this.x, this.y, this.width, this.height);
+            draw_shape = () => drawHexagon(ctx, this.x, this.y, this.width, height);
         } else {
-            draw_shape = () => drawTrapezoid(ctx, this.topleft(), this, this.scopeend());
+            // Override height for scopes
+            height = 3*LINEHEIGHT;
+
+            draw_shape = () => drawTrapezoid(ctx, this.topleft(), this, this.scopeend(), height);
         }
         ctx.strokeStyle = this.strokeStyle();
 
@@ -379,11 +383,16 @@ class ScopeNode extends Node {
         ctx.fill();
         ctx.fillStyle = "black";
 
+        let texty = this.topleft().y + height/2;
+
         let far_label = this.far_label();
         drawAdaptiveText(ctx, renderer, far_label,
-                         this.close_label(renderer), this.x, this.y, 
-                         this.width, this.height, 
+                         this.close_label(renderer), this.x, texty, 
+                         this.width, height, 
                          SCOPE_LOD);
+
+        if (this.data.graph)
+            draw_subgraph_scope(renderer, ctx, this.data.graph, mousepos, this.id);
     }
 
     far_label() {
@@ -680,6 +689,60 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
     });
 }
 
+// Draws the internals of a scope (i.e., a map)
+function draw_subgraph_scope(renderer, ctx, g, mousepos, parent_id) {
+    let ppp = renderer.canvas_manager.points_per_pixel();
+
+    visible_rect = renderer.visible_rect;
+
+    g.nodes().forEach(v => {
+        let n = g.node(v);
+        // Skip entry node
+        if (v == parent_id)
+            return;
+
+        if (ctx.lod && !n.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+            return;
+        if (ctx.lod && ppp >= NODE_LOD) {
+            n.simple_draw(renderer, ctx, mousepos);
+            return;
+        }
+
+        n.draw(renderer, ctx, mousepos);
+        n.in_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
+        n.out_connectors.forEach(c => { c.draw(renderer, ctx, mousepos); });
+    });
+    if (ctx.lod && ppp >= EDGE_LOD)
+        return;
+    g.edges().forEach(e => {
+        let edge = g.edge(e);
+        if (ctx.lod && !edge.intersect(visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h))
+            return;
+        edge.draw(renderer, ctx, mousepos);
+    });
+       
+}
+
+// Translate a dagre graph and its descendants by a given offset
+function offset_subgraph(graph, offset) {
+    graph.nodes().forEach(node_id => {
+       let node = graph.node(node_id);
+        node.x += offset.x;
+        node.y += offset.y;
+        if (node.data.graph)
+            offset_subgraph(node.data.graph, offset);
+    });
+    graph.edges().forEach(edge_id => {
+        let edge = graph.edge(edge_id);
+        edge.x += offset.x;
+        edge.y += offset.y;
+        edge.points.forEach((p) => {
+            p.x += offset.x;
+            p.y += offset.y;
+        });
+    });
+}
+
 // Translate an SDFG by a given offset
 function offset_sdfg(sdfg, sdfg_graph, offset) {
     sdfg.nodes.forEach((state, id) => {
@@ -722,6 +785,8 @@ function offset_state(state, state_graph, offset) {
 
         if (node.data.node.type === 'NestedSDFG')
             offset_sdfg(node.data.node.attributes.sdfg, node.data.graph, offset);
+        if (node.data.node.type.endsWith('Entry') && node.data.graph)
+            offset_subgraph(node.data.graph, offset);
     });
     state.edges.forEach((e, eid) => {
         e = check_and_redirect_edge(e, drawn_nodes, state);
@@ -833,20 +898,22 @@ function drawArrow(ctx, p1, p2, size, offset) {
     ctx.restore();
 }
 
-function drawTrapezoid(ctx, topleft, node, inverted=false) {
+function drawTrapezoid(ctx, topleft, node, inverted=false, height=null) {
+    if (height === null)
+        height = node.height;
     ctx.beginPath();
     if (inverted) {
         ctx.moveTo(topleft.x, topleft.y);
         ctx.lineTo(topleft.x + node.width, topleft.y);
-        ctx.lineTo(topleft.x + node.width - node.height, topleft.y + node.height);
-        ctx.lineTo(topleft.x + node.height, topleft.y + node.height);
+        ctx.lineTo(topleft.x + node.width - height, topleft.y + height);
+        ctx.lineTo(topleft.x + height, topleft.y + height);
         ctx.lineTo(topleft.x, topleft.y);
     } else {
-        ctx.moveTo(topleft.x, topleft.y + node.height);
-        ctx.lineTo(topleft.x + node.width, topleft.y + node.height);
-        ctx.lineTo(topleft.x + node.width - node.height, topleft.y);
-        ctx.lineTo(topleft.x + node.height, topleft.y);
-        ctx.lineTo(topleft.x, topleft.y + node.height);
+        ctx.moveTo(topleft.x, topleft.y + height);
+        ctx.lineTo(topleft.x + node.width, topleft.y + height);
+        ctx.lineTo(topleft.x + node.width - height, topleft.y);
+        ctx.lineTo(topleft.x + height, topleft.y);
+        ctx.lineTo(topleft.x, topleft.y + height);
     }
     ctx.closePath();
 }
