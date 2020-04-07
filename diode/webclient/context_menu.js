@@ -59,7 +59,7 @@ class ContextMenu {
 
         // Remove the context menu
 
-        document.body.removeChild(this._cmenu_elem);
+        this._cmenu_elem.remove();
 
         for(let x of this._click_close_handlers) {
             window.removeEventListener(...x);
@@ -69,47 +69,47 @@ class ContextMenu {
     }
 
     show(x, y) {
-        /*
-            Shows the context menu originating at point (x,y)
-        */
+        const sdfv_menu = $('<div>', {
+            id: 'sdfv-menu',
+            'class': 'sdfv-menu',
+            'css': {
+                'left': x + 'px',
+                'top': y + 'px',
+            },
+        });
 
-        let cmenu_div = document.createElement('div');
-        cmenu_div.id = "contextmenu";
-        $(cmenu_div).css('left', x + "px");
-        $(cmenu_div).css('top', y + "px");
-        cmenu_div.classList.add("context_menu");
-
-
-        if(this._html_content == null) {
-            // Set default context menu
-
-            for(let x of this._options) {
-
-                let elem = document.createElement('div');
-                elem.addEventListener('click', x.func);
-                elem.classList.add("context_menu_option");
-
-                if (x.checkbox) {
-                    let markelem = document.createElement('span');
-                    markelem.classList = x.checked ? 'checkmark_checked' : 'checkmark';
-                    elem.appendChild(markelem);
-                    elem.innerHTML += x.name;
-                    elem.addEventListener('click', elem => {
-                        x.checked = !x.checked;
-                        x.func(elem, x.checked); 
-                    });
+        if (this._html_content === null) {
+            for (const option of this._options) {
+                let option_html = '';
+                let option_click_handler = null;
+                if (option.checkbox) {
+                    let tick_classes = 'cm material-icons';
+                    if (!option.checked)
+                        tick_classes += ' hidden';
+                    option_html = $('<i>', {
+                        'class': tick_classes,
+                        'html': 'check',
+                    })[0].outerHTML + option.name;
+                    option_click_handler = function(element) {
+                        option.checked = !option.checked;
+                        option.func(element, option.checked);
+                    };
                 } else {
-                    elem.innerText = x.name;
-                    elem.addEventListener('click', x.func);
+                    option_html = option.name;
+                    option_click_handler = option.func;
                 }
-                cmenu_div.appendChild(elem);
+                $('<div>', {
+                    'class': 'sdfv-menu-option',
+                    'html': option_html,
+                    'click': option_click_handler,
+                }).appendTo(sdfv_menu);
             }
-        }
-        else {
-            cmenu_div.innerHTML = this._html_content;
+        } else {
+            sdfv_menu.html(this._html_content);
         }
 
-        this._cmenu_elem = cmenu_div;
-        document.body.appendChild(cmenu_div);
+        this._cmenu_elem = sdfv_menu;
+        sdfv_menu.appendTo(document.body);
     }
+
 }

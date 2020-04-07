@@ -12,10 +12,11 @@ function init_sdfv(sdfg) {
     $('#reload').click(function(e){
         reload_file();
     });
-    $('#outline').click(function(e){
+    $('#outline-btn').click(function(e){
         if (renderer)
             setTimeout(() => outline(renderer, renderer.graph), 1);
     });
+    $('#search-bar').show();
     $('#search-btn').click(function(e){
         if (renderer)
             setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
@@ -109,9 +110,10 @@ function find_recursive(graph, query, results, case_sensitive) {
 }
 
 function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
-    // Modify sidebar header
-    document.getElementById("sidebar-header").innerText = 'Search Results for "' + query + '"';
+    // Adapt the info-container header to show the search query
+    $('#info-title').text('Search Results for "' + query + '":');
 
+    // Recursively search for all matches
     let results = [];
     if (!case_sensitive)
         query = query.toLowerCase();
@@ -121,39 +123,39 @@ function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
     if (results.length > 0)
         renderer.zoom_to_view(results);
 
-    // Show clickable results in sidebar
-    let sidebar = document.getElementById("sidebar-contents");
-    sidebar.innerHTML = '';
-    for (let result of results) {
-        let d = document.createElement('div');
-        d.className = 'context_menu_option';
-        d.innerHTML = result.type() + ' ' + result.label();
-        d.onclick = () => {renderer.zoom_to_view([result])};
-        sidebar.appendChild(d);
+    // Show clickable results in the info box
+    const info_content = $('#info-contents');
+    info_content.html('');
+    for (const result of results) {
+        $('<div>', {
+            'class': 'info-menu-option',
+            'click': function () {
+                renderer.zoom_to_view([result]);
+            },
+            'html': result.type() + ' ' + result.label(),
+        }).appendTo(info_content);
     }
 
-    // Open sidebar if closed
-    document.getElementById("sidebar").style.display = "flex";
+    // Show the clear info-box button if it's hidden
+    $('#info-clear-btn').show();
 }
 
 function outline(renderer, sdfg) {
-    // Modify sidebar header
-    document.getElementById("sidebar-header").innerText = 'SDFG Outline';
+    // Set the info-box title
+    $('#info-title').text('SDFG Outline');
 
-    let sidebar = document.getElementById("sidebar-contents");
-    sidebar.innerHTML = '';
+    let info_content = document.getElementById('info-contents');
+    info_content.innerHTML = '';
 
     // Entire SDFG
     let d = document.createElement('div');
-    d.className = 'context_menu_option';
+    d.className = 'info-menu-option';
     d.innerHTML = '<i class="material-icons" style="font-size: inherit">filter_center_focus</i> SDFG ' +
         renderer.sdfg.attributes.name;
     d.onclick = () => renderer.zoom_to_view();
-    sidebar.appendChild(d);
+    info_content.appendChild(d);
 
-    let stack = [sidebar];
-
-    // Add elements to tree view in sidebar
+    let stack = [info_content];
     traverse_sdfg_scopes(sdfg, (node, parent) => {
         // Skip exit nodes when scopes are known
         if (node.type().endsWith('Exit') && node.data.node.scope_entry >= 0) {
@@ -163,7 +165,7 @@ function outline(renderer, sdfg) {
 
         // Create element
         let d = document.createElement('div');
-        d.className = 'context_menu_option';
+        d.className = 'info-menu-option';
         let is_collapsed = node.attributes().is_collapsed;
         is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
         let node_type = node.type();
@@ -209,8 +211,8 @@ function outline(renderer, sdfg) {
             stack[stack.length - 1].appendChild(elem);
     });
 
-    // Open sidebar if closed
-    document.getElementById("sidebar").style.display = "flex";
+    // Show the clear info-box button if it's hidden
+    $('#info-clear-btn').show();
 }
 
 function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
@@ -218,61 +220,126 @@ function mouse_event(evtype, event, mousepos, elements, renderer, elem) {
         if (renderer.menu)
             renderer.menu.destroy();
         if (elem) {
-            // Change header
-            document.getElementById("sidebar-header").innerText = elem.type() + " " + elem.label();
+            // Correctly set the info-box title.
+            $('#info-title').text(elem.type() + ' ' + elem.label());
 
-            // Change contents
-            let contents = document.getElementById("sidebar-contents");
-            let html = "";
-            if (elem instanceof Edge && elem.data.type === "Memlet") {
-                let sdfg_edge = elem.sdfg.nodes[elem.parent_id].edges[elem.id];
-                html += "<h4>Connectors: " + sdfg_edge.src_connector + " &rarr; " + sdfg_edge.dst_connector + "</h4>";
+            const contents = $('#info-contents');
+            contents.html('');
+            if (elem instanceof Edge && elem.data.type === 'Memlet') {
+                const sdfg_edge =
+                    elem.sdfg.nodes[elem.parent_id].edges[elem.id];
+                $('<p>', {
+                    'class': 'info-subtitle',
+                    'html': 'Connectors: ' + sdfg_edge.src_connector +
+                    ' <i class="material-icons">arrow_forward</i> ' +
+                    sdfg_edge.dst_connector,
+                }).appendTo(contents);
+                $('<hr>').appendTo(contents);
             }
-            html += "<hr />";
 
-            for (let attr of Object.entries(elem.attributes())) {
-                if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
-                html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
+            const attr_table = $('<table>', {
+                id: 'sdfg-attribute-table',
+                'class': 'info-table',
+            }).appendTo(contents);
+            const attr_table_header = $('<thead>').appendTo(attr_table);
+            const attr_table_header_row =
+                $('<tr>').appendTo(attr_table_header);
+            $('<th>', {
+                'class': 'key-col',
+                'text': 'Attribute',
+            }).appendTo(attr_table_header_row);
+            $('<th>', {
+                'class': 'val-col',
+                'text': 'Value',
+            }).appendTo(attr_table_header_row);
+
+            const attr_table_body = $('<tbody>').appendTo(attr_table);
+            for (const attr of Object.entries(elem.attributes())) {
+                if (attr[0] === 'layout' ||
+                    attr[0] === 'sdfg' ||
+                    attr[0].startsWith('_meta_'))
+                    continue;
+                const val = sdfg_property_to_string(
+                    attr[1],
+                    renderer.view_settings()
+                );
+                if (val === null || val === '')
+                    continue;
+                const row = $('<tr>').appendTo(attr_table_body);
+                $('<th>', {
+                    'class': 'key-col',
+                    'text': attr[0],
+                }).appendTo(row);
+                $('<td>', {
+                    'class': 'val-col',
+                    'html': val,
+                }).appendTo(row);
             }
 
-            // If access node, add array information too
+            // If we're processing an access node, add array information too.
             if (elem instanceof AccessNode) {
-                let sdfg_array = elem.sdfg.attributes._arrays[elem.attributes().data];
-                html += "<br /><h4>Array properties:</h4>";
-                for (let attr of Object.entries(sdfg_array.attributes)) {
-                    if (attr[0] === "layout" || attr[0] === "sdfg" || attr[0].startsWith("_meta_")) continue;
-                    html += "<b>" + attr[0] + "</b>:&nbsp;&nbsp;";
-                    html += sdfg_property_to_string(attr[1], renderer.view_settings()) + "</p>";
+                const sdfg_array = elem.sdfg.attributes._arrays[
+                    elem.attributes().data
+                ];
+                $('<br>').appendTo(contents);
+                $('<p>', {
+                    'class': 'info-subtitle',
+                    'text': 'Array properties:'
+                }).appendTo(contents);
+
+                const array_table = $('<table>', {
+                    id: 'sdfg-array-table',
+                    'class': 'info-table',
+                }).appendTo(contents);
+                const array_table_header = $('<thead>').appendTo(array_table);
+                const array_table_header_row =
+                    $('<tr>').appendTo(array_table_header);
+                $('<th>', {
+                    'class': 'key-col',
+                    'text': 'Property',
+                }).appendTo(array_table_header_row);
+                $('<th>', {
+                    'class': 'val-col',
+                    'text': 'Value',
+                }).appendTo(array_table_header_row);
+
+                const array_table_body = $('<tbody>').appendTo(array_table);
+                for (const attr of Object.entries(sdfg_array.attributes)) {
+                    if (attr[0] === 'layout' ||
+                        attr[0] === 'sdfg' ||
+                        attr[0].startsWith('_meta_'))
+                        continue;
+                    const val = sdfg_property_to_string(
+                        attr[1],
+                        renderer.view_settings()
+                    );
+                    if (val === null || val === '')
+                        continue;
+                    const row = $('<tr>').appendTo(array_table_body);
+                    $('<th>', {
+                        'class': 'key-col',
+                        'text': attr[0],
+                    }).appendTo(row);
+                    $('<td>', {
+                        'class': 'val-col',
+                        'html': val,
+                    }).appendTo(row);
                 }
             }
 
-            contents.innerHTML = html;
-            document.getElementById("sidebar").style.display = "flex";
+            $('#info-clear-btn').show();
         } else {
-            document.getElementById("sidebar-contents").innerHTML = "";
-            document.getElementById("sidebar-header").innerText = "Nothing selected";
+            clear_info_box();
         }
     }
 }
 
-function close_menu() {
-  document.getElementById("sidebar").style.display = "none";
+/**
+ * Clear the info container and its title.
+ * This also hides the clear button again.
+ */
+function clear_info_box() {
+    $('#info-contents').html('');
+    $('#info-title').text('');
+    $('#info-clear-btn').hide();
 }
-
-
-var right = document.getElementById('sidebar');
-var bar = document.getElementById('dragbar');
-
-const drag = (e) => {
-  document.selection ? document.selection.empty() : window.getSelection().removeAllRanges();
-  right.style.width = Math.max(((e.view.innerWidth - e.pageX)), 20) + 'px';
-}
-
-bar.addEventListener('mousedown', () => {
-    document.addEventListener('mousemove', drag);
-    document.addEventListener('mouseup', () => {
-        document.removeEventListener('mousemove', drag);
-    });
-});
-

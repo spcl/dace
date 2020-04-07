@@ -22,24 +22,50 @@
 
 </head>
 <body>
-<div class="w3-sidebar w3-bar-block w3-card w3-animate-right" style="display:none;right:0;" id="sidebar">
-    <div class="dragbar" id="dragbar"></div>
-    <div class="sidebar-inner">
-        <button onclick="close_menu()" class="w3-bar-item w3-button w3-large">Close &times;</button>
-        <h3 id="sidebar-header">Nothing selected</h3>
-        <div id="sidebar-contents"></div>
-    </div>
-</div>  
 <div id="filepicker"><form>
     <input type="file" accept=".sdfg,.json"> <input type="button" id="reload" value="Refresh">
-    <input type="button" id="outline" value="SDFG Outline">
 </form></div>
-<div><form>
-    <input id="search" type="text" placeholder="Search in graph elements">
-    <input type="button" id="search-btn" value="Search">
-    <input type="checkbox" id="search-case"> Case Sensitive
-</form></div>
+
+<div>
+    <div id="search-bar" class="hidden">
+        <div id="search-container">
+            <input id="search" type="text" placeholder="Search the graph">
+        </div>
+        <div id="search-case-container">
+            <label for="search-case">
+                <input id="search-case" type="checkbox">
+                Case Sensitive
+            </label>
+        </div>
+        <div id="search-btn" class="button">
+            <span>
+                Search
+            </span>
+        </div>
+        <div id="outline-btn" class="hidden button">
+            <span>
+                SDFG Outline
+            </span>
+        </div>
+        <div class="clearfix"></div>
+    </div>
+</div>
 <div id="contents"></div>
+<div id="info-container">
+    <div id="info-header">
+        <div id="info-title-container">
+            <h3 id="info-title"></h3>
+        </div>
+        <div id="info-clear-btn" class="hidden button" onclick="clear_info_box();">
+            <span>
+                Clear Info &times;
+            </span>
+        </div>
+        <div class="clearfix"></div>
+    </div>
+    <div id="info-contents"></div>
+</div>
+
 <script src="./webclient/sdfv.js"></script>
 <script>
 $(document).ready(function(){

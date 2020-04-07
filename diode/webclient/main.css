@@ -22,6 +22,9 @@ body {
     height: 100%;
 }
 
+.hidden {
+    display: none !important;
+}
 
 .syntax_error_highlight {
     position: absolute;
@@ -333,7 +336,7 @@ ul.tree_view .selected {
 
 
 /* ContextMenu */
-.context_menu {
+.sdfv-menu {
     position: absolute;
     background: white;
     border: 2px solid grey;
@@ -342,13 +345,13 @@ ul.tree_view .selected {
     z-index: 100000;
 }
 
-.context_menu .context_menu_option {
+.sdfv-menu .sdfv-menu-option {
     cursor: pointer;
     background: transparent;
 
 }
 
-.context_menu .context_menu_option:hover {
+.sdfv-menu .sdfv-menu-option:hover {
     background: grey;
 }
 
