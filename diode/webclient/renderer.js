@@ -829,7 +829,6 @@ class SDFGRenderer {
 
     onresize() {
         // Set canvas background and size
-        console.log("EEE");
         this.canvas.style.backgroundColor = "#ffffff";
         this.canvas.style.width = '99%';
         this.canvas.style.height = '99%';
