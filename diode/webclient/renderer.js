@@ -780,6 +780,8 @@ class SDFGRenderer {
         // Resize event for container
         let observer = new MutationObserver((mutations) => { this.onresize(); this.draw_async(); });
         observer.observe(this.container, { attributes: true });
+        // Also listen to resize events coming from the window
+        window.addEventListener('resize', () => { this.onresize(); this.draw_async(); });
 
         // Create the initial SDFG layout
         this.relayout();
@@ -827,6 +829,7 @@ class SDFGRenderer {
 
     onresize() {
         // Set canvas background and size
+        console.log("EEE");
         this.canvas.style.backgroundColor = "#ffffff";
         this.canvas.style.width = '99%';
         this.canvas.style.height = '99%';
