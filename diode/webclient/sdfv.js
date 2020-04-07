@@ -155,13 +155,40 @@ function outline(renderer, sdfg) {
 
     // Add elements to tree view in sidebar
     traverse_sdfg_scopes(sdfg, (node, parent) => {
+        // Skip exit nodes when scopes are known
+        if (node.type().endsWith('Exit') && node.data.node.scope_entry >= 0) {
+            stack.push(null);
+            return true;
+        }
+
+        // Create element
         let d = document.createElement('div');
         d.className = 'context_menu_option';
         let is_collapsed = node.attributes().is_collapsed;
         is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
-        d.innerHTML = node.type() + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
+        let node_type = node.type();
+
+        // If a scope has children, remove the name "Entry" from the type
+        if (node.type().endsWith('Entry')) {
+            let state = node.sdfg.nodes[node.parent_id];
+            if (state.scope_dict[node.id] !== undefined) {
+                node_type = node_type.slice(0, -5);
+            }
+        }
+
+        d.innerHTML = node_type + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
         d.onclick = (e) => {
-            renderer.zoom_to_view([node]);
+            // Show node or entire scope
+            let nodes_to_display = [node];
+            if (node.type().endsWith('Entry')) {
+                let state = node.sdfg.nodes[node.parent_id];
+                if (state.scope_dict[node.id] !== undefined) {
+                    for (let subnode_id of state.scope_dict[node.id])
+                        nodes_to_display.push(parent.node(subnode_id));
+                }
+            }
+
+            renderer.zoom_to_view(nodes_to_display);
 
             // Ensure that the innermost div is the one that handles the event
             if (!e) e = window.event;
@@ -175,8 +202,11 @@ function outline(renderer, sdfg) {
             return false;
                         
     }, (node, parent) => {
+        // After scope ends, pop ourselves as the current element 
+        // and add to parent
         let elem = stack.pop();
-        stack[stack.length - 1].appendChild(elem);
+        if (elem)
+            stack[stack.length - 1].appendChild(elem);
     });
 
     // Open sidebar if closed
