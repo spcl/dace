@@ -155,12 +155,6 @@ function outline(renderer, sdfg) {
 
     // Add elements to tree view in sidebar
     traverse_sdfg_scopes(sdfg, (node, parent) => {
-        // Skip exit nodes when scopes are known
-        if (node.type().endsWith('Exit') && node.data.node.scope_entry >= 0) {
-            stack.push(null);
-            return true;
-        }
-
         // Create element
         let d = document.createElement('div');
         d.className = 'context_menu_option';
@@ -207,7 +201,7 @@ function outline(renderer, sdfg) {
         let elem = stack.pop();
         if (elem)
             stack[stack.length - 1].appendChild(elem);
-    });
+    }, skip_exit_nodes=true);
 
     // Open sidebar if closed
     document.getElementById("sidebar").style.display = "flex";
