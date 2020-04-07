@@ -136,9 +136,15 @@ function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
     document.getElementById("sidebar").style.display = "flex";
 }
 
-function outline_recursive(renderer, graph, elements) {
-    for (let nodeid of graph.nodes()) {
+function outline_recursive(renderer, graph, nodes, elements, processed_nodes=null) {
+    if (processed_nodes === null)
+        processed_nodes = new Set();
+
+    for (let nodeid of nodes) {
         let node = graph.node(nodeid);
+        if (node !== undefined && processed_nodes.has(node.id.toString()))
+            continue;
+
         let d = document.createElement('div');
         d.className = 'context_menu_option';
         let is_collapsed = node.attributes().is_collapsed;
@@ -153,11 +159,24 @@ function outline_recursive(renderer, graph, elements) {
             if (e.stopPropagation) e.stopPropagation();
         };
 
+        // Traverse scopes recursively (if scope_dict provided)
+        if (node.type().endsWith('Entry') && !is_collapsed) {
+            let state = node.sdfg.nodes[node.parent_id];
+            if (state.scope_dict[node.id] !== undefined)
+                outline_recursive(renderer, graph, state.scope_dict[node.id], d, processed_nodes);
+        }
+
         // Traverse states or nested SDFGs
-        if (node.data.graph && !is_collapsed)
-            outline_recursive(renderer, node.data.graph, d);
+        if (node.data.graph && !is_collapsed) {
+            let state = node.data.state;
+            if (state !== undefined && state.scope_dict[-1] !== undefined)
+                outline_recursive(renderer, node.data.graph, state.scope_dict[-1], d);
+            else // No scope_dict, outline all nodes flat
+                outline_recursive(renderer, node.data.graph, node.data.graph.nodes(), d);
+        }
 
         elements.appendChild(d);
+        processed_nodes.add(node.id.toString());
     }
 }
 
@@ -177,7 +196,7 @@ function outline(renderer, sdfg) {
     sidebar.appendChild(d);
 
     // Add elements to tree view in sidebar
-    outline_recursive(renderer, sdfg, sidebar);
+    outline_recursive(renderer, sdfg, sdfg.nodes(), sidebar);
 
     // Open sidebar if closed
     document.getElementById("sidebar").style.display = "flex";
