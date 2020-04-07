@@ -136,50 +136,6 @@ function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
     document.getElementById("sidebar").style.display = "flex";
 }
 
-function outline_recursive(renderer, graph, nodes, elements, processed_nodes=null) {
-    if (processed_nodes === null)
-        processed_nodes = new Set();
-
-    for (let nodeid of nodes) {
-        let node = graph.node(nodeid);
-        if (node !== undefined && processed_nodes.has(node.id.toString()))
-            continue;
-
-        let d = document.createElement('div');
-        d.className = 'context_menu_option';
-        let is_collapsed = node.attributes().is_collapsed;
-        is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
-        d.innerHTML = node.type() + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
-        d.onclick = (e) => {
-            renderer.zoom_to_view([node]);
-
-            // Ensure that the innermost div is the one that handles the event
-            if (!e) e = window.event;
-            e.cancelBubble = true;
-            if (e.stopPropagation) e.stopPropagation();
-        };
-
-        // Traverse scopes recursively (if scope_dict provided)
-        if (node.type().endsWith('Entry') && !is_collapsed) {
-            let state = node.sdfg.nodes[node.parent_id];
-            if (state.scope_dict[node.id] !== undefined)
-                outline_recursive(renderer, graph, state.scope_dict[node.id], d, processed_nodes);
-        }
-
-        // Traverse states or nested SDFGs
-        if (node.data.graph && !is_collapsed) {
-            let state = node.data.state;
-            if (state !== undefined && state.scope_dict[-1] !== undefined)
-                outline_recursive(renderer, node.data.graph, state.scope_dict[-1], d);
-            else // No scope_dict, outline all nodes flat
-                outline_recursive(renderer, node.data.graph, node.data.graph.nodes(), d);
-        }
-
-        elements.appendChild(d);
-        processed_nodes.add(node.id.toString());
-    }
-}
-
 function outline(renderer, sdfg) {
     // Modify sidebar header
     document.getElementById("sidebar-header").innerText = 'SDFG Outline';
@@ -195,8 +151,33 @@ function outline(renderer, sdfg) {
     d.onclick = () => renderer.zoom_to_view();
     sidebar.appendChild(d);
 
+    let stack = [sidebar];
+
     // Add elements to tree view in sidebar
-    outline_recursive(renderer, sdfg, sdfg.nodes(), sidebar);
+    traverse_sdfg_scopes(sdfg, (node, parent) => {
+        let d = document.createElement('div');
+        d.className = 'context_menu_option';
+        let is_collapsed = node.attributes().is_collapsed;
+        is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
+        d.innerHTML = node.type() + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
+        d.onclick = (e) => {
+            renderer.zoom_to_view([node]);
+
+            // Ensure that the innermost div is the one that handles the event
+            if (!e) e = window.event;
+            e.cancelBubble = true;
+            if (e.stopPropagation) e.stopPropagation();
+        };
+        stack.push(d);
+
+        // If is collapsed, don't traverse further
+        if (is_collapsed)
+            return false;
+                        
+    }, (node, parent) => {
+        let elem = stack.pop();
+        stack[stack.length - 1].appendChild(elem);
+    });
 
     // Open sidebar if closed
     document.getElementById("sidebar").style.display = "flex";
