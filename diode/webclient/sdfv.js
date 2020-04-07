@@ -49,7 +49,6 @@ function file_read_complete() {
     if (renderer)
         renderer.destroy();
     renderer = new SDFGRenderer(sdfg, document.getElementById('contents'), mouse_event);
-    close_menu();
 }
 
 // https://stackoverflow.com/a/901144/6489142
