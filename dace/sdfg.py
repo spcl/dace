@@ -2340,6 +2340,9 @@ def trace_nested_access(node, state, sdfg):
                     nested_sdfg,
                     dace.nodes.NestedSDFG) and nested_sdfg.sdfg == curr_sdfg:
                 break
+        else:
+            raise ValueError("{} not found in its parent state {}".format(
+                curr_sdfg.name, curr_state.label))
         if node.access == dace.dtypes.AccessType.ReadOnly:
             for e in curr_state.in_edges(nested_sdfg):
                 if e.dst_conn == curr_node.data:
