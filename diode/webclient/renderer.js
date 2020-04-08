@@ -205,12 +205,15 @@ class CanvasManager {
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
-    translate_element(el, x, y, g) {
+    translate_element(el, x, y) {
         this.stopAnimation();
+
+        const dx = x / this.user_transform.a;
+        const dy = y / this.user_transform.d;
 
         // Calculate the box to bind the element to. This is given by
         // the parent element, i.e. the element where out to-be-moved
-        // element is contained within.
+        // element is contained within
         const parent_layout = el.sdfg.nodes[0].attributes.layout;
         const min_x = (parent_layout.x - (parent_layout.width / 2)) +
             (el.width / 2);
@@ -220,13 +223,97 @@ class CanvasManager {
         const max_y = (min_y + parent_layout.height) - el.height;
 
         // Make sure we don't move our element outside its parent's
-        // bounding box.
-        let target_x = el.x + (x / this.user_transform.a);
-        let target_y = el.y + (y / this.user_transform.d);
-        if (target_x > min_x && target_x < max_x) el.x = target_x;
-        if (target_y > min_y && target_y < max_y) el.y = target_y;
+        // bounding box
+        const target_x = el.x + dx;
+        const target_y = el.y + dy;
+        /*
+        if (target_x <= min_x && target_x >= max_x) dx = 0;
+        if (target_y <= min_y && target_y >= max_y) dy = 0;
+        */
 
-        //console.log(el);
+        el.x += dx;
+        el.y += dy;
+
+        if (el.in_connectors)
+            el.in_connectors.forEach(c => {
+                c.x += dx;
+                c.y += dy;
+            });
+        if (el.out_connectors)
+            el.out_connectors.forEach(c => {
+                c.x += dx;
+                c.y += dy;
+            });
+
+        // Allow recursive translation of nested SDFGs
+        function translate_recursive(ng) {
+            ng.nodes().forEach(state_id => {
+                const state = ng.node(state_id);
+                state.x += dx;
+                state.y += dy;
+                const g = state.data.graph;
+                g.nodes().forEach(node_id => {
+                    const node = g.node(node_id);
+                    node.x += dx;
+                    node.y += dy;
+                    if (node.data.node.type === 'NestedSDFG')
+                        translate_recursive(node.data.graph);
+
+                    if (node.in_connectors)
+                        node.in_connectors.forEach(c => {
+                            c.x += dx;
+                            c.y += dy;
+                        });
+                    if (node.out_connectors)
+                        node.out_connectors.forEach(c => {
+                            c.x += dx;
+                            c.y += dy;
+                        });
+                });
+
+                /*
+                g.edges().forEach(edge_id => {
+                    const edge = g.edge(edge_id);
+                    console.log("Moving edge");
+                    console.log(edge);
+                    edge.x += dx;
+                    edge.y += dy;
+                });
+                */
+            });
+        }
+
+        if (el.data.node) {
+            if (el.data.node.type === 'NestedSDFG') {
+                // We're moving a nested graph. Translate recursively
+                translate_recursive(el.data.graph);
+            }
+        } else if (el.data.state) {
+            // We're moving a state, move all its contained elements
+            const graph = el.data.graph;
+            graph.nodes().forEach(node_id => {
+                const node = graph.node(node_id);
+
+                node.x += dx;
+                node.y += dy;
+
+                if (node.data.node.type === 'NestedSDFG') {
+                    // We're moving a nested graph. Translate recursively
+                    translate_recursive(node.data.graph);
+                }
+
+                if (node.in_connectors)
+                    node.in_connectors.forEach(c => {
+                        c.x += dx;
+                        c.y += dy;
+                    });
+                if (node.out_connectors)
+                    node.out_connectors.forEach(c => {
+                        c.x += dx;
+                        c.y += dy;
+                    });
+            });
+        }
     }
 
     mapPixelToCoordsX(xpos) {
@@ -1013,12 +1100,6 @@ class SDFGRenderer {
         } else {
             this.tooltip_container.style.display = 'none';
         }
-        // XXX: Remove, temporarily draw ruler
-        let idx = 0;
-        for (idx = 0; idx < 50; idx += 1)
-            this.ctx.strokeRect(idx * 100, 0, 100, 5);
-        for (idx = 0; idx < 50; idx += 1)
-            this.ctx.strokeRect(0, idx * 100, 5, 100);
     }
 
     // Returns a dictionary of SDFG elements in a given rectangle. Used for
@@ -1248,8 +1329,7 @@ class SDFGRenderer {
                 if (this.last_dragged_element) {
                     this.canvas_manager.translate_element(
                         this.last_dragged_element,
-                        event.movementX, event.movementY,
-                        this.graph
+                        event.movementX, event.movementY
                     );
                     dirty = true;
                     this.draw_async();
@@ -1258,8 +1338,6 @@ class SDFGRenderer {
                     const mouse_elements = this.find_elements_under_cursor(
                         this.mousepos.x, this.mousepos.y
                     );
-                    // XXX: Remove
-                    console.log(mouse_elements.elements);
                     if (mouse_elements.foreground_elem) {
                         this.last_dragged_element =
                             mouse_elements.foreground_elem;
