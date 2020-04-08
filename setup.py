@@ -62,7 +62,7 @@ setup(
         'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml', 'ply',
         'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum'
     ],
-    extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},
+    extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum', 'torch']},
     entry_points={
         'console_scripts': [
             'dacelab = dace.frontend.octave.dacelab:main',
