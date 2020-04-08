@@ -40,6 +40,9 @@ class Edge(object):
         yield self._dst
         yield self._data
 
+    def __repr__(self):
+        return str(list(self))
+
     def to_json(self, parent_graph):
         # Slight hack to preserve the old format (attributes should not behave like this)
         memlet_ret = self.data.to_json(parent_graph)

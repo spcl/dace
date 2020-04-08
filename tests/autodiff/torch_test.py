@@ -1,8 +1,11 @@
+from functools import reduce
+
 import torch
 import numpy as np
+
 import dace
 import dace.graph.nodes as nd
-from dace.autodiff import add_backward_pass
+from dace.autodiff import BackwardPassGenerator
 from dace.libraries.blas import ExpandGemmPure
 from dace.transformation import optimizer
 
@@ -10,16 +13,35 @@ all_tests = []
 
 
 def correctness_test(func):
-    all_tests.append(func)
-    return func
+    def check_correctness():
+        runner, pytorch_func, inputs = func()
+        sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
+        torch_dict = {
+            name: torch.tensor(arr.copy(), requires_grad=True)
+            for name, arr in inputs.items()
+        }
+
+        sdfg_results = runner.run(**sdfg_dict)
+        torch_results = pytorch_func(**torch_dict)
+
+        for k, v in torch_results.items():
+            v = v.detach().numpy()
+            diff = np.linalg.norm(sdfg_results[k] - v) / reduce(
+                lambda x, y: x * y, v.shape)
+            assert diff < 1e-5
+
+    all_tests.append(check_correctness)
+    return check_correctness
 
 
 class SDFGBackwardRunner:
-    def __init__(self, sdfg, target, required_grads=None):
+    def __init__(self, sdfg, target):
+        sdfg.expand_library_nodes()
+        sdfg.apply_strict_transformations()
         self.sdfg = sdfg
         self.target = target
-        self.required_grads = required_grads
         state = sdfg.nodes()[0]
+        required_grads = set(node.data for node in state.source_nodes())
 
         matches = [
             node for node in state.nodes()
@@ -29,7 +51,8 @@ class SDFGBackwardRunner:
             raise ValueError(
                 "Found more than one accessnode with data {}".format(target))
 
-        add_backward_pass(sdfg, state, matches[0])
+        BackwardPassGenerator(sdfg, state, required_grads,
+                              matches[0]).backward()
         self.sdfg.apply_strict_transformations()
 
     def run(self, **inputs):
@@ -51,25 +74,8 @@ class SDFGBackwardRunner:
             name: arr
             for name, arr in inputs.items()
             if name.endswith("_grad") and name != self.target + "_grad"
-            if self.required_grads is None or name in self.required_grads
         }
         return results
-
-
-def check_correctness(runner: SDFGBackwardRunner, pytorch_func, inputs):
-    sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
-    torch_dict = {
-        name: torch.tensor(arr.copy(), requires_grad=True)
-        for name, arr in inputs.items()
-    }
-
-    sdfg_results = runner.run(**sdfg_dict)
-    torch_results = pytorch_func(**torch_dict)
-
-    for k, v in torch_results.items():
-        v = v.detach().numpy()
-        diff = np.linalg.norm(sdfg_results[k] - v) / (v.shape[0] * v.shape[1])
-        assert diff < 1e-5
 
 
 @correctness_test
@@ -93,9 +99,6 @@ def test_gemm():
             s = z
 
     sdfg = dace_gemm.to_sdfg()
-    state = sdfg.nodes()[0]
-    sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
 
     return SDFGBackwardRunner(sdfg, "S"), torch_gemm, dict(
         X=np.random.rand(5, 4).astype(np.float32),
@@ -151,10 +154,10 @@ def test_complex_tasklet():
             s >> S(1, lambda x, y: x + y)[0]
             z << Z[i, j]
 
-            z1 = z
-            # this is a complicated tasklet...
-            log(3) # random expr
-            z2 = z
+            z1 = z + 1
+            log(3)  # random expr
+            z2 = z - 1 * (2 / 2)
+            # hello world 1, 2, 3
             s = z1 * z2
 
     sdfg = dace_sum.to_sdfg()
@@ -164,6 +167,46 @@ def test_complex_tasklet():
         X=np.random.rand(3, 3).astype(np.float32),
         Y=np.random.rand(3, 3).astype(np.float32))
 
+
+@correctness_test
+def test_tasklets_only():
+    def torch_func(*, A, B):
+        tmp_a = torch.sqrt(A)
+        tmp_b = torch.log(B + 1)
+
+        C = tmp_a * tmp_b
+
+        C.backward()
+        return dict(A_grad=A.grad, B_grad=B.grad)
+
+    @dace.program
+    def dace_func(A: dace.float32[1], B: dace.float32[1], C: dace.float32[1]):
+        tmp_a = dace.define_local_scalar(dace.float32)
+        tmp_b = dace.define_local_scalar(dace.float32)
+
+        with dace.tasklet:
+            a << A[0]
+            a_out >> tmp_a
+
+            a_out = sqrt(a)
+
+        with dace.tasklet:
+            a << B[0]
+            a_out >> tmp_b
+
+            a_out = log(a + 1)
+
+        with dace.tasklet:
+            a << tmp_a
+            b << tmp_b
+            c >> C[0]
+            c = a * b
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "C"), torch_func, dict(
+        A=np.random.rand(1).astype(np.float32),
+        B=np.random.rand(1).astype(np.float32))
 
 
 @correctness_test
@@ -195,9 +238,6 @@ def test_add_mmul_transpose_log():
             s = log(z)
 
     sdfg = dace_func.to_sdfg()
-    state = sdfg.nodes()[0]
-    sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
 
     return SDFGBackwardRunner(sdfg, "S"), torch_func, dict(
         X=np.random.rand(4, 5).astype(np.float32),
@@ -207,7 +247,7 @@ def test_add_mmul_transpose_log():
 
 def test_all():
     for test in all_tests:
-        check_correctness(*test())
+        test()
 
 
 if __name__ == "__main__":

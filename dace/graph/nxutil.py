@@ -102,7 +102,7 @@ def depth_limited_dfs_iter(source, depth):
             stack.pop()
 
 
-def dfs_topological_sort(G, sources=None, condition=None):
+def dfs_topological_sort(G, sources=None, condition=None, target=None):
     """ Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering
@@ -114,6 +114,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
+    :param target: (optional) A target node in `G`. The search will stop when this node is reached.
     :return: A generator of edges in the lastvisit depth-first-search.
 
     @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -157,6 +158,8 @@ def dfs_topological_sort(G, sources=None, condition=None):
                     visited.add(child)
                     if condition is None or condition(parent, child):
                         yield child
+                        if target is not None and child is target:
+                            break
                         stack.append((child, iter(G.neighbors(child))))
             except StopIteration:
                 stack.pop()
