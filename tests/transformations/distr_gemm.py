@@ -53,6 +53,9 @@ if __name__ == "__main__":
                                               AccumulateTransient)
     from dace.dtypes import DataDistributionType
     sdfg = gemm.to_sdfg()
+    T0 = dace.symbol('T0')
+    T1 = dace.symbol('T1')
+    T2 = dace.symbol('T2')
     sdfg.apply_transformations([MapReduceFusion, MapTiling, DataDistribution,
                                  DataDistribution, DataDistribution],
                                 #  InLocalStorage, InLocalStorage, AccumulateTransient],
@@ -64,19 +67,31 @@ if __name__ == "__main__":
                                     {'array': 'A',
                                      'dist_type': DataDistributionType.Block,
                                      'dist_shape': ['M/T0', 'K/T2'],
-                                     'local_shape': ['T0', 'T2']},
+                                     'local_shape': ['T0', 'T2'],
+                                     'dist_location': 'lambda x, y: x*(N/T1)*(K/T2) + y*(K/T2)',
+                                     'dist_shape_map': {0: 0, 1: 1}},
                                     {'array': 'B',
                                      'dist_type': DataDistributionType.Block,
                                      'dist_shape': ['K/T2', 'N/T1'],
-                                     'local_shape': ['T2', 'T1']},
+                                     'local_shape': ['T2', 'T1'],
+                                     'dist_location': 'lambda x, y: x*(N/T1)*(K/T2) + y*(K/T2)',
+                                     'dist_shape_map': {0: 0, 1: 1}},
                                     {'array': 'C',
                                      'dist_type': DataDistributionType.Block,
                                      'dist_shape': ['M/T0', 'N/T1'],
-                                     'local_shape': ['T0', 'T1']}],
+                                     'local_shape': ['T0', 'T1'],
+                                     'dist_location': 'lambda x, y: x*(N/T1)*(K/T2) + y*(K/T2)',
+                                     'dist_shape_map': {0: 0, 1: 1}}],
                                     # {'array': 'A'},
                                     # {'array': 'B'},
                                     # {'array': 'C'}],
                                 validate=False)
+    from dace.graph import nodes
+    from dace.dtypes import ScheduleType
+    for n in sdfg.nodes()[0].nodes():
+        if isinstance(n, nodes.MapEntry) and n.map.label.startswith('merged'):
+            n.map.schedule = ScheduleType.MPI
+            n.map.dist_location = 'lambda x, y, z: x*(N/T1)*(K/T2) + y*(K/T2) + z'
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
     if dace.Config.get_bool('profiling'):
