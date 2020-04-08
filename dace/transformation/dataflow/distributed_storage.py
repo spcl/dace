@@ -7,7 +7,7 @@ from abc import ABC
 import random
 
 from dace import dtypes, registry, symbolic, subsets, sdfg as sd
-from dace.properties import (LambdaProperty, Property, ShapeProperty,
+from dace.properties import (LambdaProperty, Property, ShapeProperty, DictProperty,
                              TypeProperty, make_properties)
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
@@ -45,6 +45,13 @@ class DataDistribution(pattern_matching.Transformation):
     
     dist_location = LambdaProperty(
         desc="Distributed location",
+        default=None,
+        allow_none=True)
+
+    dist_shape_map = DictProperty(
+        key_type=int,
+        value_type=int,
+        desc="Distributed shape map",
         default=None,
         allow_none=True)
     
@@ -87,7 +94,8 @@ class DataDistribution(pattern_matching.Transformation):
                                 for i in range(len(data.shape))]
 
         sdfg.distribute_data(node.data, self.dist_type, self.dist_shape,
-                             self.local_shape, self.dist_location)
+                             self.local_shape, self.dist_location, self.dist_shape_map)
+        sdfg.arrays[node.data].storage = dtypes.StorageType.Distributed
 
 
 # @make_properties
