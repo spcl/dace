@@ -629,6 +629,8 @@ class Map(object):
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
+    dist_location = LambdaProperty(allow_none=True)
+
     def __init__(self,
                  label,
                  params,
@@ -638,7 +640,8 @@ class Map(object):
                  is_async=False,
                  flatten=False,
                  fence_instrumentation=False,
-                 debuginfo=None):
+                 debuginfo=None,
+                 dist_location=None):
         super(Map, self).__init__()
 
         # Assign properties
@@ -651,6 +654,7 @@ class Map(object):
         self.range = ndrange
         self.debuginfo = debuginfo
         self._fence_instrumentation = fence_instrumentation
+        self.dist_location = dist_location
 
     def __str__(self):
         return self.label + "[" + ", ".join([
