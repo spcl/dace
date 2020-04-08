@@ -9,7 +9,7 @@ from dace.codegen import cppunparse
 from dace import symbolic
 from dace.properties import (Property, make_properties, ReferenceProperty,
                              ShapeProperty, SubsetProperty, SymbolicProperty,
-                             TypeClassProperty, DebugInfoProperty,
+                             TypeClassProperty, DebugInfoProperty, DictProperty,
                              CodeProperty, ListProperty, LambdaProperty)
 
 
@@ -62,13 +62,14 @@ class Data(object):
         desc='Full storage location identifier (e.g., rank, GPU ID)',
         default='')
     dist_location = LambdaProperty(allow_none=True)
+    dist_shape_map = DictProperty(key_type=int, value_type=int, allow_none=True)
     toplevel = Property(dtype=bool,
                         desc="Allocate array outside of state",
                         default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, dtype, shape, dist_shape, transient, storage,
-                 location, dist_location, toplevel, debuginfo):
+                 location, dist_location, dist_shape_map, toplevel, debuginfo):
         self.dtype = dtype
         self.shape = shape
         self.dist_shape = dist_shape
@@ -76,6 +77,7 @@ class Data(object):
         self.storage = storage
         self.location = location
         self.dist_location = dist_location
+        self.dist_shape_map = dist_shape_map
         self.toplevel = toplevel
         self.debuginfo = debuginfo
         self._validate()
@@ -140,13 +142,15 @@ class Scalar(Data):
                  allow_conflicts=False,
                  location='',
                  dist_location=None,
+                 dist_shape_map=None,
                  toplevel=False,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
         super(Scalar, self).__init__(dtype, shape, dist_shape,
                                      transient, storage, location,
-                                     dist_location,toplevel, debuginfo)
+                                     dist_location, dist_shape_map, toplevel,
+                                     debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -171,7 +175,8 @@ class Scalar(Data):
     def clone(self):
         return Scalar(self.dtype, self.dist_shape, self.transient,
                       self.storage, self.allow_conflicts, self.location,
-                      self.dist_location, self.toplevel, self.debuginfo)
+                      self.dist_location, self.dist_shape_map, self.toplevel,
+                      self.debuginfo)
 
     @property
     def strides(self):
@@ -291,6 +296,7 @@ class Array(Data):
                  storage=dace.dtypes.StorageType.Default,
                  location='',
                  dist_location=None,
+                 dist_shape_map=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
@@ -299,8 +305,8 @@ class Array(Data):
                  total_size=None):
 
         super(Array, self).__init__(dtype, shape, dist_shape, transient,
-                                    storage, location, dist_location, toplevel,
-                                    debuginfo)
+                                    storage, location, dist_location,
+                                    dist_shape_map, toplevel, debuginfo)
 
         if shape is None:
             raise IndexError('Shape must not be None')
@@ -334,8 +340,8 @@ class Array(Data):
         return Array(self.dtype, self.shape, self.dist_shape,
                      self.materialize_func, self.transient,
                      self.allow_conflicts, self.storage, self.location,
-                     self.dist_location, self.strides, self.offset,
-                     self.may_alias, self.toplevel, self.debuginfo,
+                     self.dist_location, self.dist_shape_map, self.strides,
+                     self.offset, self.may_alias, self.toplevel, self.debuginfo,
                      self.total_size)
 
     def to_json(self):
@@ -503,6 +509,7 @@ class Stream(Data):
                  storage=dace.dtypes.StorageType.Default,
                  location='',
                  dist_location=None,
+                 dist_shape_map=None,
                  offset=None,
                  toplevel=False,
                  debuginfo=None):
@@ -522,7 +529,8 @@ class Stream(Data):
 
         super(Stream, self).__init__(dtype, shape, dist_shape,
                                      transient, storage, location,
-                                     dist_location, toplevel, debuginfo)
+                                     dist_location, dist_shape_map, toplevel,
+                                     debuginfo)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -562,8 +570,8 @@ class Stream(Data):
     def clone(self):
         return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
                       self.dist_shape, self.transient, self.storage,
-                      self.location, self.dist_location, self.offset,
-                      self.toplevel, self.debuginfo)
+                      self.location, self.dist_location, self.dist_shape_map,
+                      self.offset, self.toplevel, self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
