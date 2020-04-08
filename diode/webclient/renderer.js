@@ -846,7 +846,7 @@ class SDFGRenderer {
     // Change translation and scale such that the chosen elements
     // (or entire graph if null) is in view
     zoom_to_view(elements=null) {
-        if (!elements)
+        if (!elements || elements.length == 0)
             elements = this.graph.nodes().map(x => this.graph.node(x));
         
         let bb = boundingBox(elements);
