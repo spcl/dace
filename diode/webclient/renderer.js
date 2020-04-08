@@ -205,6 +205,30 @@ class CanvasManager {
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
+    translate_element(el, x, y, g) {
+        this.stopAnimation();
+
+        // Calculate the box to bind the element to. This is given by
+        // the parent element, i.e. the element where out to-be-moved
+        // element is contained within.
+        const parent_layout = el.sdfg.nodes[0].attributes.layout;
+        const min_x = (parent_layout.x - (parent_layout.width / 2)) +
+            (el.width / 2);
+        const min_y = (parent_layout.y - (parent_layout.height / 2)) +
+            (el.height / 2);
+        const max_x = (min_x + parent_layout.width) - el.width;
+        const max_y = (min_y + parent_layout.height) - el.height;
+
+        // Make sure we don't move our element outside its parent's
+        // bounding box.
+        let target_x = el.x + (x / this.user_transform.a);
+        let target_y = el.y + (y / this.user_transform.d);
+        if (target_x > min_x && target_x < max_x) el.x = target_x;
+        if (target_y > min_y && target_y < max_y) el.y = target_y;
+
+        //console.log(el);
+    }
+
     mapPixelToCoordsX(xpos) {
         return this.svgPoint(xpos, 0).matrixTransform(this.user_transform.inverse()).x;
     }
@@ -667,6 +691,7 @@ class SDFGRenderer {
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
+        this.last_dragged_element = null;
         this.tooltip = null;
         this.tooltip_container = null;
 
@@ -988,6 +1013,12 @@ class SDFGRenderer {
         } else {
             this.tooltip_container.style.display = 'none';
         }
+        // XXX: Remove, temporarily draw ruler
+        let idx = 0;
+        for (idx = 0; idx < 50; idx += 1)
+            this.ctx.strokeRect(idx * 100, 0, 100, 5);
+        for (idx = 0; idx < 50; idx += 1)
+            this.ctx.strokeRect(0, idx * 100, 5, 100);
     }
 
     // Returns a dictionary of SDFG elements in a given rectangle. Used for
@@ -1157,6 +1188,45 @@ class SDFGRenderer {
         traverse_recursive(this.graph, this.sdfg.attributes.name);
     }
 
+    find_elements_under_cursor(mouse_pos_x, mouse_pos_y) {
+        // Find all elements under the cursor.
+        const elements = this.elements_in_rect(mouse_pos_x, mouse_pos_y, 0, 0);
+        const clicked_states = elements.states;
+        const clicked_nodes = elements.nodes;
+        const clicked_edges = elements.edges;
+        const clicked_interstate_edges = elements.isedges;
+        const clicked_connectors = elements.connectors;
+        const total_elements =
+            clicked_states.length + clicked_nodes.length +
+            clicked_edges.length + clicked_interstate_edges.length +
+            clicked_connectors.length;
+        let foreground_elem = null, foreground_surface = -1;
+
+        // Find the top-most element under the mouse cursor (i.e. the one with
+        // the smallest dimensions).
+        const categories = [
+            clicked_states,
+            clicked_interstate_edges,
+            clicked_nodes,
+            clicked_edges
+        ];
+        for (const category of categories) {
+            for (let i = 0; i < category.length; i++) {
+                const s = category[i].obj.width * category[i].obj.height;
+                if (foreground_surface < 0 || s < foreground_surface) {
+                    foreground_surface = s;
+                    foreground_elem = category[i].obj;
+                }
+            }
+        }
+
+        return {
+            total_elements,
+            elements,
+            foreground_elem,
+        };
+    }
+
     on_mouse_event(event, comp_x_func, comp_y_func, evtype="click") {
         let dirty = false; // Whether to redraw at the end
 
@@ -1164,6 +1234,7 @@ class SDFGRenderer {
             this.drag_start = event;
         } else if (evtype === "mouseup") {
             this.drag_start = null;
+            this.last_dragged_element = null;
         } else if (evtype === "touchend") {
             if (event.touches.length == 0)
                 this.drag_start = null;
@@ -1174,7 +1245,30 @@ class SDFGRenderer {
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
             if (this.drag_start && event.buttons & 1) {
-                // Only accept the primary mouse button as dragging source
+                if (this.last_dragged_element) {
+                    this.canvas_manager.translate_element(
+                        this.last_dragged_element,
+                        event.movementX, event.movementY,
+                        this.graph
+                    );
+                    dirty = true;
+                    this.draw_async();
+                    return false;
+                } else {
+                    const mouse_elements = this.find_elements_under_cursor(
+                        this.mousepos.x, this.mousepos.y
+                    );
+                    // XXX: Remove
+                    console.log(mouse_elements.elements);
+                    if (mouse_elements.foreground_elem) {
+                        this.last_dragged_element =
+                            mouse_elements.foreground_elem;
+                        return false;
+                    }
+                    return true;
+                }
+            } else if (this.drag_start && event.buttons & 2) {
+                // Only accept the secondary mouse button as dragging source
                 this.canvas_manager.translate(event.movementX, event.movementY);
 
                 // Mark for redraw
@@ -1183,7 +1277,7 @@ class SDFGRenderer {
                 return false;
             } else {
                 this.drag_start = null;
-                if (event.buttons & 1)
+                if (event.buttons & 1 || event.buttons & 2)
                     return true; // Don't stop propagation
             }
         } else if (evtype === "touchmove") {
@@ -1242,27 +1336,12 @@ class SDFGRenderer {
             return true;
 
         // Find elements under cursor
-        let elements = this.elements_in_rect(this.mousepos.x, this.mousepos.y, 0, 0);
-        let clicked_states = elements.states;
-        let clicked_nodes = elements.nodes;
-        let clicked_edges = elements.edges;
-        let clicked_interstate_edges = elements.isedges;
-        let clicked_connectors = elements.connectors;
-        let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
-            clicked_interstate_edges.length + clicked_connectors.length;
-        let foreground_elem = null, fg_surface = -1;
-
-        // Find the top-most element under mouse cursor (the one with the smallest dimensions)
-        for (let category of [clicked_states, clicked_interstate_edges, 
-                              clicked_nodes, clicked_edges]) {
-            for (let i = 0; i < category.length; i++) {
-                let s = category[i].obj.width * category[i].obj.height;
-                if (fg_surface < 0 || s < fg_surface) {
-                        fg_surface = s;
-                        foreground_elem = category[i].obj;
-                }
-            }
-        }
+        const elements_under_cursor = this.find_elements_under_cursor(
+            this.mousepos.x, this.mousepos.y
+        );
+        let elements = elements_under_cursor.elements;
+        let total_elements = elements_under_cursor.total_elements;
+        let foreground_elem = elements_under_cursor.foreground_elem;
         
         // Change mouse cursor accordingly
         if (total_elements > 0)
