@@ -1615,13 +1615,16 @@ subgraph cluster_state_{state} {{
             dist_type: dtypes.DataDistributionType,
             dist_shape: Shape = None,
             local_shape: Shape = None,
-            dist_location: Callable[[sbs.Subset], Set[Integer]] = None,
-            inv_location: Callable[[sbs.Subset], sbs.Subset] = None):
+            dist_location: Callable[..., Integer] = None,
+            dist_shape_map: Dict[int, int] = None):
         data = self.arrays[data_name]
+
+        data.dist_location = dist_location
+        data.dist_shape_map = dist_shape_map
 
         if dist_type == dtypes.DataDistributionType.Replication:
             data.dist_shape = (1, )
-            data.dist_location = 'lambda s, d, x: set([0])'
+            # data.dist_location = 'lambda s, d, x: set([0])'
 
             visited_edges = set()
             for state in self.nodes():
@@ -1659,7 +1662,7 @@ subgraph cluster_state_{state} {{
                     symbolic.pystr_to_symbolic("int_ceil({}, {})".format(s, t))
                     for s, t in zip(data.shape, local_shape)]
             data.shape = local_shape
-            data.dist_location = 'lambda s, d, x: s.grid_dist_location(d, x)'
+            # data.dist_location = 'lambda s, d, x: s.grid_dist_location(d, x)'
 
             visited_edges = set()
             for state in self.nodes():
@@ -1766,7 +1769,7 @@ subgraph cluster_state_{state} {{
 
             data.dist_shape = dist_shape
             data.shape = local_shape
-            data.dist_location = dist_location
+            # data.dist_location = dist_location
 
     # SDFG queries
     ##############################
