@@ -19,7 +19,15 @@ function init_sdfv(sdfg) {
     $('#search-btn').click(function(e){
         if (renderer)
             setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
-                                                    $('#search-case')[0].checked);}, 1);
+                                            $('#search-case')[0].checked);}, 1);
+    });
+    $('#search').on('keydown', function(e) {
+        if (e.key == 'Enter' || e.which == 13) {
+            if (renderer)
+                setTimeout(() => {find_in_graph(renderer, renderer.graph, $('#search').val(),
+                                                $('#search-case')[0].checked);}, 1);
+            e.preventDefault();
+        }
     });
 
     if (sdfg !== null)
@@ -128,31 +136,6 @@ function find_in_graph(renderer, sdfg, query, case_sensitive=false) {
     document.getElementById("sidebar").style.display = "flex";
 }
 
-function outline_recursive(renderer, graph, elements) {
-    for (let nodeid of graph.nodes()) {
-        let node = graph.node(nodeid);
-        let d = document.createElement('div');
-        d.className = 'context_menu_option';
-        let is_collapsed = node.attributes().is_collapsed;
-        is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
-        d.innerHTML = node.type() + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
-        d.onclick = (e) => {
-            renderer.zoom_to_view([node]);
-
-            // Ensure that the innermost div is the one that handles the event
-            if (!e) e = window.event;
-            e.cancelBubble = true;
-            if (e.stopPropagation) e.stopPropagation();
-        };
-
-        // Traverse states or nested SDFGs
-        if (node.data.graph && !is_collapsed)
-            outline_recursive(renderer, node.data.graph, d);
-
-        elements.appendChild(d);
-    }
-}
-
 function outline(renderer, sdfg) {
     // Modify sidebar header
     document.getElementById("sidebar-header").innerText = 'SDFG Outline';
@@ -168,8 +151,63 @@ function outline(renderer, sdfg) {
     d.onclick = () => renderer.zoom_to_view();
     sidebar.appendChild(d);
 
+    let stack = [sidebar];
+
     // Add elements to tree view in sidebar
-    outline_recursive(renderer, sdfg, sidebar);
+    traverse_sdfg_scopes(sdfg, (node, parent) => {
+        // Skip exit nodes when scopes are known
+        if (node.type().endsWith('Exit') && node.data.node.scope_entry >= 0) {
+            stack.push(null);
+            return true;
+        }
+
+        // Create element
+        let d = document.createElement('div');
+        d.className = 'context_menu_option';
+        let is_collapsed = node.attributes().is_collapsed;
+        is_collapsed = (is_collapsed === undefined) ? false : is_collapsed;
+        let node_type = node.type();
+
+        // If a scope has children, remove the name "Entry" from the type
+        if (node.type().endsWith('Entry')) {
+            let state = node.sdfg.nodes[node.parent_id];
+            if (state.scope_dict[node.id] !== undefined) {
+                node_type = node_type.slice(0, -5);
+            }
+        }
+
+        d.innerHTML = node_type + ' ' + node.label() + (is_collapsed ? " (collapsed)" : "");
+        d.onclick = (e) => {
+            // Show node or entire scope
+            let nodes_to_display = [node];
+            if (node.type().endsWith('Entry')) {
+                let state = node.sdfg.nodes[node.parent_id];
+                if (state.scope_dict[node.id] !== undefined) {
+                    for (let subnode_id of state.scope_dict[node.id])
+                        nodes_to_display.push(parent.node(subnode_id));
+                }
+            }
+
+            renderer.zoom_to_view(nodes_to_display);
+
+            // Ensure that the innermost div is the one that handles the event
+            if (!e) e = window.event;
+            e.cancelBubble = true;
+            if (e.stopPropagation) e.stopPropagation();
+        };
+        stack.push(d);
+
+        // If is collapsed, don't traverse further
+        if (is_collapsed)
+            return false;
+                        
+    }, (node, parent) => {
+        // After scope ends, pop ourselves as the current element 
+        // and add to parent
+        let elem = stack.pop();
+        if (elem)
+            stack[stack.length - 1].appendChild(elem);
+    });
 
     // Open sidebar if closed
     document.getElementById("sidebar").style.display = "flex";
