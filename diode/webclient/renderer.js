@@ -205,31 +205,55 @@ class CanvasManager {
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
-    translate_element(el, x, y) {
+    translate_element(el, x, y, entire_graph) {
         this.stopAnimation();
 
-        const dx = x / this.user_transform.a;
-        const dy = y / this.user_transform.d;
+        // Calculate movement distance with current zoom level
+        let dx = x / this.user_transform.a;
+        let dy = y / this.user_transform.d;
 
-        // Calculate the box to bind the element to. This is given by
-        // the parent element, i.e. the element where out to-be-moved
-        // element is contained within
-        const parent_layout = el.sdfg.nodes[0].attributes.layout;
-        const min_x = (parent_layout.x - (parent_layout.width / 2)) +
-            (el.width / 2);
-        const min_y = (parent_layout.y - (parent_layout.height / 2)) +
-            (el.height / 2);
-        const max_x = (min_x + parent_layout.width) - el.width;
-        const max_y = (min_y + parent_layout.height) - el.height;
+        // Recursively find the element's parent element
+        function find_parent(p_graph, parent_arr, inherited_parent=null) {
+            p_graph.nodes().forEach(state_id => {
+                const state = p_graph.node(state_id);
+                if (state === el && inherited_parent) {
+                    parent_arr.push(inherited_parent);
+                    return;
+                }
+                const sub_graph = state.data.graph;
+                sub_graph.nodes().forEach(node_id => {
+                    const node = sub_graph.node(node_id);
+                    if (node === el) {
+                        parent_arr.push(state);
+                        return;
+                    }
+                    if (node.data.node && node.data.node.type === 'NestedSDFG')
+                        return find_parent(node.data.graph, parent_arr, node);
+                });
+            });
+        };
+        let parent_candidates = [];
+        find_parent(entire_graph, parent_candidates);
+        const parent_element = parent_candidates[0];
 
-        // Make sure we don't move our element outside its parent's
-        // bounding box
-        const target_x = el.x + dx;
-        const target_y = el.y + dy;
-        /*
-        if (target_x <= min_x && target_x >= max_x) dx = 0;
-        if (target_y <= min_y && target_y >= max_y) dy = 0;
-        */
+        if (parent_element) {
+            // Calculate the box to bind the element to. This is given by
+            // the parent element, i.e. the element where out to-be-moved
+            // element is contained within
+            const min_x = (parent_element.x - (parent_element.width / 2)) +
+                (el.width / 2);
+            const min_y = (parent_element.y - (parent_element.height / 2)) +
+                (el.height / 2);
+            const max_x = (min_x + parent_element.width) - el.width;
+            const max_y = (min_y + parent_element.height) - el.height;
+
+            // Make sure we don't move our element outside its parent's
+            // bounding box
+            const target_x = el.x + dx;
+            const target_y = el.y + dy;
+            if (target_x <= min_x || target_x >= max_x) dx = 0;
+            if (target_y <= min_y || target_y >= max_y) dy = 0;
+        }
 
         if (el.data.type && el.data.type === 'Memlet') {
             if (el.points[2]) {
@@ -241,6 +265,7 @@ class CanvasManager {
             return;
         }
 
+        // Move the element
         el.x += dx;
         el.y += dy;
 
@@ -254,7 +279,6 @@ class CanvasManager {
                 c.x += dx;
                 c.y += dy;
             });
-        console.log(el);
 
         // Allow recursive translation of nested SDFGs
         function translate_recursive(ng) {
@@ -325,6 +349,7 @@ class CanvasManager {
                     });
             });
 
+            // Drag all the edges along
             graph.edges().forEach(edge_id => {
                 const edge = graph.edge(edge_id);
                 edge.x += dx;
@@ -1350,7 +1375,8 @@ class SDFGRenderer {
                 if (this.last_dragged_element) {
                     this.canvas_manager.translate_element(
                         this.last_dragged_element,
-                        event.movementX, event.movementY
+                        event.movementX, event.movementY,
+                        this.graph
                     );
                     dirty = true;
                     this.draw_async();
