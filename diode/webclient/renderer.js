@@ -231,6 +231,16 @@ class CanvasManager {
         if (target_y <= min_y && target_y >= max_y) dy = 0;
         */
 
+        if (el.data.type && el.data.type === 'Memlet') {
+            if (el.points[2]) {
+                // Only allow dragging, if the memlet is 'making a curve'
+                el.points[1].x += dx;
+                el.points[1].y += dy;
+            }
+            // Don't do any of the other stuff, it doesn't apply here
+            return;
+        }
+
         el.x += dx;
         el.y += dy;
 
@@ -244,6 +254,7 @@ class CanvasManager {
                 c.x += dx;
                 c.y += dy;
             });
+        console.log(el);
 
         // Allow recursive translation of nested SDFGs
         function translate_recursive(ng) {
@@ -271,15 +282,15 @@ class CanvasManager {
                         });
                 });
 
-                /*
                 g.edges().forEach(edge_id => {
                     const edge = g.edge(edge_id);
-                    console.log("Moving edge");
-                    console.log(edge);
                     edge.x += dx;
                     edge.y += dy;
+                    edge.points.forEach(point => {
+                        point.x += dx;
+                        point.y += dy;
+                    });
                 });
-                */
             });
         }
 
@@ -312,6 +323,16 @@ class CanvasManager {
                         c.x += dx;
                         c.y += dy;
                     });
+            });
+
+            graph.edges().forEach(edge_id => {
+                const edge = graph.edge(edge_id);
+                edge.x += dx;
+                edge.y += dy;
+                edge.points.forEach(point => {
+                    point.x += dx;
+                    point.y += dy;
+                });
             });
         }
     }
