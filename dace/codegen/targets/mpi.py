@@ -110,10 +110,10 @@ void __dace_exit_mpi({params}) {{
         # generator)
         callsite_stream.write('{', sdfg, state_id, map_header)
 
-        # if len(map_header.map.params) > 1:
-        #     raise NotImplementedError(
-        #         'Multi-dimensional MPI maps are not supported')
-
+        # If number of map parameters is greater than 1,
+        # we assume block distribution.
+        # Multiplication factors are essentially
+        # the strides of the N-D index space.
         mul_factors = [1]
         param_count = len(map_header.map.params)
         if param_count > 1:
@@ -121,31 +121,30 @@ void __dace_exit_mpi({params}) {{
                 begin, end, skip = r
                 mul_factors.append((end + 1 - begin) // skip)
         print('Mul factors for MPI map are {}'.format(mul_factors))
+        # Compute the product of the strides
+        # This is the multiplication factor for the first index
         from functools import reduce
         mul = reduce(lambda x, y: x * y, mul_factors)
         print('Mul for MPI map is {}'.format(mul))
 
+        # rank_remainder = rank
         callsite_stream.write(
             'int __dace_comm_rank_r = %s;\n' % ('__dace_comm_rank'),
             sdfg, state_id, map_header)
 
         for var, r, f in zip(map_header.map.params, map_header.map.range, reversed(mul_factors)):
             begin, end, skip = r
-
-            # callsite_stream.write('{\n', sdfg, state_id, map_header)
-            # callsite_stream.write(
-            #     'auto %s = %s + __dace_comm_rank * (%s);\n' %
-            #     (var, cppunparse.pyexpr2cpp(symbolic.symstr(begin)),
-            #      cppunparse.pyexpr2cpp(symbolic.symstr(skip))), sdfg, state_id,
-            #     map_header)
+            # current_index = rank_remainder / multiplication_factor
             callsite_stream.write(
                 'int %s = __dace_comm_rank_r / (%s);\n' %
                 (var, cppunparse.pyexpr2cpp(symbolic.symstr(mul))),
                 sdfg, state_id, map_header)
+            # rank_remainder -= current_index * multiplication_factor
             callsite_stream.write(
                 '__dace_comm_rank_r -= %s * %s;\n' %
                 (var, cppunparse.pyexpr2cpp(symbolic.symstr(mul))),
                 sdfg, state_id, map_header)
+            # Comput the multiplication factor for the next index
             mul //= f
 
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, map_header)
@@ -213,25 +212,20 @@ void __dace_exit_mpi({params}) {{
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
+        # Find the map/map entry of the MPI scope we are in.
         while (not isinstance(parent, nodes.MapEntry)
                 or parent.map.schedule != dtypes.ScheduleType.MPI):
             parent = dfg.scope_dict()[parent]
             if parent is None:
                 raise Exception("Distributed copy outside MPI map")
 
-        mul_factors = [1]
-        param_count = len(edge.data.dist_subset)
-        if param_count > 1:
-            for r in reversed(parent.map.range[1:]):
-                begin, end, skip = r
-                mul_factors.append((end + 1 - begin) // skip)
-        print('Mul factors for MPI map are {}'.format(mul_factors))
-        from functools import reduce
-        mul = reduce(lambda x, y: x * y, mul_factors)
-        print('Mul for MPI map is {}'.format(mul))
-
         data = sdfg.arrays[memlet.data]
 
+        # Extract the distributed subset index
+        # This is needed because we may either have subsets.Indices
+        # or subsets.Range in the distributed subset.
+        # Currently we only support Indices and
+        # Range of length 1 in all dimensions.
         if isinstance(edge.data.dist_subset, subsets.Indices):
             index = edge.data.dist_subset
         else:
@@ -246,6 +240,9 @@ void __dace_exit_mpi({params}) {{
                         "Only distributed indices are currently supported")
                 index.append(begin)
 
+        # Parse distributed location lambda method to a sympy expression.
+        # Replace the arguments of the lambda with the parameters
+        # of the MPI map, in order to find the rank-owner of the source data.
         dist_location = LambdaProperty.from_string(data.dist_location)
         body = pystr_to_symbolic(unparse(dist_location.body))
         args = [pystr_to_symbolic(a.arg) for a in dist_location.args.args]
@@ -258,6 +255,9 @@ void __dace_exit_mpi({params}) {{
         callsite_stream.write("int other_rank = %s;\n" % str(other_rank),
                               sdfg, state_id, [src_node, dst_node])
 
+        # Use the index matching of the pair (data, map) to create a system
+        # of equations. Solve the system to find the expressions that describe
+        # the coordinates of the ranks that request the source data.
         eqs = []
         for k, v in data.dist_shape_map.items():
             eqs.append(pystr_to_symbolic(
@@ -274,24 +274,16 @@ void __dace_exit_mpi({params}) {{
             else:
                 ranges[i] = r
 
+        # Parse the distributed location of the MPI map to sympy expression.
+        # We will use this expression to compute the actual ranks of the
+        # processes that request the source data.
         dist_location = LambdaProperty.from_string(parent.map.dist_location)
         body = pystr_to_symbolic(unparse(dist_location.body))
         args = [pystr_to_symbolic(a.arg) for a in dist_location.args.args]
-        # repl = {arg: r for arg, r in zip(args, symbols)}
-
-        # callsite_stream.write("int src_rank = 0;\n", sdfg, state_id, [src_node, dst_node])
-        # for r, f in zip(edge.data.dist_subset, reversed(mul_factors[-param_count:])):
-        #     begin, end, skip = r
-        #     if begin != end:
-        #         raise NotImplementedError("Only distributed indices are supported")
-        #     callsite_stream.write(
-        #         "src_rank += %s * %s;\n" %
-        #         (begin, cppunparse.pyexpr2cpp(symbolic.symstr(mul))),
-        #         sdfg, state_id,[src_node, dst_node])
-        #     mul //= f
 
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
+            # Irecv from owner rank to requesting (current) rank.
             callsite_stream.write(
                 "double {n};\nMPI_Request req;\n"
                 "MPI_Irecv(&{n}, 1, MPI_DOUBLE, other_rank, tag, &req)\n".format(n=vconn),
@@ -299,18 +291,23 @@ void __dace_exit_mpi({params}) {{
                 state_id,
                 [src_node, dst_node],
             )
+            # Inverse communication scheme
+            # Create and set variables for coordinates that have a fixed value.
             for k, v in fixed.items():
                 callsite_stream.write(
                     "int {a} = {v};\n".format(a=args[k], v=v),
                     sdfg, state_id, [src_node, dst_node])
+            # Create for-loops for coordinates that are 'free'
             for k, v in ranges.items():
                 callsite_stream.write(
                     "for (int {a} = {b}; {a} < {e}; {a} += {s}) {{\n".format(
                         a=args[k], b=v[0], e=v[1]+1, s=v[2]),
                     sdfg, state_id, [src_node, dst_node])
+            # Compute (during runtime) the rank requesting the source data.
             callsite_stream.write(
                 "other_rank = {e};\n".format(e=body),
                 sdfg, state_id, [src_node, dst_node])
+            # Isend from owner (current) rank to requesting rank.
             callsite_stream.write(
                 "MPI_Isend(&{n}, 1, MPI_DOUBLE, other_rank, tag, &req)\n".format(n=vconn)
             )
