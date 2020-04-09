@@ -1,1 +1,1 @@
-from .autodiff import BackwardPassGenerator
+from .autodiff import BackwardPassGenerator, AutoDiffException

@@ -9,6 +9,7 @@ import dace.graph.nodes as nd
 from dace.sdfg import ScopeSubgraphView
 from dace.graph.nxutil import dfs_topological_sort
 from dace.frontend.operations import detect_reduction_type
+from dace import data as dt
 
 import ast
 import itertools
@@ -116,18 +117,33 @@ def _invert_access(access: dace.AccessType) -> dace.AccessType:
 
 def _has_inplace_operation(state: dace.SDFGState,
                            target: nd.AccessNode) -> bool:
-    """Returns true if state has any inplace operations before target"""
+    """Returns true if state has any inplace operations
 
+       Note that this method is currently much stronger than required; some of the constrains can be
+       loosened in the future.
+    """
+
+    sdfg = state.parent
+
+    # check that each data descriptor has at most one access nodes
     seen_accesses: Set[str] = set()
-    for src, _, dst, _, _ in state.bfs_edges(target):
-        if type(src) is nd.AccessNode:
-            if src.data in seen_accesses:
+    for node in state.nodes():
+        if isinstance(node, nd.AccessNode):
+            if node.data in seen_accesses:
                 return True
-            seen_accesses.add(src.data)
-        if type(dst) is nd.AccessNode:
-            if dst.data in seen_accesses:
+            seen_accesses.add(node.data)
+
+    # edges with scalar memlets can be used to connect two code nodes together. If this feature is
+    # used, it should be done using a new scalar everytime.
+    # When a scalar is used in a code -> code edge, it should also have an AccessNode that refers to it.
+    seen_scalars = set()
+    for edge in state.edges():
+        memlet_data = edge.data.data
+        if isinstance(sdfg.arrays[memlet_data], dt.Scalar) and isinstance(
+                edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode):
+            if memlet_data in seen_scalars or memlet_data in seen_accesses:
                 return True
-            seen_accesses.add(dst.data)
+            seen_scalars.add(memlet_data)
     return False
 
 
@@ -186,7 +202,8 @@ class BackwardPassGenerator:
 
         source_nodes = [
             node for node in self.state.source_nodes()
-            if node.data in self.required_grads
+            if isinstance(node, nd.AccessNode)
+            and node.data in self.required_grads
         ]
 
         required_nodes: Set[nd.Node] = set()
