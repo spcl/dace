@@ -144,7 +144,8 @@ class BackwardPassGenerator:
        :return: the reversed node
 
     """
-    def __init__(self, sdfg: SDFG, state: SDFGState, required_grads: Set[str], target: nd.AccessNode):
+    def __init__(self, sdfg: SDFG, state: SDFGState, required_grads: Set[str],
+                 target: nd.AccessNode):
         """Generate the backward pass for a state wrt. a `target` scalar.
 
            :param sdfg: the `SDFG` to differentiate
@@ -158,9 +159,7 @@ class BackwardPassGenerator:
         self.required_grads = required_grads
         self.target = target
 
-    def backward(
-        self
-    ):
+    def backward(self):
 
         target_arr = self.sdfg.arrays[self.target.data]
         try:
@@ -169,12 +168,12 @@ class BackwardPassGenerator:
             raise AutoDiffException("Expected scalar target") from e
 
         self.reverse_map = {}
-        if self.required_grads.difference(
-                node.data for node in self.state.nodes() 
-                if type(node) is nd.AccessNode):
+        if self.required_grads.difference(node.data
+                                          for node in self.state.nodes()
+                                          if type(node) is nd.AccessNode):
             raise AutoDiffException(
-                "Could not find AccessNode nodes in {} with the following data {}".
-                format(
+                "Could not find AccessNode nodes in {} with the following data {}"
+                .format(
                     self.sdfg,
                     self.required_grads.difference(
                         node.data for node in self.state.nodes()
@@ -219,18 +218,18 @@ class BackwardPassGenerator:
         # all memlets that write to grads
         # a reversed topological sort is a topological sort on the reverse graph
         for node in reversed(
-                list(dfs_topological_sort(subgraph, subgraph.source_nodes(), target=self.target))):
+                list(
+                    dfs_topological_sort(subgraph,
+                                         subgraph.source_nodes(),
+                                         target=self.target))):
             if type(node) is nd.MapExit:
                 # TODO handle scopes
                 raise AutoDiffException("TODO")
             else:
-                output_grads = {
-                    edge.src_conn:
-                    (self.reverse_map[edge.dst], edge.dst_conn, edge.data)
-                    for edge in subgraph.out_edges(node)
-                }
-                required_grads = list(edge.dst_conn
-                                      for edge in subgraph.in_edges(node))
+                output_grads = [edge for edge in subgraph.out_edges(node)]
+                required_grads = [
+                    edge.dst_conn for edge in subgraph.in_edges(node)
+                ]
 
                 rev: nd.Node = getattr(self, '_reverse_' +
                                        type(node).__name__)(node, output_grads,
@@ -240,8 +239,8 @@ class BackwardPassGenerator:
                 subgraph.graph.add_node(rev)
 
                 # connect the gradients of the outputs (as inputs)
-                for output_conn, (dest_node, input_conn,
-                                  memlet) in output_grads.items():
+                for _, output_conn, dest_node, input_conn, memlet in output_grads:
+                    dest_node = self.reverse_map[dest_node]
                     if detect_reduction_type(memlet.wcr) not in [
                             None, dace.dtypes.ReductionType.Sum
                     ]:
@@ -297,8 +296,7 @@ class BackwardPassGenerator:
 
                 # connect any required inputs from the forward pass
                 required_inputs = rev.in_connectors.difference(
-                    self.append_grad(output_conn)
-                    for output_conn in output_grads)
+                    self.append_grad(edge.src_conn) for edge in output_grads)
                 for src, src_conn, dst, dst_conn, memlet in subgraph.graph.in_edges(
                         node):
                     if dst_conn in required_inputs:
@@ -344,8 +342,7 @@ class BackwardPassGenerator:
         rev_outputs = set()
         rev_inputs = set()
 
-        for output_conn, (dest_node, input_conn,
-                          memlet) in output_grads.items():
+        for _, output_conn, _, input_conn, memlet in output_grads:
             # tasklets should have scalar outputs
             _check_one(memlet.subset.num_elements())
             # for each output_conn...

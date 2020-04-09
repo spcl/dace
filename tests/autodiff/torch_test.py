@@ -169,6 +169,46 @@ def test_complex_tasklet():
 
 
 @correctness_test
+def test_tasklets_only_reuse():
+    def torch_func(*, A):
+        tmp_a = torch.sqrt(A)
+        tmp_b = torch.log(A + 1)
+
+        C = tmp_a * tmp_b
+
+        C.backward()
+        return dict(A_grad=A.grad)
+
+    @dace.program
+    def dace_func(A: dace.float32[1], C: dace.float32[1]):
+        tmp_a = dace.define_local_scalar(dace.float32)
+        tmp_b = dace.define_local_scalar(dace.float32)
+
+        with dace.tasklet:
+            a << A[0]
+            a_out >> tmp_a
+
+            a_out = sqrt(a)
+
+        with dace.tasklet:
+            a << A[0]
+            a_out >> tmp_b
+
+            a_out = log(a + 1)
+
+        with dace.tasklet:
+            a << tmp_a
+            b << tmp_b
+            c >> C[0]
+            c = a * b
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "C"), torch_func, dict(
+        A=np.random.rand(1).astype(np.float32),
+        )
+
+@correctness_test
 def test_tasklets_only():
     def torch_func(*, A, B):
         tmp_a = torch.sqrt(A)
