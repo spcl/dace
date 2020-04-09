@@ -205,6 +205,13 @@ class CanvasManager {
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
+    /**
+     * Move/translate an element in the graph by a change in x and y.
+     * @param {*} el           Element to move
+     * @param {*} x            Change in x direction
+     * @param {*} y            Change in y direction
+     * @param {*} entire_graph Reference to the entire graph
+     */
     translate_element(el, x, y, entire_graph) {
         this.stopAnimation();
 
@@ -212,12 +219,23 @@ class CanvasManager {
         let dx = x / this.user_transform.a;
         let dy = y / this.user_transform.d;
 
-        // Recursively find the element's parent element
-        function find_parent(p_graph, parent_arr, inherited_parent=null) {
+        // Edges connected to the moving element
+        let out_edges = [];
+        let in_edges = [];
+
+        // Recursively find the element's parent element and its connected edges
+        function find_parent_and_edges(p_graph, parent_arr, inherited_parent=null) {
             p_graph.nodes().forEach(state_id => {
                 const state = p_graph.node(state_id);
-                if (state === el && inherited_parent) {
-                    parent_arr.push(inherited_parent);
+                if (state === el) {
+                    if (inherited_parent)
+                        parent_arr.push(inherited_parent);
+                    p_graph.outEdges(state.id).forEach(edge_id => {
+                        out_edges.push(p_graph.edge(edge_id));
+                    });
+                    p_graph.inEdges(state.id).forEach(edge_id => {
+                        in_edges.push(p_graph.edge(edge_id));
+                    });
                     return;
                 }
                 const sub_graph = state.data.graph;
@@ -225,15 +243,21 @@ class CanvasManager {
                     const node = sub_graph.node(node_id);
                     if (node === el) {
                         parent_arr.push(state);
+                        sub_graph.outEdges(node.id).forEach(edge_id => {
+                            out_edges.push(sub_graph.edge(edge_id));
+                        });
+                        sub_graph.inEdges(node.id).forEach(edge_id => {
+                            in_edges.push(sub_graph.edge(edge_id));
+                        });
                         return;
                     }
                     if (node.data.node && node.data.node.type === 'NestedSDFG')
-                        return find_parent(node.data.graph, parent_arr, node);
+                        return find_parent_and_edges(node.data.graph, parent_arr, node);
                 });
             });
         };
         let parent_candidates = [];
-        find_parent(entire_graph, parent_candidates);
+        find_parent_and_edges(entire_graph, parent_candidates);
         const parent_element = parent_candidates[0];
 
         if (parent_element) {
@@ -255,7 +279,7 @@ class CanvasManager {
             if (target_y <= min_y || target_y >= max_y) dy = 0;
         }
 
-        if (el.data.type && el.data.type === 'Memlet') {
+        if (el.data.type && (el.data.type === 'Memlet' || el.data.type === 'InterstateEdge')) {
             if (el.points[2]) {
                 // Only allow dragging, if the memlet is 'making a curve'
                 el.points[1].x += dx;
@@ -269,6 +293,7 @@ class CanvasManager {
         el.x += dx;
         el.y += dy;
 
+        // Move the element's connectors if it has any
         if (el.in_connectors)
             el.in_connectors.forEach(c => {
                 c.x += dx;
@@ -279,6 +304,16 @@ class CanvasManager {
                 c.x += dx;
                 c.y += dy;
             });
+
+        // Move the connected edges along with the element
+        out_edges.forEach(edge => {
+            edge.points[0].x += dx;
+            edge.points[0].y += dy;
+        });
+        in_edges.forEach(edge => {
+            edge.points[edge.points.length - 1].x += dx;
+            edge.points[edge.points.length - 1].y += dy;
+        });
 
         // Allow recursive translation of nested SDFGs
         function translate_recursive(ng) {
