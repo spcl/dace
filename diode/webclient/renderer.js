@@ -279,8 +279,7 @@ class CanvasManager {
                 el.points[1].x += dx;
                 el.points[1].y += dy;
             }
-            // Don't do any of the other stuff.
-            // The rest of the method doesn't apply here
+            // The rest of the method doesn't apply to Edges
             return;
         }
 
