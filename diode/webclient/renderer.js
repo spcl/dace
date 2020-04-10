@@ -205,6 +205,161 @@ class CanvasManager {
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
     }
 
+    /**
+     * Move/translate an element in the graph by a change in x and y.
+     * @param {*} el                Element to move
+     * @param {*} x                 Change in x direction
+     * @param {*} y                 Change in y direction
+     * @param {*} entire_graph      Reference to the entire graph
+     * @param {*} sdfg_list         List of SDFGs and nested SDFGs
+     * @param {*} state_parent_list List of parent elements to SDFG states
+     */
+    translate_element(el, x, y, entire_graph, sdfg_list, state_parent_list) {
+        this.stopAnimation();
+
+        // Calculate movement distance with current zoom level
+        let dx = x / this.user_transform.a;
+        let dy = y / this.user_transform.d;
+
+        // Edges connected to the moving element
+        let out_edges = [];
+        let in_edges = [];
+
+        // Find the parent graph in the list of available SDFGs
+        let parent_graph = sdfg_list[el.sdfg.sdfg_list_id];
+        let parent_element = null;
+
+        if (entire_graph !== parent_graph && el.data.state) {
+            // If the parent graph and the entire SDFG shown are not the same,
+            // we're currently in a nested SDFG. If we're also moving a state,
+            // this means that its parent element is found in the list of
+            // parents to states (state_parent_list)
+            parent_element = state_parent_list[el.sdfg.sdfg_list_id];
+        } else if (el.parent_id !== null && parent_graph) {
+            // If the parent_id isn't null and there is a parent graph, we can
+            // look up the parent node via the element's parent_id
+            parent_element = parent_graph.node(el.parent_id);
+            // If our parent element is a state, we want the state's graph
+            if (parent_element.data.state)
+                parent_graph = parent_element.data.graph;
+        }
+
+        if (parent_graph) {
+            // Find all the edges connected to the moving node
+            parent_graph.outEdges(el.id).forEach(edge_id => {
+                out_edges.push(parent_graph.edge(edge_id));
+            });
+            parent_graph.inEdges(el.id).forEach(edge_id => {
+                in_edges.push(parent_graph.edge(edge_id));
+            });
+        }
+
+        if (parent_element) {
+            // Calculate the box to bind the element to. This is given by
+            // the parent element, i.e. the element where out to-be-moved
+            // element is contained within
+            const min_x = (parent_element.x - (parent_element.width / 2)) +
+                (el.width / 2);
+            const min_y = (parent_element.y - (parent_element.height / 2)) +
+                (el.height / 2);
+            const max_x = (min_x + parent_element.width) - el.width;
+            const max_y = (min_y + parent_element.height) - el.height;
+
+            // Make sure we don't move our element outside its parent's
+            // bounding box
+            const target_x = el.x + dx;
+            const target_y = el.y + dy;
+            if (target_x <= min_x || target_x >= max_x) dx = 0;
+            if (target_y <= min_y || target_y >= max_y) dy = 0;
+        }
+
+        if (el instanceof Edge) {
+            if (el.points[2]) {
+                // Only allow dragging, if the memlet is 'making a curve'
+                el.points[1].x += dx;
+                el.points[1].y += dy;
+            }
+            // The rest of the method doesn't apply to Edges
+            return;
+        }
+
+        // Move a node together with its connectors if it has any
+        function move_node_and_connectors(node) {
+            node.x += dx;
+            node.y += dy;
+            if (node.data.node && node.data.node.type === 'NestedSDFG')
+                translate_recursive(node.data.graph);
+            if (node.in_connectors)
+                node.in_connectors.forEach(c => {
+                    c.x += dx;
+                    c.y += dy;
+                });
+            if (node.out_connectors)
+                node.out_connectors.forEach(c => {
+                    c.x += dx;
+                    c.y += dy;
+                });
+        }
+
+        // Allow recursive translation of nested SDFGs
+        function translate_recursive(ng) {
+            ng.nodes().forEach(state_id => {
+                const state = ng.node(state_id);
+                state.x += dx;
+                state.y += dy;
+                const g = state.data.graph;
+                g.nodes().forEach(node_id => {
+                    const node = g.node(node_id);
+                    move_node_and_connectors(node);
+                });
+
+                g.edges().forEach(edge_id => {
+                    const edge = g.edge(edge_id);
+                    edge.x += dx;
+                    edge.y += dy;
+                    edge.points.forEach(point => {
+                        point.x += dx;
+                        point.y += dy;
+                    });
+                });
+            });
+        }
+
+        // Move the node
+        move_node_and_connectors(el);
+
+        // FIXME: el.data.state.collapsed reads FALSE if the state is collapsed!
+        if (el.data.state && !el.data.state.attributes.is_collapsed) {
+            // We're moving a state, move all its contained elements
+            const graph = el.data.graph;
+            graph.nodes().forEach(node_id => {
+                const node = graph.node(node_id);
+                move_node_and_connectors(node);
+            });
+
+            // Drag all the edges along
+            graph.edges().forEach(edge_id => {
+                const edge = graph.edge(edge_id);
+                edge.x += dx;
+                edge.y += dy;
+                edge.points.forEach(point => {
+                    point.x += dx;
+                    point.y += dy;
+                });
+            });
+        }
+
+        // Move the connected edges along with the element
+        out_edges.forEach(edge => {
+            edge.points[0].x += dx;
+            edge.points[0].y += dy;
+        });
+        in_edges.forEach(edge => {
+            edge.points[edge.points.length - 1].x += dx;
+            edge.points[edge.points.length - 1].y += dy;
+        });
+    }
+
     mapPixelToCoordsX(xpos) {
         return this.svgPoint(xpos, 0).matrixTransform(this.user_transform.inverse()).x;
     }
@@ -385,7 +540,7 @@ function calculateNodeSize(sdfg_state, node, ctx) {
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-function relayout_sdfg(ctx, sdfg, sdfg_list) {
+function relayout_sdfg(ctx, sdfg, sdfg_list, state_parent_list) {
     let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
@@ -404,7 +559,8 @@ function relayout_sdfg(ctx, sdfg, sdfg_list) {
             stateinfo.height = LINEHEIGHT;
         }
         else {
-            state_g = relayout_state(ctx, state, sdfg, sdfg_list);
+            state_g = relayout_state(ctx, state, sdfg, sdfg_list,
+                state_parent_list);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 2*STATE_MARGIN;
@@ -470,7 +626,7 @@ function relayout_sdfg(ctx, sdfg, sdfg_list) {
     return g;
 }
 
-function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
+function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({multigraph: true});
 
@@ -515,6 +671,11 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
 
         // Dynamically create node type
         let obj = new SDFGElements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
+
+        // If it's a nested SDFG, we need to record the node as all of its
+        // state's parent node
+        if (node.type === 'NestedSDFG')
+            state_parent_list[node.attributes.sdfg.sdfg_list_id] = obj;
 
         // Add input connectors
         let i = 0;
@@ -657,6 +818,7 @@ class SDFGRenderer {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
         this.sdfg_list = {};
+        this.state_parent_list = {}; // List of all state's parent elements
 
         // Rendering-related fields
         this.container = container;
@@ -667,6 +829,7 @@ class SDFGRenderer {
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
+        this.last_dragged_element = null;
         this.tooltip = null;
         this.tooltip_container = null;
 
@@ -837,7 +1000,8 @@ class SDFGRenderer {
     // Re-layout graph and nested graphs
     relayout() {
         this.sdfg_list = {};
-        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list);
+        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list,
+            this.state_parent_list);
         this.onresize();
 
         return this.graph;
@@ -1157,6 +1321,45 @@ class SDFGRenderer {
         traverse_recursive(this.graph, this.sdfg.attributes.name);
     }
 
+    find_elements_under_cursor(mouse_pos_x, mouse_pos_y) {
+        // Find all elements under the cursor.
+        const elements = this.elements_in_rect(mouse_pos_x, mouse_pos_y, 0, 0);
+        const clicked_states = elements.states;
+        const clicked_nodes = elements.nodes;
+        const clicked_edges = elements.edges;
+        const clicked_interstate_edges = elements.isedges;
+        const clicked_connectors = elements.connectors;
+        const total_elements =
+            clicked_states.length + clicked_nodes.length +
+            clicked_edges.length + clicked_interstate_edges.length +
+            clicked_connectors.length;
+        let foreground_elem = null, foreground_surface = -1;
+
+        // Find the top-most element under the mouse cursor (i.e. the one with
+        // the smallest dimensions).
+        const categories = [
+            clicked_states,
+            clicked_interstate_edges,
+            clicked_nodes,
+            clicked_edges
+        ];
+        for (const category of categories) {
+            for (let i = 0; i < category.length; i++) {
+                const s = category[i].obj.width * category[i].obj.height;
+                if (foreground_surface < 0 || s < foreground_surface) {
+                    foreground_surface = s;
+                    foreground_elem = category[i].obj;
+                }
+            }
+        }
+
+        return {
+            total_elements,
+            elements,
+            foreground_elem,
+        };
+    }
+
     on_mouse_event(event, comp_x_func, comp_y_func, evtype="click") {
         let dirty = false; // Whether to redraw at the end
 
@@ -1164,6 +1367,7 @@ class SDFGRenderer {
             this.drag_start = event;
         } else if (evtype === "mouseup") {
             this.drag_start = null;
+            this.last_dragged_element = null;
         } else if (evtype === "touchend") {
             if (event.touches.length == 0)
                 this.drag_start = null;
@@ -1173,7 +1377,32 @@ class SDFGRenderer {
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
-            if (this.drag_start && event.buttons & 1) {
+            // TODO: Find a more intuitive activation for dragging objects.
+            // We're currently moving only if mouse button 3 (wheel) is active
+            if (this.drag_start && event.buttons & 4) {
+                // Only accept the secondary mouse button as a source for
+                // dragging objects
+                if (this.last_dragged_element) {
+                    this.canvas_manager.translate_element(
+                        this.last_dragged_element,
+                        event.movementX, event.movementY,
+                        this.graph, this.sdfg_list, this.state_parent_list
+                    );
+                    dirty = true;
+                    this.draw_async();
+                    return false;
+                } else {
+                    const mouse_elements = this.find_elements_under_cursor(
+                        this.mousepos.x, this.mousepos.y
+                    );
+                    if (mouse_elements.foreground_elem) {
+                        this.last_dragged_element =
+                            mouse_elements.foreground_elem;
+                        return false;
+                    }
+                    return true;
+                }
+            } else if (this.drag_start && event.buttons & 1) {
                 // Only accept the primary mouse button as dragging source
                 this.canvas_manager.translate(event.movementX, event.movementY);
 
@@ -1183,7 +1412,7 @@ class SDFGRenderer {
                 return false;
             } else {
                 this.drag_start = null;
-                if (event.buttons & 1)
+                if (event.buttons & 1 || event.buttons & 4)
                     return true; // Don't stop propagation
             }
         } else if (evtype === "touchmove") {
@@ -1242,27 +1471,12 @@ class SDFGRenderer {
             return true;
 
         // Find elements under cursor
-        let elements = this.elements_in_rect(this.mousepos.x, this.mousepos.y, 0, 0);
-        let clicked_states = elements.states;
-        let clicked_nodes = elements.nodes;
-        let clicked_edges = elements.edges;
-        let clicked_interstate_edges = elements.isedges;
-        let clicked_connectors = elements.connectors;
-        let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
-            clicked_interstate_edges.length + clicked_connectors.length;
-        let foreground_elem = null, fg_surface = -1;
-
-        // Find the top-most element under mouse cursor (the one with the smallest dimensions)
-        for (let category of [clicked_states, clicked_interstate_edges, 
-                              clicked_nodes, clicked_edges]) {
-            for (let i = 0; i < category.length; i++) {
-                let s = category[i].obj.width * category[i].obj.height;
-                if (fg_surface < 0 || s < fg_surface) {
-                        fg_surface = s;
-                        foreground_elem = category[i].obj;
-                }
-            }
-        }
+        const elements_under_cursor = this.find_elements_under_cursor(
+            this.mousepos.x, this.mousepos.y
+        );
+        let elements = elements_under_cursor.elements;
+        let total_elements = elements_under_cursor.total_elements;
+        let foreground_elem = elements_under_cursor.foreground_elem;
         
         // Change mouse cursor accordingly
         if (total_elements > 0)
