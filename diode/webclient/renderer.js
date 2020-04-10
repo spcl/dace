@@ -289,31 +289,23 @@ class CanvasManager {
             return;
         }
 
-        // Move the element
-        el.x += dx;
-        el.y += dy;
-
-        // Move the element's connectors if it has any
-        if (el.in_connectors)
-            el.in_connectors.forEach(c => {
-                c.x += dx;
-                c.y += dy;
-            });
-        if (el.out_connectors)
-            el.out_connectors.forEach(c => {
-                c.x += dx;
-                c.y += dy;
-            });
-
-        // Move the connected edges along with the element
-        out_edges.forEach(edge => {
-            edge.points[0].x += dx;
-            edge.points[0].y += dy;
-        });
-        in_edges.forEach(edge => {
-            edge.points[edge.points.length - 1].x += dx;
-            edge.points[edge.points.length - 1].y += dy;
-        });
+        // Move a node together with its connectors if it has any
+        function move_node_and_connectors(node) {
+            node.x += dx;
+            node.y += dy;
+            if (node.data.node && node.data.node.type === 'NestedSDFG')
+                translate_recursive(node.data.graph);
+            if (node.in_connectors)
+                node.in_connectors.forEach(c => {
+                    c.x += dx;
+                    c.y += dy;
+                });
+            if (node.out_connectors)
+                node.out_connectors.forEach(c => {
+                    c.x += dx;
+                    c.y += dy;
+                });
+        }
 
         // Allow recursive translation of nested SDFGs
         function translate_recursive(ng) {
@@ -324,21 +316,7 @@ class CanvasManager {
                 const g = state.data.graph;
                 g.nodes().forEach(node_id => {
                     const node = g.node(node_id);
-                    node.x += dx;
-                    node.y += dy;
-                    if (node.data.node.type === 'NestedSDFG')
-                        translate_recursive(node.data.graph);
-
-                    if (node.in_connectors)
-                        node.in_connectors.forEach(c => {
-                            c.x += dx;
-                            c.y += dy;
-                        });
-                    if (node.out_connectors)
-                        node.out_connectors.forEach(c => {
-                            c.x += dx;
-                            c.y += dy;
-                        });
+                    move_node_and_connectors(node);
                 });
 
                 g.edges().forEach(edge_id => {
@@ -353,35 +331,15 @@ class CanvasManager {
             });
         }
 
-        if (el.data.node) {
-            if (el.data.node.type === 'NestedSDFG') {
-                // We're moving a nested graph. Translate recursively
-                translate_recursive(el.data.graph);
-            }
-        } else if (el.data.state) {
+        // Move the node
+        move_node_and_connectors(el);
+
+        if (el.data.state) {
             // We're moving a state, move all its contained elements
             const graph = el.data.graph;
             graph.nodes().forEach(node_id => {
                 const node = graph.node(node_id);
-
-                node.x += dx;
-                node.y += dy;
-
-                if (node.data.node.type === 'NestedSDFG') {
-                    // We're moving a nested graph. Translate recursively
-                    translate_recursive(node.data.graph);
-                }
-
-                if (node.in_connectors)
-                    node.in_connectors.forEach(c => {
-                        c.x += dx;
-                        c.y += dy;
-                    });
-                if (node.out_connectors)
-                    node.out_connectors.forEach(c => {
-                        c.x += dx;
-                        c.y += dy;
-                    });
+                move_node_and_connectors(node);
             });
 
             // Drag all the edges along
@@ -395,6 +353,16 @@ class CanvasManager {
                 });
             });
         }
+
+        // Move the connected edges along with the element
+        out_edges.forEach(edge => {
+            edge.points[0].x += dx;
+            edge.points[0].y += dy;
+        });
+        in_edges.forEach(edge => {
+            edge.points[edge.points.length - 1].x += dx;
+            edge.points[edge.points.length - 1].y += dy;
+        });
     }
 
     mapPixelToCoordsX(xpos) {
