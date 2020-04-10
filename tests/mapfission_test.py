@@ -255,6 +255,82 @@ class MapFissionTest(unittest.TestCase):
         sdfg(A=A)
         self.assertTrue(np.allclose(A, np.zeros_like(A)))
 
+    def test_offsets(self):
+        sdfg = dace.SDFG('mapfission_offsets')
+        sdfg.add_array('A', [20], dace.float64)
+        sdfg.add_scalar('interim', dace.float64, transient=True)
+        state = sdfg.add_state()
+        me, mx = state.add_map('outer', dict(i='10:20'))
+
+        t1 = state.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
+        t2 = state.add_tasklet('addtwo', {'a'}, {'b'}, 'b = a + 2')
+
+        aread = state.add_read('A')
+        awrite = state.add_write('A')
+        state.add_memlet_path(aread,
+                              me,
+                              t1,
+                              dst_conn='a',
+                              memlet=dace.Memlet.simple('A', 'i'))
+        state.add_edge(t1, 'b', t2, 'a', dace.Memlet.simple('interim', '0'))
+        state.add_memlet_path(t2,
+                              mx,
+                              awrite,
+                              src_conn='b',
+                              memlet=dace.Memlet.simple('A', 'i'))
+
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+
+        dace.propagate_labels_sdfg(sdfg)
+        sdfg.validate()
+
+        # Test
+        A = np.random.rand(20)
+        expected = A.copy()
+        expected[10:] += 3
+        sdfg(A=A)
+        self.assertTrue(np.allclose(A, expected))
+
+    def test_offsets_array(self):
+        sdfg = dace.SDFG('mapfission_offsets2')
+        sdfg.add_array('A', [20], dace.float64)
+        sdfg.add_array('interim', [1], dace.float64, transient=True)
+        state = sdfg.add_state()
+        me, mx = state.add_map('outer', dict(i='10:20'))
+
+        t1 = state.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
+        interim = state.add_access('interim')
+        t2 = state.add_tasklet('addtwo', {'a'}, {'b'}, 'b = a + 2')
+
+        aread = state.add_read('A')
+        awrite = state.add_write('A')
+        state.add_memlet_path(aread,
+                              me,
+                              t1,
+                              dst_conn='a',
+                              memlet=dace.Memlet.simple('A', 'i'))
+        state.add_edge(t1, 'b', interim, None,
+                       dace.Memlet.simple('interim', '0'))
+        state.add_edge(interim, None, t2, 'a',
+                       dace.Memlet.simple('interim', '0'))
+        state.add_memlet_path(t2,
+                              mx,
+                              awrite,
+                              src_conn='b',
+                              memlet=dace.Memlet.simple('A', 'i'))
+
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+
+        dace.propagate_labels_sdfg(sdfg)
+        sdfg.validate()
+
+        # Test
+        A = np.random.rand(20)
+        expected = A.copy()
+        expected[10:] += 3
+        sdfg(A=A)
+        self.assertTrue(np.allclose(A, expected))
+
 
 if __name__ == '__main__':
     unittest.main()

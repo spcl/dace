@@ -5,6 +5,7 @@ from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
 from dace.graph import nodes, nxutil
 from dace.graph.graph import OrderedDiGraph
+from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pattern_matching, helpers
 from typing import List, Optional, Tuple
 
@@ -48,8 +49,8 @@ class MapFission(pattern_matching.Transformation):
         ]
 
     @staticmethod
-    def _components(subgraph: sd.SubgraphView
-                    ) -> List[Tuple[nodes.Node, nodes.Node]]:
+    def _components(
+            subgraph: sd.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -289,29 +290,31 @@ class MapFission(pattern_matching.Transformation):
             # Create new arrays for scalars
             for scalar, edges in scalars.items():
                 desc = parent.arrays[scalar]
-                name, newdesc = parent.add_temp_transient(
+                del parent.arrays[scalar]
+                name, newdesc = parent.add_transient(
+                    scalar,
                     mapsize,
                     desc.dtype,
                     desc.storage,
                     toplevel=desc.toplevel,
                     debuginfo=desc.debuginfo,
-                    allow_conflicts=desc.allow_conflicts)
+                    allow_conflicts=desc.allow_conflicts,
+                    find_new_name=True)
 
                 # Add extra nodes in component boundaries
                 for edge in edges:
                     anode = state.add_access(name)
+                    sbs = subsets.Range.from_string(','.join(outer_map.params))
+                    # Offset memlet by map range begin (to fit the transient)
+                    sbs.offset([r[0] for r in outer_map.range], True)
                     state.add_edge(
                         edge.src, edge.src_conn, anode, None,
-                        mm.Memlet(
-                            name, outer_map.range.num_elements(),
-                            subsets.Range.from_string(','.join(
-                                outer_map.params)), 1))
+                        mm.Memlet(name, outer_map.range.num_elements(), sbs,
+                                  1))
                     state.add_edge(
                         anode, None, edge.dst, edge.dst_conn,
-                        mm.Memlet(
-                            name, outer_map.range.num_elements(),
-                            subsets.Range.from_string(','.join(
-                                outer_map.params)), 1))
+                        mm.Memlet(name, outer_map.range.num_elements(), sbs,
+                                  1))
                     state.remove_edge(edge)
 
             # Add extra maps around components
@@ -445,7 +448,9 @@ class MapFission(pattern_matching.Transformation):
                         for e in state.memlet_tree(edge):
                             # Prepend map dimensions to memlet
                             e.data.subset = subsets.Range(
-                                [(d, d, 1) for d in outer_map.params] +
+                                [(pystr_to_symbolic(d) - r[0],
+                                  pystr_to_symbolic(d) - r[0], 1) for d, r in
+                                 zip(outer_map.params, outer_map.range)] +
                                 e.data.subset.ranges)
 
         # If nested SDFG, reconnect nodes around map and modify memlets
