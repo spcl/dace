@@ -75,7 +75,7 @@ class SDFGBackwardRunner:
         results = {
             name: arr
             for name, arr in inputs.items()
-            if name.endswith("_grad") and name != self.target + "_grad"
+            #if name.endswith("_grad") and name != self.target + "_grad"
         }
         return results
 
@@ -212,7 +212,8 @@ def test_inplace_error():
         SDFGBackwardRunner(dace_inplace.to_sdfg(), "S")
     assert "Inplace" in str(execinfo.value)
 
-def test_reused_scalar_error():
+
+def test_reused_scalar_inplace_error():
     sdfg = dace.SDFG("dace_func")
     state = sdfg.add_state()
 
@@ -240,7 +241,6 @@ def test_reused_scalar_error():
     with pytest.raises(AutoDiffException) as execinfo:
         SDFGBackwardRunner(sdfg, "C")
     assert "Inplace" in str(execinfo.value)
-
 
 
 @correctness_test
@@ -370,15 +370,23 @@ def test_add_mmul_transpose_log():
         Xt = X.T
         YW = W * Y
         Z = Xt @ YW
-        Zl = torch.log(Z)
+        Zl = torch.log(Z + 1)
 
         S = Zl.sum()
         S.backward()
-        return dict(X_grad=X.grad, Y_grad=Y.grad)
-
+        return dict(X=X,
+                    Y=Y,
+                    W=W,
+                    YW=YW,
+                    Z=Z,
+                    X_grad=X.grad,
+                    Y_grad=Y.grad)
+    
     @dace.program
     def dace_func(X: dace.float32[4, 5], Y: dace.float32[4, 3],
                   W: dace.float32[4, 3], Z: dace.float32[5, 3],
+                  YW: dace.float32[4, 3],
+                  Xt: dace.float32[5, 4],
                   S: dace.float32[1]):
 
         Xt[:] = np.transpose(X)
@@ -389,20 +397,19 @@ def test_add_mmul_transpose_log():
         def summap(i, j):
             s >> S(1, lambda x, y: x + y)[0]
             z << Z[i, j]
-            s = log(z)
+            s = log(z + 1)
 
     sdfg = dace_func.to_sdfg()
-
+    
     return SDFGBackwardRunner(sdfg, "S"), torch_func, dict(
         X=np.random.rand(4, 5).astype(np.float32),
         W=np.random.rand(4, 3).astype(np.float32),
         Y=np.random.rand(4, 3).astype(np.float32))
 
 
-def test_all():
-    for test in all_tests:
-        test()
+#def test_all():
+#    for test in all_tests:
+#        test()
 
-
-if __name__ == "__main__":
-    test_all()
+#if __name__ == "__main__":
+#    test_all()
