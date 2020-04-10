@@ -208,18 +208,14 @@ class CanvasManager {
     /**
      * Move/translate an element in the graph by a change in x and y.
      * @param {*} el                Element to move
-     * @param {*} x                 Change in x direction
-     * @param {*} y                 Change in y direction
+     * @param {*} dx                Change in x direction
+     * @param {*} dy                Change in y direction
      * @param {*} entire_graph      Reference to the entire graph
      * @param {*} sdfg_list         List of SDFGs and nested SDFGs
      * @param {*} state_parent_list List of parent elements to SDFG states
      */
-    translate_element(el, x, y, entire_graph, sdfg_list, state_parent_list) {
+    translate_element(el, dx, dy, entire_graph, sdfg_list, state_parent_list) {
         this.stopAnimation();
-
-        // Calculate movement distance with current zoom level
-        let dx = x / this.user_transform.a;
-        let dy = y / this.user_transform.d;
 
         // Edges connected to the moving element
         let out_edges = [];
@@ -1375,7 +1371,16 @@ class SDFGRenderer {
             else
                 this.drag_start = event;
         } else if (evtype === "mousemove") {
-            this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
+            // Calculate the change in mouse position in canvas coordinates
+            let new_mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
+            let canvas_mouse_dx = 0;
+            let canvas_mouse_dy = 0;
+            if (this.mousepos) {
+                canvas_mouse_dx = new_mousepos.x - this.mousepos.x;
+                canvas_mouse_dy = new_mousepos.y - this.mousepos.y;
+            }
+
+            this.mousepos = new_mousepos;
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
             // TODO: Find a more intuitive activation for dragging objects.
@@ -1386,7 +1391,7 @@ class SDFGRenderer {
                 if (this.last_dragged_element) {
                     this.canvas_manager.translate_element(
                         this.last_dragged_element,
-                        event.movementX, event.movementY,
+                        canvas_mouse_dx, canvas_mouse_dy,
                         this.graph, this.sdfg_list, this.state_parent_list
                     );
                     dirty = true;
