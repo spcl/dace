@@ -207,12 +207,14 @@ class CanvasManager {
 
     /**
      * Move/translate an element in the graph by a change in x and y.
-     * @param {*} el           Element to move
-     * @param {*} x            Change in x direction
-     * @param {*} y            Change in y direction
-     * @param {*} entire_graph Reference to the entire graph
+     * @param {*} el                Element to move
+     * @param {*} x                 Change in x direction
+     * @param {*} y                 Change in y direction
+     * @param {*} entire_graph      Reference to the entire graph
+     * @param {*} sdfg_list         List of SDFGs and nested SDFGs
+     * @param {*} state_parent_list List of parent elements to SDFG states
      */
-    translate_element(el, x, y, entire_graph) {
+    translate_element(el, x, y, entire_graph, sdfg_list, state_parent_list) {
         this.stopAnimation();
 
         // Calculate movement distance with current zoom level
@@ -223,42 +225,34 @@ class CanvasManager {
         let out_edges = [];
         let in_edges = [];
 
-        // Recursively find the element's parent element and its connected edges
-        function find_parent_and_edges(p_graph, parent_arr, inherited_parent=null) {
-            p_graph.nodes().forEach(state_id => {
-                const state = p_graph.node(state_id);
-                if (state === el) {
-                    if (inherited_parent)
-                        parent_arr.push(inherited_parent);
-                    p_graph.outEdges(state.id).forEach(edge_id => {
-                        out_edges.push(p_graph.edge(edge_id));
-                    });
-                    p_graph.inEdges(state.id).forEach(edge_id => {
-                        in_edges.push(p_graph.edge(edge_id));
-                    });
-                    return;
-                }
-                const sub_graph = state.data.graph;
-                sub_graph.nodes().forEach(node_id => {
-                    const node = sub_graph.node(node_id);
-                    if (node === el) {
-                        parent_arr.push(state);
-                        sub_graph.outEdges(node.id).forEach(edge_id => {
-                            out_edges.push(sub_graph.edge(edge_id));
-                        });
-                        sub_graph.inEdges(node.id).forEach(edge_id => {
-                            in_edges.push(sub_graph.edge(edge_id));
-                        });
-                        return;
-                    }
-                    if (node.data.node && node.data.node.type === 'NestedSDFG')
-                        return find_parent_and_edges(node.data.graph, parent_arr, node);
-                });
+        // Find the parent graph in the list of available SDFGs
+        let parent_graph = sdfg_list[el.sdfg.sdfg_list_id];
+        let parent_element = null;
+
+        if (entire_graph !== parent_graph && el.data.state) {
+            // If the parent graph and the entire SDFG shown are not the same,
+            // we're currently in a nested SDFG. If we're also moving a state,
+            // this means that its parent element is found in the list of
+            // parents to states (state_parent_list)
+            parent_element = state_parent_list[el.sdfg.sdfg_list_id];
+        } else if (el.parent_id !== null && parent_graph) {
+            // If the parent_id isn't null and there is a parent graph, we can
+            // look up the parent node via the element's parent_id
+            parent_element = parent_graph.node(el.parent_id);
+            // If our parent element is a state, we want the state's graph
+            if (parent_element.data.state)
+                parent_graph = parent_element.data.graph;
+        }
+
+        if (parent_graph) {
+            // Find all the edges connected to the moving node
+            parent_graph.outEdges(el.id).forEach(edge_id => {
+                out_edges.push(parent_graph.edge(edge_id));
             });
-        };
-        let parent_candidates = [];
-        find_parent_and_edges(entire_graph, parent_candidates);
-        const parent_element = parent_candidates[0];
+            parent_graph.inEdges(el.id).forEach(edge_id => {
+                in_edges.push(parent_graph.edge(edge_id));
+            });
+        }
 
         if (parent_element) {
             // Calculate the box to bind the element to. This is given by
@@ -334,7 +328,8 @@ class CanvasManager {
         // Move the node
         move_node_and_connectors(el);
 
-        if (el.data.state) {
+        // FIXME: el.data.state.collapsed reads FALSE if the state is collapsed!
+        if (el.data.state && !el.data.state.attributes.is_collapsed) {
             // We're moving a state, move all its contained elements
             const graph = el.data.graph;
             graph.nodes().forEach(node_id => {
@@ -545,7 +540,7 @@ function calculateNodeSize(sdfg_state, node, ctx) {
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-function relayout_sdfg(ctx, sdfg, sdfg_list) {
+function relayout_sdfg(ctx, sdfg, sdfg_list, state_parent_list) {
     let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
@@ -564,7 +559,8 @@ function relayout_sdfg(ctx, sdfg, sdfg_list) {
             stateinfo.height = LINEHEIGHT;
         }
         else {
-            state_g = relayout_state(ctx, state, sdfg, sdfg_list);
+            state_g = relayout_state(ctx, state, sdfg, sdfg_list,
+                state_parent_list);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 2*STATE_MARGIN;
@@ -630,7 +626,7 @@ function relayout_sdfg(ctx, sdfg, sdfg_list) {
     return g;
 }
 
-function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
+function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({multigraph: true});
 
@@ -675,6 +671,11 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list) {
 
         // Dynamically create node type
         let obj = new SDFGElements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
+
+        // If it's a nested SDFG, we need to record the node as all of its
+        // state's parent node
+        if (node.type === 'NestedSDFG')
+            state_parent_list[node.attributes.sdfg.sdfg_list_id] = obj;
 
         // Add input connectors
         let i = 0;
@@ -817,6 +818,7 @@ class SDFGRenderer {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
         this.sdfg_list = {};
+        this.state_parent_list = {}; // List of all state's parent elements
 
         // Rendering-related fields
         this.container = container;
@@ -998,7 +1000,8 @@ class SDFGRenderer {
     // Re-layout graph and nested graphs
     relayout() {
         this.sdfg_list = {};
-        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list);
+        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list,
+            this.state_parent_list);
         this.onresize();
 
         return this.graph;
@@ -1374,12 +1377,16 @@ class SDFGRenderer {
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
-            if (this.drag_start && event.buttons & 1) {
+            // TODO: Find a more intuitive activation for dragging objects.
+            // We're currently moving only if mouse button 3 (wheel) is active
+            if (this.drag_start && event.buttons & 4) {
+                // Only accept the secondary mouse button as a source for
+                // dragging objects
                 if (this.last_dragged_element) {
                     this.canvas_manager.translate_element(
                         this.last_dragged_element,
                         event.movementX, event.movementY,
-                        this.graph
+                        this.graph, this.sdfg_list, this.state_parent_list
                     );
                     dirty = true;
                     this.draw_async();
@@ -1395,8 +1402,8 @@ class SDFGRenderer {
                     }
                     return true;
                 }
-            } else if (this.drag_start && event.buttons & 2) {
-                // Only accept the secondary mouse button as dragging source
+            } else if (this.drag_start && event.buttons & 1) {
+                // Only accept the primary mouse button as dragging source
                 this.canvas_manager.translate(event.movementX, event.movementY);
 
                 // Mark for redraw
