@@ -7,7 +7,7 @@ import functools
 import sympy
 import warnings
 
-from dace import registry, subsets, symbolic, dtypes
+from dace import registry, subsets, symbolic, dtypes, sdfg as sd
 from dace.memlet import EmptyMemlet, Memlet
 from dace.graph import nodes
 
@@ -120,8 +120,8 @@ class AffineSMemlet(SeparableMemletPattern):
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
 
-        params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        disallowed_params, params = variable_context
+
         # Create wildcards for multiplication and addition
         a = sympy.Wild('a', exclude=params)
         b = sympy.Wild('b', exclude=params)
@@ -210,8 +210,8 @@ class AffineSMemlet(SeparableMemletPattern):
                 # Map ranges where the last index is not known
                 # exactly are not supported by this pattern.
                 return False
-            if (any(s not in defined_vars for s in node_rb.free_symbols)
-                    or any(s not in defined_vars
+            if (any(s in disallowed_params for s in node_rb.free_symbols)
+                    or any(s in disallowed_params
                            for s in node_re.free_symbols)):
                 # Cannot propagate variables only defined in this scope (e.g.,
                 # dynamic map ranges)
@@ -314,9 +314,11 @@ class ModuloSMemlet(SeparableMemletPattern):
         # Pattern does not support ranges
         if not isinstance(dexpr, sympy.Basic): return False
 
+        disallowed_params, params = variable_context
+
         # Create wildcards
         val = sympy.Wild('val')
-        mod = sympy.Wild('mod', exclude=variable_context[-1])
+        mod = sympy.Wild('mod', exclude=params)
 
         # Try to match an affine expression
         matches = dexpr.match(val % mod)
@@ -366,8 +368,10 @@ class ConstantSMemlet(SeparableMemletPattern):
         if len(dim_exprs) > 1: return False
         dexpr = dim_exprs[0]
 
+        params = variable_context[-1]
+
         # Create a wildcard that excludes current map's parameters
-        cst = sympy.Wild('cst', exclude=variable_context[-1])
+        cst = sympy.Wild('cst', exclude=params)
 
         # Range case
         if isinstance(dexpr, tuple) and len(dexpr) == 3:
@@ -413,8 +417,7 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 dims.append(dim)
 
-        self.params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        disallowed_params, self.params = variable_context
 
         used_symbols = set()
         for dim in dims:
@@ -422,7 +425,7 @@ class GenericSMemlet(SeparableMemletPattern):
                 used_symbols.update(dim.free_symbols)
 
         if (used_symbols & set(self.params)
-                and any(s not in defined_vars
+                and any(s in disallowed_params
                         for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
@@ -662,13 +665,7 @@ def propagate_memlet(dfg_state,
         return EmptyMemlet()
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in scope_node.in_connectors
-                             if not conn.startswith('IN_'))
-    defined_vars = [
-        symbolic.pystr_to_symbolic(s)
-        for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
-        if s not in scope_node_symbols
-    ]
+    disallowed_vars = sd.dynamic_map_inputs(dfg_state, entry_node)
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets
@@ -693,7 +690,7 @@ def propagate_memlet(dfg_state,
         mapnode = entry_node.map
 
         variable_context = [
-            defined_vars,
+            disallowed_vars,
             [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
         ]
 
@@ -751,7 +748,7 @@ def propagate_memlet(dfg_state,
     if any(m.num_accesses == -1 for m in aggdata):
         new_memlet.num_accesses = -1
     elif symbolic.issymbolic(new_memlet.num_accesses) and any(
-            s not in defined_vars
+            s in disallowed_vars
             for s in new_memlet.num_accesses.free_symbols):
         new_memlet.num_accesses = -1
 
