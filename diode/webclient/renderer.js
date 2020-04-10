@@ -308,27 +308,28 @@ class CanvasManager {
                 state.x += dx;
                 state.y += dy;
                 const g = state.data.graph;
-                g.nodes().forEach(node_id => {
-                    const node = g.node(node_id);
-                    move_node_and_connectors(node);
-                });
-
-                g.edges().forEach(edge_id => {
-                    const edge = g.edge(edge_id);
-                    edge.x += dx;
-                    edge.y += dy;
-                    edge.points.forEach(point => {
-                        point.x += dx;
-                        point.y += dy;
+                if (g) {
+                    g.nodes().forEach(node_id => {
+                        const node = g.node(node_id);
+                        move_node_and_connectors(node);
                     });
-                });
+
+                    g.edges().forEach(edge_id => {
+                        const edge = g.edge(edge_id);
+                        edge.x += dx;
+                        edge.y += dy;
+                        edge.points.forEach(point => {
+                            point.x += dx;
+                            point.y += dy;
+                        });
+                    });
+                }
             });
         }
 
         // Move the node
         move_node_and_connectors(el);
 
-        // FIXME: el.data.state.collapsed reads FALSE if the state is collapsed!
         if (el.data.state && !el.data.state.attributes.is_collapsed) {
             // We're moving a state, move all its contained elements
             const graph = el.data.graph;
