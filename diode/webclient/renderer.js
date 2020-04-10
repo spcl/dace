@@ -273,13 +273,14 @@ class CanvasManager {
             if (target_y <= min_y || target_y >= max_y) dy = 0;
         }
 
-        if (el.data.type && (el.data.type === 'Memlet' || el.data.type === 'InterstateEdge')) {
+        if (el instanceof Edge) {
             if (el.points[2]) {
                 // Only allow dragging, if the memlet is 'making a curve'
                 el.points[1].x += dx;
                 el.points[1].y += dy;
             }
-            // Don't do any of the other stuff, it doesn't apply here
+            // Don't do any of the other stuff.
+            // The rest of the method doesn't apply here
             return;
         }
 
@@ -1412,7 +1413,7 @@ class SDFGRenderer {
                 return false;
             } else {
                 this.drag_start = null;
-                if (event.buttons & 1 || event.buttons & 2)
+                if (event.buttons & 1 || event.buttons & 4)
                     return true; // Don't stop propagation
             }
         } else if (evtype === "touchmove") {
