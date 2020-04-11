@@ -266,6 +266,36 @@ class BackwardPassGenerator:
         else:
             return conn + "_grad"
 
+    def _init_grad(self, data: str):
+        """Add a state where `data` is initialized with zero. However, the target grad is instead initialized with 1.
+           self.sdfg.arrays[data] should have type Union[dt.Array, dt.Scalar]
+        """
+        state = self.sdfg.add_state_before(self.state)
+        arr = self.sdfg.arrays[data]
+        scalar = 1 if data == self.target.data + "_grad" else 0
+        if type(arr) is dt.Array:
+            state.add_mapped_tasklet(
+                "_init_" + data + "_", {
+                    "i{}".format(i): "0:{}".format(shape)
+                    for i, shape in enumerate(arr.shape)
+                }, {},
+                "__out = {}".format(scalar), {
+                    "__out":
+                    dace.Memlet.simple(
+                        data, ", ".join("i{}".format(i)
+                                        for i in range(len(arr.shape))))
+                },
+                external_edges=True)
+        elif type(arr) is dt.Scalar:
+            tasklet = state.add_tasklet("_init_" + data + "_", None, {"__out"},
+                                        "__out = {}".format(scalar))
+            write = state.add_write(data)
+            state.add_edge(tasklet, "__out", write, None,
+                           Memlet.simple(data, "0"))
+        else:
+            raise AutoDiffException(
+                "Unsupported data descriptor {}".format(arr))
+
     def _reverse_subgraph(self, subgraph: ScopeSubgraphView):
 
         nodes_to_skip = set()
@@ -334,6 +364,8 @@ class BackwardPassGenerator:
                     else:
                         raise AutoDiffException(
                             "Unsupported data descriptor {}".format(array))
+
+                    self._init_grad(memlet.data + "_grad")
 
                 self.grad_memlets[memlet.data].append(memlet)
                 memlet.data = memlet.data + "_grad"

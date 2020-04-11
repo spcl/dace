@@ -374,20 +374,12 @@ def test_add_mmul_transpose_log():
 
         S = Zl.sum()
         S.backward()
-        return dict(X=X,
-                    Y=Y,
-                    W=W,
-                    YW=YW,
-                    Z=Z,
-                    X_grad=X.grad,
-                    Y_grad=Y.grad)
-    
+        return dict(X_grad=X.grad, Y_grad=Y.grad, W_grad=W.grad)
+
     @dace.program
     def dace_func(X: dace.float32[4, 5], Y: dace.float32[4, 3],
                   W: dace.float32[4, 3], Z: dace.float32[5, 3],
-                  YW: dace.float32[4, 3],
-                  Xt: dace.float32[5, 4],
-                  S: dace.float32[1]):
+                  YW: dace.float32[4, 3], S: dace.float32[1]):
 
         Xt[:] = np.transpose(X)
         YW[:] = W * Y
@@ -400,16 +392,13 @@ def test_add_mmul_transpose_log():
             s = log(z + 1)
 
     sdfg = dace_func.to_sdfg()
-    
+
     return SDFGBackwardRunner(sdfg, "S"), torch_func, dict(
         X=np.random.rand(4, 5).astype(np.float32),
         W=np.random.rand(4, 3).astype(np.float32),
         Y=np.random.rand(4, 3).astype(np.float32))
 
 
-#def test_all():
-#    for test in all_tests:
-#        test()
-
-#if __name__ == "__main__":
-#    test_all()
+if __name__ == "__main__":
+    for test in all_tests:
+        test()
