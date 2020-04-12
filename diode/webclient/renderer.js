@@ -208,18 +208,15 @@ class CanvasManager {
     /**
      * Move/translate an element in the graph by a change in x and y.
      * @param {*} el                Element to move
-     * @param {*} x                 Change in x direction
-     * @param {*} y                 Change in y direction
+     * @param {*} old_mousepos      Old mouse position in canvas coordinates
+     * @param {*} new_mousepos      New mouse position in canvas coordinates
      * @param {*} entire_graph      Reference to the entire graph
      * @param {*} sdfg_list         List of SDFGs and nested SDFGs
      * @param {*} state_parent_list List of parent elements to SDFG states
      */
-    translate_element(el, x, y, entire_graph, sdfg_list, state_parent_list) {
+    translate_element(el, old_mousepos, new_mousepos, entire_graph, sdfg_list,
+                      state_parent_list) {
         this.stopAnimation();
-
-        // Calculate movement distance with current zoom level
-        let dx = x / this.user_transform.a;
-        let dy = y / this.user_transform.d;
 
         // Edges connected to the moving element
         let out_edges = [];
@@ -254,23 +251,49 @@ class CanvasManager {
             });
         }
 
+        // Compute theoretical initial displacement/movement
+        let dx = new_mousepos.x - old_mousepos.x;
+        let dy = new_mousepos.y - old_mousepos.y;
+
         if (parent_element) {
             // Calculate the box to bind the element to. This is given by
             // the parent element, i.e. the element where out to-be-moved
             // element is contained within
-            const min_x = (parent_element.x - (parent_element.width / 2)) +
-                (el.width / 2);
-            const min_y = (parent_element.y - (parent_element.height / 2)) +
-                (el.height / 2);
-            const max_x = (min_x + parent_element.width) - el.width;
-            const max_y = (min_y + parent_element.height) - el.height;
+            const parent_left_border =
+                (parent_element.x - (parent_element.width / 2));
+            const parent_rigth_border =
+                parent_left_border + parent_element.width;
+            const parent_top_border =
+                (parent_element.y - (parent_element.height / 2));
+            const parent_bottom_border =
+                parent_top_border + parent_element.height;
+
+            const el_h_margin = el.height / 2;
+            const el_w_margin = el.width / 2;
+            const min_x = parent_left_border + el_w_margin;
+            const min_y = parent_top_border + el_h_margin;
+            const max_x = parent_rigth_border - el_w_margin;
+            const max_y = parent_bottom_border - el_h_margin;
 
             // Make sure we don't move our element outside its parent's
-            // bounding box
-            const target_x = el.x + dx;
-            const target_y = el.y + dy;
-            if (target_x <= min_x || target_x >= max_x) dx = 0;
-            if (target_y <= min_y || target_y >= max_y) dy = 0;
+            // bounding box. If either the element or the mouse pointer are
+            // outside the parent, we clamp movement in that direction
+            let target_x = el.x + dx;
+            let target_y = el.y + dy;
+            if (target_x <= min_x ||
+                new_mousepos.x <= parent_left_border) {
+                dx = min_x - el.x;
+            } else if (target_x >= max_x ||
+                       new_mousepos.x >= parent_rigth_border) {
+                dx = max_x - el.x;
+            }
+            if (target_y <= min_y ||
+                new_mousepos.y <= parent_top_border) {
+                dy = min_y - el.y;
+            } else if (target_y >= max_y ||
+                       new_mousepos.y >= parent_bottom_border) {
+                dy = max_y - el.y;
+            }
         }
 
         if (el instanceof Edge) {
@@ -308,27 +331,28 @@ class CanvasManager {
                 state.x += dx;
                 state.y += dy;
                 const g = state.data.graph;
-                g.nodes().forEach(node_id => {
-                    const node = g.node(node_id);
-                    move_node_and_connectors(node);
-                });
-
-                g.edges().forEach(edge_id => {
-                    const edge = g.edge(edge_id);
-                    edge.x += dx;
-                    edge.y += dy;
-                    edge.points.forEach(point => {
-                        point.x += dx;
-                        point.y += dy;
+                if (g) {
+                    g.nodes().forEach(node_id => {
+                        const node = g.node(node_id);
+                        move_node_and_connectors(node);
                     });
-                });
+
+                    g.edges().forEach(edge_id => {
+                        const edge = g.edge(edge_id);
+                        edge.x += dx;
+                        edge.y += dy;
+                        edge.points.forEach(point => {
+                            point.x += dx;
+                            point.y += dy;
+                        });
+                    });
+                }
             });
         }
 
         // Move the node
         move_node_and_connectors(el);
 
-        // FIXME: el.data.state.collapsed reads FALSE if the state is collapsed!
         if (el.data.state && !el.data.state.attributes.is_collapsed) {
             // We're moving a state, move all its contained elements
             const graph = el.data.graph;
@@ -1374,6 +1398,8 @@ class SDFGRenderer {
             else
                 this.drag_start = event;
         } else if (evtype === "mousemove") {
+            // Calculate the change in mouse position in canvas coordinates
+            let old_mousepos = this.mousepos;
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
@@ -1385,7 +1411,7 @@ class SDFGRenderer {
                 if (this.last_dragged_element) {
                     this.canvas_manager.translate_element(
                         this.last_dragged_element,
-                        event.movementX, event.movementY,
+                        old_mousepos, this.mousepos,
                         this.graph, this.sdfg_list, this.state_parent_list
                     );
                     dirty = true;
