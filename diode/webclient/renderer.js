@@ -687,7 +687,7 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
-            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list);
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list, state_parent_list);
             let sdfginfo = calculateBoundingBox(nested_g);
             node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
             node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
