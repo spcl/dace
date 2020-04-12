@@ -306,8 +306,10 @@ class FPGACodeGen(TargetCodeGenerator):
 
     @staticmethod
     def detect_memory_widths(subgraphs):
-        # For each memory, checks that all the memlets are consistent (they have the same width).
-        # This allow us to instantiate to generate data paths with a single data size throughout the subgraph.
+        # For each memory, checks that all the memlets are consistent (they
+        # have the same width). This allow us to instantiate to generate data
+        # paths with a single data size throughout the subgraph. Exceptions are
+        # made for registers memories.
         stack = []
         for sg in subgraphs:
             stack += [(n, sg) for n in sg.nodes()]
@@ -323,6 +325,11 @@ class FPGACodeGen(TargetCodeGenerator):
                     continue
                 seen.add(node)
                 nodedesc = node.desc(graph)
+                if (isinstance(nodedesc, dace.data.Array) and
+                        nodedesc.storage == dace.StorageType.FPGA_Registers):
+                    # Allow registers to be inconsistent
+                    memory_widths[node.data] = 1
+                    continue
                 for edge in graph.all_edges(node):
                     if (isinstance(edge.data, dace.memlet.EmptyMemlet)
                             or edge.data.data is None):
