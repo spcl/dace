@@ -837,6 +837,7 @@ class SDFGRenderer {
         this.inclusive_ranges = false;
 
         // Mouse-related fields
+        this.move_mode = false;
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
         this.realmousepos = null; // Last position of the mouse pointer (in pixel coordinates)
         this.drag_start = null; // Null if the mouse/touch is not activated
@@ -923,6 +924,23 @@ class SDFGRenderer {
         d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.expand_all();
         d.title = 'Expand all elements';
+        this.toolbar.appendChild(d);
+
+        // Enter object moving mode
+        d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">open_with</i>';
+        d.style = 'padding-bottom: 0px; user-select: none';
+        d.onclick = () => {
+            this.move_mode = !this.move_mode;
+            if (this.move_mode) {
+                d.innerHTML = '<i class="material-icons">done</i>';
+                d.title = 'Exit object moving mode';
+            } else {
+                d.innerHTML = '<i class="material-icons">open_with</i>';
+                d.title = 'Enter object moving mode';
+            }
+        };
+        d.title = 'Enter object moving mode';
         this.toolbar.appendChild(d);
 
         this.container.append(this.toolbar);
@@ -1377,39 +1395,40 @@ class SDFGRenderer {
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
-            // TODO: Find a more intuitive activation for dragging objects.
-            // We're currently moving only if mouse button 3 (wheel) is active
-            if (this.drag_start && event.buttons & 4) {
-                // Only accept the secondary mouse button as a source for
-                // dragging objects
-                if (this.last_dragged_element) {
-                    this.canvas_manager.translate_element(
-                        this.last_dragged_element,
-                        event.movementX, event.movementY,
-                        this.graph, this.sdfg_list, this.state_parent_list
-                    );
+            if (this.drag_start && event.buttons & 1) {
+                // Only accept the primary mouse button as dragging source
+                if (this.move_mode) {
+                    if (this.last_dragged_element) {
+                        this.canvas.style.cursor = 'grabbing';
+                        this.canvas_manager.translate_element(
+                            this.last_dragged_element,
+                            event.movementX, event.movementY,
+                            this.graph, this.sdfg_list, this.state_parent_list
+                        );
+                        dirty = true;
+                        this.draw_async();
+                        return false;
+                    } else {
+                        const mouse_elements = this.find_elements_under_cursor(
+                            this.mousepos.x, this.mousepos.y
+                        );
+                        if (mouse_elements.foreground_elem) {
+                            this.last_dragged_element =
+                                mouse_elements.foreground_elem;
+                            this.canvas.style.cursor = 'grabbing';
+                            return false;
+                        }
+                        return true;
+                    }
+                } else {
+                    this.canvas_manager.translate(event.movementX,
+                        event.movementY);
+
+                    // Mark for redraw
                     dirty = true;
                     this.draw_async();
                     return false;
-                } else {
-                    const mouse_elements = this.find_elements_under_cursor(
-                        this.mousepos.x, this.mousepos.y
-                    );
-                    if (mouse_elements.foreground_elem) {
-                        this.last_dragged_element =
-                            mouse_elements.foreground_elem;
-                        return false;
-                    }
-                    return true;
                 }
-            } else if (this.drag_start && event.buttons & 1) {
-                // Only accept the primary mouse button as dragging source
-                this.canvas_manager.translate(event.movementX, event.movementY);
-
-                // Mark for redraw
-                dirty = true;
-                this.draw_async();
-                return false;
             } else {
                 this.drag_start = null;
                 if (event.buttons & 1 || event.buttons & 4)
@@ -1479,10 +1498,16 @@ class SDFGRenderer {
         let foreground_elem = elements_under_cursor.foreground_elem;
         
         // Change mouse cursor accordingly
-        if (total_elements > 0)
-            this.canvas.style.cursor = 'pointer';
-        else
+        if (total_elements > 0) {
+            if (this.move_mode && this.drag_start)
+                this.canvas.style.cursor = 'grabbing';
+            else if (this.move_mode)
+                this.canvas.style.cursor = 'grab';
+            else
+                this.canvas.style.cursor = 'pointer';
+        } else {
             this.canvas.style.cursor = 'auto';
+        }
 
         this.tooltip = null;
         this.last_hovered_elements = elements;
