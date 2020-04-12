@@ -65,6 +65,8 @@ run_all() {
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
+    run_sample intel_fpga/veclen_conversion.py "\n"
+
     # #### WCR ####
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
