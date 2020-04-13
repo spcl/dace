@@ -4,6 +4,7 @@ import ctypes
 import aenum
 import inspect
 import numpy
+import re
 from functools import wraps
 
 from dace.registry import extensible_enum
