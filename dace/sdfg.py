@@ -25,7 +25,7 @@ from dace.frontend.python import wrappers
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
-from dace.data import validate_name
+from dace.dtypes import validate_name
 from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
@@ -363,7 +363,7 @@ class SDFG(OrderedDiGraph):
             return
 
         # Replace in arrays and symbols (if a variable name)
-        if dt.validate_name(new_name):
+        if validate_name(new_name):
             replace_dict(self._arrays, name, new_name)
             replace_dict(self._symbols, name, new_name)
 

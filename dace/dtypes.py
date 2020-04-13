@@ -924,3 +924,11 @@ def deduplicate(iterable):
     """ Removes duplicates in the passed iterable. """
     return type(iterable)(
         [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+
+
+def validate_name(name):
+    if not isinstance(name, str) or len(name) == 0:
+        return False
+    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
+        return False
+    return True
