@@ -44,7 +44,7 @@ run_sample() {
     echo -e ${3} | $PYTHON_BINARY ${1}.py ${@:4}
 
     if [ $? -ne 0 ]; then
-        bail "$1 (${RED}Wrong emulation result${NC})"
+        bail "$1"
     fi
 
     return 0
@@ -65,7 +65,7 @@ run_all() {
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
-    run_sample intel_fpga/veclen_conversion.py "\n"
+    run_sample intel_fpga/veclen_conversion "\n"
 
     # #### WCR ####
     # simple WCR (accumulates on scalar)
