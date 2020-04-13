@@ -77,8 +77,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # Override Intel FPGA OpenCL installation directory
         if Config.get("compiler", "intel_fpga", "path"):
             options.append("-DINTELFPGAOCL_ROOT_DIR=\"{}\"".format(
-                Config.get("compiler", "intel_fpga", "path").replace("\\",
-                                                                    "/")))
+                Config.get("compiler", "intel_fpga",
+                           "path").replace("\\", "/")))
         return options
 
     def get_generated_codeobjects(self):
@@ -433,8 +433,10 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
     def generate_host_function_epilogue(sdfg, state, host_stream):
         state_id = sdfg.node_id(state)
         host_stream.write(
-            "const auto start = std::chrono::high_resolution_clock::now();", sdfg, state_id)
-        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+            "const auto start = std::chrono::high_resolution_clock::now();",
+            sdfg, state_id)
+        launch_async = Config.get_bool("compiler", "intel_fpga",
+                                       "launch_async")
         if launch_async:
             # hlslib uses std::async to launch each kernel launch as an
             # asynchronous task in a separate C++ thread. This seems to cause
@@ -490,9 +492,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 continue
             added.add(pname)
             if isinstance(p, dace.data.Array):
-                arg = self.make_kernel_argument(p, pname,
-                                                self._memory_widths[pname],
-                                                is_output, True)
+                arg = self.make_kernel_argument(
+                    p, pname, self._memory_widths[(pname, sdfg)], is_output,
+                    True)
             else:
                 arg = self.make_kernel_argument(p, pname, 1, is_output, True)
             if arg is not None:
@@ -799,11 +801,11 @@ __kernel void \\
         memlet = edge.data
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
-        memlet_type = self.make_vector_type(data_desc.dtype,
-                                            self._memory_widths[data_name],
+        memory_width = self._memory_widths[(data_name, sdfg)]
+        memlet_type = self.make_vector_type(data_desc.dtype, memory_width,
                                             False)
         offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
-                                     self._memory_widths[data_name])
+                                     memory_width)
 
         result = ""
 
@@ -903,11 +905,11 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
             data_desc = sdfg.arrays[data_name]
-            memlet_type = self.make_vector_type(data_desc.dtype,
-                                                self._memory_widths[data_name],
+            memory_width = self._memory_widths[(data_name, sdfg)]
+            memlet_type = self.make_vector_type(data_desc.dtype, memory_width,
                                                 False)
             offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
-                                         self._memory_widths[data_name])
+                                         memory_width)
 
             result = ""
 
@@ -915,14 +917,12 @@ __kernel void \\
             dst_def_type = self._dispatcher.defined_vars.get(data_name)
 
             read_expr = self.make_read(src_def_type, memlet_type, connector,
-                                       self._memory_widths[data_name],
-                                       connector, None)
+                                       memory_width, connector, None)
 
             # create write expression
             write_expr = self.make_write(dst_def_type, memlet_type, data_name,
-                                         self._memory_widths[data_name],
-                                         data_name, offset, read_expr,
-                                         memlet.wcr)
+                                         memory_width, data_name, offset,
+                                         read_expr, memlet.wcr)
 
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
@@ -1168,7 +1168,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         veclen_lhs = memlet.veclen
         try:
-            memwidth_lhs = self.memory_widths[memlet.data]
+            memwidth_lhs = self.memory_widths[(memlet.data, self.sdfg)]
         except KeyError:
             memwidth_lhs = 1  # Is not a data container
         try:
@@ -1183,8 +1183,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                     target, veclen_lhs, value, veclen_rhs))
         veclen = veclen_lhs
         try:
-            memwidth_rhs = self.memory_widths[self.memlets[node.value.id]
-                                              [0].data]
+            memwidth_rhs = self.memory_widths[(
+                self.memlets[node.value.id][0].data, self.sdfg)]
         except (AttributeError, KeyError):
             memwidth_rhs = veclen_rhs  # Is not a data container
         if ((memwidth_lhs > memwidth_rhs and memwidth_rhs != 1)

@@ -101,11 +101,6 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.CPU_Stack,
             dace.dtypes.StorageType.FPGA_Global, None, self)
 
-        # Inspect the vector length of all memlets leading to each memory, to
-        # make sure that they're consistent, and to allow us to instantiate the
-        # memories as vector types to enable HLS to generate wider data paths.
-        self._memory_widths = type(self).detect_memory_widths(sdfg)
-
     @property
     def has_initializer(self):
         return True
@@ -335,33 +330,38 @@ class FPGACodeGen(TargetCodeGenerator):
                 for edge in state.in_edges(node):
                     memlet_data = edge.data.data
                     if memlet_data is not None:
-                        alias[edge.dst_conn] = memlet_data
+                        alias[(edge.dst_conn, nested_sdfg)] = (memlet_data,
+                                                               sdfg)
                 for edge in state.out_edges(node):
                     memlet_data = edge.data.data
                     if memlet_data is not None:
-                        alias[edge.src_conn] = memlet_data
+                        alias[(edge.src_conn, nested_sdfg)] = (memlet_data,
+                                                               sdfg)
             elif isinstance(node, dace.graph.nodes.AccessNode):
                 if node in seen:
                     continue
                 seen.add(node)
                 name = node.data
                 desc = sdfg.data(name)
-                while name in alias:
-                    name = alias[name]  # Trace to outermost version
+                # Trace to outermost version
+                key = (name, sdfg)
+                while key in alias:
+                    key = alias[key]
+                name = key[0]
                 for edge in state.all_edges(node):
                     if (isinstance(edge.data, dace.memlet.EmptyMemlet)
                             or edge.data.data is None):
                         continue
                     if (isinstance(edge.src, dace.graph.nodes.AccessNode) and
-                        isinstance(edge.dst, dace.graph.nodes.AccessNode)):
+                            isinstance(edge.dst, dace.graph.nodes.AccessNode)):
                         # Vectorization is not relevant for memcopies, but if
                         # this memory is not found anywhere else, we need to
                         # set it to 1 later
-                        if name not in memory_widths:
-                            memory_widths[name] = None
+                        if key not in memory_widths:
+                            memory_widths[key] = None
                         continue
-                    if (name not in memory_widths
-                            or memory_widths[name] is None):
+                    if (key not in memory_widths
+                            or memory_widths[key] is None):
                         if (isinstance(desc, dace.data.Stream)
                                 and desc.veclen != edge.data.veclen):
                             raise ValueError(
@@ -369,24 +369,24 @@ class FPGACodeGen(TargetCodeGenerator):
                                 "match vector length of {} ({})".format(
                                     edge.data, edge.data.veclen, node.data,
                                     nodedesc.veclen))
-                        memory_widths[name] = edge.data.veclen
+                        memory_widths[key] = edge.data.veclen
                     else:
-                        if (memory_widths[name] is not None
-                                and memory_widths[name] != edge.data.veclen):
+                        if (memory_widths[key] is not None
+                                and memory_widths[key] != edge.data.veclen):
                             # If the vector length is inconsistent, set it to 1
-                            memory_widths[name] = 1
+                            memory_widths[key] = 1
         # Inherit the parent memory width for all aliased nested arrays
-        for name in alias:
-            if name in memory_widths:
+        for key in alias:
+            if key in memory_widths:
                 continue
-            trace = name
+            trace = key
             while trace in alias:
                 trace = alias[trace]
-            memory_widths[name] = memory_widths[trace]
-        for name, width in memory_widths.items():
+            memory_widths[key] = memory_widths[trace]
+        for key, width in memory_widths.items():
             if width is None:
                 # If no non-memcopy accesses were found, default to one
-                memory_widths[name] = 1
+                memory_widths[key] = 1
         return memory_widths
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
@@ -495,7 +495,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 # Absorb vector size into type and adjust array size
                 # accordingly
-                veclen = self._memory_widths[node.data]
+                veclen = self._memory_widths[(node.data, sdfg)]
                 generate_scalar = False
                 if veclen > 1:
                     arrsize_symbolic = nodedesc.total_size
@@ -958,8 +958,6 @@ class FPGACodeGen(TargetCodeGenerator):
                         # is the case in a tiled map
                         pass
 
-
-
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
                             loop_var_type, var, sym2cpp(begin), var,
@@ -1210,6 +1208,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
                         function_stream, callsite_stream):
+
+        # Inspect the vector length of all memlets leading to each memory, to
+        # make sure that they're consistent, and to allow us to instantiate the
+        # memories as vector types to enable HLS to generate wider data paths.
+        self._memory_widths = type(self).detect_memory_widths(sdfg)
 
         if self._in_device_code:
             from dace.codegen.codegen import CodegenError

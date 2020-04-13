@@ -284,7 +284,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_args = []
         for is_output, dataname, data in global_data_parameters:
             kernel_arg = self.make_kernel_argument(
-                data, dataname, self._memory_widths[dataname], is_output, True)
+                data, dataname, self._memory_widths[(dataname, sdfg)],
+                is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
 
@@ -372,7 +373,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
                 kernel_args_module.append("dace::vec<{}, {}> {}*{}".format(
-                    p.dtype.ctype, self._memory_widths[pname],
+                    p.dtype.ctype, self._memory_widths[(pname, sdfg)],
                     "const " if not is_output else "", arr_name))
             else:
                 # Don't make duplicate arguments for other types than arrays
@@ -478,8 +479,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                            if has_out_ptr else "nullptr")
                 module_body_stream.write(
                     "dace::ArrayInterface<{}, {}> {}({}, {});".format(
-                        arg.dtype.ctype, self._memory_widths[argname], argname,
-                        in_ptr, out_ptr))
+                        arg.dtype.ctype, self._memory_widths[(argname, sdfg)],
+                        argname, in_ptr, out_ptr))
             module_body_stream.write("\n")
 
         # Allocate local transients
