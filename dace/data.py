@@ -13,14 +13,6 @@ from dace.properties import (Property, make_properties, DictProperty,
                              DebugInfoProperty, CodeProperty, ListProperty)
 
 
-def validate_name(name):
-    if not isinstance(name, str):
-        return False
-    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
-        return False
-    return True
-
-
 def create_datadescriptor(obj):
     """ Creates a data descriptor from various types of objects.
         @see: dace.data.Data
