@@ -238,7 +238,11 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                             for e in state.out_edges(node)):
                         continue
 
-                    if sdict[node] is None:
+                    blacklist = [dtypes.StorageType.GPU_Global,
+                                 dtypes.StorageType.GPU_Shared,
+                                 dtypes.StorageType.GPU_Stack,
+                                 dtypes.StorageType.CPU_Pinned]
+                    if sdict[node] is None and not (nodedesc.storage in blacklist):
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
@@ -247,7 +251,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         if (self.toplevel_trans
                                 and not isinstance(nodedesc, data.Stream)):
                             nodedesc.toplevel = True
-                    else:
+                    elif not (nodedesc.storage in blacklist):
                         # Make internal transients registers
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
