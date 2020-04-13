@@ -1097,7 +1097,8 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        val = SymbolicProperty.from_string(str(val))
+        if not dace.symbolic.issymbolic(val):
+            val = SymbolicProperty.from_string(str(val))
         super(SymbolicProperty, self).__set__(obj, val)
 
     @staticmethod
