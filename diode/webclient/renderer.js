@@ -278,21 +278,40 @@ class CanvasManager {
             // Make sure we don't move our element outside its parent's
             // bounding box. If either the element or the mouse pointer are
             // outside the parent, we clamp movement in that direction
-            let target_x = el.x + dx;
-            let target_y = el.y + dy;
-            if (target_x <= min_x ||
-                new_mousepos.x <= parent_left_border) {
-                dx = min_x - el.x;
-            } else if (target_x >= max_x ||
-                       new_mousepos.x >= parent_rigth_border) {
-                dx = max_x - el.x;
-            }
-            if (target_y <= min_y ||
-                new_mousepos.y <= parent_top_border) {
-                dy = min_y - el.y;
-            } else if (target_y >= max_y ||
-                       new_mousepos.y >= parent_bottom_border) {
-                dy = max_y - el.y;
+            if (el instanceof Edge) {
+                let target_x = el.points[1].x + dx;
+                let target_y = el.points[1].y + dy;
+                if (target_x <= min_x ||
+                    new_mousepos.x <= parent_left_border) {
+                    dx = min_x - el.points[1].x;
+                } else if (target_x >= max_x ||
+                           new_mousepos.x >= parent_rigth_border) {
+                    dx = max_x - el.points[1].x;
+                }
+                if (target_y <= min_y ||
+                    new_mousepos.y <= parent_top_border) {
+                    dy = min_y - el.points[1].y;
+                } else if (target_y >= max_y ||
+                           new_mousepos.y >= parent_bottom_border) {
+                    dy = max_y - el.points[1].y;
+                }
+            } else {
+                let target_x = el.x + dx;
+                let target_y = el.y + dy;
+                if (target_x <= min_x ||
+                    new_mousepos.x <= parent_left_border) {
+                    dx = min_x - el.x;
+                } else if (target_x >= max_x ||
+                           new_mousepos.x >= parent_rigth_border) {
+                    dx = max_x - el.x;
+                }
+                if (target_y <= min_y ||
+                    new_mousepos.y <= parent_top_border) {
+                    dy = min_y - el.y;
+                } else if (target_y >= max_y ||
+                           new_mousepos.y >= parent_bottom_border) {
+                    dy = max_y - el.y;
+                }
             }
         }
 
