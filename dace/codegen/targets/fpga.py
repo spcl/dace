@@ -310,44 +310,88 @@ class FPGACodeGen(TargetCodeGenerator):
                                                skip_entry_node=False)
 
     @staticmethod
-    def detect_memory_widths(subgraphs):
-        # For each memory, checks that all the memlets are consistent (they have the same width).
-        # This allow us to instantiate to generate data paths with a single data size throughout the subgraph.
-        stack = []
-        for sg in subgraphs:
-            stack += [(n, sg) for n in sg.nodes()]
+    def detect_memory_widths(parent_sdfg):
+        """ For each memory, checks that all the memlets are consistent (they
+            have the same width). This allow us to instantiate to generate data
+            paths with a single data size throughout the subgraph. This is
+            enforced for streams and global memories, but is optional for local
+            memories.
+        """
         memory_widths = {}
         seen = set()
-        while len(stack) > 0:
-            node, graph = stack.pop()
+        alias = {}  # Maps nested containers to their parent containers
+        q = collections.deque()  # BFS traversal
+        for state in parent_sdfg.nodes():
+            q.extendleft((n, state, parent_sdfg) for n in state.nodes())
+        while len(q) > 0:
+            node, state, sdfg = q.pop()
             if isinstance(node, dace.graph.nodes.NestedSDFG):
-                for state in node.sdfg.states():
-                    stack += [(n, state) for n in state.nodes()]
+                nested_sdfg = node.sdfg
+                for nested_state in nested_sdfg.nodes():
+                    q.extendleft((n, nested_state, nested_sdfg)
+                                 for n in nested_state.nodes())
+                # Remember mapping of outer to inner containers given by the
+                # connectors
+                for edge in state.in_edges(node):
+                    memlet_data = edge.data.data
+                    if memlet_data is not None:
+                        alias[(edge.dst_conn, nested_sdfg)] = (memlet_data,
+                                                               sdfg)
+                for edge in state.out_edges(node):
+                    memlet_data = edge.data.data
+                    if memlet_data is not None:
+                        alias[(edge.src_conn, nested_sdfg)] = (memlet_data,
+                                                               sdfg)
             elif isinstance(node, dace.graph.nodes.AccessNode):
                 if node in seen:
                     continue
                 seen.add(node)
-                nodedesc = node.desc(graph)
-                for edge in graph.all_edges(node):
+                name = node.data
+                desc = sdfg.data(name)
+                # Trace to outermost version
+                key = (name, sdfg)
+                while key in alias:
+                    key = alias[key]
+                name = key[0]
+                for edge in state.all_edges(node):
                     if (isinstance(edge.data, dace.memlet.EmptyMemlet)
                             or edge.data.data is None):
                         continue
-                    if node.data not in memory_widths:
-                        if (isinstance(nodedesc, dace.data.Stream)
-                                and nodedesc.veclen != edge.data.veclen):
+                    if (isinstance(edge.src, dace.graph.nodes.AccessNode) and
+                            isinstance(edge.dst, dace.graph.nodes.AccessNode)):
+                        # Vectorization is not relevant for memcopies, but if
+                        # this memory is not found anywhere else, we need to
+                        # set it to 1 later
+                        if key not in memory_widths:
+                            memory_widths[key] = None
+                        continue
+                    if (key not in memory_widths
+                            or memory_widths[key] is None):
+                        if (isinstance(desc, dace.data.Stream)
+                                and desc.veclen != edge.data.veclen):
                             raise ValueError(
                                 "Vector length on memlet {} ({}) doesn't "
                                 "match vector length of {} ({})".format(
                                     edge.data, edge.data.veclen, node.data,
                                     nodedesc.veclen))
-                        memory_widths[node.data] = edge.data.veclen
+                        memory_widths[key] = edge.data.veclen
                     else:
-                        if memory_widths[node.data] != edge.data.veclen:
-                            raise dace.codegen.codegen.CodegenError(
-                                "Inconsistent vector length "
-                                "on FPGA for \"{}\": got {}, had {}".format(
-                                    node.data, edge.data.veclen,
-                                    memory_widths[node.data]))
+                        if (memory_widths[key] is not None
+                                and memory_widths[key] != edge.data.veclen):
+                            # If the vector length is inconsistent, set it to 1
+                            memory_widths[key] = 1
+        # Inherit the parent memory width for all aliased nested arrays
+        for key in alias:
+            if key in memory_widths:
+                continue
+            trace = key
+            while trace in alias:
+                trace = alias[trace]
+            memory_widths[key] = memory_widths[trace]
+        for key, width in memory_widths.items():
+            if width is None:
+                # If no non-memcopy accesses were found, default to one
+                memory_widths[key] = 1
         return memory_widths
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
@@ -461,7 +505,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 # Absorb vector size into type and adjust array size
                 # accordingly
-                veclen = self._memory_widths[node.data]
+                veclen = self._memory_widths[(node.data, sdfg)]
                 generate_scalar = False
                 if veclen > 1:
                     arrsize_symbolic = nodedesc.total_size
@@ -934,8 +978,6 @@ class FPGACodeGen(TargetCodeGenerator):
                         # is the case in a tiled map
                         pass
 
-
-
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
                             loop_var_type, var, sym2cpp(begin), var,
@@ -1190,10 +1232,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Inspect the vector length of all memlets leading to each memory, to
         # make sure that they're consistent, and to allow us to instantiate the
         # memories as vector types to enable HLS to generate wider data paths.
-        # Since we cannot pass this auxiliary data structure to the allocator,
-        # which is called by the dispatcher, we temporarily store it in the
-        # codegen object (naughty).
-        self._memory_widths = type(self).detect_memory_widths(subgraphs)
+        self._memory_widths = type(self).detect_memory_widths(sdfg)
 
         if self._in_device_code:
             from dace.codegen.codegen import CodegenError
@@ -1214,9 +1253,6 @@ class FPGACodeGen(TargetCodeGenerator):
         # Store code strings to be passed to compilation phase
         self._kernel_codes.append((kernel_name, kernel_stream.getvalue()))
 
-        # Delete the field we've abused to pass this dictionary to the memory
-        # allocator
-        del self._memory_widths
         self._allocated_global_arrays = set()
 
     def generate_modules(self, sdfg, state, kernel_name, subgraphs,
