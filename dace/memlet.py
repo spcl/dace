@@ -22,7 +22,7 @@ class Memlet(object):
     """
 
     # Properties
-    veclen = Property(dtype=int, desc="Vector length")
+    veclen = Property(dtype=int, desc="Vector length", default=1)
     num_accesses = SymbolicProperty(default=0)
     subset = SubsetProperty(default=subsets.Range([]))
     other_subset = SubsetProperty(allow_none=True)
