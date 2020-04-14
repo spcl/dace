@@ -304,8 +304,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         node.schedule = dtypes.ScheduleType.GPU_Device
                     elif (isinstance(node, nodes.EntryNode)
                           and self.sequential_innermaps):
-                        # node.schedule = dtypes.ScheduleType.Sequential
-                        pass
+                        node.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################
         # Step 7: Introduce copy-out if data used in outgoing interstate edges
