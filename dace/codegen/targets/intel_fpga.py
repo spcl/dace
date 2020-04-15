@@ -1516,7 +1516,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                     node.value.id) == DefinedType.RemoteStream and self.memlets[node.value.id][0].num_accesses != 1:
                     # read from a remote stream in the right part of the assignment
                     updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(
-                        unparse(value), target))
+                        value, target))
                 else:
                     if memwidth_rhs > memwidth_lhs:
                         code_str = unpack_str + "({}, {});".format(value, target)
@@ -1538,12 +1538,10 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # instead of directly writing to channel
                 updated = ast.Name(id="{} = {};".format(target, value))
         elif memlet is not None and memlet.num_accesses != 1:
-
             # if the target is a Remote Stream, perform a push
             if self.defined_vars.get(target) == DefinedType.RemoteStream:
                 newnode = ast.Name(id="SMI_Push(&{}, &{}); ".format(
-                    target, cppunparse.cppunparse(value,
-                                                  expr_semicolon=False)))
+                    target, value))
             else:
                 newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
