@@ -166,6 +166,10 @@ class Scalar(Data):
     def offset(self):
         return [0]
 
+    @property
+    def materialize_func(self):
+        return None
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
