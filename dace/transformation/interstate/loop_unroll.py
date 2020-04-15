@@ -23,8 +23,9 @@ class LoopUnroll(DetectLoop):
                      "iterations (loop must be constant-sized for 0)")
 
     @staticmethod
-    def _loop_range(itervar: str, inedges: List[gr.Edge], condition: sp.Expr
-                    ) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
+    def _loop_range(
+            itervar: str, inedges: List[gr.Edge],
+            condition: sp.Expr) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
         """
         Finds loop range from state machine.
         :param itersym: String representing the iteration variable.
@@ -122,7 +123,8 @@ class LoopUnroll(DetectLoop):
             raise NotImplementedError  # TODO(later)
 
         # Find the state prior to the loop
-        if str(sp.simplify(rng[0])) == str(sp.simplify(guard_inedges[0].data.assignments[itervar])):
+        if str(sp.simplify(rng[0])) == str(
+                sp.simplify(guard_inedges[0].data.assignments[itervar])):
             before_state: sd.SDFGState = guard_inedges[0].src
             last_state: sd.SDFGState = guard_inedges[1].src
         else:
@@ -156,7 +158,7 @@ class LoopUnroll(DetectLoop):
             # Replace iterate with value in each state
             for state in new_states:
                 state.set_label(state.label + '_%s_%d' % (itervar, i))
-                state.replace(itervar, str(i))
+                state.replace(itervar, i)
 
             # Add subgraph to original SDFG
             for edge in loop_subgraph.edges():
