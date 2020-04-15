@@ -4344,6 +4344,13 @@ def scope_symbols(dfg):
         else:
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))
+
+    for edge in dfg.edges():
+        if edge.data.data:
+            subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
+                                  for symname, sym in edge.data.subset.free_symbols.items()
+                                  if symname not in iteration_variables)
+
     return iteration_variables, subset_symbols
 
 
