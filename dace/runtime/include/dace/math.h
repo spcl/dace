@@ -159,32 +159,6 @@ namespace dace
             return (T)std::pow(a, b);
         }
 
-#ifndef DACE_XILINX
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
-        {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-//#endif
-        }
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
-        {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
-            unsigned int result = 1;
-            for (unsigned int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-//#endif
-        }
-#endif
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
         {
