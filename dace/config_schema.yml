@@ -128,7 +128,7 @@ required:
 
             autobuild_bitstreams:
                 type: bool
-                default: false
+                default: true
                 title: Automatically build bitstreams
                 description: >
                     If set to true, CMake will automatically build missing
