@@ -133,7 +133,7 @@ def loads(*args, context=None, **kwargs):
 
 
 def dumps(*args, **kwargs):
-    return json.dumps(*args, default=to_json, **kwargs)
+    return json.dumps(*args, default=to_json, indent=2, **kwargs)
 
 
 def all_properties_to_json(object_with_properties):
