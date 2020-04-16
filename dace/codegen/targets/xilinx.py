@@ -46,6 +46,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         target_platform = Config.get("compiler", "xilinx", "platform")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "xilinx", "enable_debugging") else "OFF")
+        autobuild = ("ON" if Config.get_bool(
+            "compiler", "autobuild_bitstreams") else "OFF")
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -53,6 +55,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
