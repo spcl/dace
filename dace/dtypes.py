@@ -272,13 +272,16 @@ def result_type_of(lhs, rhs):
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
     rhs_ = rhs.type if isinstance(rhs, typeclass) else rhs
+    # Extract data sizes (seems the type itself doesn't expose this)
+    size_lhs = lhs_(0).itemsize
+    size_rhs = rhs_(0).itemsize
     # Both are integers
     if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(
             rhs_, numpy.integer):
         # If one byte width is larger, use it
-        if lhs_.itemsize > rhs_.itemsize:
+        if size_lhs > size_rhs:
             return lhs
-        elif lhs_.itemsize < rhs_.itemsize:
+        elif size_lhs < size_rhs:
             return rhs
         # Sizes are the same
         if numpy.issubdtype(lhs_, numpy.unsignedinteger):
@@ -294,7 +297,7 @@ def result_type_of(lhs, rhs):
     if numpy.issubdtype(rhs_, numpy.integer):
         return lhs
     # Both sides are floating point numbers
-    if lhs_.itemsize > rhs_.itemsize:
+    if size_lhs > size_rhs:
         return lhs
     return rhs  # RHS is bigger
 
