@@ -21,6 +21,10 @@ class Vectorization(pattern_matching.Transformation):
                                 "parent SDFGs",
                                 dtype=bool,
                                 default=False)
+    strided_map = Property(desc="Use strided map range (jump by vector length)"
+                           " instead of modifying memlets",
+                           dtype=bool,
+                           default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _tasklet = nodes.Tasklet('_')
@@ -112,10 +116,18 @@ class Vectorization(pattern_matching.Transformation):
         vector_size = self.vector_len
 
         # Change the step of the inner-most dimension.
-        dim_from, dim_to, _dim_step = map_entry.map.range[-1]
-        map_entry.map.range[-1] = (dim_from, dim_to, vector_size)
+        dim_from, dim_to, dim_step = map_entry.map.range[-1]
+        if self.strided_map:
+            map_entry.map.range[-1] = (dim_from, dim_to, vector_size)
+        else:
+            map_entry.map.range[-1] = (dim_from,
+                                       (dim_to + 1) / vector_size - 1,
+                                       dim_step)
+
+        # TODO: Postamble and/or preamble non-vectorized map
 
         # Vectorize memlets adjacent to the tasklet.
+        processed_edges = set()
         for edge in graph.all_edges(tasklet):
             _src, _, _dest, _, memlet = edge
 
@@ -132,30 +144,39 @@ class Vectorization(pattern_matching.Transformation):
                 symbols = symbolic.pystr_to_symbolic(
                     memlet.subset[-1]).free_symbols
 
-            if param in symbols:
-                try:
-                    # propagate vector length inside this SDFG
-                    for e in graph.memlet_path(edge):
-                        e.data.veclen = vector_size
+            if param not in symbols:
+                continue
+            try:
+                # propagate vector length inside this SDFG
+                for e in graph.memlet_tree(edge):
+                    e.data.veclen = vector_size
+                    if not self.strided_map and e not in processed_edges:
+                        e.data.subset.replace({param: vector_size * param})
+                        processed_edges.add(e)
 
+                # propagate to the parent (TODO: handle multiple level of nestings)
+                if self.propagate_parent and sdfg.parent is not None:
                     source_edge = graph.memlet_path(edge)[0]
                     sink_edge = graph.memlet_path(edge)[-1]
 
-                    # propagate to the parent (TODO: handle multiple level of nestings)
-                    if self.propagate_parent and sdfg.parent is not None:
-                        # Find parent Nested SDFG node
-                        parent_node = next(n for n in sdfg.parent.nodes()
-                                           if isinstance(n, nodes.NestedSDFG)
-                                           and n.sdfg.name == sdfg.name)
+                    # Find parent Nested SDFG node
+                    parent_node = next(n for n in sdfg.parent.nodes()
+                                       if isinstance(n, nodes.NestedSDFG)
+                                       and n.sdfg.name == sdfg.name)
 
-                        # continue in propagating the vector length following the path that arrives to source_edge or
-                        # starts from sink_edge
-                        for pe in sdfg.parent.all_edges(parent_node):
-                            if str(pe.dst_conn) == str(source_edge.src) or str(
-                                    pe.src_conn) == str(sink_edge.dst):
-                                for ppe in sdfg.parent.memlet_path(pe):
-                                    ppe.data.veclen = vector_size
+                    # continue in propagating the vector length following the
+                    # path that arrives to source_edge or starts from sink_edge
+                    for pe in sdfg.parent.all_edges(parent_node):
+                        if str(pe.dst_conn) == str(source_edge.src) or str(
+                                pe.src_conn) == str(sink_edge.dst):
+                            for ppe in sdfg.parent.memlet_tree(pe):
+                                ppe.data.veclen = vector_size
+                                if (not self.strided_map
+                                        and ppe not in processed_edges):
+                                    ppe.data.subset.replace(
+                                        {param: vector_size * param})
+                                    processed_edges.add(ppe)
 
-                except AttributeError:
-                    raise
+            except AttributeError:
+                raise
         return

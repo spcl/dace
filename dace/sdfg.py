@@ -25,7 +25,7 @@ from dace.frontend.python import wrappers
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
-from dace.data import validate_name
+from dace.dtypes import validate_name
 from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
@@ -363,7 +363,7 @@ class SDFG(OrderedDiGraph):
             return
 
         # Replace in arrays and symbols (if a variable name)
-        if dt.validate_name(new_name):
+        if validate_name(new_name):
             replace_dict(self._arrays, name, new_name)
             replace_dict(self._symbols, name, new_name)
 
@@ -2316,6 +2316,54 @@ class MemletTrackingView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
+def trace_nested_access(node, state, sdfg):
+    """ Given an AccessNode in a nested SDFG, trace the accessed memory
+        back to the outermost scope in which it is defined.
+
+        :param node: An access node.
+        :param state: State in which the access node is located.
+        :param sdfg: SDFG in which the access node is located.
+        :return: A list of scopes (node, state, sdfg) in which the given
+                 data is accessed, from outermost scope to innermost scope.
+        """
+    if node.access == dace.dtypes.AccessType.ReadWrite:
+        raise NotImplementedError("Access node must be read or write only")
+    curr_node = node
+    curr_sdfg = sdfg
+    trace = [(node, state, sdfg)]
+    while curr_sdfg.parent is not None:
+        curr_state = curr_sdfg.parent
+        # Find the nested SDFG containing ourself in the parent state
+        for nested_sdfg in curr_state.nodes():
+            if isinstance(
+                    nested_sdfg,
+                    dace.nodes.NestedSDFG) and nested_sdfg.sdfg == curr_sdfg:
+                break
+        else:
+            raise ValueError("{} not found in its parent state {}".format(
+                curr_sdfg.name, curr_state.label))
+        if node.access == dace.dtypes.AccessType.ReadOnly:
+            for e in curr_state.in_edges(nested_sdfg):
+                if e.dst_conn == curr_node.data:
+                    # See if the input to this connector traces back to an
+                    # access node. If not, just give up here
+                    curr_node = find_input_arraynode(curr_state, e)
+                    curr_sdfg = curr_state.parent  # Exit condition
+                    if isinstance(curr_node, dace.nodes.AccessNode):
+                        trace.append((curr_node, curr_state, curr_sdfg))
+                    break
+        if node.access == dace.dtypes.AccessType.WriteOnly:
+            for e in curr_state.out_edges(nested_sdfg):
+                if e.src_conn == curr_node.data:
+                    # See if the output of this connector traces back to an
+                    # access node. If not, just give up here
+                    curr_node = find_output_arraynode(curr_state, e)
+                    curr_sdfg = curr_state.parent  # Exit condition
+                    if isinstance(curr_node, dace.nodes.AccessNode):
+                        trace.append((curr_node, curr_state, curr_sdfg))
+                    break
+    return list(reversed(trace))
 
 
 class ScopeSubgraphView(SubgraphView, MemletTrackingView):
