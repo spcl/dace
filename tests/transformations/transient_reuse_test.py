@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     sdfg = operation.to_sdfg()
     sdfg.apply_transformations(TransientReuse)
-    sdfg(A=A, B=B, C=C, D=D)
+    sdfg(A=A, B=B, C=C, D=D, M=m, N=n)
 
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B,D))
 
