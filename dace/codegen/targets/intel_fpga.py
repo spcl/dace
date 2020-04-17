@@ -44,10 +44,13 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 TYPE_TO_SMI_TYPE = {
-    dace.dtypes.uint8: "SMI_CHAR",
-    dace.dtypes.int32: "SMI_INT",
-    dace.dtypes.float32: "SMI_FLOAT",
-    dace.dtypes.float64: "SMI_DOUBLE"
+    "char": "SMI_CHAR",
+    "int": "SMI_INT",
+    "float": "SMI_FLOAT",
+    "double": "SMI_DOUBLE",
+    "float2": "SMI_FLOAT2",
+    "float4": "SMI_FLOAT4",
+    "double2": "SMI_DOUBLE2"
 }
 
 
@@ -266,10 +269,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         "Port for remote stream {} must be a constant or a number"
                         .format(dst_node.label))
                 # TODO handle dynamic number of accesses in SMI
+                message_size = memlet.num_accesses / vector_length
                 kernel_stream.write(
                     "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);"
-                    .format(var_name, memlet.num_accesses,
-                            TYPE_TO_SMI_TYPE[dtype], rcv_rank, port))
+                    .format(var_name, message_size ,
+                            TYPE_TO_SMI_TYPE[vec_type], rcv_rank, port))
 
                 self._dispatcher.defined_vars.add(var_name,
                                                   DefinedType.RemoteStream)
@@ -291,10 +295,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
+                message_size = memlet.num_accesses / vector_length
                 kernel_stream.write(
                     "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);"
-                    .format(var_name, memlet.num_accesses,
-                            TYPE_TO_SMI_TYPE[dtype], snd_rank, port))
+                    .format(var_name, message_size,
+                            TYPE_TO_SMI_TYPE[vec_type], snd_rank, port))
 
                 # add this as defined vars of type Remote Stream, so that we will no further open it in the following
                 self._dispatcher.defined_vars.add(var_name,
@@ -467,6 +472,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 ) is False or src_node_desc.storage != dace.dtypes.StorageType.FPGA_Remote:
                     return "{} = {};".format(var_name, read_expr)
                 else:
+                    import pdb
+                    pdb.set_trace()
                     return "SMI_Pop(&{},(void *)&{})".format(
                         read_expr, var_name)
         raise NotImplementedError(
@@ -1475,10 +1482,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         if memwidth_lhs > memwidth_rhs:
             self.width_converters.add((False, dtype, veclen))
             pack_str = "pack_{}{}".format(dtype.ctype, veclen)
+
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
                 value = value[1:]
+            original_value = value
             value = "{}({})".format(pack_str, value)
 
         defined_type = self.defined_vars.get(memlet.data)
@@ -1515,8 +1524,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                               ast.Name) and self.defined_vars.get_if_defined(
                     node.value.id) == DefinedType.RemoteStream and self.memlets[node.value.id][0].num_accesses != 1:
                     # read from a remote stream in the right part of the assignment
-                    updated = ast.Name(id="SMI_Pop(&{},(void *)&{});".format(
-                        value, target))
+                    # Corner case: if we are dealing with vectors, target is already a pointer
+                    updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
+                        value, "&" if veclen ==1 else "", target))
                 else:
                     if memwidth_rhs > memwidth_lhs:
                         code_str = unpack_str + "({}, {});".format(value, target)
@@ -1540,11 +1550,24 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         elif memlet is not None and memlet.num_accesses != 1:
             # if the target is a Remote Stream, perform a push
             if self.defined_vars.get(target) == DefinedType.RemoteStream:
-                newnode = ast.Name(id="SMI_Push(&{}, &{}); ".format(
-                    target, value))
+
+                #Corner case: if we are working with vectorized data type, this would result in having some `pack_..` in
+                #value. This in practice is an rvalue, and we can not get its address. Therefore, we have to
+                #create a temporary variable of the given type, assign the result of pack and then use it.
+                #It turns out that with Node Transformer we can return a list of nodes
+                if memwidth_lhs > memwidth_rhs:
+                    tmp_var_name ="__dace_smi_{}".format(original_value)
+                    tmp_var=ast.Name(id="{}{} {}={};".format(dtype.ctype, veclen, tmp_var_name, value))
+                    newnode = ast.Name(id="SMI_Push(&{}, &{}); ".format(
+                        target, tmp_var_name))
+                    return [tmp_var, ast.copy_location(newnode, node)]
+                else:
+                    newnode = ast.Name(id="SMI_Push(&{}, &{}); ".format(
+                        target, value))
+                    return ast.copy_location(newnode, node)
             else:
                 newnode = ast.Name(id="*{} = {}; ".format(target, value))
-            return ast.copy_location(newnode, node)
+                return ast.copy_location(newnode, node)
 
         return ast.copy_location(updated, node)
 
