@@ -173,5 +173,4 @@ class TransientReuse(pattern_matching.Transformation):
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')
-        print('memory savings: ', memory_before - memory_after, 'B -',
-              100 - N((100 / memory_before) * memory_after, 2), "%")
+        print('memory savings: ', memory_before - memory_after, 'B')
