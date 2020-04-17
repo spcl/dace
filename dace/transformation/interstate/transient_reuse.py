@@ -2,7 +2,6 @@ from dace import registry, sdfg as sd
 from dace.graph import nodes
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
-from sympy import N
 import networkx as nx
 
 
@@ -36,7 +35,7 @@ class TransientReuse(pattern_matching.Transformation):
         for a in sdfg.arrays:
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
-            memory_before += sdfg.arrays[a].total_size
+                memory_before += sdfg.arrays[a].total_size
 
         # only consider transients appearing in one single state
         for state in sdfg.states():
@@ -50,7 +49,7 @@ class TransientReuse(pattern_matching.Transformation):
 
         for state in sdfg.nodes():
             # Copy the whole graph
-            G = nx.DiGraph()
+            G = nx.MultiDiGraph()
             for n in state.nodes():
                 G.add_node(n)
             for n in state.nodes():
@@ -59,12 +58,10 @@ class TransientReuse(pattern_matching.Transformation):
 
             # Collapse all mappings and their scopes into one node
             scope_dict = state.scope_dict(node_to_children=True)
-            for n in state.nodes():
-                if isinstance(n, nodes.EntryNode):
-                    for m in scope_dict[n]:
-                        if isinstance(m, nodes.ExitNode):
-                            G.add_edges_from([(n, x) for (y, x) in G.out_edges(m)])
-                        G.remove_node(m)
+            for n in scope_dict:
+                if n is not None:
+                    G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_nodes(n)[0])])
+                    G.remove_nodes_from(scope_dict[n])
 
             # Remove all nodes that are not AccessNodes or have incoming wcr edges
             # and connect their predecessors and successors
@@ -97,9 +94,10 @@ class TransientReuse(pattern_matching.Transformation):
             # Find valid mappings. A mapping (n, m) is only valid if the successors of n
             # are a subset of the ancestors of m and n is also an ancestor of m.
             # Further the arrays have to be equivalent.
-            # Assumption: Arrays are never used in two AccessNodes
             for n in G.nodes():
                 for m in G.nodes():
+                    if n is not m and n.data == m.data:
+                        raise Exception("Transients used in multiple nodes")
                     if (n.data in transients and m.data in transients
                             and sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
                             and n in ancestors[m] and successors[n].issubset(ancestors[m])):
@@ -169,7 +167,8 @@ class TransientReuse(pattern_matching.Transformation):
         # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
-            memory_after += sdfg.arrays[a].total_size
+            if sdfg.arrays[a].transient:
+                memory_after += sdfg.arrays[a].total_size
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')
