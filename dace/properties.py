@@ -648,6 +648,10 @@ class SDFGReferenceProperty(Property):
         if obj is None:
             return None
 
+        # Backwards compatibility
+        if isinstance(obj, str):
+            obj = json.loads(obj)
+
         # Parse the JSON back into an SDFG object
         return dace.SDFG.from_json(obj, context)
 
