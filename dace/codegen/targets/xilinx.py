@@ -283,8 +283,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             for k, v in symbol_parameters.items()
         ]
         arrays = list(sorted(global_data_parameters, key=lambda t: t[1]))
-        scalars = (scalar_parameters + [(False, k, v)
-                                        for k, v in symbol_parameters.items()])
+        scalars = scalar_parameters + list(symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
 
         # Build kernel signature
@@ -296,7 +295,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if kernel_arg:
                 kernel_args.append(kernel_arg)
         kernel_args += (v.signature(with_types=True, name=k)
-                        for _, k, v in scalars)
+                        for k, v in scalars)
 
         # Write kernel signature
         kernel_stream.write(
