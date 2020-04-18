@@ -297,6 +297,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_args += (v.signature(with_types=True, name=k)
                         for k, v in scalars)
 
+        kernel_args = dace.dtypes.deduplicate(kernel_args)
+
         # Write kernel signature
         kernel_stream.write(
             "DACE_EXPORTED void {}({}) {{\n".format(kernel_name,

@@ -1290,8 +1290,7 @@ class FPGACodeGen(TargetCodeGenerator):
             key=lambda t: t[1])
         scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
         scalars += ((False, k, v) for k, v in symbol_parameters.items())
-        scalars = dace.dtypes.deduplicate(
-            list(sorted(scalars, key=lambda t: t[1])))
+        scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, argname, arg in itertools.chain(arrays, scalars):
             # Only pass each array once from the host code
             if arg in seen:
@@ -1302,6 +1301,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                                            name=argname))
                 kernel_args_opencl.append(
                     FPGACodeGen.make_opencl_parameter(argname, arg))
+
+        kernel_args_call_host = dace.dtypes.deduplicate(kernel_args_call_host)
+        kernel_args_opencl = dace.dtypes.deduplicate(kernel_args_opencl)
 
         host_function_name = "__dace_runkernel_{}".format(kernel_name)
 
