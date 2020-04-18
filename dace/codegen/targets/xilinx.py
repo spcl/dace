@@ -284,7 +284,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         ]
         arrays = list(sorted(global_data_parameters, key=lambda t: t[1]))
         scalars = scalar_parameters + list(symbol_parameters.items())
-        scalars = list(sorted(scalars, key=lambda t: t[1]))
+        scalars = list(sorted(scalars, key=lambda t: t[0]))
 
         # Build kernel signature
         kernel_args = []
