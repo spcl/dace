@@ -125,6 +125,18 @@ required:
                 description: >
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
                     generating code. 
+
+            autobuild_bitstreams:
+                type: bool
+                default: true
+                title: Automatically build bitstreams
+                description: >
+                    If set to true, CMake will automatically build missing
+                    bitstreams when running an FPGA program. This can take a
+                    very long time, and users might want to do this manually.
+                    If set to false, the program will optimistically assume
+                    that the bitstream is present in the build directory, and
+                    will crash if this is not the case.
             #############################################
             # CPU compiler
             cpu:

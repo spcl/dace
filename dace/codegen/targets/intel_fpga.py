@@ -84,6 +84,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
+        autobuild = ("ON" if Config.get_bool(
+            "compiler", "autobuild_bitstreams") else "OFF")
         #Here we have to get also SMI related options (even if we don't use them)
         smi_ranks = Config.get("compiler", "intel_fpga", "smi_ranks")
         smi_rendezvous = ("ON" if Config.get_bool(
@@ -94,8 +96,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             "-DDACE_INTELFPGA_MODE={}".format(mode),
             "-DDACE_INTELFPGA_TARGET_BOARD=\"{}\"".format(target_board),
             "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
             "-DDACE_INTELFPGA_SMI_NUM_RANKS={}".format(smi_ranks),
-            "-DDACE_INTELFPGA_SMI_RENDEZVOUS={}".format(smi_rendezvous),
+            "-DDACE_INTELFPGA_SMI_RENDEZVOUS={}".format(smi_rendezvous)
         ]
         # Override Intel FPGA OpenCL installation directory
         if Config.get("compiler", "intel_fpga", "path"):
