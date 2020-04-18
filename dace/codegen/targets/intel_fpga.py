@@ -477,20 +477,20 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
-        # Treat scalars and symbols the same, assuming there are no scalar
-        # outputs
-        symbol_sigs = [
-            v.signature(with_types=True, name=k)
-            for k, v in symbol_parameters.items()
-        ]
-        symbol_names = symbol_parameters.keys()
-
         kernel_args_opencl = []
         kernel_args_host = []
         kernel_args_call = []
         added = set()
-        for is_output, pname, p in parameters:
-            # Don't make duplicate arguments for other types than arrays
+        # Split into arrays and scalars
+        arrays = sorted([
+            t for t in parameters if not isinstance(t[2], dace.data.Scalar)
+        ], key=lambda t: t[1])
+        scalars = [
+            t for t in parameters if isinstance(t[2], dace.data.Scalar)
+        ]
+        scalars += [(False, k, v) for k, v in symbol_parameters.items()]
+        scalars = list(sorted(scalars, key=lambda t: t[1]))
+        for is_output, pname, p in itertools.chain(arrays, scalars):
             if pname in added:
                 continue
             added.add(pname)
@@ -504,10 +504,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.signature(True, name=pname))
                 kernel_args_call.append(pname)
-
-        kernel_args_opencl += symbol_sigs
-        kernel_args_host += symbol_sigs
-        kernel_args_call += symbol_names
 
         module_function_name = "module_" + name
 
