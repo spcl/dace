@@ -352,7 +352,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
-        host_function_name = "__dace_runkernel_{}".format(kernel_name)
 
         kernel_stream.write(
             """\
