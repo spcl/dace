@@ -1294,7 +1294,15 @@ class FPGACodeGen(TargetCodeGenerator):
 
         seen = set(nested_transient_set)
         kernel_args_call_host = []
-        for is_output, argname, arg in parameters:
+        # Split into arrays and scalars
+        arrays = sorted(
+            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            key=lambda t: t[1])
+        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
+        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars = dace.dtypes.deduplicate(
+            list(sorted(scalars, key=lambda t: t[1])))
+        for is_output, argname, arg in itertools.chain(arrays, scalars):
             # Only pass each array once from the host code
             if arg in seen:
                 continue
@@ -1304,12 +1312,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                                            name=argname))
 
         # Treat scalars as symbols, assuming they can be input only
-        symbol_sigs = [
-            p.signature(name=name) for name, p in symbol_parameters.items()
-        ]
-        symbol_names = symbol_parameters.keys()
+        symbol_sigs = [p.signature(name=name) for _, name, p in scalars]
+        symbol_names = [k for _, k, _ in scalars]
 
-        kernel_args_call_host += symbol_names
         kernel_args_opencl = (self.opencl_parameters(
             sdfg, [p
                    for p in parameters if p[1] not in nested_transient_set]) +
