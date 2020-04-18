@@ -811,43 +811,16 @@ class CPPUnparser:
         # double-complex (128-bit) otherwise
         dtype = self.dtype or 'dace::complex128'
 
-        if six.PY3:
-            if repr_n.endswith("j"):
-                self.write("%s(0, %s)" %
-                           (dtype, repr_n.replace("inf", INFSTR)[:-1]))
-            else:
-                self.write(repr_n.replace("inf", INFSTR), infer_type)
-                # If the number has a type, use it
-                if isinstance(t.n, np.uint):
-                    return dace.dtypes.typeclass(
-                        np.uint32) if infer_type else None
-                elif isinstance(t.n, np.int):
-                    return dace.dtypes.typeclass(
-                        np.int32) if infer_type else None
-                elif isinstance(t.n, np.float):
-                    return dace.dtypes.typeclass(
-                        np.float32) if infer_type else None
-                elif isinstance(t.n, np.float64):
-                    return dace.dtypes.typeclass(
-                        np.float64) if infer_type else None
-                elif infer_type:
-                    raise TypeError('Unable to convert number')
+        if repr_n.endswith("j"):
+            self.write("%s(0, %s)" %
+                       (dtype, repr_n.replace("inf", INFSTR)[:-1]))
         else:
-            # Parenthesize negative numbers, to avoid turning (-1)**2 into -1**2.
-            if repr_n.startswith("-"):
-                self.write("(")
-            if "inf" in repr_n and repr_n.endswith("*j"):
-                repr_n = repr_n.replace("*j", "j")
-
-            if repr_n.endswith("j"):
-                self.write("%s(0, %s)" %
-                           (dtype, repr_n.replace("inf", INFSTR)[:-1]))
+            self.write(repr_n.replace("inf", INFSTR), infer_type)
+            # If the number has a type, use it
+            if infer_type:
+                return dace.dtypes.typeclass(type(t.n))
             else:
-                # Substitute overflowing decimal literal for AST infinities.
-                self.write(repr_n.replace("inf", INFSTR))
-
-            if repr_n.startswith("-"):
-                self.write(")")
+                return None
 
     def _List(self, t, infer_type=False):
         raise SyntaxError('Invalid C++')
@@ -909,8 +882,8 @@ class CPPUnparser:
         self.write(" : ", infer_type)
         type_orelse = self.dispatch(t.orelse, infer_type)
         self.write(")", infer_type)
-        return dace.dtypes._CTYPES_RULES[frozenset(
-            (type_body, type_orelse))] if infer_type is True else None
+        return dace.dtypes.result_type_of(
+            type_body, type_orelse) if infer_type is True else None
 
     def _Set(self, t):
         raise SyntaxError('Invalid C++')
@@ -991,8 +964,8 @@ class CPPUnparser:
 
             self.write(")", infer_type)
             # infer type and returns
-            return dace.dtypes._CTYPES_RULES[frozenset(
-                (type_left, type_right))] if infer_type is True else None
+            return dace.dtypes.result_type_of(
+                type_left, type_right) if infer_type is True else None
         # Special case for integer power
         elif t.op.__class__.__name__ == 'Pow':
             if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
@@ -1006,17 +979,17 @@ class CPPUnparser:
                         self.write(" * ", infer_type)
                         self.dispatch(t.left, infer_type)
                 self.write(")", infer_type)
-                return dace.dtypes._CTYPES_RULES[frozenset(
-                    (type_left,
-                     typeclass(numpy.uint32)))] if infer_type is True else None
+                return dace.dtypes.result_type_of(
+                    type_left, typeclass(
+                        numpy.uint32)) if infer_type is True else None
             else:
                 self.write("dace::math::pow(", infer_type)
                 type_left = self.dispatch(t.left, infer_type)
                 self.write(", ", infer_type)
                 type_right = self.dispatch(t.right, infer_type)
                 self.write(")", infer_type)
-                return dace.dtypes._CTYPES_RULES[frozenset(
-                    (type_left, type_right))] if infer_type is True else None
+                return dace.dtypes.result_type_of(
+                    type_left, type_right) if infer_type is True else None
         else:
             self.write("(", infer_type)
 
@@ -1027,8 +1000,8 @@ class CPPUnparser:
             type_right = self.dispatch(t.right, infer_type)
 
             self.write(")", infer_type)
-            return dace.dtypes._CTYPES_RULES[frozenset(
-                (type_left, type_right))] if infer_type is True else None
+            return dace.dtypes.result_type_of(
+                type_left, type_right) if infer_type is True else None
 
     cmpops = {
         "Eq": "==",

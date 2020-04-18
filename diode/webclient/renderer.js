@@ -278,21 +278,40 @@ class CanvasManager {
             // Make sure we don't move our element outside its parent's
             // bounding box. If either the element or the mouse pointer are
             // outside the parent, we clamp movement in that direction
-            let target_x = el.x + dx;
-            let target_y = el.y + dy;
-            if (target_x <= min_x ||
-                new_mousepos.x <= parent_left_border) {
-                dx = min_x - el.x;
-            } else if (target_x >= max_x ||
-                       new_mousepos.x >= parent_rigth_border) {
-                dx = max_x - el.x;
-            }
-            if (target_y <= min_y ||
-                new_mousepos.y <= parent_top_border) {
-                dy = min_y - el.y;
-            } else if (target_y >= max_y ||
-                       new_mousepos.y >= parent_bottom_border) {
-                dy = max_y - el.y;
+            if (el instanceof Edge) {
+                let target_x = el.points[1].x + dx;
+                let target_y = el.points[1].y + dy;
+                if (target_x <= min_x ||
+                    new_mousepos.x <= parent_left_border) {
+                    dx = min_x - el.points[1].x;
+                } else if (target_x >= max_x ||
+                           new_mousepos.x >= parent_rigth_border) {
+                    dx = max_x - el.points[1].x;
+                }
+                if (target_y <= min_y ||
+                    new_mousepos.y <= parent_top_border) {
+                    dy = min_y - el.points[1].y;
+                } else if (target_y >= max_y ||
+                           new_mousepos.y >= parent_bottom_border) {
+                    dy = max_y - el.points[1].y;
+                }
+            } else {
+                let target_x = el.x + dx;
+                let target_y = el.y + dy;
+                if (target_x <= min_x ||
+                    new_mousepos.x <= parent_left_border) {
+                    dx = min_x - el.x;
+                } else if (target_x >= max_x ||
+                           new_mousepos.x >= parent_rigth_border) {
+                    dx = max_x - el.x;
+                }
+                if (target_y <= min_y ||
+                    new_mousepos.y <= parent_top_border) {
+                    dy = min_y - el.y;
+                } else if (target_y >= max_y ||
+                           new_mousepos.y >= parent_bottom_border) {
+                    dy = max_y - el.y;
+                }
             }
         }
 
@@ -687,7 +706,7 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
-            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list);
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list, state_parent_list);
             let sdfginfo = calculateBoundingBox(nested_g);
             node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
             node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
@@ -861,6 +880,7 @@ class SDFGRenderer {
         this.inclusive_ranges = false;
 
         // Mouse-related fields
+        this.move_mode = false;
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
         this.realmousepos = null; // Last position of the mouse pointer (in pixel coordinates)
         this.drag_start = null; // Null if the mouse/touch is not activated
@@ -947,6 +967,23 @@ class SDFGRenderer {
         d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.expand_all();
         d.title = 'Expand all elements';
+        this.toolbar.appendChild(d);
+
+        // Enter object moving mode
+        d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">open_with</i>';
+        d.style = 'padding-bottom: 0px; user-select: none';
+        d.onclick = () => {
+            this.move_mode = !this.move_mode;
+            if (this.move_mode) {
+                d.innerHTML = '<i class="material-icons">done</i>';
+                d.title = 'Exit object moving mode';
+            } else {
+                d.innerHTML = '<i class="material-icons">open_with</i>';
+                d.title = 'Enter object moving mode';
+            }
+        };
+        d.title = 'Enter object moving mode';
         this.toolbar.appendChild(d);
 
         this.container.append(this.toolbar);
@@ -1403,39 +1440,40 @@ class SDFGRenderer {
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
-            // TODO: Find a more intuitive activation for dragging objects.
-            // We're currently moving only if mouse button 3 (wheel) is active
-            if (this.drag_start && event.buttons & 4) {
-                // Only accept the secondary mouse button as a source for
-                // dragging objects
-                if (this.last_dragged_element) {
-                    this.canvas_manager.translate_element(
-                        this.last_dragged_element,
-                        old_mousepos, this.mousepos,
-                        this.graph, this.sdfg_list, this.state_parent_list
-                    );
+            if (this.drag_start && event.buttons & 1) {
+                // Only accept the primary mouse button as dragging source
+                if (this.move_mode) {
+                    if (this.last_dragged_element) {
+                        this.canvas.style.cursor = 'grabbing';
+                        this.canvas_manager.translate_element(
+                            this.last_dragged_element,
+                            old_mousepos, this.mousepos,
+                            this.graph, this.sdfg_list, this.state_parent_list
+                        );
+                        dirty = true;
+                        this.draw_async();
+                        return false;
+                    } else {
+                        const mouse_elements = this.find_elements_under_cursor(
+                            this.mousepos.x, this.mousepos.y
+                        );
+                        if (mouse_elements.foreground_elem) {
+                            this.last_dragged_element =
+                                mouse_elements.foreground_elem;
+                            this.canvas.style.cursor = 'grabbing';
+                            return false;
+                        }
+                        return true;
+                    }
+                } else {
+                    this.canvas_manager.translate(event.movementX,
+                        event.movementY);
+
+                    // Mark for redraw
                     dirty = true;
                     this.draw_async();
                     return false;
-                } else {
-                    const mouse_elements = this.find_elements_under_cursor(
-                        this.mousepos.x, this.mousepos.y
-                    );
-                    if (mouse_elements.foreground_elem) {
-                        this.last_dragged_element =
-                            mouse_elements.foreground_elem;
-                        return false;
-                    }
-                    return true;
                 }
-            } else if (this.drag_start && event.buttons & 1) {
-                // Only accept the primary mouse button as dragging source
-                this.canvas_manager.translate(event.movementX, event.movementY);
-
-                // Mark for redraw
-                dirty = true;
-                this.draw_async();
-                return false;
             } else {
                 this.drag_start = null;
                 if (event.buttons & 1 || event.buttons & 4)
@@ -1505,10 +1543,16 @@ class SDFGRenderer {
         let foreground_elem = elements_under_cursor.foreground_elem;
         
         // Change mouse cursor accordingly
-        if (total_elements > 0)
-            this.canvas.style.cursor = 'pointer';
-        else
+        if (total_elements > 0) {
+            if (this.move_mode && this.drag_start)
+                this.canvas.style.cursor = 'grabbing';
+            else if (this.move_mode)
+                this.canvas.style.cursor = 'grab';
+            else
+                this.canvas.style.cursor = 'pointer';
+        } else {
             this.canvas.style.cursor = 'auto';
+        }
 
         this.tooltip = null;
         this.last_hovered_elements = elements;

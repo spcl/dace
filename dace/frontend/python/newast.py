@@ -1882,7 +1882,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays:
                 if self.sdfg.arrays[arrname].transient:
-                    if (pyname and data.validate_name(pyname)
+                    if (pyname and dtypes.validate_name(pyname)
                             and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
 
