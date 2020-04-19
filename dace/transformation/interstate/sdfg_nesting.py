@@ -4,6 +4,7 @@ from copy import deepcopy as dc
 import itertools
 import networkx as nx
 from typing import Dict, List, Set, Optional
+import warnings
 
 from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
 from dace.graph import nodes, nxutil
@@ -186,6 +187,16 @@ class InlineSDFG(pattern_matching.Transformation):
         if nsdfg.exit_code:
             sdfg.set_exit_code(sdfg.exit_code + nsdfg.exit_code)
 
+        # Constants
+        for cstname, cstval in nsdfg.constants.items():
+            if cstname in sdfg.constants:
+                if cstval != sdfg.constants[cstname]:
+                    warnings.warn('Constant value mismatch for "%s" while '
+                                  'inlining SDFG. Inner = %s != %s = outer' %
+                                  (cstname, cstval, sdfg.constants[cstname]))
+            else:
+                sdfg.add_constant(cstname, cstval)
+
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
@@ -360,8 +371,8 @@ class InlineSDFG(pattern_matching.Transformation):
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
 
-    def _modify_memlet_path(self,
-                            new_edges: Dict[nodes.Node, MultiConnectorEdge],
+    def _modify_memlet_path(self, new_edges: Dict[nodes.Node,
+                                                  MultiConnectorEdge],
                             nstate: SDFGState, state: SDFGState,
                             inputs: bool) -> Set[MultiConnectorEdge]:
         """ Modifies memlet paths in an inlined SDFG. Returns set of modified
