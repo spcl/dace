@@ -758,10 +758,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             kernel_args_call.append("smi_comm")
             kernel_args_host.append("smi_comm")
 
-        kernel_args_opencl += symbol_sigs
-        kernel_args_host += symbol_sigs
-        kernel_args_call += symbol_names
-
         module_function_name = "module_" + name
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
