@@ -385,65 +385,63 @@ class BackwardPassGenerator:
             required_inputs = rev.in_connectors.difference(
                 self.append_grad(edge.src_conn, node) for edge in output_grads)
 
-            for edge in subgraph.graph.in_edges(node):
-                if edge.dst_conn in required_inputs:
+            self._connect_inputs(subgraph, node, required_inputs)
 
-                    path = subgraph.graph.memlet_path(edge)
-                    conn_map = dict()
+    def _connect_inputs(self, subgraph, node, required_inputs):
+        """For each connector in `required_inputs`, connect the reversed node of `node` that input
+           from the forward pass, routing through maps from the backward pass if required.
+        """
 
-                    # TODO subgraph.graph or state here?
-                    for i, traversed_edge in enumerate(path):
-                        throw = False
-                        src = None
-                        dst = None
-                        src_conn = traversed_edge.src_conn
-                        dst_conn = traversed_edge.dst_conn
+        for edge in subgraph.graph.in_edges(node):
+            if edge.dst_conn in required_inputs:
+                path = subgraph.graph.memlet_path(edge)
+                conn_map = dict()
 
-                        if i == 0:
-                            # the start of the path should be in the forward pass
-                            src = traversed_edge.src
-                            throw |= type(
-                                traversed_edge.dst) is not nd.MapEntry
+                for i, traversed_edge in enumerate(path):
+                    throw = False
+                    src = None
+                    dst = None
+                    src_conn = traversed_edge.src_conn
+                    dst_conn = traversed_edge.dst_conn
 
-                        if i == len(path) - 1:
-                            # the end of the path should be in the backward pass
-                            dst = self.reverse_map[traversed_edge.dst]
-                            throw |= type(
-                                traversed_edge.src) is not nd.MapEntry
+                    if i == 0:
+                        # the start of the path should be in the forward pass
+                        src = traversed_edge.src
+                        throw |= type(traversed_edge.dst) is not nd.MapEntry
 
-                        if i != 0 and i != len(path) - 1:
-                            throw |= type(
-                                traversed_edge.src) is not nd.MapEntry
-                            throw |= type(
-                                traversed_edge.dst) is not nd.MapEntry
+                    if i == len(path) - 1:
+                        # the end of the path should be in the backward pass
+                        dst = self.reverse_map[traversed_edge.dst]
+                        throw |= type(traversed_edge.src) is not nd.MapEntry
 
-                        if len(path) == 1:
-                            # if len path == 1, throw will be true because the ends are not maps
-                            # however, this is fine in this case as long as we have code -> code or access -> code
-                            throw = not (
-                                (isinstance(traversed_edge.src, nd.CodeNode)
-                                 and isinstance(traversed_edge.dst,
-                                                nd.CodeNode)) or
-                                (isinstance(traversed_edge.src, nd.AccessNode)
-                                 and isinstance(traversed_edge.dst,
-                                                nd.CodeNode)))
-                        if throw:
-                            raise AutoDiffException(
-                                "Unexpected graph structure")
+                    if i != 0 and i != len(path) - 1:
+                        throw |= type(traversed_edge.src) is not nd.MapEntry
+                        throw |= type(traversed_edge.dst) is not nd.MapEntry
 
-                        if dst is None:
-                            dst = self._find_backward_entry_node_for_map_entry(
-                                subgraph.graph, traversed_edge.dst)
-                            dst_conn, _src_conn = _add_through_connector(dst)
-                            conn_map[dst] = _src_conn
+                    if len(path) == 1:
+                        # if len path == 1, throw will be true because the ends are not maps
+                        # however, this is fine in this case as long as we have code -> code or access -> code
+                        throw = not (
+                            (isinstance(traversed_edge.src, nd.CodeNode) and
+                             isinstance(traversed_edge.dst, nd.CodeNode)) or
+                            (isinstance(traversed_edge.src, nd.AccessNode)
+                             and isinstance(traversed_edge.dst, nd.CodeNode)))
+                    if throw:
+                        raise AutoDiffException("Unexpected graph structure")
 
-                        if src is None:
-                            src = self._find_backward_entry_node_for_map_entry(
-                                subgraph.graph, traversed_edge.src)
-                            src_conn = conn_map[src]
+                    if dst is None:
+                        dst = self._find_backward_entry_node_for_map_entry(
+                            subgraph.graph, traversed_edge.dst)
+                        dst_conn, _src_conn = _add_through_connector(dst)
+                        conn_map[dst] = _src_conn
 
-                        subgraph.graph.add_edge(src, src_conn, dst, dst_conn,
-                                                traversed_edge.data)
+                    if src is None:
+                        src = self._find_backward_entry_node_for_map_entry(
+                            subgraph.graph, traversed_edge.src)
+                        src_conn = conn_map[src]
+
+                    subgraph.graph.add_edge(src, src_conn, dst, dst_conn,
+                                            traversed_edge.data)
 
     def _find_backward_entry_node_for_map_entry(
             self, graph, entry_node: nd.MapEntry) -> nd.ExitNode:
