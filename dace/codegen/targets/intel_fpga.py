@@ -272,7 +272,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         "Port for remote stream {} must be a constant or a number"
                         .format(dst_node.label))
                 # TODO handle dynamic number of accesses in SMI
-                message_size = memlet.num_accesses / vector_length
+                #message_size = memlet.num_accesses / vector_length
+                message_size = memlet.num_accesses # TODO: temp fix for stencilflow
                 kernel_stream.write(
                     "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);"
                     .format(var_name, message_size ,
@@ -298,7 +299,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
-                message_size = memlet.num_accesses / vector_length
+                #message_size = memlet.num_accesses / vector_length
+                message_size = memlet.num_accesses  #TODO temp fix for stencilflow
                 kernel_stream.write(
                     "SMI_Channel {} = SMI_Open_receive_channel({}, {}, {}, {}, smi_comm);"
                     .format(var_name, message_size,
