@@ -368,7 +368,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                 "Vector length on memlet {} ({}) doesn't "
                                 "match vector length of {} ({})".format(
                                     edge.data, edge.data.veclen, node.data,
-                                    nodedesc.veclen))
+                                   node.desc(sdfg).veclen))
                         memory_widths[key] = edge.data.veclen
                     else:
                         if (memory_widths[key] is not None
