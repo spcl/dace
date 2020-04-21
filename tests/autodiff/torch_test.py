@@ -8,7 +8,6 @@ import dace
 import dace.graph.nodes as nd
 from dace.autodiff import BackwardPassGenerator, AutoDiffException
 from dace.libraries.blas import ExpandGemmPure
-from dace.transformation import optimizer
 
 all_tests = []
 
@@ -378,8 +377,7 @@ def test_add_mmul_transpose_log():
 
     @dace.program
     def dace_func(X: dace.float32[4, 5], Y: dace.float32[4, 3],
-                  W: dace.float32[4, 3], Z: dace.float32[5, 3],
-                  YW: dace.float32[4, 3], S: dace.float32[1]):
+                  W: dace.float32[4, 3], S: dace.float32[1]):
 
         Xt[:] = np.transpose(X)
         YW[:] = W * Y
@@ -396,6 +394,39 @@ def test_add_mmul_transpose_log():
     return SDFGBackwardRunner(sdfg, "S"), torch_func, dict(
         X=np.random.rand(4, 5).astype(np.float32),
         W=np.random.rand(4, 3).astype(np.float32),
+        Y=np.random.rand(4, 3).astype(np.float32))
+
+
+@correctness_test
+def test_reduce_node_1_axis_and_none_axis():
+    def torch_func(*, X, Y, W):
+
+        Xt = X.T
+        YW = torch.sum(W, dim=0) * Y
+        Z = Xt @ YW
+        Zl = torch.log(Z + 1)
+
+        S = Zl.sum()
+        S.backward()
+        return dict(X_grad=X.grad, Y_grad=Y.grad, W_grad=W.grad)
+
+    @dace.program
+    def dace_func(X: dace.float32[4, 5], Y: dace.float32[4, 3],
+                  W: dace.float32[7, 4, 3]):
+
+        Xt[:] = np.transpose(X)
+        YW[:] = np.sum(W, axis=0) * Y
+        Z[:] = Xt @ YW
+
+        Zl = dace.elementwise(Z, lambda x: log(x + 1))
+        S = np.sum(Zl)
+        return S
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "__return"), torch_func, dict(
+        X=np.random.rand(4, 5).astype(np.float32),
+        W=np.random.rand(7, 4, 3).astype(np.float32),
         Y=np.random.rand(4, 3).astype(np.float32))
 
 

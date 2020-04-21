@@ -10,7 +10,7 @@ import dace.graph.nodes as nd
 from dace.sdfg import ScopeSubgraphView
 from dace.graph.nxutil import dfs_topological_sort
 from dace.frontend.operations import detect_reduction_type
-from dace import data as dt
+from dace import dtypes, data as dt
 
 import ast
 import itertools
@@ -59,6 +59,7 @@ def code_to_exprs(code: str, inputs: Set[str],
 
     code_fn = """
 def symbolic_execution({}):
+    # define functions from cmath.h
     from sympy import exp, log
     def log2(x):
         return log(x, 2)
@@ -66,7 +67,6 @@ def symbolic_execution({}):
     def log10(x):
         return log(x, 10)
 
-    # mostly taken from cmath.h
     from sympy import sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh
     from sympy import sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh
 
@@ -97,7 +97,7 @@ def symbolic_execution({}):
     except Exception as e:
         raise AutoDiffException(
             "Exception occured while attempting to symbolically execute code:\n{}\n{}"
-            .format(cleaned_code, code_fn)) from e
+            .format(cleaned_code)) from e
 
 
 def _check_one(value):
@@ -182,18 +182,6 @@ def _get_matching_entry(state: SDFGState, map_exit: nd.MapExit) -> nd.MapEntry:
 
 
 class BackwardPassGenerator:
-    """Signatures:
-       Generate the backward pass for the node.
-
-       :param node: the node to generate a backward pass for.
-       :param output_grads: the nodes that produce the gradients for the outputs. This is a map from
-                            output_connector to Tuple[Node, input_connector].
-       :param required_grads: the list of input connectors that gradients need to be generated
-                              for. For each of these, there should be an output on the reverse node
-                              with the suffix _grad.
-       :return: the reversed node
-
-    """
     def __init__(self, sdfg: SDFG, state: SDFGState, required_grads: Set[str],
                  target: nd.AccessNode):
         """Generate the backward pass for a state wrt. a `target` scalar.
@@ -258,9 +246,14 @@ class BackwardPassGenerator:
         self._reverse_subgraph(
             ScopeSubgraphView(self.state, list(required_nodes)))
 
-    def append_grad(self, conn, node):
+    def get_grad_name(self, conn: str, node: nd.Node, in_connector: bool):
         if type(node) in [nd.MapExit, nd.MapEntry]:
             return _invert_map_connector(conn)
+
+        if type(node) is nd.Reduce:
+            # in this case the reverse node will be a NSDFG, which can't have None as connectors
+            return "_reduce_in_grad" if in_connector else "_reduce_out_grad"
+
         if conn is None:
             return None
         else:
@@ -297,17 +290,20 @@ class BackwardPassGenerator:
                 "Unsupported data descriptor {}".format(arr))
 
     def _reverse_subgraph(self, subgraph: ScopeSubgraphView):
-
-        nodes_to_skip = set()
-        # all memlets that write to grads
         # a reversed topological sort is a topological sort on the reverse graph
         for node in reversed(
                 list(
                     dfs_topological_sort(subgraph,
                                          subgraph.source_nodes(),
                                          target=self.target))):
-            output_grads = [edge for edge in subgraph.out_edges(node)]
-            required_grads = [
+
+            # output name on the forward node (for which the gradient will be connected as an input on the reverse node)
+            output_grad_connectors = [
+                edge.src_conn for edge in subgraph.out_edges(node)
+            ]
+
+            # input name on the forward node that the gradient should be generated for
+            input_grad_connectors = [
                 edge.dst_conn for edge in subgraph.in_edges(node)
             ]
 
@@ -316,17 +312,22 @@ class BackwardPassGenerator:
                     type(node)))
 
             rev: nd.Node = getattr(self, '_reverse_' + type(node).__name__)(
-                node, output_grads, required_grads)
-            # add rev to the graph and hook up the edges
+                node, output_grad_connectors, input_grad_connectors)
+
+            if type(rev) is SDFG:
+                rev = self.state.add_nested_sdfg(rev, None,
+                                                 {"_reduce_in_grad"},
+                                                 {"_reduce_out_grad"})
+            else:
+                self.state.add_node(rev)
+
             self.reverse_map[node] = rev
-            subgraph.graph.add_node(rev)
 
             # connect the gradients of the outputs (as inputs)
-            for _, output_conn, dest_node, input_conn, memlet in output_grads:
-                dest_node = self.reverse_map[dest_node]
-                if detect_reduction_type(memlet.wcr) not in [
-                        None, dace.dtypes.ReductionType.Sum
-                ]:
+            for _, output_conn, dest_node, input_conn, memlet in subgraph.out_edges(
+                    node):
+                if detect_reduction_type(
+                        memlet.wcr) not in [None, dtypes.ReductionType.Sum]:
                     raise AutoDiffException(
                         "Unsupported reduction type {}".format(
                             detect_reduction_type(memlet.wcr)))
@@ -369,21 +370,24 @@ class BackwardPassGenerator:
 
                 self.grad_memlets[memlet.data].append(memlet)
                 memlet.data = memlet.data + "_grad"
-                subgraph.graph.add_edge(
-                    dest_node, self.append_grad(input_conn, dest_node), rev,
-                    self.append_grad(output_conn, rev), memlet)
+
+                self.state.add_edge(
+                    self.reverse_map[dest_node], self.get_grad_name(input_conn, dest_node,
+                                                  False), rev,
+                    self.get_grad_name(output_conn, node, True), memlet)
 
             if isinstance(node, nd.AccessNode):
                 # this means we are writing out a grad to an array. In this case, we need to set
                 # all incoming memlets to WCR Sum
-                # TODO @orausch there could be an intersection check here
-                for edge in subgraph.graph.in_edges(rev):
-                    for path_edge in subgraph.graph.memlet_tree(edge):
+                # TODO @orausch there could/should be an intersection check here
+                for edge in self.state.in_edges(rev):
+                    for path_edge in self.state.memlet_tree(edge):
                         path_edge.data.wcr = "lambda x, y: x + y"
 
             # connect any required inputs from the forward pass
             required_inputs = rev.in_connectors.difference(
-                self.append_grad(edge.src_conn, node) for edge in output_grads)
+                self.get_grad_name(conn, node, True)
+                for conn in output_grad_connectors)
 
             self._connect_inputs(subgraph, node, required_inputs)
 
@@ -426,6 +430,7 @@ class BackwardPassGenerator:
                              isinstance(traversed_edge.dst, nd.CodeNode)) or
                             (isinstance(traversed_edge.src, nd.AccessNode)
                              and isinstance(traversed_edge.dst, nd.CodeNode)))
+
                     if throw:
                         raise AutoDiffException("Unexpected graph structure")
 
@@ -460,17 +465,16 @@ class BackwardPassGenerator:
         return src_candidates[0]
 
     def _reverse_AccessNode(self, node: nd.AccessNode,
-                            output_grads: List[MultiConnectorEdge],
-                            required_grads: List[str]):
-
+                            output_grad_connectors: List[str],
+                            input_grad_connectors: List[str]):
         return nd.AccessNode(node.data + "_grad",
                              access=_invert_access(node.access))
 
     def _reverse_MapEntry(
         self,
         node: nd.MapEntry,
-        output_grads: List[MultiConnectorEdge],
-        required_grads: List[str],
+        output_grad_connectors: List[str],
+        input_grad_connectors: List[str],
     ):
         rev = nd.MapExit(self.reverse_map[node.map])
 
@@ -485,8 +489,8 @@ class BackwardPassGenerator:
     def _reverse_MapExit(
         self,
         node: nd.MapExit,
-        output_grads: List[MultiConnectorEdge],
-        required_grads: List[str],
+        output_grad_connectors: List[str],
+        input_grad_connectors: List[str],
     ):
         self.reverse_map[node.map] = dc(node.map)
 
@@ -496,13 +500,104 @@ class BackwardPassGenerator:
 
         for conn in node.out_connectors:
             rev.add_out_connector(conn)
+
         return rev
 
-    def _reverse_Tasklet(self, tasklet: nd.Tasklet,
-                         output_grads: List[MultiConnectorEdge],
-                         required_grads: List[str]) -> nd.Tasklet:
+    def _reverse_Reduce(self, node: nd.Reduce,
+                        output_grad_connectors: List[str],
+                        input_grad_connectors: List[str]):
 
-        if tasklet.language is not dace.dtypes.Language.Python:
+        reduction_type = detect_reduction_type(node.wcr)
+
+        # NOTE: Reduce nodes should have exactly one input and one output edge
+        if len(output_grad_connectors) != 1:
+            raise AutoDiffException(
+                "recieved invalid SDFG: reduce node {} should have exactly one output edge"
+                .format(node))
+
+        if len(input_grad_connectors) != 1:
+            raise AutoDiffException(
+                "recieved invalid SDFG: reduce node {} should have exactly one input edge"
+                .format(node))
+
+        cands = [
+            edge for edge in self.state.in_edges(node)
+            if edge.dst_conn == input_grad_connectors[0]
+        ]
+        if len(cands) != 1:
+            raise AutoDiffException("recieved invalid SDFG")
+        input_array = self.sdfg.arrays[cands[0].data.data]
+
+        cands = [
+            edge for edge in self.state.out_edges(node)
+            if edge.src_conn == output_grad_connectors[0]
+        ]
+        if len(cands) != 1:
+            raise AutoDiffException("recieved invalid SDFG")
+        output_array = self.sdfg.arrays[cands[0].data.data]
+
+        all_axes: List[int] = list(range(len(input_array.shape)))
+        reduce_axes: List[int] = all_axes if node.axes is None else node.axes
+        non_reduce_axes: List[int] = [
+            i for i in all_axes if i not in reduce_axes
+        ]
+
+        if reduction_type is dtypes.ReductionType.Sum:
+            # in this case, we need to simply scatter the grad across the axes that were reduced
+
+            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") +
+                        "_")
+            state = sdfg.add_state()
+
+            rev_input_conn_name = self.get_grad_name(output_grad_connectors[0],
+                                                     node, True)
+            rev_output_conn_name = self.get_grad_name(input_grad_connectors[0],
+                                                      node, False)
+
+            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
+                                              shape=output_array.shape,
+                                              dtype=output_array.dtype)
+            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
+                                               shape=input_array.shape,
+                                               dtype=input_array.dtype)
+
+            state.add_mapped_tasklet(
+                "_distribute_grad_" + str(reduction_type).replace(".", "_") +
+                "_", {
+                    "i" + str(i): "0:{}".format(shape)
+                    for i, shape in enumerate(input_array.shape)
+                }, {
+                    "__in":
+                    Memlet.simple(
+                        rev_input_conn_name,
+                        "0" if node.axes is None else ",".join(
+                            "i" + str(i) for i in non_reduce_axes))
+                },
+                "__out = __in", {
+                    "__out":
+                    Memlet.simple(rev_output_conn_name, ",".join(
+                        "i" + str(i) for i in all_axes))
+                },
+                external_edges=True)
+
+            return sdfg
+
+        #elif reduction_type in [
+        #        dtypes.ReductionType.Max, dtypes.ReductionType.Min
+        #]:
+        #    # in this case we need to modify the forward pass and add an argmin/argmax
+        #    # TODO
+        #    pass
+        else:
+            raise AutoDiffException(
+                "Unsupported reduction type {} for reduce node".format(
+                    node.wcr))
+
+    def _reverse_Tasklet(self, tasklet: nd.Tasklet,
+                         output_grad_connectors: List[str],
+                         input_grad_connectors: List[str]) -> nd.Tasklet:
+
+        if tasklet.language is not dtypes.Language.Python:
             raise AutoDiffException(
                 "Expected tasklet with language Python, got language {}".
                 format(tasklet.language))
@@ -529,13 +624,14 @@ class BackwardPassGenerator:
         rev_outputs = set()
         rev_inputs = set()
 
-        for _, output_conn, _, input_conn, memlet in output_grads:
+        for output_conn in output_grad_connectors:
             # tasklets should have scalar outputs
             _check_one(memlet.subset.num_elements())
             # for each output_conn...
-            for inp in required_grads:
+            for inp in input_grad_connectors:
                 # ...add the code to generate {inp}_grad
-                rev_outputs.add(inp + "_grad")
+                rev_output_grad_name = self.get_grad_name(inp, tasklet, False)
+                rev_outputs.add(rev_output_grad_name)
 
                 output_expr = output_exprs[output_conn]
 
@@ -548,14 +644,15 @@ class BackwardPassGenerator:
                         "Unable to symbolically differentiate expression: {}".
                         format(diff_expr.expr))
 
+                rev_input_grad_name = self.get_grad_name(
+                    output_conn, tasklet, True)
                 rev_inputs |= _symbols_to_strings(
-                    diff_expr.free_symbols) | {output_conn + "_grad"}
+                    diff_expr.free_symbols) | {rev_input_grad_name}
 
-                rev_code.append(
-                    "{input}_grad = {output}_grad * ({diff_expr})".format(
-                        input=inp,
-                        output=output_conn,
-                        diff_expr=str(diff_expr)))
+                rev_code.append("{output} = {input} * ({diff_expr})".format(
+                    input=rev_input_grad_name,
+                    output=rev_output_grad_name,
+                    diff_expr=str(diff_expr)))
 
         return nd.Tasklet("_" + tasklet.label + "_reverse_",
                           inputs=rev_inputs,
