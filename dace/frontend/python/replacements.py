@@ -3,17 +3,23 @@ import dace
 import ast
 import copy
 from functools import reduce
-from typing import Any, Dict, Union, Callable
+from typing import Any, Dict, Union, Callable, Tuple, List
 
 import dace
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.memlet_parser import parse_memlet_subset
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
 import numpy as np
+
+Size = Union[int, dace.symbolic.symbol]
+ShapeTuple = Tuple[Size]
+ShapeList = List[Size]
+Shape = Union[ShapeTuple, ShapeList]
 
 ##############################################################################
 # Python function replacements ###############################################
@@ -95,7 +101,7 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
-        input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
+        input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                             ast.parse(input).body[0].value, {})
         input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
                               1)
@@ -121,11 +127,11 @@ def _reduce(sdfg: SDFG,
             axis = tuple(pystr_to_symbolic(a) for a in axis)
 
         # Compute memlets
-        input_subset = _parse_memlet_subset(sdfg.arrays[inarr],
+        input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                             ast.parse(input).body[0].value, {})
         input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
                               1)
-        output_subset = _parse_memlet_subset(sdfg.arrays[outarr],
+        output_subset = parse_memlet_subset(sdfg.arrays[outarr],
                                              ast.parse(output).body[0].value,
                                              {})
         output_memlet = Memlet(outarr, output_subset.num_elements(),
