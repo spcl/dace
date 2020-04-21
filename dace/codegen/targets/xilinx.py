@@ -46,6 +46,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         target_platform = Config.get("compiler", "xilinx", "platform")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "xilinx", "enable_debugging") else "OFF")
+        autobuild = ("ON" if Config.get_bool(
+            "compiler", "autobuild_bitstreams") else "OFF")
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -53,6 +55,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -279,21 +282,22 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             v.signature(with_types=True, name=k)
             for k, v in symbol_parameters.items()
         ]
+        arrays = list(sorted(global_data_parameters, key=lambda t: t[1]))
+        scalars = scalar_parameters + list(symbol_parameters.items())
+        scalars = list(sorted(scalars, key=lambda t: t[0]))
 
         # Build kernel signature
         kernel_args = []
-        for is_output, dataname, data in global_data_parameters:
+        for is_output, dataname, data in arrays:
             kernel_arg = self.make_kernel_argument(
-                data, dataname, self._memory_widths[dataname], is_output, True)
+                data, dataname, self._memory_widths[(dataname, sdfg)],
+                is_output, True)
             if kernel_arg:
                 kernel_args.append(kernel_arg)
+        kernel_args += (v.signature(with_types=True, name=k)
+                        for k, v in scalars)
 
-        scalar_parameters = collections.OrderedDict(scalar_parameters)
-        symbol_parameters.update(scalar_parameters)
-        kernel_args += ([
-            arg.signature(with_types=True, name=argname)
-            for argname, arg in symbol_parameters.items()
-        ])
+        kernel_args = dace.dtypes.deduplicate(kernel_args)
 
         # Write kernel signature
         kernel_stream.write(
@@ -331,10 +335,17 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         # Just collect all variable names for calling the kernel function
         added = set()
+        arrays = list(
+            sorted([
+                p
+                for p in parameters if not isinstance(p[2], dace.data.Scalar)
+            ],
+                   key=lambda t: t[1]))
+        scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
+        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
         kernel_args = []
-        for _, name, p in itertools.chain(
-                parameters,
-            [(False, k, v) for k, v in symbol_parameters.items()]):
+        for _, name, p in itertools.chain(arrays, scalars):
             if not isinstance(p, dace.data.Array) and name in added:
                 continue
             added.add(name)
@@ -342,7 +353,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
-        host_function_name = "__dace_runkernel_{}".format(kernel_name)
 
         kernel_stream.write(
             """\
@@ -365,14 +375,19 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_args_module = []
         added = set()
 
-        for is_output, pname, p in itertools.chain(
-                parameters,
-            [(False, k, v) for k, v in symbol_parameters.items()]):
+        parameters = list(sorted(parameters, key=lambda t: t[1]))
+        arrays = [
+            p for p in parameters if not isinstance(p[2], dace.data.Scalar)
+        ]
+        scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
+        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
+        for is_output, pname, p in itertools.chain(parameters, scalars):
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
                 kernel_args_module.append("dace::vec<{}, {}> {}*{}".format(
-                    p.dtype.ctype, self._memory_widths[pname],
+                    p.dtype.ctype, self._memory_widths[(pname, sdfg)],
                     "const " if not is_output else "", arr_name))
             else:
                 # Don't make duplicate arguments for other types than arrays
@@ -478,8 +493,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                            if has_out_ptr else "nullptr")
                 module_body_stream.write(
                     "dace::ArrayInterface<{}, {}> {}({}, {});".format(
-                        arg.dtype.ctype, self._memory_widths[argname], argname,
-                        in_ptr, out_ptr))
+                        arg.dtype.ctype, self._memory_widths[(argname, sdfg)],
+                        argname, in_ptr, out_ptr))
             module_body_stream.write("\n")
 
         # Allocate local transients
@@ -620,12 +635,18 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def generate_host_header(self, sdfg, kernel_function_name, parameters,
                              symbol_parameters, host_code_stream):
 
+        arrays = [
+            p for p in parameters if not isinstance(p[2], dace.data.Scalar)
+        ]
+        arrays = list(sorted(arrays, key=lambda t: t[1]))
+        scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
+        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars = list(sorted(scalars, key=lambda t: t[1]))
+
         kernel_args = []
 
         seen = set()
-        for is_output, name, arg in itertools.chain(
-                parameters,
-            [(False, k, v) for k, v in symbol_parameters.items()]):
+        for is_output, name, arg in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
                 kernel_args.append(
                     arg.signature(with_types=True,

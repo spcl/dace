@@ -338,13 +338,13 @@ class Tasklet(CodeNode):
         return dot.draw_node(sdfg, graph, self, shape="octagon")
 
     def validate(self, sdfg, state):
-        if not data.validate_name(self.label):
+        if not dtypes.validate_name(self.label):
             raise NameError('Invalid tasklet name "%s"' % self.label)
         for in_conn in self.in_connectors:
-            if not data.validate_name(in_conn):
+            if not dtypes.validate_name(in_conn):
                 raise NameError('Invalid input connector "%s"' % in_conn)
         for out_conn in self.out_connectors:
-            if not data.validate_name(out_conn):
+            if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
 
     def __str__(self):
@@ -456,13 +456,13 @@ class NestedSDFG(CodeNode):
             return self.label
 
     def validate(self, sdfg, state):
-        if not data.validate_name(self.label):
+        if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
-            if not data.validate_name(in_conn):
+            if not dtypes.validate_name(in_conn):
                 raise NameError('Invalid input connector "%s"' % in_conn)
         for out_conn in self.out_connectors:
-            if not data.validate_name(out_conn):
+            if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
         connectors = self.in_connectors | self.out_connectors
         for dname, desc in self.sdfg.arrays.items():
@@ -687,7 +687,7 @@ class Map(object):
         ]) + "]"
 
     def validate(self, sdfg, state, node):
-        if not data.validate_name(self.label):
+        if not dtypes.validate_name(self.label):
             raise NameError('Invalid map name "%s"' % self.label)
 
     def get_param_num(self):
@@ -885,7 +885,7 @@ class Consume(object):
                     (self._label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
-        if not data.validate_name(self.label):
+        if not dtypes.validate_name(self.label):
             raise NameError('Invalid consume name "%s"' % self.label)
 
     def get_param_num(self):
