@@ -23,7 +23,6 @@ import sympy as sp
 from sympy.parsing.sympy_parser import parse_expr
 from astunparse import unparse
 
-
 class AutoDiffException(Exception):
     """Base class for all exceptions related to automatic differentiation"""
     pass
@@ -586,7 +585,8 @@ class BackwardPassGenerator:
         #        dtypes.ReductionType.Max, dtypes.ReductionType.Min
         #]:
         #    # in this case we need to modify the forward pass and add an argmin/argmax
-        #    # TODO
+        #    
+        #    
         #    pass
         else:
             raise AutoDiffException(
@@ -619,6 +619,9 @@ class BackwardPassGenerator:
         output_exprs = code_to_exprs(code_str, tasklet.in_connectors,
                                      tasklet.out_connectors)
 
+        # for each output that an input is used in, there will be an entry for the expression of the
+        # grad in this list in the final code snippet. When we generate the final code for the
+        # reverse tasklet, we need to add them all up.
         rev_code = defaultdict(list)
 
         # the outputs of the reversed nodes are the grads of inputs of the original node

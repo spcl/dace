@@ -28,6 +28,7 @@ def correctness_test(func):
             v = v.detach().numpy()
             diff = np.linalg.norm(sdfg_results[k] - v) / reduce(
                 lambda x, y: x * y, v.shape)
+            print("Difference:", diff)
             assert diff < 1e-5
 
     all_tests.append(check_correctness)
@@ -476,4 +477,6 @@ def test_reduce_node_1_axis_and_none_axis():
 
 if __name__ == "__main__":
     for test in all_tests:
+        print("START: {}".format(test.__name__))
         test()
+        print("END: {}".format(test.__name__))
