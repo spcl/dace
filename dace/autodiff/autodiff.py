@@ -618,7 +618,8 @@ class BackwardPassGenerator:
 
         output_exprs = code_to_exprs(code_str, tasklet.in_connectors,
                                      tasklet.out_connectors)
-        rev_code = []
+
+        rev_code = defaultdict(list)
 
         # the outputs of the reversed nodes are the grads of inputs of the original node
         rev_outputs = set()
@@ -649,12 +650,15 @@ class BackwardPassGenerator:
                 rev_inputs |= _symbols_to_strings(
                     diff_expr.free_symbols) | {rev_input_grad_name}
 
-                rev_code.append("{output} = {input} * ({diff_expr})".format(
+                rev_code[rev_output_grad_name].append("{input} * ({diff_expr})".format(
                     input=rev_input_grad_name,
-                    output=rev_output_grad_name,
                     diff_expr=str(diff_expr)))
 
+
+        code = ""
+        for output, exprs in rev_code.items():
+            code += "\n" + output + " = " + " + ".join(exprs)
         return nd.Tasklet("_" + tasklet.label + "_reverse_",
                           inputs=rev_inputs,
                           outputs=rev_outputs,
-                          code="\n".join(rev_code))
+                          code=code)

@@ -320,6 +320,50 @@ def test_tasklets_only_reuse():
     return SDFGBackwardRunner(
         sdfg, "C"), torch_func, dict(A=np.random.rand(1).astype(np.float32))
 
+@correctness_test
+def test_tasklets_multioutput():
+    def torch_func(*, A, B):
+        tmp_a = torch.sqrt(A)
+        tmp_b = torch.log(B + 1)
+
+        C = tmp_a * tmp_b * B
+
+        C.backward()
+        return dict(A_grad=A.grad, B_grad=B.grad)
+
+    @dace.program
+    def dace_func(A: dace.float32[1], B: dace.float32[1], C: dace.float32[1]):
+        tmp_a = dace.define_local_scalar(dace.float32)
+        tmp_b = dace.define_local_scalar(dace.float32)
+        tmp_d = dace.define_local_scalar(dace.float32)
+
+        with dace.tasklet:
+            a << A[0]
+            a_out >> tmp_a
+
+            a_out = sqrt(a)
+
+        with dace.tasklet:
+            b << B[0]
+            b_out >> tmp_b
+            d_out >> tmp_d
+
+            b_out = log(b + 1)
+            d_out = b
+
+        with dace.tasklet:
+            a << tmp_a
+            b << tmp_b
+            d << tmp_d
+            c >> C[0]
+            c = a * b * d
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "C"), torch_func, dict(
+        A=np.random.rand(1).astype(np.float32),
+        B=np.random.rand(1).astype(np.float32))
+
 
 @correctness_test
 def test_tasklets_only():
