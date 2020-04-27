@@ -528,8 +528,13 @@ class MapEntry(EntryNode):
         ret = clc(map=m)
 
         try:
-            # Set map reference to map exit
-            nid = int(json_obj['scope_exits'][0])
+            # Connection of the scope nodes
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+
             exit_node = context['sdfg_state'].node(nid)
             exit_node.map = m
         except IndexError:  # Exit node has a higher node ID
@@ -716,7 +721,12 @@ class ConsumeEntry(EntryNode):
 
         try:
             # Set map reference to map exit
-            nid = int(json_obj['scope_exits'][0])
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+
             exit_node = context['sdfg_state'].node(nid)
             exit_node.consume = c
         except IndexError:  # Exit node has a higher node ID
