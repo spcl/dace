@@ -11,6 +11,7 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.memlet_parser import parse_memlet_subset
 from dace.frontend.python import astutils
+from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
@@ -25,7 +26,6 @@ Shape = Union[ShapeTuple, ShapeList]
 ##############################################################################
 # Python function replacements ###############################################
 ##############################################################################
-
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
@@ -170,9 +170,10 @@ def _elementwise(sdfg: SDFG, state: SDFGState, func: str, in_array: str, out_arr
 
     inparr = sdfg.arrays[in_array]
     restype = sdfg.arrays[in_array].dtype
+
     if out_array is None:
         out_array, outarr = sdfg.add_temp_transient(inparr.shape, restype,
-                                                inparr.storage)
+                                                    inparr.storage)
     else:
         outarr = sdfg.arrays[out_array]
 
@@ -369,6 +370,93 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 @oprepo.replaces('numpy.max')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg, state, "lambda x, y: max(x, y)", a, axis=axis)
+
+@oprepo.replaces('numpy.min')
+def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(sdfg, state, "lambda x, y: min(x, y)", a, axis=axis)
+
+
+@oprepo.replaces('numpy.argmax')
+def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis):
+    return _argminmax(sdfg, state, a, axis, func="max")
+
+
+@oprepo.replaces('numpy.argmin')
+def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis):
+    return _argminmax(sdfg, state, a, axis, func="min")
+
+
+def _argminmax(sdfg: SDFG, state: SDFGState, a: str, axis, func):
+    nest = NestedCall(sdfg, state)
+
+    assert func in ['min', 'max']
+
+    if axis is None or type(axis) is not int:
+        raise SyntaxError('Axis must be an int')
+
+    a_arr = sdfg.arrays[a]
+
+    if not 0 <= axis < len(a_arr.shape):
+        raise SyntaxError("Expected 0 <= axis < len({}.shape), got {}".format(
+            a, axis))
+
+    reduced_shape = list(copy.deepcopy(a_arr.shape))
+    reduced_shape.pop(axis)
+
+    val_and_idx = dace.struct('_val_and_idx', val=a_arr.dtype, idx=dace.int64)
+
+    # convert to array of structs
+    structs, structs_arr = sdfg.add_temp_transient(a_arr.shape, val_and_idx)
+
+    # HACK: at the time of writing, the reduce op on structs doesn't work unless we init the output
+    # array for that reason we will init the output array with (-1, -inf) in the loop. This should
+    # be removed once the issue is resolved
+    reduced_structs, reduced_struct_arr = sdfg.add_temp_transient(
+        reduced_shape, val_and_idx)
+
+    code = ("__out = _val_and_idx(val=__in, idx=__i{})\n".format(axis) +
+            "__init = _val_and_idx(val={}1e38, idx=-1)".format('-' if func ==
+                                                               'max' else ''))
+
+    state.add_mapped_tasklet(
+        name="_arg{}_convert_".format(func),
+        map_ranges={
+            '__i%d' % i: '0:%s' % n
+            for i, n in enumerate(a_arr.shape)
+        },
+        inputs={
+            "__in":
+            Memlet.simple(
+                a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))
+        },
+        code=code,
+        outputs={
+            '__init':
+            Memlet.simple(
+                reduced_structs, ','.join('__i%d' % i
+                                          for i in range(len(a_arr.shape))
+                                          if i != axis)),
+            '__out':
+            Memlet.simple(
+                structs,
+                ','.join('__i%d' % i for i in range(len(a_arr.shape))))
+        },
+        external_edges=True)
+
+    # reduce array of structs
+    nest(_reduce)(  # comment for yapf
+        "lambda x, y: _val_and_idx(val={}(x.val, y.val), idx=(x.idx if x.val {} y.val else y.idx))"
+        .format(func, '>' if func == 'max' else '<'),
+        structs,
+        out_array=reduced_structs,
+        axis=axis)
+
+    # map to int64
+    out, outarr = sdfg.add_temp_transient(sdfg.arrays[reduced_structs].shape,
+                                          dace.int64)
+    nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
+
+    return nest, out
 
 
 ##############################################################################

@@ -12,6 +12,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
+from dace.frontend.python import nested_call
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet, inner_eval_ast, MemletExpr
 from dace.graph import nodes
 from dace.graph.labeling import propagate_memlet
@@ -2757,6 +2758,10 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('call_%d' % node.lineno)
 
         result = func(self.sdfg, self.last_state, *args, **keywords)
+
+        if isinstance(result, tuple) and type(result[0]) is nested_call.NestedCall:
+            self.last_state = result[0].last_state
+            result = result[1]
 
         if not isinstance(result, (tuple, list)):
             return [result]
