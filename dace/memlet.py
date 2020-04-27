@@ -22,7 +22,7 @@ class Memlet(object):
     """
 
     # Properties
-    veclen = Property(dtype=int, desc="Vector length")
+    veclen = Property(dtype=int, desc="Vector length", default=1)
     num_accesses = SymbolicProperty(default=0)
     subset = SubsetProperty(default=subsets.Range([]))
     other_subset = SubsetProperty(allow_none=True)
@@ -31,8 +31,9 @@ class Memlet(object):
     wcr = LambdaProperty(allow_none=True)
     wcr_identity = Property(dtype=object, default=None, allow_none=True)
     wcr_conflict = Property(dtype=bool, default=True)
-    allow_oob = Property(
-        dtype=bool, default=False, desc='Bypass out-of-bounds validation')
+    allow_oob = Property(dtype=bool,
+                         default=False,
+                         desc='Bypass out-of-bounds validation')
 
     def __init__(self,
                  data,
@@ -97,7 +98,7 @@ class Memlet(object):
     def to_json(self, parent_graph=None):
         attrs = dace.serialize.all_properties_to_json(self)
 
-        retdict = {"type": "Memlet", "label": str(self), "attributes": attrs}
+        retdict = {"type": "Memlet", "attributes": attrs}
 
         return retdict
 
@@ -176,26 +177,26 @@ class Memlet(object):
         if hasattr(data, 'data'):
             data = data.data
 
-        return Memlet(
-            data,
-            na,
-            subset,
-            veclen,
-            wcr=wcr,
-            wcr_identity=wcr_identity,
-            other_subset=other_subset,
-            wcr_conflict=wcr_conflict,
-            debuginfo=debuginfo)
+        return Memlet(data,
+                      na,
+                      subset,
+                      veclen,
+                      wcr=wcr,
+                      wcr_identity=wcr_identity,
+                      other_subset=other_subset,
+                      wcr_conflict=wcr_conflict,
+                      debuginfo=debuginfo)
 
     @staticmethod
-    def from_array(dataname, datadesc):
+    def from_array(dataname, datadesc, wcr=None):
         """ Constructs a Memlet that transfers an entire array's contents.
             :param dataname: The name of the data descriptor in the SDFG.
             :param datadesc: The data descriptor object.
+            :param wcr: The conflict resolution lambda.
             @type datadesc: Data.
         """
         range = subsets.Range.from_array(datadesc)
-        return Memlet(dataname, range.num_elements(), range, 1)
+        return Memlet(dataname, range.num_elements(), range, 1, wcr=wcr)
 
     def __hash__(self):
         return hash((self.data, self.num_accesses, self.subset, self.veclen,
@@ -290,7 +291,6 @@ class Memlet(object):
 class EmptyMemlet(Memlet):
     """ A memlet without data. Primarily used for connecting nodes to scopes
         without transferring data to them. """
-
     def __init__(self):
         super(EmptyMemlet, self).__init__(None, 0, None, 1)
 
@@ -310,7 +310,6 @@ class MemletTree(object):
         all siblings of the same edge and their children, for instance if
         multiple inputs from the same access node are used.
     """
-
     def __init__(
             self, edge, parent=None, children=None
     ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
@@ -329,3 +328,15 @@ class MemletTree(object):
                 yield from traverse(child)
 
         yield from traverse(self)
+
+    def root(self) -> 'MemletTree':
+        node = self
+        while node.parent is not None:
+            node = node.parent
+        return node
+
+    def traverse_children(self, include_self=False):
+        if include_self:
+            yield self
+        for child in self.children:
+            yield from child.traverse_children(include_self=True)

@@ -7,35 +7,16 @@ import functools
 import sympy
 import warnings
 
-from dace import data, subsets, symbolic, dtypes
+from dace import registry, subsets, symbolic, dtypes
 from dace.memlet import EmptyMemlet, Memlet
 from dace.graph import nodes
 
 
+@registry.make_registry
 class MemletPattern(object):
-    """ A pattern match on a memlet subset that can be used for propagation. 
     """
-    s_patterns = []
-    s_dependencies = {}
-
-    @staticmethod
-    def patterns():
-        return [p() for p in MemletPattern.s_patterns]
-
-    @staticmethod
-    def register_pattern(clazz, depends=None):
-        if not issubclass(clazz, MemletPattern):
-            raise TypeError
-        MemletPattern.s_patterns.append(clazz)
-
-    @staticmethod
-    def unregister_pattern(clazz):
-        if not issubclass(clazz, MemletPattern):
-            raise TypeError
-        MemletPattern.s_patterns.remove(clazz)
-
-    ####################################################
-
+    A pattern match on a memlet subset that can be used for propagation.
+    """
     def match(self, expressions, variable_context, node_range, orig_edges):
         raise NotImplementedError
 
@@ -43,22 +24,10 @@ class MemletPattern(object):
         raise NotImplementedError
 
 
+@registry.make_registry
 class SeparableMemletPattern(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
-
-    s_smpatterns = []
-
-    @staticmethod
-    def register_pattern(cls):
-        if not issubclass(cls, SeparableMemletPattern): raise TypeError
-        if cls not in SeparableMemletPattern.s_smpatterns:
-            SeparableMemletPattern.s_smpatterns.append(cls)
-
-    @staticmethod
-    def unregister_pattern(cls):
-        SeparableMemletPattern.s_smpatterns.remove(cls)
-
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
         raise NotImplementedError
@@ -67,19 +36,20 @@ class SeparableMemletPattern(object):
         raise NotImplementedError
 
 
+@registry.autoregister
 class SeparableMemlet(MemletPattern):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
-
     def match(self, expressions, variable_context, node_range, orig_edges):
         # Assuming correct dimensionality in each of the expressions
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
 
-        overapprox_range = subsets.Range([(rb.approx if isinstance(
-            rb, symbolic.SymExpr) else rb, re.approx if isinstance(
-                re, symbolic.SymExpr) else re, rs.approx if isinstance(
-                    rs, symbolic.SymExpr) else rs)
-                                          for rb, re, rs in node_range])
+        overapprox_range = subsets.Range([
+            (rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
+             re.approx if isinstance(re, symbolic.SymExpr) else re,
+             rs.approx if isinstance(rs, symbolic.SymExpr) else rs)
+            for rb, re, rs in node_range
+        ])
 
         for dim in range(data_dims):
 
@@ -89,17 +59,17 @@ class SeparableMemlet(MemletPattern):
                     dexprs.append(expr[dim].approx)
                 elif isinstance(expr[dim], tuple):
                     dexprs.append(
-                        (expr[dim][0].approx
-                         if isinstance(expr[dim][0], symbolic.SymExpr) else
-                         expr[dim][0], expr[dim][1].approx
-                         if isinstance(expr[dim][1], symbolic.SymExpr) else
-                         expr[dim][1], expr[dim][2].approx
-                         if isinstance(expr[dim][2],
-                                       symbolic.SymExpr) else expr[dim][2]))
+                        (expr[dim][0].approx if isinstance(
+                            expr[dim][0], symbolic.SymExpr) else expr[dim][0],
+                         expr[dim][1].approx if isinstance(
+                             expr[dim][1], symbolic.SymExpr) else expr[dim][1],
+                         expr[dim][2].approx if isinstance(
+                             expr[dim][2],
+                             symbolic.SymExpr) else expr[dim][2]))
                 else:
                     dexprs.append(expr[dim])
 
-            for pattern_class in SeparableMemletPattern.s_smpatterns:
+            for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
                 if smpattern.match(dexprs, variable_context, overapprox_range,
                                    orig_edges, dim, data_dims):
@@ -111,11 +81,12 @@ class SeparableMemlet(MemletPattern):
     def propagate(self, array, expressions, node_range):
         result = [(None, None, None)] * len(self.patterns_per_dim)
 
-        overapprox_range = subsets.Range([(rb.approx if isinstance(
-            rb, symbolic.SymExpr) else rb, re.approx if isinstance(
-                re, symbolic.SymExpr) else re, rs.approx if isinstance(
-                    rs, symbolic.SymExpr) else rs)
-                                          for rb, re, rs in node_range])
+        overapprox_range = subsets.Range([
+            (rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
+             re.approx if isinstance(re, symbolic.SymExpr) else re,
+             rs.approx if isinstance(rs, symbolic.SymExpr) else rs)
+            for rb, re, rs in node_range
+        ])
 
         for i, smpattern in enumerate(self.patterns_per_dim):
 
@@ -124,13 +95,14 @@ class SeparableMemlet(MemletPattern):
                 if isinstance(expr[i], symbolic.SymExpr):
                     dexprs.append(expr[i].approx)
                 elif isinstance(expr[i], tuple):
-                    dexprs.append((expr[i][0].approx if isinstance(
-                        expr[i][0],
-                        symbolic.SymExpr) else expr[i][0], expr[i][1].approx
-                                   if isinstance(expr[i][1], symbolic.SymExpr)
-                                   else expr[i][1], expr[i][2].approx
-                                   if isinstance(expr[i][2], symbolic.SymExpr)
-                                   else expr[i][2], expr.tile_sizes[i]))
+                    dexprs.append(
+                        (expr[i][0].approx if isinstance(
+                            expr[i][0], symbolic.SymExpr) else expr[i][0],
+                         expr[i][1].approx if isinstance(
+                             expr[i][1], symbolic.SymExpr) else expr[i][1],
+                         expr[i][2].approx if isinstance(
+                             expr[i][2], symbolic.SymExpr) else expr[i][2],
+                         expr.tile_sizes[i]))
                 else:
                     dexprs.append(expr[i])
 
@@ -140,14 +112,11 @@ class SeparableMemlet(MemletPattern):
         return subsets.Range(result)
 
 
-MemletPattern.register_pattern(SeparableMemlet)
-
-
+@registry.autoregister
 class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
         of the form `a * {index} + b`.
     """
-
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
 
@@ -297,15 +266,15 @@ class AffineSMemlet(SeparableMemletPattern):
             result_tile = 1
         else:
             if rt == 1:
-                result_skip = (result_end - result_begin - re + rb) / (
-                    node_re - node_rb)
+                result_skip = (result_end - result_begin - re +
+                               rb) / (node_re - node_rb)
                 try:
                     if result_skip < 1:
                         result_skip = 1
                 except:
                     pass
-                result_tile = result_end - result_begin + 1 - (
-                    node_rlen - 1) * result_skip
+                result_tile = result_end - result_begin + 1 - (node_rlen -
+                                                               1) * result_skip
             else:
                 candidate_skip = rs
                 candidate_tile = rt * node_rlen
@@ -330,16 +299,13 @@ class AffineSMemlet(SeparableMemletPattern):
         return (result_begin, result_end, result_skip, result_tile)
 
 
-SeparableMemletPattern.register_pattern(AffineSMemlet)
-
-
+@registry.autoregister
 class ModuloSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches modulo expressions, i.e.,
         of the form `f(x) % N`.
 
         Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
     """
-
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
         # Pattern does not support unions of expressions
@@ -389,14 +355,11 @@ class ModuloSMemlet(SeparableMemletPattern):
         return se_range
 
 
-SeparableMemletPattern.register_pattern(ModuloSMemlet)
-
-
+@registry.autoregister
 class ConstantSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
     """
-
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
         # Pattern does not support unions of expressions. TODO: Support
@@ -437,13 +400,10 @@ class ConstantSMemlet(SeparableMemletPattern):
         return (dim_exprs[0], dim_exprs[0], 1)
 
 
-SeparableMemletPattern.register_pattern(ConstantSMemlet)
-
-
+@registry.autoregister
 class GenericSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that detects any expression, and propagates 
         interval bounds. Used as a last resort. """
-
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
         dims = []
@@ -530,9 +490,6 @@ class GenericSMemlet(SeparableMemletPattern):
         return (result_begin, result_end, result_skip, result_tile)
 
 
-SeparableMemletPattern.register_pattern(GenericSMemlet)
-
-
 def _subexpr(dexpr, repldict):
     if isinstance(dexpr, tuple):
         return tuple(_subexpr(d, repldict) for d in dexpr)
@@ -542,10 +499,10 @@ def _subexpr(dexpr, repldict):
         return dexpr.subs(repldict)
 
 
+@registry.autoregister
 class ConstantRangeMemlet(MemletPattern):
     """ Memlet pattern that matches arbitrary expressions with constant range.
     """
-
     def match(self, expressions, variable_context, node_range, orig_edges):
         constant_range = True
         for dim in node_range:
@@ -582,10 +539,6 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-# ConstantRangeMemlet is slow, so it should be evaluated last
-MemletPattern.register_pattern(ConstantRangeMemlet)
-
-
 def propagate_labels_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         @note: This is an in-place operation on the SDFG.
@@ -600,8 +553,6 @@ def _propagate_labels(g, sdfg):
         :param sdfg: The SDFG in which the state is situated.
         @note: This is an in-place operation on the SDFG state.
     """
-    patterns = MemletPattern.patterns()
-
     # Algorithm:
     # 1. Start propagating information from tasklets outwards (their edges
     #    are hardcoded).
@@ -676,8 +627,8 @@ def _propagate_node(dfg_state, node):
         if isinstance(edge.data, EmptyMemlet):
             new_memlet = EmptyMemlet()
         else:
-            internal_edge = next(
-                e for e in internal_edges if e.data.data == edge.data.data)
+            internal_edge = next(e for e in internal_edges
+                                 if e.data.data == edge.data.data)
             new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
                                           True)
         edge._data = new_memlet
@@ -711,9 +662,8 @@ def propagate_memlet(dfg_state,
         return EmptyMemlet()
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(
-        conn for conn in scope_node.in_connectors
-        if not conn.startswith('IN_'))
+    scope_node_symbols = set(conn for conn in scope_node.in_connectors
+                             if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
         for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
@@ -750,7 +700,8 @@ def propagate_memlet(dfg_state,
         new_subset = None
         for md in aggdata:
             tmp_subset = None
-            for pattern in MemletPattern.patterns():
+            for pclass in MemletPattern.extensions():
+                pattern = pclass()
                 if pattern.match([md.subset], variable_context, mapnode.range,
                                  [md]):
                     tmp_subset = pattern.propagate(arr, [md.subset],
@@ -760,8 +711,8 @@ def propagate_memlet(dfg_state,
                 # No patterns found. Emit a warning and propagate the entire
                 # array
                 warnings.warn('Cannot find appropriate memlet pattern to '
-                              'propagate %s through %s' % (str(md.subset),
-                                                           str(mapnode.range)))
+                              'propagate %s through %s' %
+                              (str(md.subset), str(mapnode.range)))
                 tmp_subset = subsets.Range.from_array(arr)
 
             # Union edges as necessary
@@ -784,8 +735,8 @@ def propagate_memlet(dfg_state,
         # Nothing to analyze/propagate in consume
         new_subset = subsets.Range.from_array(arr)
     else:
-        raise NotImplementedError(
-            'Unimplemented primitive: %s' % type(scope_node))
+        raise NotImplementedError('Unimplemented primitive: %s' %
+                                  type(scope_node))
     ### End of subset propagation
 
     new_memlet = copy.copy(memlet)
@@ -795,8 +746,8 @@ def propagate_memlet(dfg_state,
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set
     new_memlet.num_accesses = (
-        sum(m.num_accesses for m in aggdata) * functools.reduce(
-            lambda a, b: a * b, scope_node.map.range.size(), 1))
+        sum(m.num_accesses for m in aggdata) *
+        functools.reduce(lambda a, b: a * b, scope_node.map.range.size(), 1))
     if any(m.num_accesses == -1 for m in aggdata):
         new_memlet.num_accesses = -1
     elif symbolic.issymbolic(new_memlet.num_accesses) and any(

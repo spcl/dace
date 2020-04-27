@@ -7,6 +7,7 @@ class CanvasManager {
     }
     constructor(ctx, renderer, canvas) {
         this.ctx = ctx;
+        this.ctx.lod = true;
         this.canvas = canvas;
         this.anim_id = null;
         this.prev_time = null;
@@ -170,25 +171,25 @@ class CanvasManager {
         let scale = 1, tx = 0, ty = 0;
         if (rect.width > rect.height) {
             scale = canvas_w / rect.width;
-            tx = rect.x;
-            ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+            tx = -rect.x;
+            ty = -rect.y - (rect.height/2) + (canvas_h / scale / 2);
 
             // Now other dimension does not fit, scale it as well
             if (rect.height * scale > canvas_h) {
                 scale = canvas_h / rect.height;
-                tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
-                ty = rect.y;
+                tx = -rect.x - (rect.width/2) + (canvas_w / scale / 2);
+                ty = -rect.y;
             }
         } else {
             scale = canvas_h / rect.height;
-            tx = rect.x - (rect.width/2) + (canvas_w / scale / 2);
-            ty = rect.y;
+            tx = -rect.x - (rect.width/2) + (canvas_w / scale / 2);
+            ty = -rect.y;
         
             // Now other dimension does not fit, scale it as well
             if (rect.width * scale > canvas_w) {
                 scale = canvas_w / rect.width;
-                tx = rect.x;
-                ty = rect.y - (rect.height/2) + (canvas_h / scale / 2);
+                tx = -rect.x;
+                ty = -rect.y - (rect.height/2) + (canvas_h / scale / 2);
             }
         }
 
@@ -202,6 +203,204 @@ class CanvasManager {
     translate(x, y) {
         this.stopAnimation();
         this.user_transform = this.user_transform.translate(x / this.user_transform.a, y / this.user_transform.d);
+    }
+
+    /**
+     * Move/translate an element in the graph by a change in x and y.
+     * @param {*} el                Element to move
+     * @param {*} old_mousepos      Old mouse position in canvas coordinates
+     * @param {*} new_mousepos      New mouse position in canvas coordinates
+     * @param {*} entire_graph      Reference to the entire graph
+     * @param {*} sdfg_list         List of SDFGs and nested SDFGs
+     * @param {*} state_parent_list List of parent elements to SDFG states
+     */
+    translate_element(el, old_mousepos, new_mousepos, entire_graph, sdfg_list,
+                      state_parent_list) {
+        this.stopAnimation();
+
+        // Edges connected to the moving element
+        let out_edges = [];
+        let in_edges = [];
+
+        // Find the parent graph in the list of available SDFGs
+        let parent_graph = sdfg_list[el.sdfg.sdfg_list_id];
+        let parent_element = null;
+
+        if (entire_graph !== parent_graph && el.data.state) {
+            // If the parent graph and the entire SDFG shown are not the same,
+            // we're currently in a nested SDFG. If we're also moving a state,
+            // this means that its parent element is found in the list of
+            // parents to states (state_parent_list)
+            parent_element = state_parent_list[el.sdfg.sdfg_list_id];
+        } else if (el.parent_id !== null && parent_graph) {
+            // If the parent_id isn't null and there is a parent graph, we can
+            // look up the parent node via the element's parent_id
+            parent_element = parent_graph.node(el.parent_id);
+            // If our parent element is a state, we want the state's graph
+            if (parent_element.data.state)
+                parent_graph = parent_element.data.graph;
+        }
+
+        if (parent_graph) {
+            // Find all the edges connected to the moving node
+            parent_graph.outEdges(el.id).forEach(edge_id => {
+                out_edges.push(parent_graph.edge(edge_id));
+            });
+            parent_graph.inEdges(el.id).forEach(edge_id => {
+                in_edges.push(parent_graph.edge(edge_id));
+            });
+        }
+
+        // Compute theoretical initial displacement/movement
+        let dx = new_mousepos.x - old_mousepos.x;
+        let dy = new_mousepos.y - old_mousepos.y;
+
+        if (parent_element) {
+            // Calculate the box to bind the element to. This is given by
+            // the parent element, i.e. the element where out to-be-moved
+            // element is contained within
+            const parent_left_border =
+                (parent_element.x - (parent_element.width / 2));
+            const parent_rigth_border =
+                parent_left_border + parent_element.width;
+            const parent_top_border =
+                (parent_element.y - (parent_element.height / 2));
+            const parent_bottom_border =
+                parent_top_border + parent_element.height;
+
+            const el_h_margin = el.height / 2;
+            const el_w_margin = el.width / 2;
+            const min_x = parent_left_border + el_w_margin;
+            const min_y = parent_top_border + el_h_margin;
+            const max_x = parent_rigth_border - el_w_margin;
+            const max_y = parent_bottom_border - el_h_margin;
+
+            // Make sure we don't move our element outside its parent's
+            // bounding box. If either the element or the mouse pointer are
+            // outside the parent, we clamp movement in that direction
+            if (el instanceof Edge) {
+                let target_x = el.points[1].x + dx;
+                let target_y = el.points[1].y + dy;
+                if (target_x <= min_x ||
+                    new_mousepos.x <= parent_left_border) {
+                    dx = min_x - el.points[1].x;
+                } else if (target_x >= max_x ||
+                           new_mousepos.x >= parent_rigth_border) {
+                    dx = max_x - el.points[1].x;
+                }
+                if (target_y <= min_y ||
+                    new_mousepos.y <= parent_top_border) {
+                    dy = min_y - el.points[1].y;
+                } else if (target_y >= max_y ||
+                           new_mousepos.y >= parent_bottom_border) {
+                    dy = max_y - el.points[1].y;
+                }
+            } else {
+                let target_x = el.x + dx;
+                let target_y = el.y + dy;
+                if (target_x <= min_x ||
+                    new_mousepos.x <= parent_left_border) {
+                    dx = min_x - el.x;
+                } else if (target_x >= max_x ||
+                           new_mousepos.x >= parent_rigth_border) {
+                    dx = max_x - el.x;
+                }
+                if (target_y <= min_y ||
+                    new_mousepos.y <= parent_top_border) {
+                    dy = min_y - el.y;
+                } else if (target_y >= max_y ||
+                           new_mousepos.y >= parent_bottom_border) {
+                    dy = max_y - el.y;
+                }
+            }
+        }
+
+        if (el instanceof Edge) {
+            if (el.points[2]) {
+                // Only allow dragging, if the memlet is 'making a curve'
+                el.points[1].x += dx;
+                el.points[1].y += dy;
+            }
+            // The rest of the method doesn't apply to Edges
+            return;
+        }
+
+        // Move a node together with its connectors if it has any
+        function move_node_and_connectors(node) {
+            node.x += dx;
+            node.y += dy;
+            if (node.data.node && node.data.node.type === 'NestedSDFG')
+                translate_recursive(node.data.graph);
+            if (node.in_connectors)
+                node.in_connectors.forEach(c => {
+                    c.x += dx;
+                    c.y += dy;
+                });
+            if (node.out_connectors)
+                node.out_connectors.forEach(c => {
+                    c.x += dx;
+                    c.y += dy;
+                });
+        }
+
+        // Allow recursive translation of nested SDFGs
+        function translate_recursive(ng) {
+            ng.nodes().forEach(state_id => {
+                const state = ng.node(state_id);
+                state.x += dx;
+                state.y += dy;
+                const g = state.data.graph;
+                if (g) {
+                    g.nodes().forEach(node_id => {
+                        const node = g.node(node_id);
+                        move_node_and_connectors(node);
+                    });
+
+                    g.edges().forEach(edge_id => {
+                        const edge = g.edge(edge_id);
+                        edge.x += dx;
+                        edge.y += dy;
+                        edge.points.forEach(point => {
+                            point.x += dx;
+                            point.y += dy;
+                        });
+                    });
+                }
+            });
+        }
+
+        // Move the node
+        move_node_and_connectors(el);
+
+        if (el.data.state && !el.data.state.attributes.is_collapsed) {
+            // We're moving a state, move all its contained elements
+            const graph = el.data.graph;
+            graph.nodes().forEach(node_id => {
+                const node = graph.node(node_id);
+                move_node_and_connectors(node);
+            });
+
+            // Drag all the edges along
+            graph.edges().forEach(edge_id => {
+                const edge = graph.edge(edge_id);
+                edge.x += dx;
+                edge.y += dy;
+                edge.points.forEach(point => {
+                    point.x += dx;
+                    point.y += dy;
+                });
+            });
+        }
+
+        // Move the connected edges along with the element
+        out_edges.forEach(edge => {
+            edge.points[0].x += dx;
+            edge.points[0].y += dy;
+        });
+        in_edges.forEach(edge => {
+            edge.points[edge.points.length - 1].x += dx;
+            edge.points[edge.points.length - 1].y += dy;
+        });
     }
 
     mapPixelToCoordsX(xpos) {
@@ -368,6 +567,10 @@ function calculateNodeSize(sdfg_state, node, ctx) {
         size.width = 0.0;
         size.height = 0.0;
     }
+    else if (node.type === "LibraryNode") {
+        size.width += 2.0 * (size.height / 3.0);
+        size.height /= 1.75;
+    }
     else if (node.type === "Reduce") {
         size.height -= 4*LINEHEIGHT;
         size.width *= 2;
@@ -380,7 +583,7 @@ function calculateNodeSize(sdfg_state, node, ctx) {
 }
 
 // Layout SDFG elements (states, nodes, scopes, nested SDFGs)
-function relayout_sdfg(ctx, sdfg) {
+function relayout_sdfg(ctx, sdfg, sdfg_list, state_parent_list) {
     let STATE_MARGIN = 4*LINEHEIGHT;
 
     // Layout the SDFG as a dagre graph
@@ -399,7 +602,8 @@ function relayout_sdfg(ctx, sdfg) {
             stateinfo.height = LINEHEIGHT;
         }
         else {
-            state_g = relayout_state(ctx, state, sdfg);
+            state_g = relayout_state(ctx, state, sdfg, sdfg_list,
+                state_parent_list);
             stateinfo = calculateBoundingBox(state_g);
         }
         stateinfo.width += 2*STATE_MARGIN;
@@ -459,10 +663,13 @@ function relayout_sdfg(ctx, sdfg) {
     g.width = bb.width;
     g.height = bb.height;
 
+    // Add SDFG to global store
+    sdfg_list[sdfg.sdfg_list_id] = g;
+
     return g;
 }
 
-function relayout_state(ctx, sdfg_state, sdfg) {
+function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({multigraph: true});
 
@@ -477,6 +684,8 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
     // Process nodes hierarchically
     let toplevel_nodes = sdfg_state.scope_dict[-1];
+    if (toplevel_nodes === undefined)
+        toplevel_nodes = Object.keys(sdfg_state.nodes);
     let drawn_nodes = new Set();
 
     function layout_node(node) {
@@ -497,7 +706,7 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Recursively lay out nested SDFGs
         if (node.type === "NestedSDFG") {
-            nested_g = relayout_sdfg(ctx, node.attributes.sdfg);
+            nested_g = relayout_sdfg(ctx, node.attributes.sdfg, sdfg_list, state_parent_list);
             let sdfginfo = calculateBoundingBox(nested_g);
             node.attributes.layout.width = sdfginfo.width + 2*LINEHEIGHT;
             node.attributes.layout.height = sdfginfo.height + 2*LINEHEIGHT;
@@ -505,6 +714,11 @@ function relayout_state(ctx, sdfg_state, sdfg) {
 
         // Dynamically create node type
         let obj = new SDFGElements[node.type]({node: node, graph: nested_g}, node.id, sdfg, sdfg_state.id);
+
+        // If it's a nested SDFG, we need to record the node as all of its
+        // state's parent node
+        if (node.type === 'NestedSDFG')
+            state_parent_list[node.attributes.sdfg.sdfg_list_id] = obj;
 
         // Add input connectors
         let i = 0;
@@ -545,11 +759,6 @@ function relayout_state(ctx, sdfg_state, sdfg) {
     sdfg_state.edges.forEach((edge, id) => {
         edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
         if (!edge) return;
-
-        let label = edge.attributes.data.label;
-        console.assert(label != undefined);
-        let textmetrics = ctx.measureText(label);
-
         g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
     });
 
@@ -599,12 +808,14 @@ function relayout_state(ctx, sdfg_state, sdfg) {
         let gedge = g.edge(edge.src, edge.dst, id);
 
         // Reposition first and last points according to connectors
+        let src_conn = null, dst_conn = null;
         if (edge.src_connector) {
             let src_node = g.node(edge.src);
             let cindex = src_node.data.node.attributes.layout.out_connectors.indexOf(edge.src_connector);
             if (cindex >= 0) {
                 gedge.points[0].x = src_node.out_connectors[cindex].x;
-                gedge.points[0].y += LINEHEIGHT / 2.0;
+                gedge.points[0].y = src_node.out_connectors[cindex].y;
+                src_conn = src_node.out_connectors[cindex];
             }
         }
         if (edge.dst_connector) {
@@ -612,9 +823,19 @@ function relayout_state(ctx, sdfg_state, sdfg) {
             let cindex = dst_node.data.node.attributes.layout.in_connectors.indexOf(edge.dst_connector);
             if (cindex >= 0) {
                 gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
-                gedge.points[gedge.points.length - 1].y -= LINEHEIGHT / 2.0;
+                gedge.points[gedge.points.length - 1].y = dst_node.in_connectors[cindex].y;
+                dst_conn = dst_node.in_connectors[cindex];
             }
         }
+
+        let n = gedge.points.length - 1;
+        if (src_conn !== null)
+            gedge.points[0] = dagre.util.intersectRect(src_conn, gedge.points[n]);
+        if (dst_conn !== null)
+            gedge.points[n] = dagre.util.intersectRect(dst_conn, gedge.points[0]);
+
+        if  (gedge.points.length == 3 && gedge.points[0].x == gedge.points[n].x)
+            gedge.points = [gedge.points[0], gedge.points[n]];
 
         let bb = calculateEdgeBoundingBox(gedge);
         // Convert from top-left to center
@@ -639,18 +860,27 @@ class SDFGRenderer {
     constructor(sdfg, container, on_mouse_event = null) {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
+        this.sdfg_list = {};
+        this.state_parent_list = {}; // List of all state's parent elements
 
         // Rendering-related fields
         this.container = container;
         this.ctx = null;
         this.canvas = null;
         this.toolbar = null;
+        this.menu = null;
         this.last_visible_elements = null;
         this.last_hovered_elements = null;
         this.last_clicked_elements = null;
+        this.last_dragged_element = null;
         this.tooltip = null;
+        this.tooltip_container = null;
+
+        // View options
+        this.inclusive_ranges = false;
 
         // Mouse-related fields
+        this.move_mode = false;
         this.mousepos = null; // Last position of the mouse pointer (in canvas coordinates)
         this.realmousepos = null; // Last position of the mouse pointer (in pixel coordinates)
         this.drag_start = null; // Null if the mouse/touch is not activated
@@ -661,9 +891,20 @@ class SDFGRenderer {
     }
 
     destroy() {
-        this.canvas_manager.destroy();
-        this.container.removeChild(this.canvas);
-        this.container.removeChild(this.toolbar);
+        try {
+            if (this.menu)
+                this.menu.destroy();
+            this.canvas_manager.destroy();
+            this.container.removeChild(this.canvas);
+            this.container.removeChild(this.toolbar);
+            this.container.removeChild(this.tooltip_container);
+        } catch (ex) {
+            // Do nothing
+        }
+    }
+
+    view_settings() {
+        return {inclusive_ranges: this.inclusive_ranges};
     }
 
     // Initializes the DOM
@@ -678,19 +919,36 @@ class SDFGRenderer {
         let d;
 
         // Menu bar
-        /*
-        let d = document.createElement('button');
-        d.innerHTML = '<i class="material-icons">menu</i>';
-        d.style = 'padding-bottom: 0px;';
-        d.onclick = () => {};
-        d.title = 'Menu';
-        this.toolbar.appendChild(d);
-        */
+        try {
+            ContextMenu;
+            d = document.createElement('button');
+            d.innerHTML = '<i class="material-icons">menu</i>';
+            d.style = 'padding-bottom: 0px; user-select: none';
+            let that = this;
+            d.onclick = function () {
+                if (that.menu && that.menu.visible()) {
+                    that.menu.destroy();
+                    return;
+                }
+                let rect = this.getBoundingClientRect();
+                let cmenu = new ContextMenu();
+                cmenu.addOption("Save view as PNG", x => that.save_as_png());
+                if (that.has_pdf()) {
+                    cmenu.addOption("Save view as PDF", x => that.save_as_pdf());
+                    cmenu.addOption("Save all as PDF", x => that.save_as_pdf(true));
+                }
+                cmenu.addCheckableOption("Inclusive ranges", that.inclusive_ranges, (x, checked) => {that.inclusive_ranges = checked;});
+                that.menu = cmenu;
+                that.menu.show(rect.left, rect.bottom);
+            };
+            d.title = 'Menu';
+            this.toolbar.appendChild(d);
+        } catch (ex) {}
 
         // Zoom to fit
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.zoom_to_view();
         d.title = 'Zoom to fit SDFG';
         this.toolbar.appendChild(d);
@@ -698,7 +956,7 @@ class SDFGRenderer {
         // Collapse all
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">unfold_less</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.collapse_all();
         d.title = 'Collapse all elements';
         this.toolbar.appendChild(d);
@@ -706,13 +964,37 @@ class SDFGRenderer {
         // Expand all
         d = document.createElement('button');
         d.innerHTML = '<i class="material-icons">unfold_more</i>';
-        d.style = 'padding-bottom: 0px;';
+        d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.expand_all();
         d.title = 'Expand all elements';
         this.toolbar.appendChild(d);
 
+        // Enter object moving mode
+        d = document.createElement('button');
+        d.innerHTML = '<i class="material-icons">open_with</i>';
+        d.style = 'padding-bottom: 0px; user-select: none';
+        d.onclick = () => {
+            this.move_mode = !this.move_mode;
+            if (this.move_mode) {
+                d.innerHTML = '<i class="material-icons">done</i>';
+                d.title = 'Exit object moving mode';
+            } else {
+                d.innerHTML = '<i class="material-icons">open_with</i>';
+                d.title = 'Enter object moving mode';
+            }
+        };
+        d.title = 'Enter object moving mode';
+        this.toolbar.appendChild(d);
+
         this.container.append(this.toolbar);
         // End of buttons
+
+        // Tooltip HTML container
+        this.tooltip_container = document.createElement('div');
+        this.tooltip_container.innerHTML = '';
+        this.tooltip_container.className = 'sdfvtooltip';
+        this.tooltip_container.onmouseover = () => this.tooltip_container.style.display = "none";
+        this.container.appendChild(this.tooltip_container);
 
         this.ctx = this.canvas.getContext("2d");
 
@@ -778,7 +1060,9 @@ class SDFGRenderer {
 
     // Re-layout graph and nested graphs
     relayout() {
-        this.graph = relayout_sdfg(this.ctx, this.sdfg);
+        this.sdfg_list = {};
+        this.graph = relayout_sdfg(this.ctx, this.sdfg, this.sdfg_list,
+            this.state_parent_list);
         this.onresize();
 
         return this.graph;
@@ -787,7 +1071,7 @@ class SDFGRenderer {
     // Change translation and scale such that the chosen elements
     // (or entire graph if null) is in view
     zoom_to_view(elements=null) {
-        if (!elements)
+        if (!elements || elements.length == 0)
             elements = this.graph.nodes().map(x => this.graph.node(x));
         
         let bb = boundingBox(elements);
@@ -814,6 +1098,76 @@ class SDFGRenderer {
         this.draw_async();
     }
 
+    // Save functions
+    save(filename, contents) {
+        var link = document.createElement('a');
+        link.setAttribute('download', filename);
+        link.href = contents;
+        document.body.appendChild(link);
+
+        // wait for the link to be added to the document
+        window.requestAnimationFrame(function () {
+            var event = new MouseEvent('click');
+            link.dispatchEvent(event);
+            document.body.removeChild(link);
+        });
+    }
+
+    save_as_png() {
+        this.save('sdfg.png', this.canvas.toDataURL('image/png'));
+    }
+
+    has_pdf() {
+        try {
+            blobStream;
+            canvas2pdf.PdfContext;
+            return true;
+        } catch(e) {
+            return false;
+        }
+    }
+
+    save_as_pdf(save_all=false) {
+        let stream = blobStream();
+
+        // Compute document size
+        let curx = this.canvas_manager.mapPixelToCoordsX(0);
+        let cury = this.canvas_manager.mapPixelToCoordsY(0);
+        let size;
+        if (save_all) {
+            // Get size of entire graph
+            let elements = this.graph.nodes().map(x => this.graph.node(x));
+            let bb = boundingBox(elements);
+            size = [bb.width, bb.height];
+        } else {
+            // Get size of current view
+            let endx = this.canvas_manager.mapPixelToCoordsX(this.canvas.width);
+            let endy = this.canvas_manager.mapPixelToCoordsY(this.canvas.height);
+            let curw = endx - curx, curh = endy - cury;
+            size = [curw, curh];
+        }
+        //
+
+        let ctx = new canvas2pdf.PdfContext(stream, {
+            size: size
+        });
+        let oldctx = this.ctx;
+        this.ctx = ctx;
+        this.ctx.lod = !save_all;
+        this.ctx.pdf = true;
+        // Center on saved region
+        if (!save_all)
+            this.ctx.translate(-curx, -cury);
+
+        this.draw_async();
+
+        ctx.stream.on('finish', () => {
+            this.save('sdfg.pdf', ctx.stream.toBlobURL('application/pdf'));
+            this.ctx = oldctx;
+            this.draw_async();
+        });
+    }
+
     // Render SDFG
     draw(dt) {
         let ctx = this.ctx;
@@ -836,30 +1190,28 @@ class SDFGRenderer {
     on_pre_draw() { }
 
     on_post_draw() {
+        try {
+            this.ctx.end();
+        } catch (ex) {}
+        
         if (this.tooltip) {
-            let FONTSIZE = 18; // in pixels
             let br = this.canvas.getBoundingClientRect();
             let pos = {x: this.realmousepos.x - br.x,
                        y: this.realmousepos.y - br.y};
-            let label = this.tooltip;
-            let ctx = this.ctx;
 
-            // Reset scaling and translation
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            // Clear style and contents
+            this.tooltip_container.style = '';
+            this.tooltip_container.innerHTML = '';
+            this.tooltip_container.style.display = 'block';
+            
+            // Invoke custom container         
+            this.tooltip(this.tooltip_container);
 
-            // Set new font
-            let oldfont = ctx.font;
-            ctx.font = FONTSIZE + "px Arial";
-
-            // Draw tooltip
-            let x = pos.x + 10;
-            let textmetrics = ctx.measureText(label);
-            ctx.fillStyle = "black";
-            ctx.fillRect(x, pos.y - FONTSIZE, textmetrics.width + FONTSIZE, FONTSIZE * 1.2);
-            ctx.fillStyle = "white";
-            ctx.fillText(label, x + FONTSIZE / 2, pos.y - 0.1 * FONTSIZE);
-            ctx.fillStyle = "black";
-            ctx.font = oldfont;
+            // Make visible near mouse pointer
+            this.tooltip_container.style.top = pos.y + 'px';
+            this.tooltip_container.style.left = (pos.x + 20) + 'px';
+        } else {
+            this.tooltip_container.style.display = 'none';
         }
     }
 
@@ -1030,6 +1382,45 @@ class SDFGRenderer {
         traverse_recursive(this.graph, this.sdfg.attributes.name);
     }
 
+    find_elements_under_cursor(mouse_pos_x, mouse_pos_y) {
+        // Find all elements under the cursor.
+        const elements = this.elements_in_rect(mouse_pos_x, mouse_pos_y, 0, 0);
+        const clicked_states = elements.states;
+        const clicked_nodes = elements.nodes;
+        const clicked_edges = elements.edges;
+        const clicked_interstate_edges = elements.isedges;
+        const clicked_connectors = elements.connectors;
+        const total_elements =
+            clicked_states.length + clicked_nodes.length +
+            clicked_edges.length + clicked_interstate_edges.length +
+            clicked_connectors.length;
+        let foreground_elem = null, foreground_surface = -1;
+
+        // Find the top-most element under the mouse cursor (i.e. the one with
+        // the smallest dimensions).
+        const categories = [
+            clicked_states,
+            clicked_interstate_edges,
+            clicked_nodes,
+            clicked_edges
+        ];
+        for (const category of categories) {
+            for (let i = 0; i < category.length; i++) {
+                const s = category[i].obj.width * category[i].obj.height;
+                if (foreground_surface < 0 || s < foreground_surface) {
+                    foreground_surface = s;
+                    foreground_elem = category[i].obj;
+                }
+            }
+        }
+
+        return {
+            total_elements,
+            elements,
+            foreground_elem,
+        };
+    }
+
     on_mouse_event(event, comp_x_func, comp_y_func, evtype="click") {
         let dirty = false; // Whether to redraw at the end
 
@@ -1037,26 +1428,55 @@ class SDFGRenderer {
             this.drag_start = event;
         } else if (evtype === "mouseup") {
             this.drag_start = null;
+            this.last_dragged_element = null;
         } else if (evtype === "touchend") {
             if (event.touches.length == 0)
                 this.drag_start = null;
             else
                 this.drag_start = event;
         } else if (evtype === "mousemove") {
+            // Calculate the change in mouse position in canvas coordinates
+            let old_mousepos = this.mousepos;
             this.mousepos = {x: comp_x_func(event), y: comp_y_func(event)};
             this.realmousepos = {x: event.clientX, y: event.clientY};
 
             if (this.drag_start && event.buttons & 1) {
                 // Only accept the primary mouse button as dragging source
-                this.canvas_manager.translate(event.movementX, event.movementY);
+                if (this.move_mode) {
+                    if (this.last_dragged_element) {
+                        this.canvas.style.cursor = 'grabbing';
+                        this.canvas_manager.translate_element(
+                            this.last_dragged_element,
+                            old_mousepos, this.mousepos,
+                            this.graph, this.sdfg_list, this.state_parent_list
+                        );
+                        dirty = true;
+                        this.draw_async();
+                        return false;
+                    } else {
+                        const mouse_elements = this.find_elements_under_cursor(
+                            this.mousepos.x, this.mousepos.y
+                        );
+                        if (mouse_elements.foreground_elem) {
+                            this.last_dragged_element =
+                                mouse_elements.foreground_elem;
+                            this.canvas.style.cursor = 'grabbing';
+                            return false;
+                        }
+                        return true;
+                    }
+                } else {
+                    this.canvas_manager.translate(event.movementX,
+                        event.movementY);
 
-                // Mark for redraw
-                dirty = true;
-                this.draw_async();
-                return false;
+                    // Mark for redraw
+                    dirty = true;
+                    this.draw_async();
+                    return false;
+                }
             } else {
                 this.drag_start = null;
-                if (event.buttons & 1)
+                if (event.buttons & 1 || event.buttons & 4)
                     return true; // Don't stop propagation
             }
         } else if (evtype === "touchmove") {
@@ -1115,33 +1535,24 @@ class SDFGRenderer {
             return true;
 
         // Find elements under cursor
-        let elements = this.elements_in_rect(this.mousepos.x, this.mousepos.y, 0, 0);
-        let clicked_states = elements.states;
-        let clicked_nodes = elements.nodes;
-        let clicked_edges = elements.edges;
-        let clicked_interstate_edges = elements.isedges;
-        let clicked_connectors = elements.connectors;
-        let total_elements = clicked_states.length + clicked_nodes.length + clicked_edges.length +
-            clicked_interstate_edges.length + clicked_connectors.length;
-        let foreground_elem = null, fg_surface = -1;
-
-        // Find the top-most element under mouse cursor (the one with the smallest dimensions)
-        for (let category of [clicked_states, clicked_interstate_edges, 
-                              clicked_nodes, clicked_edges]) {
-            for (let i = 0; i < category.length; i++) {
-                let s = category[i].obj.width * category[i].obj.height;
-                if (fg_surface < 0 || s < fg_surface) {
-                        fg_surface = s;
-                        foreground_elem = category[i].obj;
-                }
-            }
-        }
+        const elements_under_cursor = this.find_elements_under_cursor(
+            this.mousepos.x, this.mousepos.y
+        );
+        let elements = elements_under_cursor.elements;
+        let total_elements = elements_under_cursor.total_elements;
+        let foreground_elem = elements_under_cursor.foreground_elem;
         
         // Change mouse cursor accordingly
-        if (total_elements > 0)
-            this.canvas.style.cursor = 'pointer';
-        else
+        if (total_elements > 0) {
+            if (this.move_mode && this.drag_start)
+                this.canvas.style.cursor = 'grabbing';
+            else if (this.move_mode)
+                this.canvas.style.cursor = 'grab';
+            else
+                this.canvas.style.cursor = 'pointer';
+        } else {
             this.canvas.style.cursor = 'auto';
+        }
 
         this.tooltip = null;
         this.last_hovered_elements = elements;

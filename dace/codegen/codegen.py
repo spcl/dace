@@ -3,42 +3,27 @@ from typing import List
 
 from dace import dtypes
 from dace import data
-from dace.codegen.targets import framecode
+from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 
-# Import all code generation targets
-from dace.codegen.targets import cpu, cuda, immaterial, mpi, xilinx, intel_fpga
-from dace.codegen.instrumentation import INSTRUMENTATION_PROVIDERS
+# Import CPU code generator. TODO: Remove when refactored
+from dace.codegen.targets import cpu
+
+from dace.codegen.instrumentation import InstrumentationProvider
 
 
 class CodegenError(Exception):
     pass
 
 
-STRING_TO_TARGET = {
-    "cpu": cpu.CPUCodeGen,
-    "cuda": cuda.CUDACodeGen,
-    "immaterial": immaterial.ImmaterialCodeGen,
-    "mpi": mpi.MPICodeGen,
-    "intel_fpga": intel_fpga.IntelFPGACodeGen,
-    "xilinx": xilinx.XilinxCodeGen,
-}
-
-_TARGET_REGISTER_ORDER = [
-    'cpu', 'cuda', 'immaterial', 'mpi', 'intel_fpga', 'xilinx'
-]
-
-
 def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
-    proto += "int __dace_init(" + sdfg.signature(
-        with_types=True, for_call=False) + ");\n"
-    proto += "int __dace_exit(" + sdfg.signature(
-        with_types=True, for_call=False) + ");\n"
-    proto += "void __program_" + sdfg.name + "(" + sdfg.signature(
-        with_types=True, for_call=False) + ");\n\n"
+    params = (sdfg.name, sdfg.signature(with_types=True, for_call=False))
+    proto += "int __dace_init_%s(%s);\n" % params
+    proto += "int __dace_exit_%s(%s);\n" % params
+    proto += "void __program_%s(%s);\n\n" % params
     return proto
 
 
@@ -72,15 +57,15 @@ def generate_dummy(sdfg) -> str:
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
             deallocations += "  free(" + str(arg) + ");\n"
 
-    sdfg_call = "\n  __dace_init(" + sdfg.signature(
-        with_types=False, for_call=True) + ");\n"
-    sdfg_call += "  __program_" + sdfg.name + "(" + sdfg.signature(
-        with_types=False, for_call=True) + ");\n"
-    sdfg_call += "  __dace_exit(" + sdfg.signature(
-        with_types=False, for_call=True) + ");\n\n"
+    sdfg_call = '''
+  __dace_init_{name}({params});
+  __program_{name}({params});
+  __dace_exit_{name}({params});\n\n'''.format(name=sdfg.name,
+                                              params=sdfg.signature(
+                                                  with_types=False,
+                                                  for_call=True))
 
-    res = ""
-    res += includes
+    res = includes
     res += header
     res += allocations
     res += sdfg_call
@@ -114,35 +99,52 @@ def generate_code(sdfg) -> List[CodeObject]:
         sdfg = sdfg2
 
     frame = framecode.DaCeCodeGenerator()
-    # Instantiate all targets (who register themselves with framecodegen)
-    targets = {
-        name: STRING_TO_TARGET[name](frame, sdfg)
-        for name in _TARGET_REGISTER_ORDER
-    }
+
+    # Instantiate CPU first (as it is used by the other code generators)
+    # TODO: Refactor the parts used by other code generators out of CPU
+    default_target = cpu.CPUCodeGen
+    for k, v in target.TargetCodeGenerator.extensions().items():
+        # If another target has already been registered as CPU, use it instead
+        if v['name'] == 'cpu':
+            default_target = k
+    targets = {'cpu': default_target(frame, sdfg)}
+
+    # Instantiate the rest of the targets
+    targets.update({
+        v['name']: k(frame, sdfg)
+        for k, v in target.TargetCodeGenerator.extensions().items()
+        if v['name'] not in targets
+    })
 
     # Instantiate all instrumentation providers in SDFG
+    provider_mapping = InstrumentationProvider.get_provider_mapping()
     frame._dispatcher.instrumentation[
         dtypes.InstrumentationType.No_Instrumentation] = None
     for node, _ in sdfg.all_nodes_recursive():
         if hasattr(node, 'instrument'):
             frame._dispatcher.instrumentation[node.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.instrument]
+                provider_mapping[node.instrument]
         elif hasattr(node, 'consume'):
             frame._dispatcher.instrumentation[node.consume.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.consume.instrument]
+                provider_mapping[node.consume.instrument]
         elif hasattr(node, 'map'):
             frame._dispatcher.instrumentation[node.map.instrument] = \
-                INSTRUMENTATION_PROVIDERS[node.map.instrument]
+                provider_mapping[node.map.instrument]
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()
     }
 
     # Generate frame code (and the rest of the code)
-    global_code, frame_code, used_targets = frame.generate_code(sdfg, None)
+    (global_code, frame_code, used_targets,
+     used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
-        CodeObject(sdfg.name, global_code + frame_code, 'cpp', cpu.CPUCodeGen,
-                   'Frame')
+        CodeObject(sdfg.name,
+                   global_code + frame_code,
+                   'cpp',
+                   cpu.CPUCodeGen,
+                   'Frame',
+                   environments=used_environments)
     ]
 
     # Create code objects for each target
@@ -150,23 +152,21 @@ def generate_code(sdfg) -> List[CodeObject]:
         target_objects.extend(tgt.get_generated_codeobjects())
 
     # add a header file for calling the SDFG
-    dummy = CodeObject(
-        sdfg.name,
-        generate_headers(sdfg),
-        'h',
-        cpu.CPUCodeGen,
-        'CallHeader',
-        linkable=False)
+    dummy = CodeObject(sdfg.name,
+                       generate_headers(sdfg),
+                       'h',
+                       cpu.CPUCodeGen,
+                       'CallHeader',
+                       linkable=False)
     target_objects.append(dummy)
 
     # add a dummy main function to show how to call the SDFG
-    dummy = CodeObject(
-        sdfg.name + "_main",
-        generate_dummy(sdfg),
-        'cpp',
-        cpu.CPUCodeGen,
-        'DummyMain',
-        linkable=False)
+    dummy = CodeObject(sdfg.name + "_main",
+                       generate_dummy(sdfg),
+                       'cpp',
+                       cpu.CPUCodeGen,
+                       'DummyMain',
+                       linkable=False)
     target_objects.append(dummy)
 
     return target_objects

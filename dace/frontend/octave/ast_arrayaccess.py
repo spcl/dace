@@ -67,9 +67,10 @@ class AST_ArrayAccess(AST_Node):
                 elif isinstance(acc, AST_Ident):
                     vardef = self.search_vardef_in_scope(acc.get_name())
                     if vardef is None:
-                        raise ValueError(
-                            "No definition found for " + acc.get_name() +
-                            " which is used in Array Access: " + str(self))
+                        raise ValueError("No definition found for " +
+                                         acc.get_name() +
+                                         " which is used in Array Access: " +
+                                         str(self))
                     if isinstance(vardef, AST_ForLoop) and acc.get_name(
                     ) == vardef.var.get_name():
                         d = vardef.initializer.get_dims()[:-1]
@@ -139,14 +140,13 @@ class AST_ArrayAccess(AST_Node):
 
         if self.is_data_dependent_access() == False:
             msubset = self.make_range_from_accdims()
-            memlet = dace.memlet.Memlet(
-                arrnode,
-                msubset.num_elements(),
-                msubset,
-                1,
-                None,
-                None,
-                debuginfo=self.context)
+            memlet = dace.memlet.Memlet(arrnode,
+                                        msubset.num_elements(),
+                                        msubset,
+                                        1,
+                                        None,
+                                        None,
+                                        debuginfo=self.context)
             sdfg.nodes()[state].add_edge(arrnode, None, resnode, None, memlet)
         else:
             # add a map around the access and feed the access dims that are

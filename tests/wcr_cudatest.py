@@ -19,7 +19,7 @@ def my_add_mapped_tasklet(
         code_global="",
         code_init="",
         code_exit="",
-        location="-1",
+        location=None,
         language=dace.dtypes.Language.Python,
         debuginfo=None,
         external_edges=True,
@@ -63,8 +63,11 @@ def my_add_mapped_tasklet(
         location=location,
         debuginfo=debuginfo,
     )
-    map = state._map_from_ndrange(
-        map_name, schedule, unroll_map, map_ranges, debuginfo=debuginfo)
+    map = state._map_from_ndrange(map_name,
+                                  schedule,
+                                  unroll_map,
+                                  map_ranges,
+                                  debuginfo=debuginfo)
     map_entry = nd.MapEntry(map)
     map_exit = nd.MapExit(map)
     state.add_nodes_from([map_entry, tasklet, map_exit])
@@ -162,8 +165,9 @@ def create_test_sdfg():
     BETA_MAX = state.add_access('BETA_MAX')
     BETA = state.add_access('BETA')
 
-    beta_max_reduce = state.add_reduce(
-        wcr="lambda a, b: max(a, b)", axes=(0, ), identity=-999999)
+    beta_max_reduce = state.add_reduce(wcr="lambda a, b: max(a, b)",
+                                       axes=(0, ),
+                                       identity=-999999)
     state.add_edge(BETA, None, beta_max_reduce, None,
                    dace.memlet.Memlet.simple(BETA.data, '0:10'))
     state.add_edge(beta_max_reduce, None, BETA_MAX, None,
@@ -175,7 +179,7 @@ def create_test_sdfg():
 if __name__ == '__main__':
     my_max_sdfg = create_test_sdfg()
     my_max_sdfg.validate()
-    my_max_sdfg.apply_transformations(GPUTransformSDFG, apply_once=True)
+    my_max_sdfg.apply_transformations(GPUTransformSDFG)
 
     BETA = np.random.rand(10).astype(np.float32)
     BETA_MAX = np.zeros(1).astype(np.float32)

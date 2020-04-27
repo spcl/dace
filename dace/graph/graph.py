@@ -60,8 +60,9 @@ class Edge(object):
         if json_obj['type'] != "Edge":
             raise TypeError("Invalid data type")
 
-        ret = Edge(json_obj['src'], json_obj['dst'],
-                   json_obj['attributes']['data'])
+        ret = Edge(
+            json_obj['src'], json_obj['dst'],
+            dace.serialize.from_json(json_obj['attributes']['data'], context))
 
         return ret
 
@@ -107,7 +108,8 @@ class MultiConnectorEdge(MultiEdge):
         sdfg = context['sdfg_state']
         if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
-        data = json_obj['attributes']['data']
+        data = dace.serialize.from_json(json_obj['attributes']['data'],
+                                        context)
         src_nid = json_obj['src']
         dst_nid = json_obj['dst']
 
@@ -323,8 +325,8 @@ class Graph(object):
                         if condition is None or condition(
                                 e.src, e.dst, e.data):
                             yield e
-                            stack.append((e.dst,
-                                          G.out_edges(e.dst).__iter__()))
+                            stack.append(
+                                (e.dst, G.out_edges(e.dst).__iter__()))
                 except StopIteration:
                     stack.pop()
 
@@ -366,22 +368,35 @@ class Graph(object):
             to dest_node """
         return nx.all_simple_paths(self._nx, source_node, dest_node)
 
+    def all_nodes_between(self, begin, end):
+        """Finds all nodes between begin and end. Returns None if there is any
+           path starting at begin that does not reach end."""
+        to_visit = [begin]
+        seen = set()
+        while len(to_visit) > 0:
+            n = to_visit.pop()
+            if n == end:
+                continue  # We've reached the end node
+            if n in seen:
+                continue  # We've already visited this node
+            seen.add(n)
+            # Keep chasing all paths to reach the end node
+            node_out_edges = self.out_edges(n)
+            if len(node_out_edges) == 0:
+                # We traversed to the end without finding the end
+                return None
+            for e in node_out_edges:
+                next_node = e.dst
+                if next_node != end and next_node not in seen:
+                    to_visit.append(next_node)
+        return seen
+
 
 @dace.serialize.serializable
 class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
         self._graph = graph
         self._subgraph_nodes = subgraph_nodes
-        self._parallel_parent = None
-
-    def is_parallel(self):
-        return self._parallel_parent is not None
-
-    def set_parallel_parent(self, parallel_parent):
-        self._parallel_parent = parallel_parent
-
-    def get_parallel_parent(self):
-        return self._parallel_parent
 
     def nodes(self):
         return self._subgraph_nodes
@@ -551,12 +566,11 @@ class MultiDiConnectorGraph(MultiDiGraph):
 
     def add_edge(self, source, src_connector, destination, dst_connector,
                  data):
-        key = self._nx.add_edge(
-            source,
-            destination,
-            data=data,
-            src_conn=src_connector,
-            dst_conn=dst_connector)
+        key = self._nx.add_edge(source,
+                                destination,
+                                data=data,
+                                src_conn=src_connector,
+                                dst_conn=dst_connector)
         return (source, src_connector, destination, dst_connector, data, key)
 
     def remove_edge(self, edge):
@@ -570,7 +584,6 @@ class MultiDiConnectorGraph(MultiDiGraph):
 class OrderedDiGraph(Graph):
     """ Directed graph where nodes and edges are returned in the order they
         were added. """
-
     def __init__(self):
         self._nx = nx.DiGraph()
         # {node: ({in edge: None}, {out edges: None})}
@@ -665,7 +678,6 @@ class OrderedDiGraph(Graph):
 class OrderedMultiDiGraph(OrderedDiGraph):
     """ Directed multigraph where nodes and edges are returned in the order
         they were added. """
-
     def __init__(self):
         self._nx = nx.MultiDiGraph()
         # {node: ({in edge: edge}, {out edge: edge})}
@@ -705,13 +717,15 @@ class OrderedMultiDiGraph(OrderedDiGraph):
 class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph):
     """ Directed multigraph with node connectors (SDFG states), where nodes
         and edges are returned in the order they were added. """
-
     def __init__(self):
         super().__init__()
 
     def add_edge(self, src, src_conn, dst, dst_conn, data):
-        key = self._nx.add_edge(
-            src, dst, data=data, src_conn=src_conn, dst_conn=dst_conn)
+        key = self._nx.add_edge(src,
+                                dst,
+                                data=data,
+                                src_conn=src_conn,
+                                dst_conn=dst_conn)
         edge = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, key)
         if src not in self._nodes:
             self.add_node(src)

@@ -35,10 +35,16 @@ nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'},
                               {'output'})
 
 # Add edges
-state.add_memlet_path(
-    A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
-state.add_memlet_path(
-    nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
+state.add_memlet_path(A,
+                      map_entry,
+                      nsdfg,
+                      dst_conn='input',
+                      memlet=Memlet.simple(A, 'i,j'))
+state.add_memlet_path(nsdfg,
+                      map_exit,
+                      B,
+                      src_conn='output',
+                      memlet=Memlet.simple(B, 'i,j'))
 
 if __name__ == '__main__':
     print('Nested SDFG test')
@@ -57,7 +63,7 @@ if __name__ == '__main__':
 
     mysdfg(A=input, B=output, N=N)
 
-    diff = np.linalg.norm(output - np.power(input, 5)) / dp.eval(N * N)
+    diff = np.linalg.norm(output - np.power(input, 5)) / (N.get() * N.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

@@ -38,7 +38,7 @@ if __name__ == '__main__':
     diff = np.linalg.norm(expected_C - C) / (256 * 256)
     print('Difference (before):', diff)
 
-    sdfg.apply_transformations(DoubleBuffering, apply_once=True)
+    sdfg.apply_transformations(DoubleBuffering)
     C = np.zeros((256, 256), dtype=np.float32)
     sdfg(A=A, B=B, C=C)
 

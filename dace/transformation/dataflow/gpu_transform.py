@@ -1,16 +1,13 @@
 """ Contains the GPU Transform Map transformation. """
 
-import copy
-import itertools
-
-from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
+from dace import data, dtypes, sdfg as sd, registry
 from dace.graph import nodes, nxutil
 from dace.graph.graph import SubgraphView
 from dace.transformation import pattern_matching, helpers
 from dace.properties import Property, make_properties
-from dace.config import Config
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class GPUTransformMap(pattern_matching.Transformation):
     """ Implements the GPUTransformMap transformation.
@@ -19,21 +16,22 @@ class GPUTransformMap(pattern_matching.Transformation):
         outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    fullcopy = Property(
-        desc="Copy whole arrays rather than used subset",
-        dtype=bool,
-        default=False)
+    fullcopy = Property(desc="Copy whole arrays rather than used subset",
+                        dtype=bool,
+                        default=False)
 
-    toplevel_trans = Property(
-        desc="Make all GPU transients top-level", dtype=bool, default=False)
+    toplevel_trans = Property(desc="Make all GPU transients top-level",
+                              dtype=bool,
+                              default=False)
 
     register_trans = Property(
         desc="Make all transients inside GPU maps registers",
         dtype=bool,
         default=False)
 
-    sequential_innermaps = Property(
-        desc="Make all internal maps Sequential", dtype=bool, default=False)
+    sequential_innermaps = Property(desc="Make all internal maps Sequential",
+                                    dtype=bool,
+                                    default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
     _reduce = nodes.Reduce('lambda: None', None)
@@ -112,11 +110,11 @@ class GPUTransformMap(pattern_matching.Transformation):
                 full_data=self.fullcopy)
         else:
             cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
-            nsdfg_node = helpers.nest_state_subgraph(
-                sdfg,
-                graph,
-                SubgraphView(graph, [cnode]),
-                full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg,
+                                                     graph,
+                                                     SubgraphView(
+                                                         graph, [cnode]),
+                                                     full_data=self.fullcopy)
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
@@ -129,6 +127,3 @@ class GPUTransformMap(pattern_matching.Transformation):
 
         # Inline back as necessary
         sdfg.apply_strict_transformations()
-
-
-pattern_matching.Transformation.register_pattern(GPUTransformMap)

@@ -11,7 +11,6 @@ from dace.transformation.optimizer import Optimizer
 class TransformationTester(Optimizer):
     """ An SDFG optimizer that consecutively applies available transformations
         up to a fixed depth. """
-
     def __init__(self,
                  sdfg: SDFG,
                  depth=1,
@@ -65,12 +64,11 @@ class TransformationTester(Optimizer):
                 sys.stdout = output
                 sys.stderr = output
 
-                print(
-                    '    ' * depth,
-                    type(match).__name__,
-                    '- ',
-                    end='',
-                    file=self.stdout)
+                print('    ' * depth,
+                      type(match).__name__,
+                      '- ',
+                      end='',
+                      file=self.stdout)
 
                 tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
                 match.apply(tsdfg)

@@ -9,17 +9,17 @@ import ctypes
 import os
 import six
 import shutil
-import hashlib
 import subprocess
 import re
-from typing import List
+from typing import Any, Dict, List
 import numpy as np
+import warnings
 
 import dace
 from dace.frontend import operations
 from dace import symbolic, data as dt
 from dace.config import Config
-from dace.codegen import codegen
+from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import make_absolute
 
@@ -44,7 +44,6 @@ class CompilationError(Exception):
 class ReloadableDLL(object):
     """ A reloadable shared object (or dynamically linked library), which
         bypasses Python's dynamic library reloading issues. """
-
     def __init__(self, library_filename, program_name):
         """ Creates a new reloadable shared object.
             :param library_filename: Path to library file.
@@ -86,30 +85,40 @@ class ReloadableDLL(object):
         self._stub.load_library.restype = ctypes.c_void_p
         self._stub.get_symbol.restype = ctypes.c_void_p
 
-        # Convert library filename to string according to OS
-        if os.name == 'nt':
-            # As UTF-16
-            lib_cfilename = ctypes.c_wchar_p(self._library_filename)
-        else:
-            # As UTF-8
-            lib_cfilename = ctypes.c_char_p(
-                self._library_filename.encode('utf-8'))
-
         # Check if library is already loaded
-        is_loaded = self._stub.is_library_loaded(lib_cfilename)
-        if is_loaded == 1:
-            raise DuplicateDLLError(
-                'Library %s is already loaded somewhere else, ' %
-                os.path.basename(self._library_filename) +
-                'either unload it or use a different name ' +
-                'for the SDFG/program.')
+        is_loaded = True
+        lib_cfilename = None
+        while is_loaded:
+            # Convert library filename to string according to OS
+            if os.name == 'nt':
+                # As UTF-16
+                lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+            else:
+                # As UTF-8
+                lib_cfilename = ctypes.c_char_p(
+                    self._library_filename.encode('utf-8'))
+
+            is_loaded = self._stub.is_library_loaded(lib_cfilename)
+            if is_loaded == 1:
+                warnings.warn('Library %s already loaded, renaming file' %
+                              self._library_filename)
+                try:
+                    shutil.copyfile(self._library_filename,
+                                    self._library_filename + '_')
+                    self._library_filename += '_'
+                except shutil.Error:
+                    raise DuplicateDLLError(
+                        'Library %s is already loaded somewhere else ' %
+                        os.path.basename(self._library_filename) +
+                        'and cannot be unloaded. Please use a different name '
+                        + 'for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
 
         if self._lib.value is None:
-            raise RuntimeError('Could not load library %s' % os.path.basename(
-                self._library_filename))
+            raise RuntimeError('Could not load library %s' %
+                               os.path.basename(self._library_filename))
 
     def unload(self):
         """ Unloads the internal library using the stub. """
@@ -132,15 +141,17 @@ class ReloadableDLL(object):
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
-
     def __init__(self, sdfg, lib: ReloadableDLL):
         self._sdfg = sdfg
         self._lib = lib
         self._initialized = False
         self._lastargs = ()
+        self._return_arrays: List[np.ndarray] = []
+        self._return_kwarrays: Dict[str, np.ndarray] = {}
+        self._return_syms: Dict[str, Any] = {}
         lib.load()  # Explicitly load the library
-        self._init = lib.get_symbol('__dace_init')
-        self._exit = lib.get_symbol('__dace_exit')
+        self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
+        self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
     @property
@@ -164,6 +175,12 @@ class CompiledSDFG(object):
             Organizes arguments first by `sdfg.arglist`, then data descriptors
             by alphabetical order, then symbols by alphabetical order.
         """
+        # Return value initialization (for values that have not been given)
+        kwargs.update({
+            k: v
+            for k, v in self._initialize_return_values(kwargs).items()
+            if k not in kwargs
+        })
 
         # Argument construction
         sig = self._sdfg.signature_arglist(with_types=False)
@@ -188,76 +205,112 @@ class CompiledSDFG(object):
 
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
-            if not isinstance(arg, np.ndarray) and isinstance(atype, dt.Array):
+            if not _is_array(arg) and isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an object (type %s) to an array in argument "%s"'
                     % (type(arg).__name__, a))
-            if isinstance(arg, np.ndarray) and not isinstance(atype, dt.Array):
+            if _is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
             if not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg, atype.dtype.type):
+                        arg, atype.dtype.type) and not (
+                            isinstance(arg, symbolic.symbol)
+                            and arg.dtype == atype.dtype):
                 print('WARNING: Casting scalar argument "%s" from %s to %s' %
                       (a, type(arg).__name__, atype.dtype.type))
 
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             if isinstance(argtype.dtype, dace.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg)
+                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
 
         # Retain only the element datatype for upcoming checks and casts
-        argtypes = [t.dtype.as_ctypes() for t in argtypes]
+        arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
 
         sdfg = self._sdfg
-
-        # As in compilation, add symbols used in array sizes to parameters
-        symparams = {}
-        symtypes = {}
-        for symname in sdfg.undefined_symbols(False):
-            try:
-                symval = symbolic.symbol(symname)
-                symparams[symname] = symval.get()
-                symtypes[symname] = symval.dtype.as_ctypes()
-            except UnboundLocalError:
-                try:
-                    symparams[symname] = kwargs[symname]
-                except KeyError:
-                    raise UnboundLocalError('Unassigned symbol %s' % symname)
-
-        arglist.extend(
-            [symparams[k] for k in sorted(symparams.keys()) if k not in sig])
-        argtypes.extend(
-            [symtypes[k] for k in sorted(symtypes.keys()) if k not in sig])
 
         # Obtain SDFG constants
         constants = sdfg.constants
 
         # Remove symbolic constants from arguments
         callparams = tuple(
-            (arg, atype) for arg, atype in zip(arglist, argtypes)
+            (arg, actype, atype)
+            for arg, actype, atype in zip(arglist, arg_ctypes, argtypes)
             if not symbolic.issymbolic(arg) or (
                 hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
         callparams = tuple(
-            (atype(symbolic.eval(arg)),
-             atype) if symbolic.issymbolic(arg, constants) else (arg, atype)
-            for arg, atype in callparams)
+            (actype(arg.get()), actype,
+             atype) if isinstance(arg, symbolic.symbol) else (arg, actype,
+                                                              atype)
+            for arg, actype, atype in callparams)
 
-        # Replace arrays with their pointers
-        newargs = tuple((ctypes.c_void_p(arg.__array_interface__['data'][0]),
-                         atype) if isinstance(arg, np.ndarray) else (arg,
-                                                                     atype)
-                        for arg, atype in callparams)
+        # Replace arrays with their base host/device pointers
+        newargs = tuple(
+            (ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
+             atype) if _is_array(arg) else (arg, actype, atype)
+            for arg, actype, atype in callparams)
 
         newargs = tuple(
-            atype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
-            for arg, atype in newargs)
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype in newargs)
 
         self._lastargs = newargs
         return self._lastargs
+
+    def _initialize_return_values(self, kwargs):
+        # Obtain symbol values from arguments and constants
+        syms = dict()
+        syms.update(
+            {k: v
+             for k, v in kwargs.items() if k not in self.sdfg.arrays})
+        syms.update(self.sdfg.constants)
+
+        if self._initialized:
+            if self._return_syms == syms:
+                return self._return_kwarrays
+
+        self._return_syms = syms
+
+        # Initialize return values with numpy arrays
+        self._return_arrays = []
+        self._return_kwarrays = {}
+        for arrname, arr in sorted(self.sdfg.arrays.items()):
+            if arrname.startswith('__return'):
+                if isinstance(arr, dt.Stream):
+                    raise NotImplementedError('Return streams are unsupported')
+                if arr.storage in [
+                        dace.dtypes.StorageType.GPU_Global,
+                        dace.dtypes.StorageType.FPGA_Global
+                ]:
+                    raise NotImplementedError('Non-host return values are '
+                                              'unsupported')
+
+                # Create an array with the properties of the SDFG array
+                self._return_arrays.append(
+                    np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
+                               arr.dtype.type,
+                               buffer=np.zeros(
+                                   [symbolic.evaluate(arr.total_size, syms)],
+                                   arr.dtype.type),
+                               strides=[
+                                   symbolic.evaluate(s, syms) * arr.dtype.bytes
+                                   for s in arr.strides
+                               ]))
+                self._return_kwarrays[arrname] = self._return_arrays[-1]
+
+        # Set up return_arrays field
+        if len(self._return_arrays) == 0:
+            self._return_arrays = None
+        elif len(self._return_arrays) == 1:
+            self._return_arrays = self._return_arrays[0]
+        else:
+            self._return_arrays = tuple(self._return_arrays)
+
+        return self._return_kwarrays
 
     def initialize(self, *argtuple):
         if self._init is not None:
@@ -277,6 +330,7 @@ class CompiledSDFG(object):
 
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
+                self._lib.load()
                 self.initialize(*argtuple)
 
             # PROFILING
@@ -284,7 +338,9 @@ class CompiledSDFG(object):
                 operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
                                     *argtuple)
             else:
-                return self._cfunc(*argtuple)
+                self._cfunc(*argtuple)
+
+            return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
                 DuplicateDLLError, ReferenceError):
             self._lib.unload()
@@ -336,10 +392,7 @@ def generate_program_folder(sdfg,
 
     src_path = os.path.join(out_path, "src")
 
-    try:
-        os.makedirs(src_path)
-    except FileExistsError:
-        pass
+    os.makedirs(src_path, exist_ok=True)
 
     filelist = []
     # Write each code object to a file
@@ -354,10 +407,7 @@ def generate_program_folder(sdfg,
         target_folder = os.path.join(src_path, target_name)
         if target_type:
             target_folder = os.path.join(target_folder, target_type)
-        try:
-            os.makedirs(target_folder)
-        except FileExistsError:
-            pass
+        os.makedirs(target_folder, exist_ok=True)
 
         # Write code to file
         basename = "{}.{}".format(name, extension)
@@ -377,6 +427,16 @@ def generate_program_folder(sdfg,
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
         filelist_file.write("\n".join(filelist))
+
+    # Build a list of environments used
+    environments = set()
+    for obj in code_objects:
+        environments |= obj.environments
+
+    # Write list of environments
+    with open(os.path.join(out_path, "dace_environments.csv"),
+              "w") as env_file:
+        env_file.write("\n".join(environments))
 
     # Copy snapshot of configuration script
     if config is not None:
@@ -411,10 +471,10 @@ def configure_and_compile(program_folder,
 
     # Prepare build folder
     build_folder = os.path.join(program_folder, "build")
-    try:
-        os.makedirs(build_folder)
-    except FileExistsError:
-        pass
+    os.makedirs(build_folder, exist_ok=True)
+
+    # Prepare performance report folder
+    os.makedirs(os.path.join(program_folder, "perf"), exist_ok=True)
 
     # Read list of DaCe files to compile.
     # We do this instead of iterating over source files in the directory to
@@ -434,7 +494,18 @@ def configure_and_compile(program_folder,
         else:
             path = os.path.join(target_name, file_name)
         files.append(path)
-        targets[target_name] = codegen.STRING_TO_TARGET[target_name]
+        targets[target_name] = next(
+            k for k, v in TargetCodeGenerator.extensions().items()
+            if v['name'] == target_name)
+
+    # Windows-only workaround: Override Visual C++'s linker to use
+    # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
+    # CMake fails to do so.
+    if os.name == 'nt':
+        if '_CL_' not in os.environ:
+            os.environ['_CL_'] = '/MT'
+        elif '/MT' not in os.environ['_CL_']:
+            os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -447,40 +518,119 @@ def configure_and_compile(program_folder,
         "-DDACE_PROGRAM_NAME={}".format(program_name),
     ]
 
+    # Get required environments are retrieve the CMake information
+    environments = set(l.strip() for l in open(
+        os.path.join(program_folder, "dace_environments.csv"), "r"))
+    cmake_minimum_version = [0]
+    cmake_variables = dict()
+    cmake_packages = set()
+    cmake_includes = set()
+    cmake_libraries = set()
+    cmake_compile_flags = set()
+    cmake_link_flags = set()
+    cmake_files = set()
+    cmake_module_paths = set()
+    for env_name in environments:
+        env = dace.library.get_environment(env_name)
+        if (env.cmake_minimum_version is not None
+                and len(env.cmake_minimum_version) > 0):
+            version_list = list(map(int, env.cmake_minimum_version.split(".")))
+            for i in range(max(len(version_list), len(cmake_minimum_version))):
+                if i >= len(version_list):
+                    break
+                if i >= len(cmake_minimum_version):
+                    cmake_minimum_version = version_list
+                    break
+                if version_list[i] > cmake_minimum_version[i]:
+                    cmake_minimum_version = version_list
+                    break
+                # Otherwise keep iterating
+        for var in env.cmake_variables:
+            if (var in cmake_variables
+                    and cmake_variables[var] != env.cmake_variables[var]):
+                raise KeyError(
+                    "CMake variable {} was redefined from {} to {}.".format(
+                        var, cmake_variables[var], env.cmake_variables[var]))
+            cmake_variables[var] = env.cmake_variables[var]
+        cmake_packages |= set(env.cmake_packages)
+        cmake_includes |= set(env.cmake_includes)
+        cmake_libraries |= set(env.cmake_libraries)
+        cmake_compile_flags |= set(env.cmake_compile_flags)
+        cmake_link_flags |= set(env.cmake_link_flags)
+        # Make path absolute
+        env_dir = os.path.dirname(env._dace_file_path)
+        cmake_files |= set(
+            (f if os.path.isabs(f) else os.path.join(env_dir, f)) +
+            (".cmake" if not f.endswith(".cmake") else "")
+            for f in env.cmake_files)
+        for header in env.headers:
+            if os.path.isabs(header):
+                # Giving an absolute path is not good practice, but allow it
+                # for emergency overriding
+                cmake_includes.add(os.path.dirname(header))
+            abs_path = os.path.join(env_dir, header)
+            if os.path.isfile(abs_path):
+                # Allow includes stored with the library, specified with a
+                # relative path
+                cmake_includes.add(env_dir)
+                break
+    environment_flags = [
+        "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(
+            map(str, cmake_minimum_version))),
+        # Make CMake list of key-value pairs
+        "-DDACE_ENV_VAR_KEYS=\"{}\"".format(";".join(cmake_variables.keys())),
+        "-DDACE_ENV_VAR_VALUES=\"{}\"".format(";".join(
+            cmake_variables.values())),
+        "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(cmake_packages)),
+        "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(cmake_includes)),
+        "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(cmake_libraries)),
+        "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(
+            " ".join(cmake_compile_flags)),
+        # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
+        "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(cmake_files)),
+    ]
+    # Escape variable expansions to defer their evaluation
+    environment_flags = [
+        cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in environment_flags
+    ]
+    cmake_command += environment_flags
+
     # Replace backslashes with forward slashes
     cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
 
     # Generate CMake options for each compiler
     libraries = set()
     for target_name, target in targets.items():
-        cmake_command += target.cmake_options()
         try:
+            cmake_command += target.cmake_options()
             libraries |= unique_flags(
                 Config.get("compiler", target_name, "libs"))
         except KeyError:
             pass
+        except ValueError as ex:  # Cannot find compiler executable
+            raise CompilerConfigurationError(str(ex))
 
-    # TODO: it should be possible to use the default arguments/compilers
-    #       found by CMake
-    cmake_command += [
-        "-DDACE_LIBS=\"{}\"".format(" ".join(libraries)),
-        "-DCMAKE_LINKER=\"{}\"".format(
-            make_absolute(Config.get('compiler', 'linker', 'executable'))),
-        "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
-            Config.get('compiler', 'linker', 'args') +
-            Config.get('compiler', 'linker', 'additional_args')),
-    ]
+    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
+
+    # Override linker and linker arguments
+    if Config.get('compiler', 'linker', 'executable'):
+        cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
+            make_absolute(Config.get('compiler', 'linker', 'executable'))))
+    if Config.get('compiler', 'linker', 'args'):
+        cmake_command.append(
+            "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
+                Config.get('compiler', 'linker', 'args') + " " +
+                " ".join(cmake_link_flags)), )
     cmake_command = ' '.join(cmake_command)
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     ##############################################
     # Configure
     try:
-        _run_liveoutput(
-            cmake_command,
-            shell=True,
-            cwd=build_folder,
-            output_stream=output_stream)
+        _run_liveoutput(cmake_command,
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -488,11 +638,10 @@ def configure_and_compile(program_folder,
         shutil.rmtree(build_folder)
         os.makedirs(build_folder)
         try:
-            _run_liveoutput(
-                cmake_command,
-                shell=True,
-                cwd=build_folder,
-                output_stream=output_stream)
+            _run_liveoutput(cmake_command,
+                            shell=True,
+                            cwd=build_folder,
+                            output_stream=output_stream)
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
@@ -506,12 +655,11 @@ def configure_and_compile(program_folder,
 
     # Compile and link
     try:
-        _run_liveoutput(
-            "cmake --build . --config %s" % (Config.get(
-                'compiler', 'build_type')),
-            shell=True,
-            cwd=build_folder,
-            output_stream=output_stream)
+        _run_liveoutput("cmake --build . --config %s" %
+                        (Config.get('compiler', 'build_type')),
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
@@ -520,8 +668,9 @@ def configure_and_compile(program_folder,
             raise CompilationError('Compiler failure:\n' + ex.output)
 
     shared_library_path = os.path.join(
-        build_folder, "lib{}.{}".format(
-            program_name, Config.get('compiler', 'library_extension')))
+        build_folder,
+        "lib{}.{}".format(program_name,
+                          Config.get('compiler', 'library_extension')))
 
     return shared_library_path
 
@@ -558,8 +707,10 @@ def get_binary_name(object_name,
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(
-        command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+    process = subprocess.Popen(command,
+                               stderr=subprocess.STDOUT,
+                               stdout=subprocess.PIPE,
+                               **kwargs)
     output = six.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
@@ -583,6 +734,39 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, command,
                                             output.getvalue())
+
+
+def _is_array(obj: Any) -> bool:
+    """
+    Returns True if an object implements the ``data_ptr()``,
+    ``__array_interface__`` or ``__cuda_array_interface__`` standards
+    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
+    supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
+    :param obj: The given object.
+    :return: True iff the object implements the array interface.
+    """
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
+        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False
+
+
+def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
+    """
+    If the given array implements ``__array_interface__`` (see ``_is_array``),
+    returns the base host or device pointer to the array's allocated memory.
+    :param array: Array object that implements NumPy's array interface.
+    :param array_type: Data descriptor of the array (used to get storage
+                       location to determine whether it's a host or GPU device
+                       pointer).
+    :return: A pointer to the base location of the allocated buffer.
+    """
+    if hasattr(array, 'data_ptr'):
+        return array.data_ptr()
+    if array_type.storage == dace.StorageType.GPU_Global:
+        return array.__cuda_array_interface__['data'][0]
+    return array.__array_interface__['data'][0]
 
 
 # Allow configuring and compiling a prepared build folder from the commandline.

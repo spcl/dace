@@ -1,5 +1,5 @@
 import dace
-from dace import symbolic, dtypes
+from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
@@ -9,6 +9,7 @@ from dace.config import Config
 from dace.codegen import cppunparse
 
 
+@registry.autoregister_params(name='mpi')
 class MPICodeGen(TargetCodeGenerator):
     """ An MPI code generator. """
     target_name = 'mpi'
@@ -68,11 +69,14 @@ void __dace_exit_mpi({params}) {{
 
     @staticmethod
     def cmake_options():
-        compiler = make_absolute(Config.get("compiler", "mpi", "executable"))
-        return [
-            "-DMPI_CXX_COMPILER=\"{}\"".format(compiler),
-            "-DDACE_ENABLE_MPI=ON",
-        ]
+        options = ['-DDACE_ENABLE_MPI=ON']
+
+        if Config.get("compiler", "mpi", "executable"):
+            compiler = make_absolute(
+                Config.get("compiler", "mpi", "executable"))
+            options.append("-DMPI_CXX_COMPILER=\"{}\"".format(compiler))
+
+        return options
 
     @property
     def has_initializer(self):
@@ -124,10 +128,9 @@ void __dace_exit_mpi({params}) {{
                                                  child, function_stream,
                                                  callsite_stream)
 
-        self._dispatcher.dispatch_subgraph(
-            sdfg,
-            dfg_scope,
-            state_id,
-            function_stream,
-            callsite_stream,
-            skip_entry_node=True)
+        self._dispatcher.dispatch_subgraph(sdfg,
+                                           dfg_scope,
+                                           state_id,
+                                           function_stream,
+                                           callsite_stream,
+                                           skip_entry_node=True)

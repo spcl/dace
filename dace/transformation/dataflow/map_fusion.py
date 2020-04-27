@@ -2,20 +2,22 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import dtypes, symbolic
+from dace import dtypes, registry, symbolic, subsets
 from dace.graph import nodes, nxutil
+from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.transformation import pattern_matching
 from typing import List, Union
 import networkx as nx
 
 
+@registry.autoregister_params(singlestate=True)
 class MapFusion(pattern_matching.Transformation):
     """ Implements the MapFusion transformation.
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
         based on the following rules, fuse them and remove the transient in
         between. There are several possibilities of what it does to this
-        transient in between. 
+        transient in between.
 
         Essentially, if there is some other place in the
         sdfg where it is required, or if it is not a transient, then it will
@@ -121,6 +123,15 @@ class MapFusion(pattern_matching.Transformation):
         if perm is None:
             return False
 
+        # Check if any intermediate transient is also going to another location
+        second_inodes = set(e.src for e in graph.in_edges(second_map_entry)
+                            if isinstance(e.src, nodes.AccessNode))
+        transients_to_remove = intermediate_nodes & second_inodes
+        # if any(e.dst != second_map_entry for n in transients_to_remove
+        #        for e in graph.out_edges(n)):
+        if any(graph.out_degree(n) > 1 for n in transients_to_remove):
+            return False
+
         # Create a dict that maps parameters of the first map to those of the
         # second map.
         params_dict = {}
@@ -146,28 +157,20 @@ class MapFusion(pattern_matching.Transformation):
                 continue
 
             provided = False
+
+            # Compute second subset with respect to first subset's symbols
+            sbs_permuted = dcpy(second_memlet.subset)
+            sbs_permuted.replace({
+                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+                for k, v in params_dict.items()
+            })
+
             for first_memlet in out_memlets:
                 if first_memlet.data != second_memlet.data:
                     continue
-                # If there is an equivalent subset, it is provided
-                expected_second_subset = []
-                for _tup in first_memlet.subset:
-                    new_tuple = []
-                    if isinstance(_tup, symbolic.symbol):
-                        new_tuple = symbolic.symbol(params_dict[str(_tup)])
-                    elif isinstance(_tup, (list, tuple)):
-                        for _sym in _tup:
-                            if (isinstance(_sym, symbolic.symbol)
-                                    and str(_sym) in params_dict):
-                                new_tuple.append(
-                                    symbolic.symbol(params_dict[str(_sym)]))
-                            else:
-                                new_tuple.append(_sym)
-                        new_tuple = tuple(new_tuple)
-                    else:
-                        new_tuple = _tup
-                    expected_second_subset.append(new_tuple)
-                if expected_second_subset == list(second_memlet.subset):
+
+                # If there is a covered subset, it is provided
+                if first_memlet.subset.covers(sbs_permuted):
                     provided = True
                     break
 
@@ -189,12 +192,12 @@ class MapFusion(pattern_matching.Transformation):
 
     def apply(self, sdfg):
         """
-            This method applies the mapfusion transformation. 
+            This method applies the mapfusion transformation.
             Other than the removal of the second map entry node (SME), and the first
             map exit (FME) node, it has the following side effects:
 
-            1.  Any transient adjacent to both FME and SME with degree = 2 will be removed. 
-                The tasklets that use/produce it shall be connected directly with a 
+            1.  Any transient adjacent to both FME and SME with degree = 2 will be removed.
+                The tasklets that use/produce it shall be connected directly with a
                 scalar/new transient (if the dataflow is more than a single scalar)
 
             2.  If this transient is adjacent to FME and SME and has other
@@ -261,10 +264,8 @@ class MapFusion(pattern_matching.Transformation):
         edges_to_remove = set()
         nodes_to_remove = set()
         for edge in graph.in_edges(first_exit):
-            memlet_path = graph.memlet_path(edge)
-            edge_index = next(
-                i for i, e in enumerate(memlet_path) if e == edge)
-            access_node = memlet_path[-1].dst
+            tree = graph.memlet_tree(edge)
+            access_node = tree.root().edge.dst
             if access_node not in do_not_erase:
                 out_edges = [
                     e for e in graph.out_edges(access_node)
@@ -273,22 +274,20 @@ class MapFusion(pattern_matching.Transformation):
                 # In this transformation, there can only be one edge to the
                 # second map
                 assert len(out_edges) == 1
+
                 # Get source connector to the second map
                 connector = out_edges[0].dst_conn[3:]
 
-                new_dst = None
-                new_dst_conn = None
+                new_dsts = []
                 # Look at the second map entry out-edges to get the new
-                # destination
-                for _e in graph.out_edges(second_entry):
-                    if _e.src_conn[4:] == connector:
-                        new_dst = _e.dst
-                        new_dst_conn = _e.dst_conn
-                        break
-                if new_dst is None:
-                    # Access node is not used in the second map
+                # destinations
+                for e in graph.out_edges(second_entry):
+                    if e.src_conn[4:] == connector:
+                        new_dsts.append(e)
+                if not new_dsts:  # Access node is not used in the second map
                     nodes_to_remove.add(access_node)
                     continue
+
                 # If the source is an access node, modify the memlet to point
                 # to it
                 if (isinstance(edge.src, nodes.AccessNode)
@@ -300,7 +299,8 @@ class MapFusion(pattern_matching.Transformation):
 
                 else:
                     # Add a transient scalar/array
-                    self.fuse_nodes(sdfg, graph, edge, new_dst, new_dst_conn)
+                    self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
+                                    new_dsts[0].dst_conn, new_dsts[1:])
 
                 edges_to_remove.add(edge)
 
@@ -308,7 +308,7 @@ class MapFusion(pattern_matching.Transformation):
                 nodes_to_remove.add(access_node)
             else:  # The case where intermediate array node cannot be removed
                 # Node will become an output of the second map exit
-                out_e = memlet_path[edge_index + 1]
+                out_e = tree.parent.edge
                 conn = second_exit.next_connector()
                 graph.add_edge(
                     second_exit,
@@ -324,6 +324,7 @@ class MapFusion(pattern_matching.Transformation):
                 second_exit.add_in_connector('IN_' + conn)
 
                 edges_to_remove.add(out_e)
+                edges_to_remove.add(edge)
 
                 # If the second map needs this node, link the connector
                 # that generated this to the place where it is needed, with a
@@ -335,7 +336,6 @@ class MapFusion(pattern_matching.Transformation):
                         self.fuse_nodes(sdfg, graph, edge, out_e.dst,
                                         out_e.dst_conn)
 
-                edges_to_remove.add(edge)
         ###
         # First scope exit is isolated and can now be safely removed
         for e in edges_to_remove:
@@ -346,10 +346,8 @@ class MapFusion(pattern_matching.Transformation):
         # Isolate second_entry node
         ###########################
         for edge in graph.in_edges(second_entry):
-            memlet_path = graph.memlet_path(edge)
-            edge_index = next(
-                i for i, e in enumerate(memlet_path) if e == edge)
-            access_node = memlet_path[0].src
+            tree = graph.memlet_tree(edge)
+            access_node = tree.root().edge.src
             if access_node in intermediate_nodes:
                 # Already handled above, can be safely removed
                 graph.remove_edge(edge)
@@ -362,17 +360,18 @@ class MapFusion(pattern_matching.Transformation):
                            dcpy(edge.data))
             first_entry.add_in_connector('IN_' + conn)
             graph.remove_edge(edge)
-            out_e = memlet_path[edge_index + 1]
-            graph.add_edge(
-                first_entry,
-                'OUT_' + conn,
-                out_e.dst,
-                out_e.dst_conn,
-                dcpy(out_e.data),
-            )
+            for out_enode in tree.children:
+                out_e = out_enode.edge
+                graph.add_edge(
+                    first_entry,
+                    'OUT_' + conn,
+                    out_e.dst,
+                    out_e.dst_conn,
+                    dcpy(out_e.data),
+                )
+                graph.remove_edge(out_e)
             first_entry.add_out_connector('OUT_' + conn)
 
-            graph.remove_edge(out_e)
         ###
         # Second node is isolated and can now be safely removed
         graph.remove_node(second_entry)
@@ -380,8 +379,15 @@ class MapFusion(pattern_matching.Transformation):
         # Fix scope exit to point to the right map
         second_exit.map = first_entry.map
 
-    def fuse_nodes(self, sdfg, graph, edge, new_dst, new_dst_conn):
+    def fuse_nodes(self,
+                   sdfg,
+                   graph,
+                   edge,
+                   new_dst,
+                   new_dst_conn,
+                   other_edges=None):
         """ Fuses two nodes via memlets and possibly transient arrays. """
+        other_edges = other_edges or []
         memlet_path = graph.memlet_path(edge)
         access_node = memlet_path[-1].dst
 
@@ -405,11 +411,19 @@ class MapFusion(pattern_matching.Transformation):
             edge.data.subset = "0"
             local_node = edge.src
             src_connector = edge.src_conn
+
+            # Add edge that leads to the second node
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                           dcpy(edge.data))
+
+            for e in other_edges:
+                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
+                               dcpy(edge.data))
         else:
-            sdfg.add_transient(
-                local_name,
-                edge.data.subset.size(),
-                dtype=access_node.desc(graph).dtype)
+            sdfg.add_transient(local_name,
+                               edge.data.subset.size(),
+                               dtype=access_node.desc(graph).dtype)
+            old_edge = dcpy(edge)
             local_node = graph.add_access(local_name)
             src_connector = None
             edge.data.data = local_name
@@ -423,10 +437,17 @@ class MapFusion(pattern_matching.Transformation):
                 None,
                 dcpy(edge.data),
             )
-        ########
-        # Add edge that leads to the second node
-        graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
-                       dcpy(edge.data))
 
+            # Add edge that leads to the second node
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
+                           dcpy(edge.data))
 
-pattern_matching.Transformation.register_pattern(MapFusion)
+            for e in other_edges:
+                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
+                               dcpy(edge.data))
+
+            # Modify data and memlets on all surrounding edges to match array
+            for neighbor in graph.all_edges(local_node):
+                for e in graph.memlet_tree(neighbor):
+                    e.data.data = local_name
+                    e.data.subset.offset(old_edge.data.subset, negative=True)

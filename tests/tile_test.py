@@ -38,8 +38,8 @@ if __name__ == "__main__":
     TW.set(args["TW"])
     TH.set(args["TH"])
 
-    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W.get(), H.get(),
-                                                          TW.get(), TH.get()))
+    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' %
+          (W.get(), H.get(), TW.get(), TH.get()))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     transpose_tiled(A, B, TW, TH)
 
-    diff = np.linalg.norm(np.transpose(A) - B) / float(dace.eval(H * W))
+    diff = np.linalg.norm(np.transpose(A) - B) / (H.get() * W.get())
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

@@ -21,8 +21,11 @@ if __name__ == '__main__':
     offset = tf.placeholder(tf.float32, [num_channels])
     populationMean = tf.placeholder(tf.float32, [num_channels])
     populationVariance = tf.placeholder(tf.float32, [num_channels])
-    y, mean, var, _, var_sqrt = gen_nn_ops._fused_batch_norm(
-        inp, scale, offset, [], [], epsilon=0.1, is_training=True)
+    y, mean, var, _, var_sqrt = gen_nn_ops._fused_batch_norm(inp,
+                                                             scale,
+                                                             offset, [], [],
+                                                             epsilon=0.1,
+                                                             is_training=True)
     outputs = [y, mean, var]
     test_in = np.random.uniform(size=size).astype(np.float32)
     test_scale = np.random.uniform(size=[num_channels]).astype(np.float32)
@@ -130,5 +133,5 @@ if __name__ == '__main__':
                            outputs_dace[2]).eval(session=sess_tf))
         print(
             tf.linalg.norm(outputs_tf[2] -
-                           np.sum(test_outputgrad, axis=(0, 1, 2)))
-            .eval(session=sess_tf))
+                           np.sum(test_outputgrad, axis=(0, 1, 2))).eval(
+                               session=sess_tf))

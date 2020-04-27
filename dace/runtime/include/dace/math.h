@@ -84,6 +84,46 @@ static DACE_CONSTEXPR DACE_HDFI int sgn(T val) {
     return (T(0) < val) - (val < T(0));
 }
 
+
+// Workarounds for float16 in CUDA
+// NOTES: * Half precision types are not trivially convertible, so other types
+//          will be implicitly converted to it in min/max.
+//        * half comparisons are designated "device-only", so they must call
+//          device-only functions as well.
+#ifdef __CUDACC__
+template <typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16& a, const dace::float16& b, const Ts&... c)
+{
+    return (a < b) ? min(a, c...) : min(b, c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16& a, const T& b, const Ts&... c)
+{
+    return (a < dace::float16(b)) ? min(a, c...) : min(dace::float16(b), c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const T& a, const dace::float16& b, const Ts&... c)
+{
+    return (dace::float16(a) < b) ? min(dace::float16(a), c...) : min(b, c...);
+}
+template <typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const dace::float16& b, const Ts&... c)
+{
+    return (a > b) ? max(a, c...) : max(b, c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const T& b, const Ts&... c)
+{
+    return (a > dace::float16(b)) ? max(a, c...) : max(dace::float16(b), c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const dace::float16& b, const Ts&... c)
+{
+    return (dace::float16(a) > b) ? max(dace::float16(a), c...) : max(b, c...);
+}
+#endif
+
+
 #ifndef DACE_SYNTHESIS
 
 // Computes integer floor, rounding the remainder towards negative infinity.
@@ -168,9 +208,29 @@ namespace dace
             return std::sin(a);
         }
         template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T sinh(const T& a)
+        {
+            return std::sinh(a);
+        }
+        template<typename T>
         DACE_CONSTEXPR DACE_HDFI T cos(const T& a)
         {
             return std::cos(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T cosh(const T& a)
+        {
+            return std::cosh(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T tan(const T& a)
+        {
+            return std::tan(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T tanh(const T& a)
+        {
+            return std::tanh(a);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T sqrt(const T& a)

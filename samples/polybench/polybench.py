@@ -31,13 +31,12 @@ def polybench_dump(filename, args, output_args):
 
         for i, name in output_args:
             fp.write("begin dump: %s\n" % name)
-            np.savetxt(
-                fp,
-                args[i].reshape(
-                    args[i].shape[0],
-                    functools.reduce(lambda a, b: a * b, args[i].shape[1:],
-                                     1)),
-                fmt="%0.7lf")
+            np.savetxt(fp,
+                       args[i].reshape(
+                           args[i].shape[0],
+                           functools.reduce(lambda a, b: a * b,
+                                            args[i].shape[1:], 1)),
+                       fmt="%0.7lf")
             fp.write("\nend   dump: %s\n" % name)
 
         fp.write("==END   DUMP_ARRAYS==\n")
@@ -50,6 +49,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
     psize = sizes[_SIZE_TO_IND[FLAGS.size]]
     for k, v in psize.items():
         k.set(v)
+    psize = {str(k): v for k, v in psize.items()}
 
     # Construct arrays from tuple arguments
     for i, arg in enumerate(args):
@@ -67,9 +67,8 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
                     if isinstance(node, dace.graph.nodes.MapEntry):
                         node.map.schedule = dace.ScheduleType.Sequential
         if FLAGS.specialize:
-            compiled_sdfg = sdfg.compile(specialize=True)
-        else:
-            compiled_sdfg = sdfg.compile()
+            sdfg.specialize(psize)
+        compiled_sdfg = sdfg.compile()
 
     print('Initializing arrays...')
     init_array(*args)
@@ -79,9 +78,10 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
         dace.simulate(func, *args)
     else:
         if isinstance(func, dace.SDFG):
-            compiled_sdfg(**keywords)
+            compiled_sdfg(**keywords, **psize)
         else:
-            compiled_sdfg(**{n: arg for n, arg in zip(func.argnames, args)})
+            compiled_sdfg(**{n: arg
+                             for n, arg in zip(func.argnames, args)}, **psize)
 
     if FLAGS.save:
         if not isinstance(output_args, list):
@@ -94,6 +94,5 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
 
 def main(sizes, args, outputs, init_array, func, keywords=None):
     # Pass application arguments and command-line arguments through abseil
-    app.run(
-        lambda argv: _main(sizes, args, outputs, init_array, func, argv, keywords)
-    )
+    app.run(lambda argv: _main(sizes, args, outputs, init_array, func, argv,
+                               keywords))

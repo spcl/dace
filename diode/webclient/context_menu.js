@@ -25,15 +25,28 @@ class ContextMenu {
         }, 30);
 
         this._options = [];
+        this._cmenu_elem = null;
     }
 
     width() {
         return this._cmenu_elem.offsetWidth;
     }
 
+    visible() { return this._cmenu_elem != null; }
+
     addOption(name, onselect, onhover=null) {
         this._options.push({
             name: name,
+            func: onselect,
+            onhover: onhover
+        });
+    }
+
+    addCheckableOption(name, checked, onselect, onhover=null) {
+        this._options.push({
+            name: name,
+            checkbox: true,
+            checked: checked,
             func: onselect,
             onhover: onhover
         });
@@ -76,10 +89,21 @@ class ContextMenu {
                 elem.addEventListener('click', x.func);
                 elem.classList.add("context_menu_option");
 
-                elem.innerText = x.name;
+                if (x.checkbox) {
+                    let markelem = document.createElement('span');
+                    markelem.classList = x.checked ? 'checkmark_checked' : 'checkmark';
+                    elem.appendChild(markelem);
+                    elem.innerHTML += x.name;
+                    elem.addEventListener('click', elem => {
+                        x.checked = !x.checked;
+                        x.func(elem, x.checked); 
+                    });
+                } else {
+                    elem.innerText = x.name;
+                    elem.addEventListener('click', x.func);
+                }
                 cmenu_div.appendChild(elem);
             }
-
         }
         else {
             cmenu_div.innerHTML = this._html_content;

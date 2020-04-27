@@ -44,20 +44,20 @@ def add_cublas_cusolver(sdfg: dace.SDFG):
 # Make sure C_memlet has a wcr if map_exit is used
 # Matrix multiplication with one matrix as constant
 def mm_small(
-        state,
-        A_node,
-        B_node,
-        C_node,
-        A_subset=None,
-        B_subset=None,
-        C_subset=None,
-        A_memlet=None,
-        B_memlet=None,
-        C_memlet=None,
-        map_entry=None,
-        map_exit=None,
-        A_direct=True,
-        B_direct=True,
+    state,
+    A_node,
+    B_node,
+    C_node,
+    A_subset=None,
+    B_subset=None,
+    C_subset=None,
+    A_memlet=None,
+    B_memlet=None,
+    C_memlet=None,
+    map_entry=None,
+    map_exit=None,
+    A_direct=True,
+    B_direct=True,
 ):
     # C = A@B
     sdfg = state.parent
@@ -185,25 +185,25 @@ def mm_small(
 # takes input and stores output in column major order. give swapped input (B, A)
 # instead of (A, B)
 def mm(
-        state,
-        A_node,
-        B_node,
-        C_node,
-        A_mode: str = "N",
-        B_mode: str = "N",
-        label: str = None,
-        A_subset=None,
-        B_subset=None,
-        C_subset=None,
-        A_memlet=None,
-        B_memlet=None,
-        C_memlet=None,
-        map_entry=None,
-        map_exit=None,
-        shadow_a=False,
-        shadow_b=False,
-        buffer_a=False,
-        buffer_c=False,
+    state,
+    A_node,
+    B_node,
+    C_node,
+    A_mode: str = "N",
+    B_mode: str = "N",
+    label: str = None,
+    A_subset=None,
+    B_subset=None,
+    C_subset=None,
+    A_memlet=None,
+    B_memlet=None,
+    C_memlet=None,
+    map_entry=None,
+    map_exit=None,
+    shadow_a=False,
+    shadow_b=False,
+    buffer_a=False,
+    buffer_c=False,
 ):
     sdfg = state.parent
     Adesc = A_node.desc(sdfg)
@@ -255,7 +255,6 @@ def mm(
             ldb=ldb,
             ldc=ldc,
         ),
-        location="cpu",
         #     code_global="""
         # #include <cublas_v2.h>
         # """,
@@ -399,7 +398,7 @@ def printer(*inp):
 
 
 def string_builder(string):
-    """ To match DaCe variable naming conventions, replaces all undesired 
+    """ To match DaCe variable naming conventions, replaces all undesired
         characters with "_".
     """
     newstring = string
@@ -474,8 +473,8 @@ def winograd_convolution(dace_session, tf_node):
         IMAGE_TILE_SIZE,
         IMAGE_TILE_SIZE,
         tf_node.inputs[0].shape[-1],
-        outputShape[0] * ceil(outputShape[1] / OUTPUT_TILE_SIZE) * ceil(
-            outputShape[2] / OUTPUT_TILE_SIZE),
+        outputShape[0] * ceil(outputShape[1] / OUTPUT_TILE_SIZE) *
+        ceil(outputShape[2] / OUTPUT_TILE_SIZE),
     ]
     inputViewDims = ["0:" + str(_x) for _x in inputViewShape]
     ########Tiling the image#################################
@@ -491,8 +490,8 @@ def winograd_convolution(dace_session, tf_node):
         # ),
         "int_floor(i3,"
         # + str(ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*"
-        + str(OUTPUT_TILE_SIZE) + "+i1",
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) +
+        ")*" + str(OUTPUT_TILE_SIZE) + "+i1",
         "i2",
     ]
     inputView = state.add_transient(
@@ -526,12 +525,11 @@ def winograd_convolution(dace_session, tf_node):
         dict(zip(inputParams[0][0:2], inputViewDims[2:4])),
         dace.ScheduleType.GPU_Device,
     )
-    intermediateResultNode = state.add_transient(
-        "BtI",
-        bt.shape,
-        dace.float32,
-        dace.StorageType.GPU_Stack,
-        toplevel=False)
+    intermediateResultNode = state.add_transient("BtI",
+                                                 bt.shape,
+                                                 dace.float32,
+                                                 dace.StorageType.GPU_Stack,
+                                                 toplevel=False)
     intermediateResultNode.setzero = True
     state.add_edge(
         inputView,
@@ -774,11 +772,11 @@ def winograd_convolution(dace_session, tf_node):
     ###################Un-Tile the output to NHWC format###################
     outputParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%" + str(
-            ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
+        "(i3/" + str(outputShape[0]) + ")%" +
+        str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
         str(OUTPUT_TILE_SIZE) + "+i0",
-        "int_floor(i3," + str(
-            outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" +
+        "int_floor(i3," +
+        str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" +
         str(OUTPUT_TILE_SIZE) + "+i1",
         "i2",
     ]
@@ -805,7 +803,6 @@ def winograd_convolution(dace_session, tf_node):
         {},
         string_builder(tf_node.name) + "_printer" + "(" +
         ",".join(taskletInputs) + ");",
-        location="cpu",
         language=dace.dtypes.Language.CPP,
     )
     for _n, _conn in zip(debugNodes, taskletInputs):

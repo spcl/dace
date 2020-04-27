@@ -1,12 +1,12 @@
 """ Contains classes that implement the reduce-expansion transformation. """
 
 from copy import deepcopy as dcpy
-from dace import sdfg, subsets, dtypes, symbolic
+from dace import registry, subsets, dtypes
 from dace.graph import nodes, nxutil
-from dace.graph.graph import OrderedMultiDiGraph
 from dace.transformation import pattern_matching as pm
 
 
+@registry.autoregister_params(singlestate=True)
 class ReduceExpansion(pm.Transformation):
     """ Implements the reduce-expansion transformation.
 
@@ -84,11 +84,10 @@ class ReduceExpansion(pm.Transformation):
             schedule=(dtypes.ScheduleType.Default
                       if len(outer_map_range) > 0 else red_node.schedule))
 
-        tasklet = graph.add_tasklet(
-            name='red_tasklet',
-            inputs={'in_1'},
-            outputs={'out_1'},
-            code='out_1 = in_1')
+        tasklet = graph.add_tasklet(name='red_tasklet',
+                                    inputs={'in_1'},
+                                    outputs={'out_1'},
+                                    code='out_1 = in_1')
 
         inner_map_entry.in_connectors = {'IN_1'}
         inner_map_entry.out_connectors = {'OUT_1'}
@@ -172,8 +171,3 @@ class ReduceExpansion(pm.Transformation):
         graph.remove_edge(graph.in_edges(red_node)[0])
         graph.remove_edge(graph.out_edges(red_node)[0])
         graph.remove_node(red_node)
-
-        return
-
-
-pm.Transformation.register_pattern(ReduceExpansion)

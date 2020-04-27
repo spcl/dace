@@ -8,7 +8,6 @@ from dace.config import Config
 class CodeIOStream(StringIO):
     """ Code I/O stream that automates indentation and mapping of code to SDFG 
         nodes. """
-
     def __init__(self, base_indentation=0):
         super(CodeIOStream, self).__init__()
         self._indent = 0

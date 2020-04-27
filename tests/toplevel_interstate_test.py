@@ -7,8 +7,8 @@ _, tmpdesc = sdfg.add_transient('tmp', [1], dace.int32)
 state = sdfg.add_state()
 tasklet = state.add_tasklet('settmp', {}, {'t'}, 't = 5')
 wtmp = state.add_write('tmp')
-state.add_edge(tasklet, 't', wtmp, None, dace.Memlet.from_array(
-    'tmp', tmpdesc))
+state.add_edge(tasklet, 't', wtmp, None,
+               dace.Memlet.from_array('tmp', tmpdesc))
 
 # States that uses tmp implicitly (only in interstate edge)
 state2 = sdfg.add_state()

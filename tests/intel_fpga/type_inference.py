@@ -17,7 +17,7 @@ def type_inference(x: dace.float32[N], y: dace.float32[N]):
         # computes y[i]=(int)x[i] + ((int)y[i])*2.1
         var1 = int(in_x)
         var2: int = in_y
-        var3 = 2.1
+        var3 = 2.1 if (i>1 and i<10) else 2.1 # Just for the sake of testing
         res = var1 + var3 * var2
         out = res
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     type_inference(X, Y)
 
-    diff = np.linalg.norm(Z - Y) / float(dace.eval(N.get()))
+    diff = np.linalg.norm(Z - Y) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

@@ -8,13 +8,10 @@ from collections import OrderedDict
 
 class PropertyTests(unittest.TestCase):
     """Implements unit tests for dace.graph.properties.Property class."""
-
     def test_indirect_properties(self):
 
         m = dace.graph.nodes.Map(
-            "test_map",
-            [sp.Symbol("i"), sp.Symbol("j"),
-             sp.Symbol("k")],
+            "test_map", ['i', 'j', 'k'],
             dace.subsets.Range([(0, 10, 1), (0, sp.Symbol("N"), 4),
                                 (0, sp.Symbol("M"), None)]))
 
@@ -23,13 +20,13 @@ class PropertyTests(unittest.TestCase):
         to_string = dace.graph.nodes.Map.__properties__["params"].to_string
         from_string = dace.graph.nodes.Map.__properties__["params"].from_string
 
-        self.assertTrue(to_string(m.params) == "[i, j, k]")
-        self.assertTrue(to_string(entry.params) == "[i, j, k]")
+        self.assertTrue(to_string(m.params) == "['i', 'j', 'k']")
+        self.assertTrue(to_string(entry.params) == "['i', 'j', 'k']")
 
         entry.params = from_string("[k, j, i]")
 
-        self.assertTrue(to_string(m.params) == "[k, j, i]")
-        self.assertTrue(to_string(entry.params) == "[k, j, i]")
+        self.assertTrue(to_string(m.params) == "['k', 'j', 'i']")
+        self.assertTrue(to_string(entry.params) == "['k', 'j', 'i']")
 
     def test_range_property(self):
 

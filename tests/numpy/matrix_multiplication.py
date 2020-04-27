@@ -52,18 +52,17 @@ if __name__ == "__main__":
     A_node = state.add_array('A', A.shape, dace.float64)
     B_node = state.add_array('B', B.shape, dace.float64)
     C_node = state.add_array('C', C.shape, dace.float64)
-    np_frontend.op_impl.matrix_multiplication(
-        state,
-        A_node,
-        A_node,
-        B_node,
-        B_node,
-        C_node,
-        C_node,
-        A_index=[1, 2, 3],
-        B_index=[1, 3, 2, 1],
-        C_index=[2, 2],
-        label='mmul')
+    np_frontend.op_impl.matrix_multiplication(state,
+                                              A_node,
+                                              A_node,
+                                              B_node,
+                                              B_node,
+                                              C_node,
+                                              C_node,
+                                              A_index=[1, 2, 3],
+                                              B_index=[1, 3, 2, 1],
+                                              C_index=[2, 2],
+                                              label='mmul')
 
     mmul(A=A, B=B, C=C)
     np.dot(A_regression, B_regression, C_regression)

@@ -2,16 +2,15 @@
 """
 
 import dace
-from copy import deepcopy as dcpy
-from dace import data, symbolic
-from dace.properties import Property
+from dace import data, registry, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.graph import edges, nodes, nxutil
+from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
+@registry.autoregister_params(singlestate=True)
 class MapToForLoop(pattern_matching.Transformation):
     """ Implements the Map to for-loop transformation.
 
@@ -74,7 +73,7 @@ class MapToForLoop(pattern_matching.Transformation):
                 loop_step = loop_step.subs(repldict)
 
         # Avoiding import loop
-        from dace.codegen.targets.cpu import cpp_array_expr
+        from dace.codegen.targets.cpp import cpp_array_expr
 
         def replace_param(param):
             param = symbolic.symstr(param)
@@ -116,6 +115,3 @@ class MapToForLoop(pattern_matching.Transformation):
         nstate.remove_nodes_from([map_entry, map_exit])
 
         return node, nstate
-
-
-pattern_matching.Transformation.register_pattern(MapToForLoop)

@@ -3,7 +3,7 @@
 import copy
 import itertools
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic
+from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
 from dace.graph import edges, nodes, nxutil
 from dace.transformation import pattern_matching
@@ -11,6 +11,7 @@ from dace.transformation import pattern_matching
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
+@registry.autoregister_params(singlestate=True)
 class DoubleBuffering(pattern_matching.Transformation):
     """ Implements the double buffering pattern, which pipelines reading
         and processing data by creating a second copy of the memory.
@@ -76,16 +77,16 @@ class DoubleBuffering(pattern_matching.Transformation):
         # Change condition of loop to one fewer iteration (so that the
         # final one reads from the last buffer)
         map_rstart, map_rend, map_rstride = map_entry.map.range[0]
-        map_rend = symbolic.pystr_to_symbolic(
-            '(%s) - (%s)' % (map_rend, map_rstride))
+        map_rend = symbolic.pystr_to_symbolic('(%s) - (%s)' %
+                                              (map_rend, map_rstride))
         map_entry.map.range = subsets.Range([(map_rstart, map_rend,
                                               map_rstride)])
 
         ##############################
         # Gather transients to modify
-        transients_to_modify = set(
-            edge.dst.data for edge in graph.out_edges(map_entry)
-            if isinstance(edge.dst, nodes.AccessNode))
+        transients_to_modify = set(edge.dst.data
+                                   for edge in graph.out_edges(map_entry)
+                                   if isinstance(edge.dst, nodes.AccessNode))
 
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
@@ -164,8 +165,8 @@ class DoubleBuffering(pattern_matching.Transformation):
         # Modify main state's memlets
 
         # Divide by loop stride
-        new_expr = symbolic.pystr_to_symbolic(
-            '(%s / %s) %% 2' % (map_param, map_rstride))
+        new_expr = symbolic.pystr_to_symbolic('(%s / %s) %% 2' %
+                                              (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
 
         ##############################
@@ -199,8 +200,8 @@ class DoubleBuffering(pattern_matching.Transformation):
 
         nstate.set_label('%s_double_buffered' % map_entry.map.label)
         # Divide by loop stride
-        new_expr = symbolic.pystr_to_symbolic(
-            '((%s / %s) + 1) %% 2' % (map_param, map_rstride))
+        new_expr = symbolic.pystr_to_symbolic('((%s / %s) + 1) %% 2' %
+                                              (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
 
     @staticmethod
@@ -231,6 +232,3 @@ class DoubleBuffering(pattern_matching.Transformation):
                                  if symbolic.issymbolic(dim) else dim)
 
         return new_subset
-
-
-pattern_matching.Transformation.register_pattern(DoubleBuffering)

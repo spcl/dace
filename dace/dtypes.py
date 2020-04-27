@@ -1,24 +1,17 @@
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
-import enum
+import aenum
 import inspect
 import numpy
-import pydoc
+import re
 from functools import wraps
 
-
-class AutoNumber(enum.Enum):
-    """ Backwards-compatible version of Enum's `auto()` """
-
-    def __new__(cls):
-        value = len(cls.__members__) + 1
-        obj = object.__new__(cls)
-        obj._value_ = value
-        return obj
+from dace.registry import extensible_enum
 
 
-class StorageType(AutoNumber):
+@extensible_enum
+class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
@@ -35,7 +28,8 @@ class StorageType(AutoNumber):
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
 
 
-class ScheduleType(AutoNumber):
+@extensible_enum
+class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
 
     Default = ()  # Scope-default parallel schedule
@@ -56,7 +50,7 @@ GPU_SCHEDULES = [
 ]
 
 
-class ReductionType(AutoNumber):
+class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
     Custom = ()  # Defined by an arbitrary lambda function
@@ -74,14 +68,15 @@ class ReductionType(AutoNumber):
     Max_Location = ()  # Maximum value and its location
 
 
-class Language(AutoNumber):
+@extensible_enum
+class Language(aenum.AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
 
     Python = ()
     CPP = ()
 
 
-class AccessType(AutoNumber):
+class AccessType(aenum.AutoNumberEnum):
     """ Types of access to an `AccessNode`. """
 
     ReadOnly = ()
@@ -89,7 +84,8 @@ class AccessType(AutoNumber):
     ReadWrite = ()
 
 
-class InstrumentationType(AutoNumber):
+@extensible_enum
+class InstrumentationType(aenum.AutoNumberEnum):
     """ Types of instrumentation providers.
         @note: Might be determined automatically in future versions.
     """
@@ -141,7 +137,7 @@ _CTYPES = {
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
     numpy.uint64: "unsigned long long",
-    numpy.float16: "half",
+    numpy.float16: "dace::float16",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
@@ -176,7 +172,6 @@ _BYTES = {
     bool: 1,
     numpy.bool: 1,
     numpy.int8: 1,
-    numpy.int8: 1,
     numpy.int16: 2,
     numpy.int32: 4,
     numpy.int64: 8,
@@ -200,7 +195,6 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.immaterial`
     """
-
     def __init__(self, wrapped_type):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -266,159 +260,46 @@ class typeclass(object):
         return self.ctype
 
 
-# _CTYPES_RULES: returns the largest between two types (dace.types.typeclass) according to C semantic
-_CTYPES_RULES = {
-
-    # Both operands are integers
-    # C Integer promotion rules apply:
-    # - if the types are the same, return the type
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))):
-    typeclass(numpy.uint8),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint16))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint32))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint64))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.int8))):
-    typeclass(numpy.int8),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.int16))):
-    typeclass(numpy.int16),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int32))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int64))):
-    typeclass(numpy.int64),
-
-    # - Otherwise if both operands after promotion have the same signedness
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint32))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint8))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint16))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint8))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint8))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int32))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int16))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int8))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int16))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int), typeclass(numpy.int16))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int8))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int), typeclass(numpy.int8))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.int8))):
-    typeclass(numpy.int16),
-
-    # - Otherwise, the signedness is different: If the operand with the unsigned type has
-    # conversion rank greater or equal than the rank of the type of the signed operand,
-    # then the operand with the signed type is implicitly converted to the unsigned type
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int64))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int32))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int8))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int32))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int16))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int8))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.int16))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.int8))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.int8))):
-    typeclass(numpy.uint8),
-
-    # - Otherwise, the signedness is different and the signed operand's rank is greater than
-    # unsigned operand's rank. In this case, if the signed type can represent all values of
-    # the unsigned type, then the operand with the unsigned type is implicitly converted to
-    # the type of the signed operand.
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint32))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint16))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint8))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.uint16))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.uint8))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.uint8))):
-    typeclass(numpy.int16),
-
-    # If any of the operand is float then the result will be in float (of the biggest rank
-    # if the two operands are of the same type)
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float32))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float16))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float32), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.float32), typeclass(numpy.float16))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.float16), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-}
+def result_type_of(lhs, rhs):
+    """Returns the largest between two types (dace.types.typeclass) according
+       to C semantics."""
+    if lhs == rhs:
+        return lhs  # Types are the same, return either
+    if lhs == None:
+        return rhs  # Use RHS even if it's None
+    if rhs == None:
+        return lhs  # Use LHS
+    # Extract the numpy type so we can call issubdtype on them
+    lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
+    rhs_ = rhs.type if isinstance(rhs, typeclass) else rhs
+    # Extract data sizes (seems the type itself doesn't expose this)
+    size_lhs = lhs_(0).itemsize
+    size_rhs = rhs_(0).itemsize
+    # Both are integers
+    if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(
+            rhs_, numpy.integer):
+        # If one byte width is larger, use it
+        if size_lhs > size_rhs:
+            return lhs
+        elif size_lhs < size_rhs:
+            return rhs
+        # Sizes are the same
+        if numpy.issubdtype(lhs_, numpy.unsignedinteger):
+            # No matter if right is signed or not, we must return unsigned
+            return lhs
+        else:
+            # Left is signed, so either right is unsigned and we return that,
+            # or both are signed
+            return rhs
+    # At least one side is a floating point number
+    if numpy.issubdtype(lhs_, numpy.integer):
+        return rhs
+    if numpy.issubdtype(rhs_, numpy.integer):
+        return lhs
+    # Both sides are floating point numbers
+    if size_lhs > size_rhs:
+        return lhs
+    return rhs  # RHS is bigger
 
 
 class pointer(typeclass):
@@ -426,7 +307,6 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
-
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -464,7 +344,6 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
-
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -577,7 +456,6 @@ def _atomic_counter_generator():
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
-
     def __init__(self, return_type, *variadic_args):
         self.uid = next(_atomic_counter_generator())
         from dace import data
@@ -613,8 +491,8 @@ class callback(typeclass):
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
-                input_ctypes.append(some_arg.as_ctypes()
-                                    if some_arg is not None else None)
+                input_ctypes.append(
+                    some_arg.as_ctypes() if some_arg is not None else None)
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
@@ -640,7 +518,7 @@ class callback(typeclass):
         cstring = cstring + ")"
         return cstring
 
-    def get_trampoline(self, pyfunc):
+    def get_trampoline(self, pyfunc, other_arguments):
         from functools import partial
         from dace import data, symbolic
 
@@ -661,11 +539,12 @@ class callback(typeclass):
                 non_symbolic_sizes = []
                 for s in size:
                     if isinstance(s, symbolic.symbol):
-                        non_symbolic_sizes.append(s.get())
+                        non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(
-                    other_inputs[i], data_type, non_symbolic_sizes)
+                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i],
+                                                     data_type,
+                                                     non_symbolic_sizes)
             return orig_function(*list_of_other_inputs)
 
         return partial(trampoline, pyfunc, arraypos, types_and_sizes)
@@ -677,8 +556,8 @@ class callback(typeclass):
         return {
             'type': 'callback',
             'arguments': [i.to_json() for i in self.input_types],
-            'returntype': self.return_type.to_json()
-            if self.return_type else None
+            'returntype':
+            self.return_type.to_json() if self.return_type else None
         }
 
     @staticmethod
@@ -768,6 +647,7 @@ TYPECLASS_STRINGS = [
 _CONSTANT_TYPES = [
     int,
     float,
+    complex,
     str,
     numpy.intc,
     numpy.intp,
@@ -859,7 +739,6 @@ class _external_function(object):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
-
     def __init__(self,
                  start_line,
                  start_column,
@@ -876,13 +755,12 @@ class DebugInfo:
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        return dict(
-            type='DebugInfo',
-            start_line=self.start_line,
-            end_line=self.end_line,
-            start_column=self.start_column,
-            end_column=self.end_column,
-            filename=self.filename)
+        return dict(type='DebugInfo',
+                    start_line=self.start_line,
+                    end_line=self.end_line,
+                    start_column=self.start_column,
+                    end_column=self.end_column,
+                    filename=self.filename)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -910,7 +788,6 @@ def json_to_typeclass(obj):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
-
     @wraps(dec)
     def layer(*args, **kwargs):
 
@@ -935,3 +812,11 @@ def deduplicate(iterable):
     """ Removes duplicates in the passed iterable. """
     return type(iterable)(
         [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+
+
+def validate_name(name):
+    if not isinstance(name, str) or len(name) == 0:
+        return False
+    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
+        return False
+    return True

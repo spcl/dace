@@ -15,30 +15,27 @@ nsdfg = dace.SDFG('noncontig_internal')
 nsdfg.add_array('aA', [2, 3, 4], dace.float32)
 nsdfg.add_array('bB', [2, 3, 4], dace.float32)
 s = nsdfg.add_state()
-s.add_mapped_tasklet(
-    'dostuff',
-    dict(i='0:2', k='0:4'),
-    dict(a=dace.Memlet.simple('aA', 'i, 0, k')),
-    'b = a * 5',
-    dict(b=dace.Memlet.simple('bB', 'i, 0, k')),
-    external_edges=True)
+s.add_mapped_tasklet('dostuff',
+                     dict(i='0:2', k='0:4'),
+                     dict(a=dace.Memlet.simple('aA', 'i, 0, k')),
+                     'b = a * 5',
+                     dict(b=dace.Memlet.simple('bB', 'i, 0, k')),
+                     external_edges=True)
 ########################
 
 # Add nested SDFG to SDFG
 map_entry, map_exit = state.add_map('elements', dict(j='0:3'))
 nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'aA'}, {'bB'})
-state.add_memlet_path(
-    A,
-    map_entry,
-    nsdfg_node,
-    dst_conn='aA',
-    memlet=dace.Memlet.simple('A', '0:2, j, 0:4'))
-state.add_memlet_path(
-    nsdfg_node,
-    map_exit,
-    B,
-    src_conn='bB',
-    memlet=dace.Memlet.simple('B', '0:2, j, 0:4'))
+state.add_memlet_path(A,
+                      map_entry,
+                      nsdfg_node,
+                      dst_conn='aA',
+                      memlet=dace.Memlet.simple('A', '0:2, j, 0:4'))
+state.add_memlet_path(nsdfg_node,
+                      map_exit,
+                      B,
+                      src_conn='bB',
+                      memlet=dace.Memlet.simple('B', '0:2, j, 0:4'))
 
 if __name__ == '__main__':
     print('Nested SDFG with non-contiguous access test')

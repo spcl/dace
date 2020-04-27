@@ -1,37 +1,41 @@
+import aenum
 import os
 import shutil  # which
 from typing import Dict
+import warnings
 
 import dace
 from dace import dtypes
 from dace.graph import nodes, nxutil
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.registry import extensible_enum, make_registry
 
 
+@make_registry
 class TargetCodeGenerator(object):
     """ Interface dictating functions that generate code for:
           * Array allocation/deallocation/initialization/copying
           * Scope (map, consume) code generation
     """
-
     def get_generated_codeobjects(self):
         """ Returns a list of generated `CodeObject` classes corresponding
-            to files with generated code.
+            to files with generated code. If an empty list is returned
+            (default) then this code generator does not create new files.
             @see: CodeObject
         """
-        raise NotImplementedError('Abstract class')
+        return []
 
     @property
     def has_initializer(self):
         """ Returns True if the target generates a `__dace_init_<TARGET>`
             function that should be called on initialization. """
-        raise NotImplementedError('Abstract class')
+        return False
 
     @property
     def has_finalizer(self):
         """ Returns True if the target generates a `__dace_exit_<TARGET>`
             function that should be called on finalization. """
-        raise NotImplementedError('Abstract class')
+        return False
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         """ Generates code for an SDFG state, outputting it to the given
@@ -45,7 +49,7 @@ class TargetCodeGenerator(object):
                                     to the current location (call-site)
                                     in the code.
         """
-        raise NotImplementedError('Abstract class')
+        pass
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
                        callsite_stream):
@@ -158,14 +162,14 @@ class TargetCodeGenerator(object):
 class IllegalCopy(TargetCodeGenerator):
     """ A code generator that is triggered when invalid copies are specified
         by the SDFG. Only raises an exception on failure. """
-
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
         raise TypeError('Illegal copy! (from ' + str(src_node) + ' to ' +
                         str(dst_node) + ')')
 
 
-class DefinedType(dace.dtypes.AutoNumber):
+@extensible_enum
+class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
         @see: DefinedMemlets
     """
@@ -180,7 +184,6 @@ class DefinedType(dace.dtypes.AutoNumber):
 class DefinedMemlets:
     """ Keeps track of the type of defined memlets to ensure that they are
         referenced correctly in nested scopes and SDFGs. """
-
     def __init__(self):
         self._scopes = [(None, {})]
 
@@ -206,8 +209,8 @@ class DefinedMemlets:
             ancestor: int = 0,
             allow_shadowing: bool = False):
         if not isinstance(name, str):
-            raise TypeError(
-                'Variable name type cannot be %s' % type(name).__name__)
+            raise TypeError('Variable name type cannot be %s' %
+                            type(name).__name__)
 
         for _, scope in reversed(self._scopes):
             if name in scope:
@@ -228,9 +231,9 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
-
     def __init__(self):
         self._used_targets = set()
+        self._used_environments = set()
 
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
@@ -266,6 +269,12 @@ class TargetDispatcher(object):
         """ Returns a list of targets (code generators) that were triggered
             during generation. """
         return self._used_targets
+
+    @property
+    def used_environments(self):
+        """ Returns a list of environments required to build and run the code.
+        """
+        return self._used_environments
 
     def register_state_dispatcher(self, dispatcher, predicate=None):
         """ Registers a code generator that processes a single state, calling
@@ -417,8 +426,9 @@ class TargetDispatcher(object):
                     state, ", ".join(
                         [type(x).__name__ for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
-            satisfied_dispatchers[0].generate_state(
-                sdfg, state, function_stream, callsite_stream)
+            satisfied_dispatchers[0].generate_state(sdfg, state,
+                                                    function_stream,
+                                                    callsite_stream)
         else:  # num_satisfied == 0
             # Otherwise use the generic code generator (CPU)
             self._generic_state_dispatcher.generate_state(
@@ -435,8 +445,8 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
-        start_nodes = list(
-            v for v in dfg.nodes() if len(list(dfg.predecessors(v))) == 0)
+        start_nodes = list(v for v in dfg.nodes()
+                           if len(list(dfg.predecessors(v))) == 0)
 
         # Mark nodes to skip in order to be able to skip
         nodes_to_skip = set()
@@ -452,11 +462,6 @@ class TargetDispatcher(object):
             if isinstance(v, nodes.MapEntry):
                 scope_subgraph = sdfg.find_state(state_id).scope_subgraph(v)
 
-                # Propagate parallelism
-                if dfg.is_parallel():
-                    scope_subgraph.set_parallel_parent(dfg.get_parallel_parent)
-
-                assert not dfg.is_parallel() or scope_subgraph.is_parallel()
                 self.dispatch_scope(v.map.schedule, sdfg, scope_subgraph,
                                     state_id, function_stream, callsite_stream)
 
@@ -470,6 +475,11 @@ class TargetDispatcher(object):
     def dispatch_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
         """ Dispatches a code generator for a single node. """
+
+        # If this node depends on any environments, register this for
+        # generating header code later
+        if hasattr(node, "environments"):
+            self._used_environments |= node.environments
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
@@ -485,8 +495,9 @@ class TargetDispatcher(object):
                         [type(x).__name__ for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
             self._used_targets.add(satisfied_dispatchers[0])
-            satisfied_dispatchers[0].generate_node(
-                sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            satisfied_dispatchers[0].generate_node(sdfg, dfg, state_id, node,
+                                                   function_stream,
+                                                   callsite_stream)
         else:  # num_satisfied == 0
             # Otherwise use the generic code generator (CPU)
             self._used_targets.add(self._generic_node_dispatcher)
@@ -626,5 +637,6 @@ def make_absolute(path):
         # as "g++". Try to find it on the PATH
         executable = shutil.which(path)
         if not executable:
-            raise ValueError("Could not find executable \"{}\"".format(path))
+            executable = path
+            warnings.warn("Could not find executable \"{}\"".format(path))
         return executable.replace('\\', '/')

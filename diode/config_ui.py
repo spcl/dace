@@ -15,7 +15,6 @@ class DIODEConfig:
         
         @see dace.config.Config
     """
-
     def __init__(self):
         self.window = None
 

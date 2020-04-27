@@ -8,6 +8,7 @@ set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
+PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 ERRORS=0
@@ -40,46 +41,34 @@ run_sample() {
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
 
-    #1: generate the opencl
-    # This will throw an exception, because the kernel has not yet been built. Catch this, and build the kernel.
-    echo -e ${3} | python3 ${1}.py ${@:4}
-
-    #2: compile for emulation
-    cd .dacecache/$2/build
-    make intelfpga_compile_$2_emulator
-    if [ $? -ne 0 ]; then
-      bail "$1 (${RED}high-level synthesis failed${NC})"
-      return 1
-    fi
-
-    #3: execute the emulation
-    cd ../../../
-    echo -e $3 | python3 $1.py ${@:4}
+    echo -e ${3} | $PYTHON_BINARY ${1}.py ${@:4}
 
     if [ $? -ne 0 ]; then
-        bail "$1 (${RED}Wrong emulation result${NC})"
+        bail "$1"
     fi
-
-    #4 cleanup
-    cd .dacecache/$2/build
-    rm -fr $1_*
-    cd -
-
-
 
     return 0
 }
 
 run_all() {
-    # #### VECTORIZATION ####
-    #Vectorization 1: first vectorize and then transform for FPGA
-    run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0\nFPGATransformSDFG\$0\n"
-    #Vectorization 2: first transform for FPGA then vectorize
-    run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0\n"
-    #Vectorization 3: TODO non vectorizable N
+
+    #### VECTORIZATION ####
+    # Vectorization 1: first vectorize and then transform for FPGA
+    run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True)\nFPGATransformSDFG\$0\n"
+    # Vectorization 2: first transform for FPGA then vectorize
+    run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
+    # Vectorization 3: TODO non vectorizable N
+
+    # ### MAP TILING ####
+    # First tile then transform
+    run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"
+    # Other way around
+    run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
+
+    run_sample intel_fpga/veclen_conversion "\n"
 
     # #### WCR ####
-    #simple WCR (accumulates on scalar)
+    # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 
     # histogram (WCR on array)
@@ -98,19 +87,19 @@ run_all() {
     # type inference for statements with annotation
     run_sample intel_fpga/type_inference type_inference "FPGATransformSDFG\$0\n"
 
-
     # #### SYSTOLIC ARRAY ###
     run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
     run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
     run_sample ../samples/fpga/jacobi_fpga_systolic jacobi_fpga_systolic_8_Hx8192xT "\n"
 
-
     # #### MISCELLANEA ####
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
+    run_sample intel_fpga/async async_test "\n" 
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
     run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
+    run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 "\n" 24
 }
 
 # Check if aoc is vailable

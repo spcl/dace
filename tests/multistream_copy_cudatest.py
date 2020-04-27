@@ -3,19 +3,25 @@ import numpy as np
 
 sdfg = dace.SDFG('multistream')
 
-_, A = sdfg.add_array(
-    'A', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
-_, B = sdfg.add_array(
-    'B', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
-_, C = sdfg.add_array(
-    'C', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
+_, A = sdfg.add_array('A', [2],
+                      dace.float32,
+                      storage=dace.StorageType.CPU_Pinned)
+_, B = sdfg.add_array('B', [2],
+                      dace.float32,
+                      storage=dace.StorageType.CPU_Pinned)
+_, C = sdfg.add_array('C', [2],
+                      dace.float32,
+                      storage=dace.StorageType.CPU_Pinned)
 
-gA = sdfg.add_transient(
-    'gA', [2], dace.float32, storage=dace.StorageType.GPU_Global)
-gB = sdfg.add_transient(
-    'gB', [2], dace.float32, storage=dace.StorageType.GPU_Global)
-gC = sdfg.add_transient(
-    'gC', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+gA = sdfg.add_transient('gA', [2],
+                        dace.float32,
+                        storage=dace.StorageType.GPU_Global)
+gB = sdfg.add_transient('gB', [2],
+                        dace.float32,
+                        storage=dace.StorageType.GPU_Global)
+gC = sdfg.add_transient('gC', [2],
+                        dace.float32,
+                        storage=dace.StorageType.GPU_Global)
 
 state = sdfg.add_state('s0')
 
