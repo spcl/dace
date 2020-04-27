@@ -48,7 +48,7 @@ class MapExpansion(pm.Transformation):
         # Extract the map and its entry and exit nodes.
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[MapExpansion._map_entry]]
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
         current_map = map_entry.map
 
         # Create new maps

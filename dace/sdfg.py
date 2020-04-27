@@ -2449,24 +2449,17 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
     def all_transients(self):
         return all_transients(self)
 
-    def entry_node(self, exit_node):
-        """ Returns the entry node corresponding to the passed exit node. """
-        return self.scope_dict()[exit_node]
+    def entry_node(self, node: nd.Node) -> nd.EntryNode:
+        """ Returns the entry node that wraps the current node, or None if
+            it is top-level in a state. """
+        return self.scope_dict()[node]
 
-    def exit_nodes(self, entry_node):
+    def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
         """ Returns the exit node leaving the context opened by
             the given entry node. """
-
-        if not isinstance(entry_node, nd.EntryNode):
-            raise TypeError(
-                "Received {}: should be dace.nodes.EntryNode".format(
-                    type(entry_node).__name__))
-
         node_to_children = self.scope_dict(True)
-        return [
-            v for v in node_to_children[entry_node]
-            if isinstance(v, nd.ExitNode)
-        ]
+        return next(v for v in node_to_children[entry_node]
+                    if isinstance(v, nd.ExitNode))
 
     def data_symbols(self):
         """Returns all symbols used in data nodes."""
@@ -2860,25 +2853,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """Iterate over all transients in this state."""
         return all_transients(self)
 
-    def entry_node(self, node):
-        """ Returns the scope entry node of the given node, or None if
-            top-level. """
-        return self.scope_dict(False)[node]
+    def entry_node(self, node: nd.Node) -> nd.EntryNode:
+        """ Returns the entry node that wraps the current node, or None if
+            it is top-level in a state. """
+        return self.scope_dict()[node]
 
-    def exit_nodes(self, entry_node):
+    def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
         """ Returns the exit node leaving the context opened by
             the given entry node. """
-
-        if not isinstance(entry_node, nd.EntryNode):
-            raise TypeError(
-                "Received {}: should be dace.nodes.EntryNode".format(
-                    type(entry_node).__name__))
-
         node_to_children = self.scope_dict(True)
-        return [
-            v for v in node_to_children[entry_node]
-            if isinstance(v, nd.ExitNode)
-        ]
+        return next(v for v in node_to_children[entry_node]
+                    if isinstance(v, nd.ExitNode))
 
     # Dynamic SDFG creation API
     ##############################
@@ -3758,7 +3743,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             # Scope tests
             ########################################
             if isinstance(node, nd.EntryNode):
-                if len(self.exit_nodes(node)) == 0:
+                try:
+                    self.exit_node(node)
+                except StopIteration:
                     raise InvalidSDFGNodeError(
                         "Entry node does not have matching "
                         "exit node",

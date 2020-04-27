@@ -167,7 +167,7 @@ def draw_graph(sdfg, graph, standalone=True):
     def add_exit_nodes(scope):
         for node in sdict_children[scope]:
             if node in sdict_children and node.is_collapsed:
-                nodes_for_edges.add(graph.exit_nodes(node)[0])
+                nodes_for_edges.add(graph.exit_node(node))
             elif node in sdict_children:
                 add_exit_nodes(node)
 

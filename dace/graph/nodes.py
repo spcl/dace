@@ -56,21 +56,19 @@ class Node(object):
             scope_entry_node = None
 
         if scope_entry_node is not None:
-            ens = parent.exit_nodes(parent.entry_node(self))
-            scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
+            ens = parent.exit_node(parent.entry_node(self))
+            scope_exit_node = str(parent.node_id(ens))
             scope_entry_node = str(parent.node_id(scope_entry_node))
         else:
             scope_entry_node = None
-            scope_exit_nodes = []
+            scope_exit_node = None
 
         # The scope exit of an entry node is the matching exit node
         if isinstance(self, EntryNode):
             try:
-                scope_exit_nodes = [
-                    str(parent.node_id(x)) for x in parent.exit_nodes(self)
-                ]
+                scope_exit_node = str(parent.node_id(parent.exit_node(self)))
             except RuntimeError:
-                scope_exit_nodes = []
+                scope_exit_node = None
 
         retdict = {
             "type": typestr,
@@ -78,7 +76,7 @@ class Node(object):
             "attributes": dace.serialize.all_properties_to_json(self),
             "id": parent.node_id(self),
             "scope_entry": scope_entry_node,
-            "scope_exits": scope_exit_nodes
+            "scope_exit": scope_exit_node
         }
         return retdict
 
