@@ -221,7 +221,7 @@ class StripMining(pattern_matching.Transformation):
 
         # Retrieve map entry and exit nodes.
         map_entry = graph.nodes()[candidate[StripMining._map_entry]]
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
 
         # Retrieve transformation properties.
         dim_idx = self.dim_idx
