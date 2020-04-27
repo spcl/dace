@@ -8,6 +8,9 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(HLSLIB_PART_NAME "${DACE_XILINX_PART_NAME}")
 
+# FPGA specific
+set(DACE_FPGA_AUTOBUILD_BITSTREAM OFF CACHE STRING "Automatically build bitstreams if they are not present.")
+
 # Allow passing flags to various stages of Xilinx compilation process
 set(DACE_XILINX_MODE "simulation" CACHE STRING "Type of compilation/execution [simulation/software_emulation/hardware_emulation/hardware].")
 set(DACE_XILINX_HOST_FLAGS "" CACHE STRING "Extra flags to host code")
@@ -500,7 +503,7 @@ if(DACE_ENABLE_INTELFPGA)
       add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_emulator
                         DEPENDS ${DACE_PROGRAM_NAME}_emulator.aocx)
   endif()
-  if(DACE_INTELFPGA_MODE STREQUAL "hardware")
+  if(DACE_INTELFPGA_MODE STREQUAL "hardware" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
       add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_hardware
                         ALL DEPENDS ${DACE_PROGRAM_NAME}_hardware.aocx)
   else()
@@ -528,7 +531,7 @@ if(DACE_ENABLE_XILINX)
   endif()
   add_custom_target(xilinx_link_hardware_emulation DEPENDS
                     xilinx_link_${DACE_PROGRAM_NAME}_hardware_emulation)
-  if(DACE_XILINX_MODE STREQUAL "hardware")
+  if(DACE_XILINX_MODE STREQUAL "hardware" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
       add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_hardware
                         ALL DEPENDS ${DACE_PROGRAM_NAME}_hw.xclbin) 
   else()

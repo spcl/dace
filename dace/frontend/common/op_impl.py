@@ -15,8 +15,8 @@ Index = typing.List[typing.Union[int, str, symbolic.symbol]]
 Node = dace.graph.nodes.Node
 DNode = dace.graph.nodes.AccessNode
 
-
 # TODO: Most of the external operations here emit Z (complex double) ops, fix
+
 
 def _to_cudatype(dtype):
     """ Returns a CUDA typename that corresponds to the input type.
@@ -44,7 +44,6 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
         @see: dace.transformation.dataflow.GPUTransformLocalStorage
     """
     cnode = tasklet_node
-    exit_nodes = [tasklet_node]
 
     gpu_storage_types = [
         dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared,
@@ -56,8 +55,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
 
     # First, understand which arrays to clone
     all_out_edges = []
-    for enode in exit_nodes:
-        all_out_edges.extend(list(graph.out_edges(enode)))
+    all_out_edges.extend(list(graph.out_edges(tasklet_node)))
     in_arrays_to_clone = set()
     out_arrays_to_clone = set()
     for e in graph.in_edges(cnode):
@@ -289,12 +287,12 @@ class ValidationError(Exception):
 
 
 def validate_matrix_multiplication(
-        A_shape: Shape,
-        B_shape: Shape,
-        C_shape: Shape,
-        A_index: Index = None,
-        B_index: Index = None,
-        C_index: Index = None
+    A_shape: Shape,
+    B_shape: Shape,
+    C_shape: Shape,
+    A_index: Index = None,
+    B_index: Index = None,
+    C_index: Index = None
 ) -> ((str, str, str), (str, str, str), (str, str, str), (str, str, str)):
     """ Validates a matrix multiplication operation, based on the shapes and
         indices of the arrays involved. Returns the ranges of the maps and
@@ -982,12 +980,12 @@ def matrix_multiplication_s(A_label: str,
 
 
 def validate_scalar_array_multiplication(
-        alpha_shape: Shape,
-        A_shape: Shape,
-        B_shape: Shape,
-        alpha_index: Index = None,
-        A_index: Index = None,
-        B_index: Index = None
+    alpha_shape: Shape,
+    A_shape: Shape,
+    B_shape: Shape,
+    alpha_index: Index = None,
+    A_index: Index = None,
+    B_index: Index = None
 ) -> (typing.Dict[str, str], (str, str), (str, str), (str, str)):
     """ Validates a scalar-array multiplication operation, based on the shapes 
         and indices of the arrays involved. Returns the ranges of the maps and
@@ -1338,10 +1336,10 @@ def unary_array_op(state: State,
 
 
 def validate_matrix_transpose(
-        A_shape: Shape,
-        B_shape: Shape,
-        A_index: Index = None,
-        B_index: Index = None
+    A_shape: Shape,
+    B_shape: Shape,
+    A_index: Index = None,
+    B_index: Index = None
 ) -> (typing.Dict[str, str], (str, str), (str, str)):
     """ Validates a matrix transpose operation, based on the shapes and indices
         of the arrays involved. Returns the ranges of the maps and memlets at 
@@ -1560,13 +1558,13 @@ def matrix_transpose_s(A_label: str,
 
 
 def validate_matrix_pointwise_op(
-        A_shape: Shape,
-        B_shape: Shape,
-        C_shape: Shape,
-        reduce: bool = False,
-        A_index: Index = None,
-        B_index: Index = None,
-        C_index: Index = None
+    A_shape: Shape,
+    B_shape: Shape,
+    C_shape: Shape,
+    reduce: bool = False,
+    A_index: Index = None,
+    B_index: Index = None,
+    C_index: Index = None
 ) -> (typing.Dict[str, str], (str, str), (str, str), (str, str)):
     """ Validates a point-wise matrix operation. """
 

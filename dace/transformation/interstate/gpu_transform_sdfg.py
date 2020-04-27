@@ -113,13 +113,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         and node.desc(sdfg).transient == False):
                     if (state.out_degree(node) > 0
                             and node.data not in input_nodes):
-                        # Special case: nodes that lead to dynamic map ranges
-                        # must stay on host
+                        # Special case: nodes that lead to top-level dynamic
+                        # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode)
                                     and last_edge.dst_conn and
-                                    not last_edge.dst_conn.startswith('IN_')):
+                                    not last_edge.dst_conn.startswith('IN_')
+                                    and sdict[last_edge.dst] is None):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))

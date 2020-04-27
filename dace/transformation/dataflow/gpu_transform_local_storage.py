@@ -112,7 +112,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     return False
 
             # If one of the outputs is a stream, do not match
-            map_exit = graph.exit_nodes(map_entry)[0]
+            map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
                 if (isinstance(dst, nodes.AccessNode)
@@ -157,12 +157,12 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             cnode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._map_entry]]
             node_schedprop = cnode.map
-            exit_nodes = graph.exit_nodes(cnode)
+            exit_node = graph.exit_node(cnode)
         else:
             cnode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._reduce]]
             node_schedprop = cnode
-            exit_nodes = [cnode]
+            exit_node = cnode
 
         # Change schedule
         node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
@@ -191,8 +191,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
 
         # First, understand which arrays to clone
         all_out_edges = []
-        for enode in exit_nodes:
-            all_out_edges.extend(list(graph.out_edges(enode)))
+        all_out_edges.extend(list(graph.out_edges(exit_node)))
         in_arrays_to_clone = set()
         out_arrays_to_clone = set()
         for e in graph.in_edges(cnode):
