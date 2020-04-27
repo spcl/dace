@@ -56,21 +56,19 @@ class Node(object):
             scope_entry_node = None
 
         if scope_entry_node is not None:
-            ens = parent.exit_nodes(parent.entry_node(self))
-            scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
+            ens = parent.exit_node(parent.entry_node(self))
+            scope_exit_node = str(parent.node_id(ens))
             scope_entry_node = str(parent.node_id(scope_entry_node))
         else:
             scope_entry_node = None
-            scope_exit_nodes = []
+            scope_exit_node = None
 
         # The scope exit of an entry node is the matching exit node
         if isinstance(self, EntryNode):
             try:
-                scope_exit_nodes = [
-                    str(parent.node_id(x)) for x in parent.exit_nodes(self)
-                ]
+                scope_exit_node = str(parent.node_id(parent.exit_node(self)))
             except RuntimeError:
-                scope_exit_nodes = []
+                scope_exit_node = None
 
         retdict = {
             "type": typestr,
@@ -78,7 +76,7 @@ class Node(object):
             "attributes": dace.serialize.all_properties_to_json(self),
             "id": parent.node_id(self),
             "scope_entry": scope_entry_node,
-            "scope_exits": scope_exit_nodes
+            "scope_exit": scope_exit_node
         }
         return retdict
 
@@ -184,7 +182,7 @@ class AccessNode(Node):
                       desc="Type of access to this array",
                       default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo2 = DebugInfoProperty()
+    debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
     def __init__(self,
@@ -194,7 +192,7 @@ class AccessNode(Node):
         super(AccessNode, self).__init__()
 
         # Properties
-        self.debuginfo2 = debuginfo
+        self.debuginfo = debuginfo
         self.access = access
         if not isinstance(data, str):
             raise TypeError('Data for AccessNode must be a string')
@@ -213,7 +211,7 @@ class AccessNode(Node):
         node._setzero = self._setzero
         node._in_connectors = self._in_connectors
         node._out_connectors = self._out_connectors
-        node.debuginfo2 = dcpy(self.debuginfo2)
+        node.debuginfo = dcpy(self.debuginfo)
         return node
 
     @property
@@ -530,8 +528,13 @@ class MapEntry(EntryNode):
         ret = clc(map=m)
 
         try:
-            # Set map reference to map exit
-            nid = int(json_obj['scope_exits'][0])
+            # Connection of the scope nodes
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+
             exit_node = context['sdfg_state'].node(nid)
             exit_node.map = m
         except IndexError:  # Exit node has a higher node ID
@@ -637,7 +640,6 @@ class Map(object):
                         choices=dtypes.ScheduleType,
                         from_string=lambda x: dtypes.ScheduleType[x],
                         default=dtypes.ScheduleType.Default)
-    is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
     flatten = Property(dtype=bool, desc="Map loop flattening")
     collapse = Property(dtype=int,
@@ -660,7 +662,6 @@ class Map(object):
                  ndrange,
                  schedule=dtypes.ScheduleType.Default,
                  unroll=False,
-                 is_async=False,
                  flatten=False,
                  collapse=1,
                  fence_instrumentation=False,
@@ -671,7 +672,6 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.is_async = is_async
         self.flatten = flatten
         self.collapse = 1
         self.params = params
@@ -721,7 +721,12 @@ class ConsumeEntry(EntryNode):
 
         try:
             # Set map reference to map exit
-            nid = int(json_obj['scope_exits'][0])
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+
             exit_node = context['sdfg_state'].node(nid)
             exit_node.consume = c
         except IndexError:  # Exit node has a higher node ID
@@ -925,13 +930,13 @@ class Reduce(Node):
     def __init__(self,
                  wcr,
                  axes,
-                 wcr_identity=None,
+                 identity=None,
                  schedule=dtypes.ScheduleType.Default,
                  debuginfo=None):
         super(Reduce, self).__init__()
         self.wcr = wcr  # type: ast._Lambda
         self.axes = axes
-        self.identity = wcr_identity
+        self.identity = identity
         self.schedule = schedule
         self.debuginfo = debuginfo
 

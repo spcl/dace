@@ -173,7 +173,7 @@ class InlineSDFG(pattern_matching.Transformation):
         nstate: SDFGState = nsdfg.nodes()[0]
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
-        nsdfg_scope_exit = (state.exit_nodes(nsdfg_scope_entry)[0]
+        nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry)
                             if nsdfg_scope_entry is not None else None)
 
         #######################################################

@@ -88,7 +88,7 @@ class MPITransformMap(pattern_matching.Transformation):
             return False
 
         # MPI schedules currently do not support WCR
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
         if any(e.data.wcr for e in graph.out_edges(map_exit)):
             return False
 
@@ -149,10 +149,8 @@ class MPITransformMap(pattern_matching.Transformation):
             in_local_storage.apply(sdfg)
 
         # Transform OutLocalStorage for each output of the MPI map
-        in_map_exits = graph.exit_nodes(map_entry)
-        out_map_exits = graph.exit_nodes(outer_map)
-        in_map_exit = in_map_exits[0]
-        out_map_exit = out_map_exits[0]
+        in_map_exit = graph.exit_node(map_entry)
+        out_map_exit = graph.exit_node(outer_map)
 
         for e in graph.out_edges(out_map_exit):
             name = e.data.data

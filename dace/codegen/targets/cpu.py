@@ -1418,7 +1418,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 map_header += ' collapse(%d)' % node.map.collapse
             # Loop over outputs, add OpenMP reduction clauses to detected cases
             # TODO: set up register outside loop
-            # exit_node = dfg.exit_nodes(node)[0]
+            # exit_node = dfg.exit_node(node)
             reduction_stmts = []
             # for outedge in dfg.in_edges(exit_node):
             #    if (isinstance(outedge.src, nodes.CodeNode)
