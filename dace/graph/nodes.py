@@ -978,7 +978,7 @@ class Reduce(Node):
 
 
 @dace.serialize.serializable
-class PipelineEntry(dace.graph.nodes.MapEntry):
+class PipelineEntry(MapEntry):
     @staticmethod
     def map_type():
         return Pipeline
@@ -993,7 +993,7 @@ class PipelineEntry(dace.graph.nodes.MapEntry):
 
 
 @dace.serialize.serializable
-class PipelineExit(dace.graph.nodes.MapExit):
+class PipelineExit(MapExit):
     @staticmethod
     def map_type():
         return Pipeline
@@ -1008,7 +1008,7 @@ class PipelineExit(dace.graph.nodes.MapExit):
 
 
 @make_properties
-class Pipeline(dace.graph.nodes.Map):
+class Pipeline(Map):
     """ This a convenience-subclass of Map that allows easier implementation of
         loop nests (using regular Map indices) that need a constant-sized
         initialization and drain phase (e.g., N*M + c iterations), which would
