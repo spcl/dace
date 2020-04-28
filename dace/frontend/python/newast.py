@@ -1,6 +1,7 @@
 import ast
 from collections import OrderedDict
 import copy
+import functools
 import itertools
 import re
 from typing import Any, Dict, List, Tuple, Union, Callable, Optional
@@ -29,6 +30,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
+import dace.frontend.torch_replacements
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -43,6 +45,11 @@ def until(val, substr):
         return val
     return val[:val.find(substr)]
 
+def rgetattr(obj, attr):
+    current = obj
+    for attr in attr.split('.'):
+        current = getattr(current, attr)
+    return current
 
 augassign_ops = {
     'Add': '+',
@@ -2468,7 +2475,7 @@ class ProgramVisitor(ExtNodeVisitor):
         modname = until(funcname, '.')
         if ('.' in funcname and len(modname) > 0 and modname in self.globals
                 and dtypes.ismodule(self.globals[modname])):
-            func = getattr(self.globals[modname], funcname[len(modname) + 1:])
+            func = rgetattr(self.globals[modname], funcname[len(modname) + 1:])
 
             # Not an SDFG, ignore (might be a recognized function, see below)
             if not isinstance(func, (SDFG, DaceProgram)):
