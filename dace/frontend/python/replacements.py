@@ -364,16 +364,18 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
 
 @oprepo.replaces('numpy.sum')
 def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis)
+    return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
 
 
 @oprepo.replaces('numpy.max')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg, state, "lambda x, y: max(x, y)", a, axis=axis)
+    # HACK: reduce doesn't work if identity isn't specified (at the moment)
+    return _reduce(sdfg, state, "lambda x, y: max(x, y)", a, axis=axis, identity=-9999999999999)
 
 @oprepo.replaces('numpy.min')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg, state, "lambda x, y: min(x, y)", a, axis=axis)
+    # HACK: reduce doesn't work if identity isn't specified (at the moment)
+    return _reduce(sdfg, state, "lambda x, y: min(x, y)", a, axis=axis, identity=999999999999)
 
 
 @oprepo.replaces('numpy.argmax')
