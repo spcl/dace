@@ -10,6 +10,7 @@ import dace.graph.nodes as nd
 from dace.sdfg import ScopeSubgraphView
 from dace.graph.nxutil import dfs_topological_sort
 from dace.frontend.operations import detect_reduction_type
+from dace.frontend.python.replacements import _argminmax, _elementwise
 from dace import dtypes, data as dt
 
 import ast
@@ -195,6 +196,7 @@ class BackwardPassGenerator:
         self.state = state
         self.required_grads = required_grads
         self.target = target
+        self._post_grad_hooks = []
 
     def backward(self):
 
@@ -244,6 +246,10 @@ class BackwardPassGenerator:
         self.grad_memlets: Dict[str, List[Memlet]] = defaultdict(list)
         self._reverse_subgraph(
             ScopeSubgraphView(self.state, list(required_nodes)))
+
+        # execute the hooks that were added
+        for hook in self._post_grad_hooks:
+            hook()
 
     def get_grad_name(self, conn: str, node: nd.Node, in_connector: bool):
         if type(node) in [nd.MapExit, nd.MapEntry]:
@@ -312,13 +318,6 @@ class BackwardPassGenerator:
 
             rev: nd.Node = getattr(self, '_reverse_' + type(node).__name__)(
                 node, output_grad_connectors, input_grad_connectors)
-
-            if type(rev) is SDFG:
-                rev = self.state.add_nested_sdfg(rev, None,
-                                                 {"_reduce_in_grad"},
-                                                 {"_reduce_out_grad"})
-            else:
-                self.state.add_node(rev)
 
             self.reverse_map[node] = rev
 
@@ -466,8 +465,10 @@ class BackwardPassGenerator:
     def _reverse_AccessNode(self, node: nd.AccessNode,
                             output_grad_connectors: List[str],
                             input_grad_connectors: List[str]):
-        return nd.AccessNode(node.data + "_grad",
-                             access=_invert_access(node.access))
+        rev = nd.AccessNode(node.data + "_grad",
+                            access=_invert_access(node.access))
+        self.state.add_node(rev)
+        return rev
 
     def _reverse_MapEntry(
         self,
@@ -483,6 +484,7 @@ class BackwardPassGenerator:
         for conn in node.out_connectors:
             rev.add_out_connector(conn)
 
+        self.state.add_node(rev)
         return rev
 
     def _reverse_MapExit(
@@ -500,6 +502,7 @@ class BackwardPassGenerator:
         for conn in node.out_connectors:
             rev.add_out_connector(conn)
 
+        self.state.add_node(rev)
         return rev
 
     def _reverse_Reduce(self, node: nd.Reduce,
@@ -579,15 +582,108 @@ class BackwardPassGenerator:
                 },
                 external_edges=True)
 
-            return sdfg
+            return self.state.add_nested_sdfg(sdfg, None,
+                                              {"_reduce_in_grad"},
+                                              {"_reduce_out_grad"})
 
-        #elif reduction_type in [
-        #        dtypes.ReductionType.Max, dtypes.ReductionType.Min
-        #]:
-        #    # in this case we need to modify the forward pass and add an argmin/argmax
-        #    
-        #    
-        #    pass
+        elif reduction_type in [
+                dtypes.ReductionType.Max, dtypes.ReductionType.Min
+        ]:
+
+            if len(node.axes) != 1:
+                raise AutoDiffException("Currently, only minmax reductions along a single axis are supported")
+
+            # in this case we need to modify the forward pass and add an argmin/argmax
+            forward_sdfg = SDFG("_forward_" + str(reduction_type).replace(".", "_") + "_")
+            state = forward_sdfg.add_state()
+
+            _, argminmax_input_arr = forward_sdfg.add_array("IN",
+                                                    shape=input_array.shape,
+                                                    dtype=input_array.dtype)
+
+            _, (argminmax_output, minmax_output) = _argminmax(
+                forward_sdfg, state, "IN", node.axes[0],
+                "min" if reduction_type is dtypes.ReductionType.Min else "max", return_val_too=True)
+
+            forward_sdfg.arrays[argminmax_output].transient = False
+            forward_sdfg.arrays[minmax_output].transient = False
+
+            in_edge = self.state.in_edges(node)[0]
+            out_edge = self.state.out_edges(node)[0]
+
+
+            # replace the node
+            new_node = self.state.add_nested_sdfg(forward_sdfg, None,
+                inputs={"IN"},
+                outputs={argminmax_output, minmax_output})
+
+            self.state.add_edge(in_edge.src, in_edge.src_conn, new_node, "IN", in_edge.data)
+            self.state.add_edge(new_node, minmax_output, out_edge.dst, out_edge.dst_conn, out_edge.data)
+
+            # in the backward pass, we simply pass along the gradient to the node to the argmin/max
+
+            
+            backward_sdfg = SDFG("_backward_" + str(reduction_type).replace(".", "_") + "_")
+            state = backward_sdfg.add_state()
+
+            rev_input_conn_name = self.get_grad_name(output_grad_connectors[0],
+                                                     node, True)
+            rev_output_conn_name = self.get_grad_name(input_grad_connectors[0],
+                                                      node, False)
+
+            _, rev_input_arr = backward_sdfg.add_array(rev_input_conn_name,
+                                              shape=output_array.shape,
+                                              dtype=output_array.dtype)
+
+            # the argmin/max from the forward pass
+            _, argminmax_input_arr = backward_sdfg.add_array(argminmax_output,
+                                                    shape=output_array.shape,
+                                                    dtype=dace.int64)
+
+            _, rev_output_arr = backward_sdfg.add_array(rev_output_conn_name,
+                                               shape=input_array.shape,
+                                               dtype=input_array.dtype)
+
+            state.add_mapped_tasklet(
+                "_distribute_grad_" + str(reduction_type).replace(".", "_") +
+                "_", {
+                    "i" + str(i): "0:{}".format(shape)
+                    for i, shape in enumerate(input_array.shape)
+                }, {
+                    "__argmax":
+                    Memlet.simple(
+                        argminmax_output,
+                        "0" if node.axes is None else ",".join(
+                            "i" + str(i) for i in non_reduce_axes)),
+                    "__in":
+                    Memlet.simple(
+                        rev_input_conn_name,
+                        "0" if node.axes is None else ",".join(
+                            "i" + str(i) for i in non_reduce_axes))
+                },
+                "__out = __in if {} == {} else 0".format('__argmax', 'i' + str(node.axes[0]))
+                , {
+                    "__out":
+                    Memlet.simple(rev_output_conn_name, ",".join(
+                        "i" + str(i) for i in all_axes))
+                },
+                external_edges=True)
+
+            rev =  self.state.add_nested_sdfg(backward_sdfg, None,
+                                              {"_reduce_in_grad", argminmax_output},
+                                              {"_reduce_out_grad"})
+
+            tmp, _ = self.sdfg.add_temp_transient(output_array.shape, dtype=dace.int64)
+            tmp_access = self.state.add_access(tmp)
+
+            self.state.add_edge(new_node, argminmax_output, tmp_access, None, self.sdfg.get_array_memlet(tmp))
+            self.state.add_edge(tmp_access, None, rev, argminmax_output, self.sdfg.get_array_memlet(tmp))
+
+
+            # remove the 'old' reduce node at the end
+            self._post_grad_hooks.append(lambda: self.state.remove_node(node))
+            return rev
+            
         else:
             raise AutoDiffException(
                 "Unsupported reduction type {} for reduce node".format(
@@ -661,7 +757,10 @@ class BackwardPassGenerator:
         code = ""
         for output, exprs in rev_code.items():
             code += "\n" + output + " = " + " + ".join(exprs)
-        return nd.Tasklet("_" + tasklet.label + "_reverse_",
-                          inputs=rev_inputs,
-                          outputs=rev_outputs,
-                          code=code)
+
+        rev = nd.Tasklet("_" + tasklet.label + "_reverse_",
+                         inputs=rev_inputs,
+                         outputs=rev_outputs,
+                         code=code)
+        self.state.add_node(rev)
+        return rev

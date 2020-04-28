@@ -463,7 +463,7 @@ def test_reduce_node_1_axis_and_none_axis():
         YW[:] = np.sum(W, axis=0) * Y
         Z[:] = Xt @ YW
 
-        Zl = dace.elementwise(Z, lambda x: log(x + 1))
+        Zl = dace.elementwise(lambda x: log(x + 1), Z)
         S = np.sum(Zl)
         return S
 
@@ -473,6 +473,59 @@ def test_reduce_node_1_axis_and_none_axis():
         X=np.random.rand(4, 5).astype(np.float32),
         W=np.random.rand(7, 4, 3).astype(np.float32),
         Y=np.random.rand(4, 3).astype(np.float32))
+
+@correctness_test
+def test_reduce_max_simple():
+    def torch_func(*, W):
+
+        Z = torch.max(W, dim=1)
+        S = Z.values.sum()
+        S.backward()
+        return dict(W_grad=W.grad)
+
+    @dace.program
+    def dace_func(W: dace.float32[4, 5]):
+
+        Z = np.max(W, axis=1)
+        S = np.sum(Z)
+        return S
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "__return"), torch_func, dict(
+        W=np.random.rand(4, 5).astype(np.float32))
+
+@correctness_test
+def test_reduce_max_node_1_axis():
+    def torch_func(*, X, Y, W):
+
+        Xt = X.T
+        YW = torch.min(W, dim=0).values * Y
+        Z = Xt @ YW
+        Zl = torch.log(Z + 1)
+
+        S = Zl.sum()
+        S.backward()
+        return dict(X_grad=X.grad, Y_grad=Y.grad, W_grad=W.grad)
+
+    @dace.program
+    def dace_func(X: dace.float64[4, 5], Y: dace.float64[4, 3],
+                  W: dace.float64[7, 4, 3]):
+
+        Xt[:] = np.transpose(X)
+        YW[:] = np.min(W, axis=0) * Y
+        Z[:] = Xt @ YW
+
+        Zl = dace.elementwise(lambda x: log(x + 1), Z)
+        S = np.sum(Zl)
+        return S
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "__return"), torch_func, dict(
+        X=np.random.rand(4, 5).astype(np.float64),
+        W=np.random.rand(7, 4, 3).astype(np.float64),
+        Y=np.random.rand(4, 3).astype(np.float64))
 
 
 if __name__ == "__main__":
