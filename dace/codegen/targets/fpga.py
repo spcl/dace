@@ -947,11 +947,26 @@ class FPGACodeGen(TargetCodeGenerator):
                         # is the case in a tiled map
                         pass
 
-                    result.write(
-                        "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
-                            loop_var_type, var, sym2cpp(begin), var,
-                            sym2cpp(end + 1), var, sym2cpp(skip)), sdfg,
-                        state_id, node)
+                    # If we know at compile-time that this loop will only have
+                    # a single iteration, replace it with a simple assignment
+                    try:
+                        begin_val = evaluate(begin, sdfg.constants)
+                        skip_val = evaluate(skip, sdfg.constants)
+                        end_val = evaluate(end, sdfg.constants)
+                        is_degenerate = begin_val + skip_val >= end_val
+                    except TypeError:
+                        is_degenerate = False
+
+                    if is_degenerate:
+                        result.write(
+                            "{{\nconst {} {} = {}; // Degenerate loop".format(
+                                loop_var_type, var, begin_val))
+                    else:
+                        result.write(
+                            "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
+                                loop_var_type, var, sym2cpp(begin), var,
+                                sym2cpp(end + 1), var, sym2cpp(skip)), sdfg,
+                            state_id, node)
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
