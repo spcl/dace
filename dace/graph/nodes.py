@@ -641,7 +641,6 @@ class Map(object):
                         from_string=lambda x: dtypes.ScheduleType[x],
                         default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    flatten = Property(dtype=bool, desc="Map loop flattening")
     collapse = Property(dtype=int,
                         default=1,
                         desc="How many dimensions to"
@@ -662,7 +661,6 @@ class Map(object):
                  ndrange,
                  schedule=dtypes.ScheduleType.Default,
                  unroll=False,
-                 flatten=False,
                  collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
@@ -672,7 +670,6 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.flatten = flatten
         self.collapse = 1
         self.params = params
         self.range = ndrange
