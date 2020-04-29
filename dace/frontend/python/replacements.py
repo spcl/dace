@@ -2,6 +2,7 @@ import dace
 
 import ast
 import copy
+import itertools
 from functools import reduce
 from typing import Any, Dict, Union, Callable, Tuple, List
 
@@ -516,70 +517,87 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
+def _broadcast_together(arr1_shape, arr2_shape):
+
+    all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
+
+    max_i = max(len(arr1_shape), len(arr2_shape))
+
+    def get_idx(i):
+        return "__i" + str(max_i - i - 1)
+
+    for i, (dim1, dim2) in enumerate(
+            itertools.zip_longest(reversed(arr1_shape), reversed(arr2_shape))):
+        all_idx.append(get_idx(i))
+
+        if dim1 == dim2:
+            a1_idx.append(get_idx(i))
+            a2_idx.append(get_idx(i))
+
+            all_idx_dict[get_idx(i)] = dim1
+
+        elif dim1 == 1:
+            a1_idx.append("0")
+            # dim2 != 1 must hold here
+            a2_idx.append(get_idx(i))
+
+            all_idx_dict[get_idx(i)] = dim2
+
+        elif dim2 == 1:
+            # dim1 != 1 must hold here
+            a1_idx.append(get_idx(i))
+            a2_idx.append("0")
+
+            all_idx_dict[get_idx(i)] = dim1
+
+        elif dim1 == None:
+            # dim2 != None must hold here
+            a2_idx.append(get_idx(i))
+
+            all_idx_dict[get_idx(i)] = dim2
+
+        elif dim2 == None:
+            # dim1 != None must hold here
+            a1_idx.append(get_idx(i))
+
+            all_idx_dict[get_idx(i)] = dim1
+        else:
+            raise SyntaxError(
+                "operands could not be broadcast together with shapes {}, {}".
+                format(arr1_shape, arr2_shape))
+
+    def to_string(idx):
+        return ", ".join(reversed(idx))
+
+    out_shape = tuple(reversed([all_idx_dict[idx] for idx in all_idx]))
+
+    all_idx_dict = {k: "0:" + str(v) for k, v in all_idx_dict.items()}
+
+    return out_shape, all_idx_dict, to_string(all_idx), to_string(a1_idx), to_string(a2_idx)
+
+
 def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
            opname: str, restype: dace.typeclass):
     """ Implements a general element-wise array binary operator. """
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
-    if (len(arr1.shape) != len(arr2.shape)
-            or any(s1 != s2 for s1, s2 in zip(arr1.shape, arr2.shape))):
-        raise SyntaxError('Array sizes must match')
 
-    name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
+    out_shape, all_idx_dict, all_idx, arr1_idx, arr2_idx = _broadcast_together(arr1.shape, arr2.shape)
+
+    name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
     state.add_mapped_tasklet(
         "_%s_" % opname,
-        {'__i%d' % i: '0:%s' % s
-         for i, s in enumerate(arr1.shape)}, {
-             '__in1':
-             Memlet.simple(
-                 op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))])),
-             '__in2':
-             Memlet.simple(
-                 op2, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
-         },
+        all_idx_dict, {
+            '__in1': Memlet.simple(op1, arr1_idx),
+            '__in2': Memlet.simple(op2, arr2_idx)
+        },
         '__out = __in1 %s __in2' % opcode, {
             '__out':
             Memlet.simple(
-                name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
+                name, all_idx)
         },
         external_edges=True)
     return name
-
-
-def _scalarbinop(sdfg: SDFG,
-                 state: SDFGState,
-                 scalop: str,
-                 arrop: str,
-                 opcode: str,
-                 opname: str,
-                 restype: dace.typeclass,
-                 reverse: bool = False):
-    """ Implements a general Scalar-Array binary operator. """
-    scalar = sdfg.arrays[scalop]
-    arr = sdfg.arrays[arrop]
-
-    name, _ = sdfg.add_temp_transient(arr.shape, restype, arr.storage)
-    state.add_mapped_tasklet(
-        "_SA%s_" % opname,
-        {'__i%d' % i: '0:%s' % s
-         for i, s in enumerate(arr.shape)}, {
-             '__in1':
-             Memlet.simple(scalop, '0'),
-             '__in2':
-             Memlet.simple(
-                 arrop, ','.join(['__i%d' % i
-                                  for i in range(len(arr.shape))])),
-         },
-        '__out = %s %s %s' % ('__in2' if reverse else '__in1', opcode,
-                              '__in1' if reverse else '__in2'),
-        {
-            '__out':
-            Memlet.simple(
-                name, ','.join(['__i%d' % i for i in range(len(arr.shape))]))
-        },
-        external_edges=True)
-    return name
-
 
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
@@ -661,31 +679,23 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     else:
         restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
 
-    if isscal1:
-        if isscal2:
-            arr1 = sdfg.arrays[op1]
-            arr2 = sdfg.arrays[op2]
-            op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
-            tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'}, {'s3'},
-                                        's3 = s1 %s s2' % opcode)
-            n1 = state.add_read(op1)
-            n2 = state.add_read(op2)
-            n3 = state.add_write(op3)
-            state.add_edge(n1, None, tasklet, 's1',
-                           dace.Memlet.from_array(op1, arr1))
-            state.add_edge(n2, None, tasklet, 's2',
-                           dace.Memlet.from_array(op2, arr2))
-            state.add_edge(tasklet, 's3', n3, None,
-                           dace.Memlet.from_array(op3, arr3))
-            return op3
-        else:
-            return _scalarbinop(sdfg, state, op1, op2, opcode, op, restype)
+    if isscal1 and isscal2:
+        arr1 = sdfg.arrays[op1]
+        arr2 = sdfg.arrays[op2]
+        op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
+        tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'}, {'s3'},
+                                    's3 = s1 %s s2' % opcode)
+        n1 = state.add_read(op1)
+        n2 = state.add_read(op2)
+        n3 = state.add_write(op3)
+        state.add_edge(n1, None, tasklet, 's1',
+                        dace.Memlet.from_array(op1, arr1))
+        state.add_edge(n2, None, tasklet, 's2',
+                        dace.Memlet.from_array(op2, arr2))
+        state.add_edge(tasklet, 's3', n3, None,
+                        dace.Memlet.from_array(op3, arr3))
     else:
-        if isscal2:
-            return _scalarbinop(sdfg, state, op2, op1, opcode, op, restype,
-                                True)
-        else:
-            return _binop(sdfg, state, op1, op2, opcode, op, restype)
+        return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
 
 def _makebinop(op, opcode):
