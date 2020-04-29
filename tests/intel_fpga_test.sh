@@ -52,14 +52,15 @@ run_sample() {
 
 run_all() {
 
-    run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
-
     #### VECTORIZATION ####
     # Vectorization 1: first vectorize and then transform for FPGA
     run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True)\nFPGATransformSDFG\$0\n"
     # Vectorization 2: first transform for FPGA then vectorize
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
     # Vectorization 3: TODO non vectorizable N
+
+    # Test removing degenerate loops that only have a single iteration
+    run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
     # ### MAP TILING ####
     # First tile then transform
