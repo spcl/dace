@@ -234,10 +234,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage ==
-                                    dace.dtypes.StorageType.FPGA_Global and
-                                    n.data not in nested_global_transients_seen
-                                ):
+                                    and n.desc(scope).storage
+                                    == dace.dtypes.StorageType.FPGA_Global
+                                    and n.data
+                                    not in nested_global_transients_seen):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -261,8 +261,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                 (is_output, dataname, data))
                         global_data_names.add(dataname)
                     elif (data.storage == dace.dtypes.StorageType.FPGA_Local
-                          or data.storage ==
-                          dace.dtypes.StorageType.FPGA_Registers):
+                          or data.storage
+                          == dace.dtypes.StorageType.FPGA_Registers):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -474,11 +474,24 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Distinguish between read, write, and read+write
                         # TODO: Handle memory banks
                         self._allocated_global_arrays.add(node.data)
+                        memory_bank_arg = ""
+                        if "bank" in nodedesc.location:
+                            try:
+                                bank = int(nodedesc.location["bank"])
+                            except ValueError:
+                                raise ValueError(
+                                    "FPGA memory bank specifier "
+                                    "must be an integer: {}".format(
+                                        nodedesc.location["bank"]))
+                            memory_bank_arg = (
+                                "hlslib::ocl::MemoryBank::bank{}, ".format(
+                                    bank))
                         result.write(
                             "auto {} = dace::fpga::_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({});".format(dataname, nodedesc.dtype.ctype,
-                                           sym2cpp(arrsize)))
+                            "({}{});".format(dataname, nodedesc.dtype.ctype,
+                                             memory_bank_arg,
+                                             sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
@@ -579,8 +592,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         host_to_device = (data_to_data and src_storage in cpu_storage_types and
                           dst_storage == dace.dtypes.StorageType.FPGA_Global)
-        device_to_host = (data_to_data and
-                          src_storage == dace.dtypes.StorageType.FPGA_Global
+        device_to_host = (data_to_data and src_storage
+                          == dace.dtypes.StorageType.FPGA_Global
                           and dst_storage in cpu_storage_types)
         device_to_device = (
             data_to_data and src_storage == dace.dtypes.StorageType.FPGA_Global
@@ -665,10 +678,10 @@ class FPGACodeGen(TargetCodeGenerator):
             ctype = src_node.desc(sdfg).dtype.ctype
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(
-                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage ==
-                                    dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -947,11 +960,26 @@ class FPGACodeGen(TargetCodeGenerator):
                         # is the case in a tiled map
                         pass
 
-                    result.write(
-                        "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
-                            loop_var_type, var, sym2cpp(begin), var,
-                            sym2cpp(end + 1), var, sym2cpp(skip)), sdfg,
-                        state_id, node)
+                    # If we know at compile-time that this loop will only have
+                    # a single iteration, replace it with a simple assignment
+                    try:
+                        begin_val = evaluate(begin, sdfg.constants)
+                        skip_val = evaluate(skip, sdfg.constants)
+                        end_val = evaluate(end, sdfg.constants)
+                        is_degenerate = begin_val + skip_val >= end_val
+                    except TypeError:
+                        is_degenerate = False
+
+                    if is_degenerate:
+                        result.write(
+                            "{{\nconst {} {} = {}; // Degenerate loop".format(
+                                loop_var_type, var, begin_val))
+                    else:
+                        result.write(
+                            "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
+                                loop_var_type, var, sym2cpp(begin), var,
+                                sym2cpp(end + 1), var, sym2cpp(skip)), sdfg,
+                            state_id, node)
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -1067,8 +1095,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 octr += 1
             if ((isinstance(src_data, dace.data.Stream)
                  and src_data.is_stream_array()) or
-                (isinstance(src_data, dace.data.Array) and
-                 src_data.storage == dace.dtypes.StorageType.FPGA_Registers)):
+                (isinstance(src_data, dace.data.Array) and src_data.storage
+                 == dace.dtypes.StorageType.FPGA_Registers)):
                 # Unroll reads from registers and stream arrays
                 unroll_dim.append(True)
             else:
