@@ -58,9 +58,9 @@ class TransientReuse(pattern_matching.Transformation):
 
             # Collapse all mappings and their scopes into one node
             scope_dict = state.scope_dict(node_to_children=True)
-            for n in scope_dict:
-                if n is not None:
-                    G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_nodes(n)[0])])
+            for n in scope_dict[None]:
+                if isinstance(n, nodes.EntryNode):
+                    G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_node(n))])
                     G.remove_nodes_from(scope_dict[n])
 
             # Remove all nodes that are not AccessNodes or have incoming wcr edges
@@ -96,12 +96,12 @@ class TransientReuse(pattern_matching.Transformation):
             # Further the arrays have to be equivalent.
             for n in G.nodes():
                 for m in G.nodes():
-                    if n is not m and n.data == m.data:
-                        raise Exception("Transients used in multiple nodes")
-                    if (n.data in transients and m.data in transients
-                            and sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
-                            and n in ancestors[m] and successors[n].issubset(ancestors[m])):
-                        mappings[n.data].add(m.data)
+                    if n is not m and n.data in transients and m.data in transients:
+                        if n.data == m.data:
+                            transients.remove(n.data)
+                        if (sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
+                                and n in ancestors[m] and successors[n].issubset(ancestors[m])):
+                            mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
             # Only add a transient to a bucket if either there is a mapping from it to
