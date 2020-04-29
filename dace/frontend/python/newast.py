@@ -830,7 +830,7 @@ class StructTransformer(ast.NodeTransformer):
         #return ast.copy_location(new_node, node)
 
         node.func = ast.copy_location(
-            ast.Name(id='__DAPPSTRUCT_' + name, ctx=ast.Load()), node.func)
+            ast.Name(id='__DACESTRUCT_' + name, ctx=ast.Load()), node.func)
 
         return node
 

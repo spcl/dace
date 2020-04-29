@@ -810,7 +810,7 @@ class StructInitializer(ExtNodeTransformer):
 
     def visit_Call(self, node):
         if isinstance(node.func,
-                      ast.Name) and (node.func.id.startswith('__DAPPSTRUCT_')
+                      ast.Name) and (node.func.id.startswith('__DACESTRUCT_')
                                      or node.func.id in self._structs):
             fields = ', '.join([
                 '.%s = %s' % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
@@ -818,8 +818,8 @@ class StructInitializer(ExtNodeTransformer):
             ])
 
             tname = node.func.id
-            if node.func.id.startswith('__DAPPSTRUCT_'):
-                tname = node.func.id[len('__DAPPSTRUCT_'):]
+            if node.func.id.startswith('__DACESTRUCT_'):
+                tname = node.func.id[len('__DACESTRUCT_'):]
 
             return ast.copy_location(
                 ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load),
