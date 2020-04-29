@@ -1493,7 +1493,7 @@ class TaskletTransformer(ExtNodeTransformer):
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
                                    set(self.outputs.keys()),
-                                   self.extcode or tasklet_ast,
+                                   self.extcode or tasklet_ast.body,
                                    language=self.lang,
                                    code_global=self.globalcode,
                                    code_init=self.initcode,

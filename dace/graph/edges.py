@@ -5,7 +5,7 @@ import dace
 from dace import symbolic
 from dace.graph.graph import Edge
 from dace.frontend.python import astutils
-from dace.properties import Property, CodeProperty, make_properties
+from dace.properties import Property, CodeProperty, make_properties, CodeBlock
 
 
 def assignments_from_string(astr):
@@ -41,12 +41,12 @@ class InterstateEdge(object):
         from_string=assignments_from_string,
         to_string=assignments_to_string)
     condition = CodeProperty(desc="Transition condition",
-                             default=ast.parse("1").body[0])
+                             default=CodeBlock("1"))
 
     def __init__(self, condition=None, assignments=None):
 
         if condition is None:
-            condition = ast.parse("1").body[0]
+            condition = CodeBlock("1")
 
         if assignments is None:
             assignments = {}
@@ -66,7 +66,7 @@ class InterstateEdge(object):
         return symbolic.pystr_to_symbolic(astutils.unparse(cond_ast))
 
     def condition_symbols(self):
-        return dace.symbolic.symbols_in_ast(self.condition[0])
+        return dace.symbolic.symbols_in_ast(self.condition.code[0])
 
     def to_json(self, parent=None):
         ret = {

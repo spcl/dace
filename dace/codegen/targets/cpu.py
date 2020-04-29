@@ -3,6 +3,7 @@ import warnings
 
 from dace import data, registry, memlet as mm
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.cpp import *
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
@@ -1065,8 +1066,8 @@ class CPUCodeGen(TargetCodeGenerator):
         inner_stream = CodeIOStream()
 
         # Add code to init and exit functions
-        self._frame._initcode.write(node.code_init, sdfg)
-        self._frame._exitcode.write(node.code_exit, sdfg)
+        self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
+        self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
 
         state_dfg = sdfg.nodes()[state_id]
 

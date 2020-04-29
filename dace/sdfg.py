@@ -30,7 +30,7 @@ from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
-                             DictProperty, OrderedDictProperty)
+                             DictProperty, OrderedDictProperty, CodeBlock)
 
 
 def getcaller() -> Tuple[str, int]:
@@ -198,11 +198,13 @@ class SDFG(OrderedDiGraph):
     global_code = CodeProperty(
         desc=
         "Code generated in a global scope on the frame-code generated file.",
-        default="")
+        default=CodeBlock("", dtypes.Language.CPP))
     init_code = CodeProperty(
-        desc="Code generated in the `__dapp_init` function.", default="")
+        desc="Code generated in the `__dace_init` function.",
+        default=CodeBlock("", dtypes.Language.CPP))
     exit_code = CodeProperty(
-        desc="Code generated in the `__dapp_exit` function.", default="")
+        desc="Code generated in the `__dace_exit` function.",
+        default=CodeBlock("", dtypes.Language.CPP))
 
     def __init__(self,
                  name: str,
@@ -239,9 +241,6 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
-        self.global_code = ''
-        self.init_code = ''
-        self.exit_code = ''
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -376,10 +375,9 @@ class SDFG(OrderedDiGraph):
             replace_dict(edge.data.assignments, name, new_name)
             for k, v in edge.data.assignments.items():
                 edge.data.assignments[k] = v.replace(name, new_name)
-            condition = CodeProperty.to_string(edge.data.condition)
-            edge.data.condition = condition.replace(name, new_name)
-            # for k, v in edge.data.condition.items():
-            #     edge.data.condition[k] = v.replace(name, new_name)
+            condition = edge.data.condition
+            edge.data.condition.as_string = condition.as_string.replace(
+                name, new_name)
 
         # Replace in states
         for state in self.nodes():
@@ -426,24 +424,15 @@ class SDFG(OrderedDiGraph):
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        self.global_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     def set_init_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dapp_init` function. """
-        self.init_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        """ Sets C++ code, generated in the `__dace_init` function. """
+        self.init_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     def set_exit_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dapp_exit` function. """
-        self.exit_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        """ Sets C++ code, generated in the `__dace_exit` function. """
+        self.exit_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     ##########################################
     # Instrumentation-related methods

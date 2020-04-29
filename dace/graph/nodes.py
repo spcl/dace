@@ -15,7 +15,7 @@ from dace.properties import (Property, CodeProperty, LambdaProperty,
                              make_properties, indirect_properties,
                              DataProperty, SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
-                             LibraryImplementationProperty)
+                             LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 import pydoc
@@ -280,14 +280,16 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    code = CodeProperty(desc="Tasklet code", default="")
+    code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
     code_global = CodeProperty(
-        desc="Global scope code needed for tasklet execution", default="")
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
     code_init = CodeProperty(
         desc="Extra code that is called on DaCe runtime initialization",
-        default="")
+        default=CodeBlock("", dtypes.Language.CPP))
     code_exit = CodeProperty(
-        desc="Extra code that is called on DaCe runtime cleanup", default="")
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -311,16 +313,16 @@ class Tasklet(CodeNode):
         # Properties
         # Set the language directly
         #self.language = language
-        self.code = {'code_or_block': code, 'language': language}
+        self.code = CodeBlock(code, language)
 
-        self.code_global = {'code_or_block': code_global, 'language': language}
-        self.code_init = {'code_or_block': code_init, 'language': language}
-        self.code_exit = {'code_or_block': code_exit, 'language': language}
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
     def language(self):
-        return self._code['language']
+        return self.code.language
 
     @staticmethod
     def from_json(json_obj, context=None):

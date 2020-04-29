@@ -12,6 +12,7 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo
+from typing import List, Union
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -63,22 +64,22 @@ class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
     def __init__(
-            self,
-            getter=None,
-            setter=None,
-            dtype=None,
-            default=None,
-            from_string=None,
-            to_string=None,
-            from_json=None,
-            to_json=None,
-            meta_to_json=None,
-            choices=None,  # Values must be present in this enum
-            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-            allow_none=False,
-            indirected=False,  # This property belongs to a different class
-            category='General',
-            desc=""):
+        self,
+        getter=None,
+        setter=None,
+        dtype=None,
+        default=None,
+        from_string=None,
+        to_string=None,
+        from_json=None,
+        to_json=None,
+        meta_to_json=None,
+        choices=None,  # Values must be present in this enum
+        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+        allow_none=False,
+        indirected=False,  # This property belongs to a different class
+        category='General',
+        desc=""):
 
         self._getter = getter
         self._setter = setter
@@ -746,19 +747,19 @@ class DebugInfoProperty(Property):
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
     def __init__(
-            self,
-            element_type,
-            getter=None,
-            setter=None,
-            default=None,
-            from_string=None,
-            to_string=None,
-            from_json=None,
-            to_json=None,
-            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-            allow_none=False,
-            desc="",
-            **kwargs):
+        self,
+        element_type,
+        getter=None,
+        setter=None,
+        default=None,
+        from_string=None,
+        to_string=None,
+        from_json=None,
+        to_json=None,
+        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+        allow_none=False,
+        desc="",
+        **kwargs):
         if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
@@ -868,40 +869,45 @@ class SubgraphProperty(Property):
         return None
 
 
-class CodeBlock(list):
-    """ Helper class that represents AST code blocks for `CodeProperty`,
-        implemented as a list with an extra _as_string property. The object
-        also stores the original string, allowing us to preserve comments and
-        formatting from user input.
+class CodeBlock(object):
+    """ Helper class that represents code blocks with language. 
+        Used in `CodeProperty`, implemented as a list of AST statements if 
+        language is Python, or a string otherwise.
     """
-    def __init__(self, *args, **kwargs):
-        self._as_string = ""
-        super().__init__(*args, **kwargs)
+    def __init__(self,
+                 code: Union[str, List[ast.AST]],
+                 language: dace.dtypes.Language = dace.dtypes.Language.Python):
+        self.language = language
+
+        # Convert to the right type
+        if language == dace.dtypes.Language.Python and isinstance(code, str):
+            self.code = ast.parse(code).body
+        elif (not isinstance(code, str)
+              and language != dace.dtypes.Language.Python):
+            raise TypeError('Only strings are supported for languages other '
+                            'than Python')
+        else:
+            self.code = code
 
     @property
     def as_string(self):
-        return self._as_string
+        if isinstance(self.code, str):
+            return self.code
+        return unparse(self.code)
 
     @as_string.setter
-    def as_string(self, string):
-        self._as_string = string
+    def as_string(self, code):
+        if self.language == dace.dtypes.Language.Python:
+            self.code = ast.parse(code).body
+        else:
+            self.code = code
 
 
 class CodeProperty(Property):
     """ Custom Property type that accepts code in various languages. """
     @property
     def dtype(self):
-        return None
-
-    @staticmethod
-    def get_language(object_with_properties, prop_name):
-        tmp = getattr(object_with_properties, "_" + prop_name)
-        try:
-            # To stay compatible, return the code only. The language has to be obtained differently
-            tmp = tmp['language']
-        except:
-            pass
-        return tmp
+        return CodeBlock
 
     def to_json(self, obj):
         lang = dace.dtypes.Language.Python
@@ -950,94 +956,13 @@ class CodeProperty(Property):
         if language is None:
             raise TypeError("Must pass language as second argument to "
                             "from_string method of CodeProperty")
-        if language == dace.dtypes.Language.Python:
-            block = CodeBlock(ast.parse(string).body)
-            block.as_string = string
-            return {'code_or_block': block, 'language': language}
-        else:
-            return {'code_or_block': string, 'language': language}
+        return CodeBlock(string, language)
 
     @staticmethod
     def to_string(obj):
-        if isinstance(obj, dict):
-            # The object has annotated language in this case; ignore the language for this operation
-            obj = obj['code_or_block']
         if isinstance(obj, str):
             return obj
-        # Grab the originally parsed string if any
-        if hasattr(obj, "_as_string") and obj._as_string:
-            return obj._as_string
-        # It's probably good enough to assume that there is an original string
-        # if the language was not Python, so we just throw the string to the
-        # astunparser.
-        return unparse(obj)
-
-    def __get__(self, obj, val):
-        tmp = super(CodeProperty, self).__get__(obj, val)
-        try:
-            # To stay compatible, return the code only. The language has to be obtained differently
-            tmp = tmp['code_or_block']
-        except (KeyError, TypeError):
-            pass
-        return tmp
-
-    def __set__(self, obj, val):
-
-        if val is None:
-            # Keep as None. The "allow_none" check in the superclass
-            # ensures that this is legal
-            super(CodeProperty, self).__set__(obj, None)
-            return
-        elif isinstance(val, str):
-            try:
-                language = getattr(obj, "_" + self.attr_name)['language']
-            except:
-                language = dace.dtypes.Language.Python
-            if language is not None:
-                # Store original string
-                val = self.from_string(val, language)['code_or_block']
-        else:
-            try:
-                language = val['language']
-                val = val['code_or_block']
-            except:
-                # Default to Python
-                language = dace.dtypes.Language.Python
-            try:
-                if language is not dace.dtypes.Language.Python and not isinstance(
-                        val, str):
-                    raise TypeError(
-                        "Only strings accepted for other "
-                        "languages than Python, got {t} ({s}).".format(
-                            t=type(val).__name__, s=str(val)))
-            except AttributeError:
-                # Don't check language if it has not been set yet. We will
-                # assume it's Python AST, since it wasn't a string
-                pass
-            if isinstance(val, str):
-                val = self.from_string(val, language)['code_or_block']
-            elif isinstance(val, (ast.FunctionDef, ast.With)):
-                # The original parsing should have already stripped this,
-                # but it's still good to handle this case.
-                val = CodeBlock(val.body)
-            elif isinstance(val, ast.AST):
-                val = CodeBlock([val])
-            else:
-                try:
-                    iter(val)
-                except TypeError:
-                    raise TypeError(
-                        "CodeProperty expected an iterable of expressions, "
-                        " got {}".format(type(val).__name__))
-                for e in val:
-                    if not isinstance(e, ast.AST):
-                        raise TypeError(
-                            "Found type {} in list of AST expressions: "
-                            "expected ast.AST".format(type(e).__name__))
-        super(CodeProperty, self).__set__(obj, {
-            'code_or_block': val,
-            'language': language
-        })
+        return obj.as_string
 
 
 class SubsetProperty(Property):
