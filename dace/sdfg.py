@@ -1464,7 +1464,7 @@ subgraph cluster_state_{state} {{
             dtype,
             storage=storage,
             transient=transient,
-            lfietime=lifetime,
+            lifetime=lifetime,
             debuginfo=debuginfo,
         )
 
