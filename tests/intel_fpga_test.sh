@@ -59,6 +59,9 @@ run_all() {
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
     # Vectorization 3: TODO non vectorizable N
 
+    # Throw error when kernel names are too long
+    run_sample intel_fpga/name_too_long name_too_long "\n"
+
     # ### MAP TILING ####
     # First tile then transform
     run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"

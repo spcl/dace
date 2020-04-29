@@ -44,6 +44,10 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
+class NameTooLongError(ValueError):
+    pass
+
+
 @registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
@@ -482,12 +486,10 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_args_call = []
         added = set()
         # Split into arrays and scalars
-        arrays = sorted([
-            t for t in parameters if not isinstance(t[2], dace.data.Scalar)
-        ], key=lambda t: t[1])
-        scalars = [
-            t for t in parameters if isinstance(t[2], dace.data.Scalar)
-        ]
+        arrays = sorted(
+            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            key=lambda t: t[1])
+        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
         scalars += [(False, k, v) for k, v in symbol_parameters.items()]
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, pname, p in itertools.chain(arrays, scalars):
@@ -506,6 +508,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 kernel_args_call.append(pname)
 
         module_function_name = "module_" + name
+        if len(module_function_name) > 61:
+            raise NameTooLongError(
+                "Due to a bug in the Intel FPGA OpenCL compiler, "
+                "kernel names cannot be longer than 61 characters:\n\t{}".
+                format(module_function_name))
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
