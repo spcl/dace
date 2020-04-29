@@ -1238,6 +1238,13 @@ subgraph cluster_state_{state} {{
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 
+    def view(self, filename=None):
+        """View this sdfg in the system's HTML viewer
+           :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        """
+        from diode.sdfv import view
+        view(self, filename=filename)
+
     @staticmethod
     def from_file(filename: str):
         """ Constructs an SDFG from a file.
