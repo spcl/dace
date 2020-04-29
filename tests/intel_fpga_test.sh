@@ -61,6 +61,9 @@ run_all() {
 
     # Throw error when kernel names are too long
     run_sample intel_fpga/name_too_long name_too_long "\n"
+    
+    # Test removing degenerate loops that only have a single iteration
+    run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
     # ### MAP TILING ####
     # First tile then transform
