@@ -3786,7 +3786,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 dtype = dace.complex128
             else:
                 raise NotImplementedError
-            name, _ = self.sdfg.add_temp_transient([1], dtype, toplevel=True)
+            name, _ = self.sdfg.add_temp_transient(
+                [1], dtype, lifetime=dtypes.AllocationLifetime.SDFG)
             self.numbers[node.n] = name
             init_state = None
             if not self.sdfg.nodes():

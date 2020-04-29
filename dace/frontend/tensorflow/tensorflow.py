@@ -140,14 +140,14 @@ class TFSession:
         pass
 
     def train(
-            self,
-            optimizer,
-            initializer,
-            iterations,
-            feed_dict,
-            gpu=False,
-            nodes=None,
-            output_gradients=False,
+        self,
+        optimizer,
+        initializer,
+        iterations,
+        feed_dict,
+        gpu=False,
+        nodes=None,
+        output_gradients=False,
     ):
         """ Trains a subgraph for the specified number of iterations and 
             returns requested nodes after training.
@@ -565,15 +565,15 @@ class TFSession:
         return call_func
 
     def run(
-            self,
-            nodes,
-            feed_dict=None,
-            gpu=False,
-            transformations=None,
-            validate=False,
-            strict=True,
-            name=None,
-            winograd=False,
+        self,
+        nodes,
+        feed_dict=None,
+        gpu=False,
+        transformations=None,
+        validate=False,
+        strict=True,
+        name=None,
+        winograd=False,
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
@@ -843,7 +843,10 @@ class TFSession:
         # If node already present set it non transient, otherwise add node
         if not nodeArray:
             dtype = dace.typeclass(_tensortype(node))
-            state.add_array(label, shape, dtype, toplevel=True)
+            state.add_array(label,
+                            shape,
+                            dtype,
+                            lifetime=dtypes.AllocationLifetime.SDFG)
         else:
             nodeArray[0].desc(self.graph).transient = False
 
@@ -892,10 +895,11 @@ class TFSession:
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
                 str(_tensorshape(node.inputs[1])))
-            fillNode = state.add_transient(name=label,
-                                           shape=shape,
-                                           dtype=dtype,
-                                           toplevel=True)
+            fillNode = state.add_transient(
+                name=label,
+                shape=shape,
+                dtype=dtype,
+                lifetime=dtypes.AllocationLifetime.SDFG)
 
         label = string_builder(node.inputs[0].name)
         try:
@@ -906,10 +910,11 @@ class TFSession:
                 str(_tensorshape(node.inputs[1])))
             assert dtype is not None
             assert shape is not None
-            emptyNode = state.add_transient(name=label,
-                                            shape=shape,
-                                            dtype=dtype,
-                                            toplevel=True)
+            emptyNode = state.add_transient(
+                name=label,
+                shape=shape,
+                dtype=dtype,
+                lifetime=dtypes.AllocationLifetime.SDFG)
         dims = self.get_default_dims(node.inputs[1])
         memlet = Memlet.simple(emptyNode, ",".join(dims))
         state.add_edge(fillNode, None, emptyNode, None, memlet)
@@ -1344,13 +1349,11 @@ class TFSession:
             "gamma_prime" + local_ctr,
             _tensorshape(node.outputs[1]),
             _tensortype(node.outputs[1]),
-            toplevel=False,
         )
         betaPrime = self.state.add_transient(
             "beta_prime" + local_ctr,
             _tensorshape(node.outputs[2]),
             _tensortype(node.outputs[2]),
-            toplevel=False,
         )
         ###############################MAPS##############################################
         # channelMapLabel = string_builder(node.type) + "_outer"
@@ -2300,7 +2303,6 @@ class TFSession:
             "scratch_node" + local_count,
             dace.typeclass(_tensortype(node.outputs[0])),
             transient=True,
-            toplevel=False,
             storage=dace.StorageType.Register,
         )
         memletTempNode = Memlet.simple(str(temp_node),
@@ -2455,7 +2457,7 @@ class TFSession:
                     label,
                     _tensorshape(outputTensor),
                     _tensortype(outputTensor),
-                    toplevel=True,
+                    lifetime=dtypes.AllocationLifetime.SDFG,
                 )
             outpNode.desc(self.graph).transient = False
 
@@ -2512,7 +2514,7 @@ class TFSession:
             str(inputList[0].shape))
 
         # tempNode = state.add_transient(
-        #    string_builder(node.name + "_tmp"), shape, dtype, toplevel=True
+        #    string_builder(node.name + "_tmp"), shape, dtype, lifetime=dtypes.AllocationLifetime.SDFG
         # )
         tempNode = outputList[0]
         tempList = [tempNode]
@@ -3092,10 +3094,11 @@ class TFSession:
                 dtype = dace.typeclass(_tensortype(node))
                 shape = dace.properties.ShapeProperty.from_string(
                     str(_tensorshape(out)))
-                outputNode = state.add_transient(label,
-                                                 shape,
-                                                 dtype,
-                                                 toplevel=True)
+                outputNode = state.add_transient(
+                    label,
+                    shape,
+                    dtype,
+                    lifetime=dtypes.AllocationLifetime.SDFG)
             outputList.append(outputNode)
 
         mapLabel = string_builder(node.type)
@@ -3107,10 +3110,11 @@ class TFSession:
         shape = dace.properties.ShapeProperty.from_string(
             str(inputList[1].shape))
 
-        temp1Node = state.add_transient(mapLabel + "_max_tmp",
-                                        shape,
-                                        dtype,
-                                        toplevel=True)
+        temp1Node = state.add_transient(
+            mapLabel + "_max_tmp",
+            shape,
+            dtype,
+            lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_max",
             dict(zip(mapParams, mapRange)),
@@ -3133,10 +3137,11 @@ class TFSession:
         )
 
         # 2nd map, calculate the denominator sum
-        temp2Node = state.add_transient(mapLabel + "_denominator_tmp",
-                                        shape,
-                                        dtype,
-                                        toplevel=True)
+        temp2Node = state.add_transient(
+            mapLabel + "_denominator_tmp",
+            shape,
+            dtype,
+            lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_denominator",
             dict(zip(mapParams, mapRange)),
@@ -3162,10 +3167,11 @@ class TFSession:
         # 3rd map, calculate the sofmax
         shape = dace.properties.ShapeProperty.from_string(
             str(inputList[0].shape))
-        temp3Node = state.add_transient(mapLabel + "_softmax_tmp",
-                                        shape,
-                                        dtype,
-                                        toplevel=True)
+        temp3Node = state.add_transient(
+            mapLabel + "_softmax_tmp",
+            shape,
+            dtype,
+            lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(mapLabel + "_softmax",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(mapLabel + "_softmax", {"j0", "j1", "j2"},
@@ -3284,7 +3290,7 @@ class TFSession:
             label + "_paddedInput",
             paddedShape,
             dace.typeclass(_tensortype(node)),
-            toplevel=True,
+            lifetime=dtypes.AllocationLifetime.SDFG,
         )
         mapEntry, mapExit = state.add_map(label + "_padding",
                                           dict(zip(shortParams, shortDims)))
@@ -3298,7 +3304,7 @@ class TFSession:
         sqrsum = state.add_transient(label + "_Sqrsum",
                                      shortAccesses,
                                      _tensortype(node),
-                                     toplevel=True)
+                                     lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(label + "_sqrsum",
                                           dict(zip(longParams, longDims)))
         tasklet = state.add_tasklet(label + "_sqrsum", {"j0"}, {"out"},
@@ -3313,7 +3319,7 @@ class TFSession:
         norm = state.add_transient(label + "_Norm",
                                    shortAccesses,
                                    _tensortype(node),
-                                   toplevel=True)
+                                   lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(label + "_norm",
                                           dict(zip(shortParams, shortDims)))
         tasklet = state.add_tasklet(label + "_norm", {"j0"}, {"out"},
@@ -3326,7 +3332,7 @@ class TFSession:
         preOut = state.add_transient(label + "_preOut",
                                      shortAccesses,
                                      _tensortype(node),
-                                     toplevel=True)
+                                     lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(label,
                                           dict(zip(longParams, longDims)))
         taskletCode = ("if (i4==" + depth_radius + "){\n out = pow(j2," +
@@ -3405,7 +3411,7 @@ class TFSession:
             label + "_paddedInput",
             paddedShape,
             dace.typeclass(_tensortype(node)),
-            toplevel=True,
+            lifetime=dtypes.AllocationLifetime.SDFG,
         )
         mapEntry, mapExit = state.add_map(label + "_padding",
                                           dict(zip(shortParams, shortDims)))
@@ -3419,7 +3425,7 @@ class TFSession:
         sqrsum = state.add_transient(label + "_Sqrsum",
                                      shortAccesses,
                                      _tensortype(node),
-                                     toplevel=True)
+                                     lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(label + "_sqrsum",
                                           dict(zip(longParams, longDims)))
         tasklet = state.add_tasklet(label + "_sqrsum", {"j0"}, {"out"},
@@ -3479,10 +3485,11 @@ class TFSession:
         dtype = dace.typeclass(_tensortype(node))
         shape = dace.properties.ShapeProperty.from_string(",".join(
             inputAccesses[1]))
-        temp1Node = state.add_transient(mapLabel + "_max_tmp",
-                                        shape,
-                                        dtype,
-                                        toplevel=True)
+        temp1Node = state.add_transient(
+            mapLabel + "_max_tmp",
+            shape,
+            dtype,
+            lifetime=dtypes.AllocationLifetime.SDFG)
 
         tasklet = state.add_tasklet(mapLabel + "_max", {"j0"}, {"out"},
                                     "out = j0")
@@ -3637,10 +3644,11 @@ class TFSession:
         dtype = dace.typeclass(_tensortype(node))
         shape = dace.properties.ShapeProperty.from_string(
             str(node.inputs[0].shape.dims[0]))
-        temp1Node = state.add_transient(mapLabel + "_max_tmp",
-                                        shape,
-                                        dtype,
-                                        toplevel=True)
+        temp1Node = state.add_transient(
+            mapLabel + "_max_tmp",
+            shape,
+            dtype,
+            lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(mapLabel + "_max",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(mapLabel + "_max", {"j0"}, {"out"},
@@ -3660,10 +3668,11 @@ class TFSession:
         )
 
         # 2nd map, calculate the denominator sum
-        temp2Node = state.add_transient(mapLabel + "_denominator_tmp",
-                                        shape,
-                                        dtype,
-                                        toplevel=True)
+        temp2Node = state.add_transient(
+            mapLabel + "_denominator_tmp",
+            shape,
+            dtype,
+            lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(mapLabel + "_denominator",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(mapLabel + "_denominator", {"j0", "j1"},
@@ -3774,16 +3783,16 @@ class TFSession:
                 state.add_edge(otherNode, None, tasklet, None, innerMemlet)
 
     def add_out_memlets(
-            self,
-            outputList,
-            otherNode,
-            tasklet,
-            outputDims,
-            outputParams,
-            wcr=None,
-            wcr_identity=None,
-            identifier="out",
-            wcr_conflict=True,
+        self,
+        outputList,
+        otherNode,
+        tasklet,
+        outputDims,
+        outputParams,
+        wcr=None,
+        wcr_identity=None,
+        identifier="out",
+        wcr_conflict=True,
     ):
         """ Convenience function that adds two memlets for each output of the 
             node: external and internal to a given map.
@@ -3868,11 +3877,13 @@ class TFSession:
                 raise TypeError
             shape = dace.properties.ShapeProperty.from_string(
                 str(_tensorshape(inp)))
-            # Create and add array, default is transient, toplevel =True
-            inputNode = state.add_transient(name=label,
-                                            shape=shape,
-                                            dtype=dtype,
-                                            toplevel=True)
+            # Create and add array, default is transient allocated in the
+            # beginning of the SDFG
+            inputNode = state.add_transient(
+                name=label,
+                shape=shape,
+                dtype=dtype,
+                lifetime=dtypes.AllocationLifetime.SDFG)
 
         params = self.get_default_params(inp)
         dims = self.get_default_dims(inp)
@@ -3903,10 +3914,11 @@ class TFSession:
                 dtype = dace.typeclass(_tensortype(out))
                 shape = dace.properties.ShapeProperty.from_string(
                     str(_tensorshape(out)))
-                outputNode = state.add_transient(label,
-                                                 shape,
-                                                 dtype,
-                                                 toplevel=True)
+                outputNode = state.add_transient(
+                    label,
+                    shape,
+                    dtype,
+                    lifetime=dtypes.AllocationLifetime.SDFG)
             outputList.append(outputNode)
         return outputList
 
@@ -4013,7 +4025,7 @@ class TFSession:
         output = state.add_transient(label + "_padded",
                                      shape=shape,
                                      dtype=inp.dtype,
-                                     toplevel=True)
+                                     lifetime=dtypes.AllocationLifetime.SDFG)
         output.setzero = True
 
         # mapParams = inputParams

@@ -69,6 +69,17 @@ class ReductionType(aenum.AutoNumberEnum):
 
 
 @extensible_enum
+class AllocationLifetime(aenum.AutoNumberEnum):
+    """ Options for allocation span (when to allocate/deallocate) of data. """
+
+    Scope = ()  # Allocated/Deallocated on innermost scope start/end
+    State = ()  # Allocated throughout the containing state
+    SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
+    TopLevel_SDFG = ()  # Allocated throughout the entire program (outer SDFG)
+    Persistent = ()  # Allocated throughout multiple invocations (init/exit)
+
+
+@extensible_enum
 class Language(aenum.AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
 

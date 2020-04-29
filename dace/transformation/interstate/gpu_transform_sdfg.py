@@ -247,7 +247,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         # Try to move allocation/deallocation out of loops
                         if (self.toplevel_trans
                                 and not isinstance(nodedesc, data.Stream)):
-                            nodedesc.toplevel = True
+                            nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
                     else:
                         # Make internal transients registers
                         if self.register_trans:

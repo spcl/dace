@@ -674,7 +674,8 @@ class SDFG(OrderedDiGraph):
         """ Alias that returns the nodes (states) in this SDFG. """
         return self.nodes()
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
+    def all_nodes_recursive(
+            self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
         """ Iterate over all nodes in this SDFG, including states, nodes in
             states, and recursive states and nodes within nested SDFGs,
             returning tuples on the form (node, parent), where the parent is
@@ -1342,11 +1343,12 @@ subgraph cluster_state_{state} {{
                   transient=False,
                   strides=None,
                   offset=None,
-                  toplevel=False,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
                   debuginfo=None,
                   allow_conflicts=False,
                   total_size=None,
-                  find_new_name=False):
+                  find_new_name=False,
+                  alignment=0):
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1382,7 +1384,8 @@ subgraph cluster_state_{state} {{
                         transient=transient,
                         strides=strides,
                         offset=offset,
-                        toplevel=toplevel,
+                        lifetime=lifetime,
+                        alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size)
 
@@ -1398,7 +1401,7 @@ subgraph cluster_state_{state} {{
                    storage=dtypes.StorageType.Default,
                    transient=False,
                    offset=None,
-                   toplevel=False,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
                    find_new_name=False):
         """ Adds a stream to the SDFG data descriptor store. """
@@ -1426,7 +1429,7 @@ subgraph cluster_state_{state} {{
             storage=storage,
             transient=transient,
             offset=offset,
-            toplevel=toplevel,
+            lifetime=lifetime,
             debuginfo=debuginfo,
         )
 
@@ -1438,7 +1441,7 @@ subgraph cluster_state_{state} {{
                    dtype,
                    storage=dtypes.StorageType.Default,
                    transient=False,
-                   toplevel=False,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
                    find_new_name=False):
         """ Adds a scalar to the SDFG data descriptor store. """
@@ -1461,7 +1464,7 @@ subgraph cluster_state_{state} {{
             dtype,
             storage=storage,
             transient=transient,
-            toplevel=toplevel,
+            lfietime=lifetime,
             debuginfo=debuginfo,
         )
 
@@ -1476,11 +1479,12 @@ subgraph cluster_state_{state} {{
                       materialize_func=None,
                       strides=None,
                       offset=None,
-                      toplevel=False,
+                      lifetime=dace.dtypes.AllocationLifetime.Scope,
                       debuginfo=None,
                       allow_conflicts=False,
                       total_size=None,
-                      find_new_name=False):
+                      find_new_name=False,
+                      alignment=0):
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1491,10 +1495,11 @@ subgraph cluster_state_{state} {{
                               True,
                               strides,
                               offset,
-                              toplevel=toplevel,
+                              lifetime=dace.dtypes.AllocationLifetime.Scope,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
+                              alignment=alignment,
                               find_new_name=find_new_name)
 
     def temp_data_name(self):
@@ -1515,10 +1520,11 @@ subgraph cluster_state_{state} {{
                            materialize_func=None,
                            strides=None,
                            offset=None,
-                           toplevel=False,
+                           lifetime=dace.dtypes.AllocationLifetime.Scope,
                            debuginfo=None,
                            allow_conflicts=False,
-                           total_size=None):
+                           total_size=None,
+                           alignment=0):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         return self.add_array(self.temp_data_name(),
@@ -1529,7 +1535,8 @@ subgraph cluster_state_{state} {{
                               True,
                               strides,
                               offset,
-                              toplevel=toplevel,
+                              lifetime=lifetime,
+                              alignment=alignment,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size)
@@ -2316,6 +2323,7 @@ class MemletTrackingView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
 
 def trace_nested_access(node, state, sdfg):
     """ Given an AccessNode in a nested SDFG, trace the accessed memory
@@ -3262,11 +3270,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: A Reduce node
         """
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr,
-                           axes,
-                           identity,
-                           schedule,
-                           debuginfo=debuginfo)
+        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3493,10 +3497,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                   transient=False,
                   strides=None,
                   offset=None,
-                  toplevel=False,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
                   debuginfo=None,
                   total_size=None,
-                  find_new_name=False):
+                  find_new_name=False,
+                  alignment=0):
         """ @attention: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
@@ -3513,10 +3518,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               transient,
                               strides,
                               offset,
-                              toplevel,
+                              lifetime,
                               debuginfo,
                               find_new_name=find_new_name,
-                              total_size=total_size)
+                              total_size=total_size,
+                              alignment=alignment)
         return self.add_access(name, debuginfo)
 
     def add_stream(
@@ -3529,7 +3535,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         storage=dtypes.StorageType.Default,
         transient=False,
         offset=None,
-        toplevel=False,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
@@ -3549,7 +3555,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             storage,
             transient,
             offset,
-            toplevel,
+            lifetime,
             debuginfo,
         )
         return self.add_access(name, debuginfo)
@@ -3560,7 +3566,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         dtype,
         storage=dtypes.StorageType.Default,
         transient=False,
-        toplevel=False,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
@@ -3571,7 +3577,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
-        self.parent.add_scalar(name, dtype, storage, transient, toplevel,
+        self.parent.add_scalar(name, dtype, storage, transient, lifetime,
                                debuginfo)
         return self.add_access(name, debuginfo)
 
@@ -3583,9 +3589,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                       materialize_func=None,
                       strides=None,
                       offset=None,
-                      toplevel=False,
+                      lifetime=dace.dtypes.AllocationLifetime.Scope,
                       debuginfo=None,
-                      total_size=None):
+                      total_size=None,
+                      alignment=0):
         """ @attention: This function is deprecated. """
         return self.add_array(name,
                               shape,
@@ -3595,9 +3602,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               True,
                               strides,
                               offset,
-                              toplevel,
+                              lifetime,
                               debuginfo,
-                              total_size=total_size)
+                              total_size=total_size,
+                              alignment=alignment)
 
     # SDFG queries
     ######################################
