@@ -368,7 +368,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                 "Vector length on memlet {} ({}) doesn't "
                                 "match vector length of {} ({})".format(
                                     edge.data, edge.data.veclen, node.data,
-                                    nodedesc.veclen))
+                                   node.desc(sdfg).veclen))
                         memory_widths[key] = edge.data.veclen
                     else:
                         if (memory_widths[key] is not None
@@ -785,24 +785,13 @@ class FPGACodeGen(TargetCodeGenerator):
                                             dst_node, edge, callsite_stream)
 
     @staticmethod
-    def opencl_parameters(sdfg, kernel_parameters):
-        seen = set()
-        out_parameters = []
-        for is_output, pname, param in kernel_parameters:
-            # Since we can have both input and output versions of the same
-            # array, make sure we only pass it once from the host code
-            if param in seen:
-                continue
-            seen.add(param)
-            if isinstance(param, dace.data.Array):
-                out_parameters.append(
-                    "hlslib::ocl::Buffer<{}, "
+    def make_opencl_parameter(name, desc):
+        if isinstance(desc, dace.data.Array):
+            return ("hlslib::ocl::Buffer<{}, "
                     "hlslib::ocl::Access::readWrite> &{}".format(
-                        param.dtype.ctype, pname))
-            else:
-                out_parameters.append(
-                    param.signature(with_types=True, name=pname))
-        return out_parameters
+                        desc.dtype.ctype, name))
+        else:
+            return (desc.signature(with_types=True, name=name))
 
     def get_next_scope_entries(self, sdfg, dfg, scope_entry):
         parent_scope_entry = dfg.scope_dict()[scope_entry]
@@ -1294,7 +1283,15 @@ class FPGACodeGen(TargetCodeGenerator):
 
         seen = set(nested_transient_set)
         kernel_args_call_host = []
-        for is_output, argname, arg in parameters:
+        kernel_args_opencl = []
+        # Split into arrays and scalars
+        arrays = sorted(
+            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            key=lambda t: t[1])
+        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
+        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars = list(sorted(scalars, key=lambda t: t[1]))
+        for is_output, argname, arg in itertools.chain(arrays, scalars):
             # Only pass each array once from the host code
             if arg in seen:
                 continue
@@ -1302,21 +1299,11 @@ class FPGACodeGen(TargetCodeGenerator):
             if not isinstance(arg, dace.data.Stream):
                 kernel_args_call_host.append(arg.signature(False,
                                                            name=argname))
+                kernel_args_opencl.append(
+                    FPGACodeGen.make_opencl_parameter(argname, arg))
 
-        # Treat scalars as symbols, assuming they can be input only
-        symbol_sigs = [
-            p.signature(name=name) for name, p in symbol_parameters.items()
-        ]
-        symbol_names = symbol_parameters.keys()
-
-        kernel_args_call_host += symbol_names
-        kernel_args_opencl = (self.opencl_parameters(
-            sdfg, [p
-                   for p in parameters if p[1] not in nested_transient_set]) +
-                              symbol_sigs)
-
-        kernel_args_opencl = deduplicate(kernel_args_opencl)
-        kernel_args_call_host = deduplicate(kernel_args_call_host)
+        kernel_args_call_host = dace.dtypes.deduplicate(kernel_args_call_host)
+        kernel_args_opencl = dace.dtypes.deduplicate(kernel_args_opencl)
 
         host_function_name = "__dace_runkernel_{}".format(kernel_name)
 

@@ -71,7 +71,7 @@ class GPUTransformMap(pattern_matching.Transformation):
                     return False
 
             # If one of the outputs is a stream, do not match
-            map_exit = graph.exit_nodes(map_entry)[0]
+            map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
                 if (isinstance(dst, nodes.AccessNode)
