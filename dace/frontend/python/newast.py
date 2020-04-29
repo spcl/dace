@@ -14,7 +14,10 @@ from dace.frontend.python.common import DaceSyntaxError, inverse_dict_lookup
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call
-from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet, inner_eval_ast, MemletExpr
+from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
+                                                pyexpr_to_symbolic,
+                                                ParseMemlet, inner_eval_ast,
+                                                MemletExpr)
 from dace.graph import nodes
 from dace.graph.labeling import propagate_memlet
 from dace.memlet import Memlet
@@ -255,6 +258,7 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 # Parsing functions
 ###############################################################
+
 
 def _subset_has_indirection(subset):
     for dim in subset:
@@ -844,8 +848,8 @@ class TaskletTransformer(ExtNodeTransformer):
                     node.value.right = self._update_names(
                         node.value.right, name, name_subscript=name_sub)
                     connector, memlet = parse_memlet(self, node.value.right,
-                                                      node.value.left,
-                                                      self.sdfg.arrays)
+                                                     node.value.left,
+                                                     self.sdfg.arrays)
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet(memlet.data, rng.num_elements(),
                                              rng, 1)
@@ -870,8 +874,8 @@ class TaskletTransformer(ExtNodeTransformer):
                     node.value.right = self._update_names(
                         node.value.right, name, name_subscript=name_sub)
                     connector, memlet = parse_memlet(self, node.value.left,
-                                                      node.value.right,
-                                                      self.sdfg.arrays)
+                                                     node.value.right,
+                                                     self.sdfg.arrays)
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet(memlet.data, rng.num_elements(),
                                              rng, 1)
@@ -2752,7 +2756,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         result = func(self.sdfg, self.last_state, *args, **keywords)
 
-        if isinstance(result, tuple) and type(result[0]) is nested_call.NestedCall:
+        if isinstance(result,
+                      tuple) and type(result[0]) is nested_call.NestedCall:
             self.last_state = result[0].last_state
             result = result[1]
 

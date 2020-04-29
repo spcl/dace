@@ -15,6 +15,7 @@ MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 MemletExpr = namedtuple('MemletExpr',
                         ['name', 'accesses', 'wcr', 'wcr_identity', 'subset'])
 
+
 def inner_eval_ast(defined, node, additional_syms=None):
     if isinstance(node, ast.AST):
         code = astutils.unparse(node)
@@ -36,8 +37,9 @@ def inner_eval_ast(defined, node, additional_syms=None):
         code = code.replace(']', ')')
         return pystr_to_symbolic(code)
 
+
 def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any],
-                        expr_ast: ast.AST):
+                       expr_ast: ast.AST):
     """ Converts a Python AST expression to a DaCe symbolic expression
         with error checks (raises `SyntaxError` on failure).
         :param defined_arrays_and_symbols: Defined arrays and symbols
@@ -47,6 +49,7 @@ def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any],
     """
     # TODO!
     return inner_eval_ast(defined_arrays_and_symbols, expr_ast)
+
 
 def _ndslice_to_subset(ndslice):
     is_tuple = [isinstance(x, tuple) for x in ndslice]
@@ -71,8 +74,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     for i, dim in enumerate(ast_ndslice):
         if isinstance(dim, tuple):
             rb = pyexpr_to_symbolic(das, dim[0] or 0)
-            re = pyexpr_to_symbolic(das, dim[1]
-                                     or array.shape[indices[i]]) - 1
+            re = pyexpr_to_symbolic(das, dim[1] or array.shape[indices[i]]) - 1
             rs = pyexpr_to_symbolic(das, dim[2] or 1)
             ndslice[i] = (rb, re, rs)
             offsets.append(i)
@@ -90,11 +92,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     return ndslice, offsets
 
 
-
-
-def parse_memlet_subset(array: data.Data,
-                         node: Union[ast.Name, ast.Subscript], das: Dict[str,
-                                                                         Any]):
+def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
+                        das: Dict[str, Any]):
     array_dependencies = {}
 
     # Get memlet range
@@ -138,6 +137,7 @@ def parse_memlet_subset(array: data.Data,
         subset = _ndslice_to_subset(ndslice)
 
     return subset
+
 
 # Parses a memlet statement
 def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
@@ -184,7 +184,7 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
 
 
 def parse_memlet(visitor, src: MemletType, dst: MemletType,
-                  defined_arrays_and_symbols: Dict[str, data.Data]):
+                 defined_arrays_and_symbols: Dict[str, data.Data]):
     srcexpr, dstexpr, localvar = None, None, None
     if isinstance(src,
                   ast.Name) and rname(src) not in defined_arrays_and_symbols:

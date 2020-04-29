@@ -29,6 +29,7 @@ Shape = Union[ShapeTuple, ShapeList]
 # Python function replacements ###############################################
 ##############################################################################
 
+
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
 def _define_local_ex(sdfg: SDFG,
@@ -104,7 +105,8 @@ def _reduce(sdfg: SDFG,
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                            ast.parse(in_array).body[0].value, {})
+                                           ast.parse(in_array).body[0].value,
+                                           {})
         input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
                               1)
         output_shape = None
@@ -130,12 +132,13 @@ def _reduce(sdfg: SDFG,
 
         # Compute memlets
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                            ast.parse(in_array).body[0].value, {})
+                                           ast.parse(in_array).body[0].value,
+                                           {})
         input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
                               1)
         output_subset = parse_memlet_subset(sdfg.arrays[outarr],
-                                             ast.parse(out_array).body[0].value,
-                                             {})
+                                            ast.parse(out_array).body[0].value,
+                                            {})
         output_memlet = Memlet(outarr, output_subset.num_elements(),
                                output_subset, 1)
 
@@ -165,9 +168,14 @@ def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
 
     return name
 
+
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
-def _elementwise(sdfg: SDFG, state: SDFGState, func: str, in_array: str, out_array=None):
+def _elementwise(sdfg: SDFG,
+                 state: SDFGState,
+                 func: str,
+                 in_array: str,
+                 out_array=None):
     """Apply a lambda function to each element in the input"""
 
     inparr = sdfg.arrays[in_array]
@@ -225,6 +233,7 @@ def _elementwise(sdfg: SDFG, state: SDFGState, func: str, in_array: str, out_arr
             external_edges=True)
 
     return out_array
+
 
 def _simple_call(sdfg: SDFG,
                  state: SDFGState,
@@ -372,25 +381,59 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 @oprepo.replaces('numpy.max')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     # HACK: reduce doesn't work if identity isn't specified (at the moment)
-    return _reduce(sdfg, state, "lambda x, y: max(x, y)", a, axis=axis, identity=-9999999999999)
+    return _reduce(sdfg,
+                   state,
+                   "lambda x, y: max(x, y)",
+                   a,
+                   axis=axis,
+                   identity=-9999999999999)
+
 
 @oprepo.replaces('numpy.min')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     # HACK: reduce doesn't work if identity isn't specified (at the moment)
-    return _reduce(sdfg, state, "lambda x, y: min(x, y)", a, axis=axis, identity=999999999999)
+    return _reduce(sdfg,
+                   state,
+                   "lambda x, y: min(x, y)",
+                   a,
+                   axis=axis,
+                   identity=999999999999)
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(sdfg, state, a, axis, func="max", result_type=result_type)
+def _argmax(sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis,
+            result_type=dace.int32):
+    return _argminmax(sdfg,
+                      state,
+                      a,
+                      axis,
+                      func="max",
+                      result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(sdfg, state, a, axis, func="min", result_type=result_type)
+def _argmin(sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis,
+            result_type=dace.int32):
+    return _argminmax(sdfg,
+                      state,
+                      a,
+                      axis,
+                      func="min",
+                      result_type=result_type)
 
 
-def _argminmax(sdfg: SDFG, state: SDFGState, a: str, axis, func, result_type=dace.int32):
+def _argminmax(sdfg: SDFG,
+               state: SDFGState,
+               a: str,
+               axis,
+               func,
+               result_type=dace.int32):
     nest = NestedCall(sdfg, state)
 
     assert func in ['min', 'max']
@@ -574,7 +617,8 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
     all_idx_dict = {k: "0:" + str(v) for k, v in all_idx_dict.items()}
 
-    return out_shape, all_idx_dict, to_string(all_idx), to_string(a1_idx), to_string(a2_idx)
+    return out_shape, all_idx_dict, to_string(all_idx), to_string(
+        a1_idx), to_string(a2_idx)
 
 
 def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
@@ -583,22 +627,20 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
 
-    out_shape, all_idx_dict, all_idx, arr1_idx, arr2_idx = _broadcast_together(arr1.shape, arr2.shape)
+    out_shape, all_idx_dict, all_idx, arr1_idx, arr2_idx = _broadcast_together(
+        arr1.shape, arr2.shape)
 
     name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
-    state.add_mapped_tasklet(
-        "_%s_" % opname,
-        all_idx_dict, {
-            '__in1': Memlet.simple(op1, arr1_idx),
-            '__in2': Memlet.simple(op2, arr2_idx)
-        },
-        '__out = __in1 %s __in2' % opcode, {
-            '__out':
-            Memlet.simple(
-                name, all_idx)
-        },
-        external_edges=True)
+    state.add_mapped_tasklet("_%s_" % opname,
+                             all_idx_dict, {
+                                 '__in1': Memlet.simple(op1, arr1_idx),
+                                 '__in2': Memlet.simple(op2, arr2_idx)
+                             },
+                             '__out = __in1 %s __in2' % opcode,
+                             {'__out': Memlet.simple(name, all_idx)},
+                             external_edges=True)
     return name
+
 
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeassignop(op, opcode):
@@ -682,11 +724,11 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         n2 = state.add_read(op2)
         n3 = state.add_write(op3)
         state.add_edge(n1, None, tasklet, 's1',
-                        dace.Memlet.from_array(op1, arr1))
+                       dace.Memlet.from_array(op1, arr1))
         state.add_edge(n2, None, tasklet, 's2',
-                        dace.Memlet.from_array(op2, arr2))
+                       dace.Memlet.from_array(op2, arr2))
         state.add_edge(tasklet, 's3', n3, None,
-                        dace.Memlet.from_array(op3, arr3))
+                       dace.Memlet.from_array(op3, arr3))
     else:
         return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
