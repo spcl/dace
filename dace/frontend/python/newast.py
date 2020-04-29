@@ -10,6 +10,7 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
+from dace.frontend.python.common import DaceSyntaxError, inverse_dict_lookup
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call
@@ -31,14 +32,6 @@ Size = Union[int, dace.symbolic.symbol]
 ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
-
-
-def _inverse_dict_lookup(dict: Dict[str, Any], value: Any):
-    """ Finds the first key in a dictionary with the input value. """
-    for k, v in dict.items():
-        if v == value:
-            return k
-    return None
 
 
 def until(val, substr):
@@ -2626,7 +2619,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 aname = memlet.data
                 rng = memlet.subset
                 access_value = (aname, rng)
-                access_key = _inverse_dict_lookup(self.accesses, access_value)
+                access_key = inverse_dict_lookup(self.accesses, access_value)
                 if access_key:
                     # Delete read access and create write access and output
                     vname = aname[:-1] + 'w'

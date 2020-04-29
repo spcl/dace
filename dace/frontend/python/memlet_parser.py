@@ -9,30 +9,11 @@ from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.memlet import Memlet
 from dace.symbolic import pystr_to_symbolic
+from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 MemletExpr = namedtuple('MemletExpr',
                         ['name', 'accesses', 'wcr', 'wcr_identity', 'subset'])
-
-class DaceSyntaxError(Exception):
-    def __init__(self, visitor, node: ast.AST, message: str):
-        self.visitor = visitor
-        self.node = node
-        self.message = message
-
-    def __str__(self):
-        # Try to recover line and column
-        try:
-            line = self.node.lineno
-            col = self.node.col_offset
-        except AttributeError:
-            line = 0
-            col = 0
-
-        return (self.message + "\n  in File " + str(self.visitor.filename) +
-                ", line " + str(line) + ":" + str(col))
-
-
 
 def inner_eval_ast(defined, node, additional_syms=None):
     if isinstance(node, ast.AST):

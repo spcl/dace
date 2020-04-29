@@ -10,6 +10,7 @@ import dace
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import inverse_dict_lookup
 from dace.frontend.python.memlet_parser import parse_memlet_subset
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
@@ -380,16 +381,16 @@ def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis):
-    return _argminmax(sdfg, state, a, axis, func="max")
+def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis):
-    return _argminmax(sdfg, state, a, axis, func="min")
+def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(sdfg, state, a, axis, func="min", result_type=result_type)
 
 
-def _argminmax(sdfg: SDFG, state: SDFGState, a: str, axis, func):
+def _argminmax(sdfg: SDFG, state: SDFGState, a: str, axis, func, result_type=dace.int32):
     nest = NestedCall(sdfg, state)
 
     assert func in ['min', 'max']
@@ -406,7 +407,7 @@ def _argminmax(sdfg: SDFG, state: SDFGState, a: str, axis, func):
     reduced_shape = list(copy.deepcopy(a_arr.shape))
     reduced_shape.pop(axis)
 
-    val_and_idx = dace.struct('_val_and_idx', val=a_arr.dtype, idx=dace.int64)
+    val_and_idx = dace.struct('_val_and_idx', val=a_arr.dtype, idx=result_type)
 
     # convert to array of structs
     structs, structs_arr = sdfg.add_temp_transient(a_arr.shape, val_and_idx)
@@ -645,14 +646,6 @@ def _is_scalar(sdfg: SDFG, arrname: str):
     return False
 
 
-def _inverse_dict_lookup(dict: Dict[str, Any], value: Any):
-    """ Finds the first key in a dictionary with the input value. """
-    for k, v in dict.items():
-        if v == value:
-            return k
-    return None
-
-
 def _is_op_boolean(op: str):
     if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'}:
         return True
@@ -667,13 +660,13 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     isscal1 = _is_scalar(sdfg, op1)
     isnum1 = isscal1 and (op1 in visitor.numbers.values())
     if isnum1:
-        type1 = _inverse_dict_lookup(visitor.numbers, op1)
+        type1 = inverse_dict_lookup(visitor.numbers, op1)
     arr2 = sdfg.arrays[op2]
     type2 = arr2.dtype.type
     isscal2 = _is_scalar(sdfg, op2)
     isnum2 = isscal2 and (op2 in visitor.numbers.values())
     if isnum2:
-        type2 = _inverse_dict_lookup(visitor.numbers, op2)
+        type2 = inverse_dict_lookup(visitor.numbers, op2)
     if _is_op_boolean(op):
         restype = dace.bool
     else:
