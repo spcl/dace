@@ -889,7 +889,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
-            if isinstance(node, PipelineEntry):
+            if isinstance(node, dace.graph.nodes.PipelineEntry):
                 for i in range(len(node.map.range)):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
@@ -906,7 +906,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
                                                    node)
             # Generate nested loops
-            if not isinstance(node, PipelineEntry):
+            if not isinstance(node, dace.graph.nodes.PipelineEntry):
                 for i, r in enumerate(node.map.range):
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1008,7 +1008,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # This was generated as unrolled processing elements, no need to
             # generate anything here
             return
-        if isinstance(node, PipelineExit):
+        if isinstance(node, dace.graph.nodes.PipelineExit):
             flat_it = node.pipeline.iterator_str()
             bound = node.pipeline.loop_bound_str()
             pipeline = node.pipeline
