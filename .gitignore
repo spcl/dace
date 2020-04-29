@@ -184,5 +184,7 @@ _build/
 
 /*.sdfg
 
-.DS_STORE
+MacOS
 
+.DS_STORE
+.DS_Store
