@@ -891,7 +891,7 @@ class CodeBlock(object):
 
     @property
     def as_string(self):
-        if isinstance(self.code, str):
+        if isinstance(self.code, str) or self.code is None:
             return self.code
         return unparse(self.code)
 
@@ -915,7 +915,7 @@ class CodeProperty(Property):
 
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
-        if obj.language == dace.dtypes.Language.Python:
+        if obj.language == dace.dtypes.Language.Python and obj.code is not None:
             code = unparse(ast.parse(obj.as_string))
         else:
             code = obj.as_string
