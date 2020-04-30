@@ -1492,3 +1492,4 @@ class Pipeline(dace.graph.nodes.Map):
 
 PipelineEntry = indirect_properties(Pipeline,
                                     lambda obj: obj.map)(PipelineEntry)
+
