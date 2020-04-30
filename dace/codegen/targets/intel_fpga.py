@@ -44,6 +44,10 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
+class NameTooLongError(ValueError):
+    pass
+
+
 @registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
@@ -525,6 +529,16 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 kernel_args_call.append(pname)
 
         module_function_name = "module_" + name
+
+        # The official limit suggested by Intel is 61. However, the compiler
+        # can also append text to the module. Longest seen so far is
+        # "_cra_slave_inst", which is 15 characters, so we restrict to
+        # 61 - 15 = 46, and round down to 42 to be conservative.
+        if len(module_function_name) > 42:
+            raise NameTooLongError(
+                "Due to a bug in the Intel FPGA OpenCL compiler, "
+                "kernel names cannot be longer than 42 characters:\n\t{}".
+                format(module_function_name))
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration

@@ -166,13 +166,28 @@ def is_op_associative(wcr_str):
     return aRbc == abRc
 
 
-def reduce(op, in_array, out_array, axis=None, identity=None):
-    """ Reduces an array according to an operation `op`, starting with 
-        initial value `identity`, over the given axis (or all axes if none 
-        given), to `out_array`.
+def reduce(op, in_array, out_array=None, axis=None, identity=None):
+    """ Reduces an array according to a binary operation `op`, starting with initial value
+        `identity`, over the given axis (or axes if axis is a list), to `out_array`.
 
-        Requires `out_array` with one dimension less than `in_array`, or a 
-        scalar if `axis` is None.
+        Requires `out_array` with `len(axis)` dimensions less than `in_array`, or a scalar if `axis` is None.
+
+        :param op: binary operation to use for reduction.
+        :param in_array: array to reduce.
+        :param out_array: output array to write the result to. If `None`, a new array will be returned.
+        :param axis: the axis or axes to reduce over. If `None`, all axes will be reduced.
+        :param identity: intial value for the reduction
+        :return: `None` if out_array is given, or the newly created `out_array` if `out_array` is `None`.
+    """
+    # The function is empty because it is parsed in the Python frontend
+    return None
+
+def elementwise(func, in_array, out_array=None):
+    """ Applies a function to each element of the array
+        :param in_array: array to apply to.
+        :param out_array: output array to write the result to. If `None`, a new array will be returned
+        :param func: lambda function to apply to each element.
+        :return: new array with the lambda applied to each element
     """
     # The function is empty because it is parsed in the Python frontend
     return None
