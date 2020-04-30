@@ -19,13 +19,13 @@ from dace.sdfg import SDFG, is_devicelevel
 
 
 def copy_expr(
-        dispatcher,
-        sdfg,
-        dataname,
-        memlet,
-        offset=None,
-        relative_offset=True,
-        packed_types=False,
+    dispatcher,
+    sdfg,
+    dataname,
+    memlet,
+    offset=None,
+    relative_offset=True,
+    packed_types=False,
 ):
     datadesc = sdfg.arrays[dataname]
     if relative_offset:
@@ -283,14 +283,14 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def ndcopy_to_strided_copy(
-        copy_shape,
-        src_shape,
-        src_strides,
-        dst_shape,
-        dst_strides,
-        subset,
-        src_subset,
-        dst_subset,
+    copy_shape,
+    src_shape,
+    src_strides,
+    dst_shape,
+    dst_strides,
+    subset,
+    src_subset,
+    dst_subset,
 ):
     """ Detects situations where an N-dimensional copy can be degenerated into
         a (faster) 1D copy or 2D strided copy. Returns new copy
@@ -813,7 +813,7 @@ class StructInitializer(ExtNodeTransformer):
                       ast.Name) and (node.func.id.startswith('__DAPPSTRUCT_')
                                      or node.func.id in self._structs):
             fields = ', '.join([
-                '.%s = %s' % (rname(arg.arg), unparse(arg.value))
+                '.%s = %s' % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
                 for arg in sorted(node.keywords, key=lambda x: x.arg)
             ])
 
