@@ -231,8 +231,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
-            read_expr = (expr + " + " + index if
-                         (index is not None and index != "0") else expr)
+            if index is not None and index != "0":
+                read_expr = "{} + {}".format(expr, index)
+            else:
+                read_expr = expr
         if is_pack:
             return "dace::Pack<{}, {}>({})".format(type_str, packing_factor,
                                                    read_expr)
@@ -252,7 +254,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         ]:
             if defined_type == DefinedType.StreamArray:
                 write_expr = "{}[{}]".format(write_expr,
-                                             "0" if index is None else index)
+                                             "0" if not index else index)
             if is_unpack:
                 return "\n".join(
                     "{}.push({}[{}]);".format(write_expr, read_expr, i)
@@ -262,10 +264,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         else:
             if defined_type == DefinedType.Scalar:
                 write_expr = var_name
-            else:
-                write_expr = (write_expr + " + " + index if
-                              (index is not None
-                               and index != "0") else write_expr)
+            elif index and index != "0":
+                write_expr = "{} + {}".format(write_expr, index)
             if is_unpack:
                 return "dace::Unpack<{}, {}>({}, {});".format(
                     type_str, packing_factor, read_expr, write_expr)
