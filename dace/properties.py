@@ -910,17 +910,10 @@ class CodeProperty(Property):
         return CodeBlock
 
     def to_json(self, obj):
-        lang = dace.dtypes.Language.Python
         if obj is None:
             return None
 
-        if isinstance(obj, dict):
-            lang = obj['language']
-
-        ret = {
-            'string_data': CodeProperty.to_string(obj),
-            'language': lang.name
-        }
+        ret = {'string_data': obj.as_string, 'language': obj.language.name}
         return ret
 
     def from_json(self, tmp, sdfg=None):

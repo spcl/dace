@@ -1616,10 +1616,9 @@ subgraph cluster_state_{state} {{
 
         # Loop condition
         if condition_expr:
-            cond_ast = CodeProperty.from_string(condition_expr,
-                                                dtypes.Language.Python)
+            cond_ast = CodeBlock(condition_expr).code
         else:
-            cond_ast = CodeProperty.from_string('True', dtypes.Language.Python)
+            cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, ed.InterstateEdge(cond_ast))
         self.add_edge(guard, after_state,
                       ed.InterstateEdge(negate_expr(cond_ast)))
@@ -3038,13 +3037,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return map_entry, map_exit
 
     def add_consume(
-            self,
-            name,
-            elements: Tuple[str, str],
-            condition: str = None,
-            schedule=dtypes.ScheduleType.Default,
-            chunksize=1,
-            debuginfo=None,
+        self,
+        name,
+        elements: Tuple[str, str],
+        condition: str = None,
+        schedule=dtypes.ScheduleType.Default,
+        chunksize=1,
+        debuginfo=None,
+        language=dtypes.Language.Python
     ) -> Tuple[nd.ConsumeEntry, nd.ConsumeExit]:
         """ Adds consume entry and consume exit nodes.
             :param name:      Label
@@ -3054,8 +3054,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               None (by default) to consume until the stream
                               is empty for the first time. If false, will
                               consume forever.
-            :param schedule:  Consume schedule type
-            :param chunksize: Maximal number of elements to consume at a time
+            :param schedule:  Consume schedule type.
+            :param chunksize: Maximal number of elements to consume at a time.
+            :param debuginfo: Source code line information for debugging.
+            :param language:  Code language for ``condition``.
 
             :return: (consume_entry, consume_exit) node 2-tuple
         """
@@ -3068,7 +3070,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         debuginfo = getdebuginfo(debuginfo)
         consume = nd.Consume(name,
                              pe_tuple,
-                             condition,
+                             CodeBlock(condition, language),
                              schedule,
                              chunksize,
                              debuginfo=debuginfo)

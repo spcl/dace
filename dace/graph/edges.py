@@ -62,8 +62,7 @@ class InterstateEdge(object):
             self.condition).strip() == "1" or self.condition.as_string == "")
 
     def condition_sympy(self):
-        cond_ast = self.condition
-        return symbolic.pystr_to_symbolic(astutils.unparse(cond_ast))
+        return symbolic.pystr_to_symbolic(self.condition.as_string)
 
     def condition_symbols(self):
         return dace.symbolic.symbols_in_ast(self.condition.code[0])
@@ -94,7 +93,7 @@ class InterstateEdge(object):
             ['%s=%s' % (k, v) for k, v in self.assignments.items()])
 
         # Edge with assigment only (no condition)
-        if astutils.unparse(self.condition) == '1':
+        if self.condition.as_string == '1':
             # Edge without conditions or assignments
             if len(self.assignments) == 0:
                 return ''
@@ -102,10 +101,10 @@ class InterstateEdge(object):
 
         # Edge with condition only (no assignment)
         if len(self.assignments) == 0:
-            return astutils.unparse(self.condition)
+            return self.condition.as_string
 
         # Edges with assigments and conditions
-        return astutils.unparse(self.condition) + '; ' + assignments
+        return self.condition.as_string + '; ' + assignments
 
     @property
     def dotOpts(self):
