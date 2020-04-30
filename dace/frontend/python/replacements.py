@@ -729,6 +729,7 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                        dace.Memlet.from_array(op2, arr2))
         state.add_edge(tasklet, 's3', n3, None,
                        dace.Memlet.from_array(op3, arr3))
+        return op3
     else:
         return _binop(sdfg, state, op1, op2, opcode, op, restype)
 

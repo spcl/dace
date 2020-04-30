@@ -21,12 +21,16 @@ def compare_numpy_output(func):
         def get_rand_arr(ddesc):
             if type(ddesc) is dace.dtypes.typeclass:
                 # we have a scalar
-                 ddesc = dace.data.Scalar(ddesc)
+                ddesc = dace.data.Scalar(ddesc)
 
             if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
-                res = np.random.rand(*ddesc.shape).astype(getattr(np, ddesc.dtype.to_string()))
-            elif ddesc.dtype in [dace.int8, dace.int16, dace.int32, dace.int64, dace.bool]:
-                res = np.random.randint(1, 3, size=ddesc.shape).astype(getattr(np, ddesc.dtype.to_string()))
+                res = np.random.rand(*ddesc.shape).astype(
+                    getattr(np, ddesc.dtype.to_string()))
+            elif ddesc.dtype in [
+                    dace.int8, dace.int16, dace.int32, dace.int64, dace.bool
+            ]:
+                res = np.random.randint(1, 3, size=ddesc.shape).astype(
+                    getattr(np, ddesc.dtype.to_string()))
             else:
                 raise ValueError("unsupported dtype {}".format(ddesc.dtype))
 
@@ -35,14 +39,13 @@ def compare_numpy_output(func):
             else:
                 return res
 
-                
-        
         signature = inspect.signature(func)
-        
-        inputs = OrderedDict((name, get_rand_arr(param.annotation)) for name, param in signature.parameters.items())
+
+        inputs = OrderedDict((name, get_rand_arr(param.annotation))
+                             for name, param in signature.parameters.items())
 
         dace_input = dc(inputs)
-        reference_input =  dc(inputs)
+        reference_input = dc(inputs)
 
         # save exceptions
         dace_thrown, numpy_thrown = None, None
@@ -52,13 +55,15 @@ def compare_numpy_output(func):
         except Exception as e:
             numpy_thrown = e
 
-        try: 
+        try:
             dace_result = dp(**dace_input)
         except Exception as e:
             dace_thrown = e
 
         if dace_thrown is not None or numpy_thrown is not None:
-            assert dace_thrown is not None and numpy_thrown is not None, "dace threw {}, but numpy threw {}"
+            assert dace_thrown is not None and numpy_thrown is not None, "dace threw:\n{}: {}\nBut numpy threw:\n{}: {}\n".format(
+                type(dace_thrown), dace_thrown, type(numpy_thrown),
+                numpy_thrown)
         else:
             assert np.allclose(reference_result, dace_result)
 
