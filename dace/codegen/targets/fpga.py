@@ -104,7 +104,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Inspect the vector length of all memlets leading to each memory, to
         # make sure that they're consistent, and to allow us to instantiate the
         # memories as vector types to enable HLS to generate wider data paths.
-        self._memory_widths = type(self).detect_memory_widths(sdfg)
+        self._memory_widths = self.detect_memory_widths(sdfg)
 
     @property
     def has_initializer(self):
