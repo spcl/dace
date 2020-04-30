@@ -884,8 +884,7 @@ class FPGACodeGen(TargetCodeGenerator):
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(x, dace.graph.nodes.MapEntry)
-                    or isinstance(x, PipelineEntry)):
+            if (isinstance(x, (dace.graph.nodes.MapEntry, PipelineEntry))):
                 if not x.unroll:
                     return False
                 to_search += scope_dict[x]
