@@ -1323,3 +1323,4 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             node.func = new_node
 
         return self.generic_visit(node)
+
