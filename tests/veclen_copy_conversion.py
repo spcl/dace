@@ -39,15 +39,18 @@ def make_sdfg(tasklet_code=None,
     pre_write = pre_state.add_write("a_device")
     pre_state.add_memlet_path(pre_read,
                               pre_write,
-                              memlet=dace.Memlet.simple(pre_write, "0:N"))
+                              memlet=dace.Memlet.simple(pre_write,
+                                                        "0:N",
+                                                        veclen=veclen))
 
     # Device to host
-    post_read = post_state.add_read("a_device")
-    post_write = post_state.add_write("a")
+    post_read = post_state.add_read("b_device")
+    post_write = post_state.add_write("b")
     post_state.add_memlet_path(post_read,
                                post_write,
-                               memlet=dace.Memlet.simple(
-                                   post_write, "0:N"))
+                               memlet=dace.Memlet.simple(post_write,
+                                                         "0:N",
+                                                         veclen=veclen))
 
     # Compute state
     read_memory = state.add_read("a_device")
@@ -86,9 +89,9 @@ def make_sdfg(tasklet_code=None,
     # Container-to-container copies between arrays and streams
     state.add_memlet_path(read_memory,
                           produce_input_stream,
-                          memlet=dace.Memlet.simple(produce_input_stream.data,
-                                                    "0",
-                                                    other_subset_str="0:N",
+                          memlet=dace.Memlet.simple(read_memory.data,
+                                                    "0:N",
+                                                    other_subset_str="0",
                                                     num_accesses=n / veclen,
                                                     veclen=veclen))
     state.add_memlet_path(consume_output_stream,
@@ -157,5 +160,17 @@ def make_sdfg(tasklet_code=None,
 
 if __name__ == "__main__":
 
-    sdfg = make_sdfg()
-    sdfg.save("test.sdfg")
+    import numpy as np
+
+    dtype = np.float32
+
+    gearbox = make_sdfg(tasklet_code = "_out = _in + 1", dtype=dtype)
+
+    size = 1024
+    a = np.arange(size, dtype=dtype)
+    b = np.empty(size, dtype=dtype)
+
+    gearbox(a=a, b=b, N=size)
+
+    if any(b != a + 1):
+        raise ValueError("Unexpected output.")
