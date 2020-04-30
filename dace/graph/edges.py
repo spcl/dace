@@ -43,7 +43,7 @@ class InterstateEdge(object):
     condition = CodeProperty(desc="Transition condition",
                              default=CodeBlock("1"))
 
-    def __init__(self, condition=None, assignments=None):
+    def __init__(self, condition: CodeBlock = None, assignments=None):
 
         if condition is None:
             condition = CodeBlock("1")
@@ -51,7 +51,14 @@ class InterstateEdge(object):
         if assignments is None:
             assignments = {}
 
-        self.condition = condition
+        if isinstance(condition, str):
+            self.condition = CodeBlock(condition)
+        elif isinstance(condition, ast.AST):
+            self.condition = CodeBlock([condition])
+        elif isinstance(condition, list):
+            self.condition = CodeBlock(condition)
+        else:
+            self.condition = condition
         self.assignments = assignments
 
         self._dotOpts = {"minlen": 3, "color": "blue", "fontcolor": "blue"}

@@ -529,13 +529,13 @@ class SDFG(OrderedDiGraph):
     def sdfg_list(self):
         return self._sdfg_list
 
-    def set_sourcecode(self, code, lang=None):
+    def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
             :param code: A string of source code.
             :param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        self.sourcecode = {'code_or_block': code, 'language': lang}
+        self.sourcecode = {'code': code, 'language': lang}
 
     @property
     def name(self):
@@ -4529,24 +4529,24 @@ def replace_properties(node: Any, name: str, new_name: str):
                         (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
-            if isinstance(propval['code_or_block'], str):
+            if isinstance(propval.code, str):
                 if str(name) != str(new_name):
-                    lang = propval['language']
-                    newcode = propval['code_or_block']
+                    lang = propval.language
+                    newcode = propval.code
                     if not re.findall(r'[^\w]%s[^\w]' % name, newcode):
                         continue
 
                     if lang is dtypes.Language.CPP:  # Replace in C++ code
                         # Use local variables and shadowing to replace
                         replacement = 'auto %s = %s;\n' % (name, new_name)
-                        propval['code_or_block'] = replacement + newcode
+                        propval.code = replacement + newcode
                     else:
                         warnings.warn(
                             'Replacement of %s with %s was not made '
                             'for string tasklet code of language %s' %
                             (name, new_name, lang))
             else:
-                for stmt in propval['code_or_block']:
+                for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
 
 

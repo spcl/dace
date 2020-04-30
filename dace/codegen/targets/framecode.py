@@ -319,7 +319,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
 
-        condition_string = cppunparse.cppunparse(edge.data.condition, False)
+        condition_string = cppunparse.cppunparse(edge.data.condition.code,
+                                                 False)
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -434,7 +435,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             entry_edge = control.scope.entry.edge
                             condition = cppunparse.cppunparse(
-                                entry_edge.data.condition, False)
+                                entry_edge.data.condition.code, False)
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -497,7 +498,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             then_entry = then_scope.entry.edge
 
                             condition = cppunparse.cppunparse(
-                                then_entry.data.condition, False)
+                                then_entry.data.condition.code, False)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
