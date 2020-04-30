@@ -7,7 +7,7 @@ import numpy as np
 
 
 def compare_numpy_output(func):
-    """Check that the `dace.program` func works identically to the python version (including error types).
+    """Check that the `dace.program` func works identically to the python version (including errors).
 
        `func` will be run once as a dace program, and once using python. The inputs to the function
        will be randomly intialized arrays with shapes and dtypes according to the argument
@@ -58,7 +58,7 @@ def compare_numpy_output(func):
             dace_thrown = e
 
         if dace_thrown is not None or numpy_thrown is not None:
-            assert dace_thrown is not None and numpy_thrown is not None
+            assert dace_thrown is not None and numpy_thrown is not None, "dace threw {}, but numpy threw {}"
         else:
             assert np.allclose(reference_result, dace_result)
 
