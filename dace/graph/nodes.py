@@ -257,7 +257,7 @@ class CodeNode(Node):
     label = Property(dtype=str, desc="Name of the CodeNode")
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=str,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     environments = SetProperty(
         str,

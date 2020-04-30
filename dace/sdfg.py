@@ -2528,7 +2528,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=str,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
