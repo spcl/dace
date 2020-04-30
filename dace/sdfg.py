@@ -1238,6 +1238,13 @@ subgraph cluster_state_{state} {{
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 
+    def view(self, filename=None):
+        """View this sdfg in the system's HTML viewer
+           :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        """
+        from diode.sdfv import view
+        view(self, filename=filename)
+
     @staticmethod
     def from_file(filename: str):
         """ Constructs an SDFG from a file.
@@ -2168,6 +2175,15 @@ subgraph cluster_state_{state} {{
         program_code = codegen.generate_code(sdfg)
 
         return program_code
+
+    def get_array_memlet(self, array: str):
+        """Convenience method to generate a Memlet that transfers a full array.
+
+           :param array: the name of the array
+           :return: a Memlet that fully transfers array
+        """
+        return dace.Memlet.from_array(array, self.arrays[array])
+
 
 
 class MemletTrackingView(object):
