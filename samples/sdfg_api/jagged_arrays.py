@@ -62,8 +62,6 @@ sdfg.validate()
 # Fuses redundant states and removes unnecessary transient arrays
 sdfg.apply_strict_transformations()
 
-sdfg.draw_to_file()
-
 ######################################
 if __name__ == '__main__':
     print('Program start')

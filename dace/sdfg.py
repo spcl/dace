@@ -26,7 +26,6 @@ from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
 from dace.dtypes import validate_name
-from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
@@ -979,142 +978,6 @@ class SDFG(OrderedDiGraph):
         """
         return ", ".join(self.signature_arglist(with_types, for_call))
 
-    def draw_to_file(self,
-                     filename="sdfg.dot",
-                     fill_connectors=True,
-                     recursive=True):
-        """ Draws the SDFG to a GraphViz (.dot) file.
-            :param filename: The file to draw the SDFG to (will be written to
-                             '_dotgraphs/<filename>').
-            :param fill_connectors: Whether to fill missing scope (e.g., "IN_")
-                                    connectors prior to drawing the graph.
-            :param recursive: If True, also draws nested SDFGs.
-        """
-        if fill_connectors:
-            self.fill_scope_connectors()
-
-        try:
-            os.makedirs("_dotgraphs")
-        # Python 2.x does not have FileExistsError
-        except OSError as e:
-            if e.errno == errno.EEXIST:
-                pass
-            else:
-                raise
-
-        with open(os.path.join("_dotgraphs", filename), "w") as outFile:
-            outFile.write(self.draw())
-
-        if recursive:
-            for state in self.nodes():
-                for node in state.nodes():
-                    if isinstance(node, dace.graph.nodes.NestedSDFG):
-                        node.sdfg.draw_to_file(filename=node.sdfg.name + "_" +
-                                               filename,
-                                               recursive=True)
-
-    def draw(self):
-        """ Creates a GraphViz representation of the full SDFG, including all
-            states and transitions.
-            :return: A string representing the SDFG in .dot format.
-        """
-
-        nodes = []
-
-        # Redirect all edges between states to point at the boundaries
-        edges = []
-        for ind, edge in enumerate(self.edges()):
-            srcState, dstState, data = edge
-            srcDotName = "state_" + str(self.node_id(srcState))
-            dstDotName = "state_" + str(self.node_id(dstState))
-            srcCluster = "cluster_" + srcDotName
-            dstCluster = "cluster_" + dstDotName
-
-            if len(srcState.nodes()) > 0:
-                srcNode = srcState.sink_nodes()[0]
-                srcName = "s%d_%d" % (self.node_id(srcState),
-                                      srcState.node_id(srcNode))
-            else:
-                srcName = "dummy_" + str(self.node_id(srcState))
-            if len(dstState.nodes()) > 0:
-                dstNode = dstState.source_nodes()[0]
-                dstName = "s%d_%d" % (self.node_id(dstState),
-                                      dstState.node_id(dstNode))
-            else:
-                dstName = "dummy_" + str(self.node_id(dstState))
-
-            if srcState != dstState:
-                edges.append(
-                    dot.draw_interstate_edge_by_name(
-                        srcName,
-                        dstName,
-                        edge,
-                        self,
-                        srcState,
-                        ltail=srcCluster,
-                        lhead=dstCluster,
-                    ))
-            else:
-                redName = srcDotName + "_to_" + dstDotName
-                nodes.append(dot.draw_invisible_node(redName))
-
-                edges.append(
-                    dot.draw_edge_explicit(
-                        srcName,
-                        redName,
-                        Edge(srcState, srcState, ed.RedirectEdge()),
-                        self,
-                        srcState,
-                        ltail=srcCluster,
-                    ))
-                edges.append(
-                    dot.draw_edge_explicit(redName,
-                                           dstName,
-                                           edge,
-                                           self,
-                                           srcState,
-                                           lhead=dstCluster))
-
-        # Mark first and last states
-        first = self.start_state
-
-        # A state is considered a last state if it has no outgoing edges that
-        # lead to another state
-        last = self.sink_nodes()
-
-        clusters = []
-        for state in self.nodes():
-            if state == first and state not in last:
-                clusterLabel = state.label + " (BEGIN)"
-                clusterColor = "#f7dede"
-            elif state in last and state != first:
-                clusterLabel = state.label + " (END)"
-                clusterColor = "#f7dede"
-            else:
-                clusterLabel = state.label
-                clusterColor = "#deebf7"
-            cluster = """
-subgraph cluster_state_{state} {{
-      label = "{label}";
-      labeljust = r;
-      bgcolor = "{color}"; color = "{color}";""".format(
-                state=self.node_id(state),
-                label=clusterLabel,
-                color=clusterColor)
-            subNodes, subEdges = dot.draw_graph(self, state, standalone=False)
-            cluster += "\n        ".join(subNodes + subEdges)
-            if len(subNodes) == 0:
-                cluster += "\n"
-                cluster += dot.draw_invisible_node("dummy_" +
-                                                   str(self.node_id(state)))
-            cluster += "\n}"
-            clusters.append(cluster)
-
-        return ("digraph SDFG {\n    outputorder=nodesfirst;\n" +
-                "    compound=true;\n" + "    newrank=true;\n" +
-                "\n    ".join(nodes + edges) + "\n" + "\n".join(clusters) +
-                "\n}")
-
     # TODO(later): Also implement the "_repr_svg_" method for static output
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
@@ -1737,7 +1600,7 @@ subgraph cluster_state_{state} {{
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
 
-        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
@@ -1919,7 +1782,7 @@ subgraph cluster_state_{state} {{
 
         except InvalidSDFGError:
             # If the SDFG is invalid, save it
-            self.save(os.path.join('_dotgraphs', 'invalid.sdfg'))
+            self.save(os.path.join('_dacegraphs', 'invalid.sdfg'))
             raise
 
     def is_valid(self) -> bool:
@@ -2168,8 +2031,7 @@ subgraph cluster_state_{state} {{
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
 
-        sdfg.draw_to_file()
-        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
@@ -2659,9 +2521,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     def memlets_for_array(self, arrayname):
         return [e for e in self.edges() if e[3].data == arrayname]
-
-    def draw_node(self, graph):
-        return dot.draw_node(graph, self, shape="Msquare")
 
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe

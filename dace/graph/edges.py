@@ -54,8 +54,6 @@ class InterstateEdge(object):
         self.condition = condition
         self.assignments = assignments
 
-        self._dotOpts = {"minlen": 3, "color": "blue", "fontcolor": "blue"}
-
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
         return (self.condition is None or InterstateEdge.condition.to_string(
@@ -106,21 +104,6 @@ class InterstateEdge(object):
 
         # Edges with assigments and conditions
         return astutils.unparse(self.condition) + '; ' + assignments
-
-    @property
-    def dotOpts(self):
-        result = {}
-        result.update(self._dotOpts)
-        result.update({'label': self.label})
-        return result
-
-
-class RedirectEdge(InterstateEdge):
-    """ An inter-state edge type used for rendering self-looping edges
-        on graph clusters in GraphViz. """
-    def __init__(self):
-        super(RedirectEdge, self).__init__()
-        self._dotOpts["arrowhead"] = "none"
 
 
 ###############################################################################

@@ -804,7 +804,6 @@ if __name__ == "__main__":
     B_regression[:] = B[:]
     C_regression[:] = C[:]
 
-    sdfg.draw_to_file()
     if args["specialize"]:
         sdfg(A=A, B=B, C=C)
     else:

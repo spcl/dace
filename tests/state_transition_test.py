@@ -89,8 +89,6 @@ if __name__ == "__main__":
             "i >= 128", language=dace.dtypes.Language.Python))
     sdfg.add_edge(s3_while_enter, s4, while_exit)
 
-    sdfg.draw_to_file("sdfg.dot")
-
     s5_then = sdfg.add_state("s5_then")
     s6_else = sdfg.add_state("s6_else")
 

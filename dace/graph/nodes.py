@@ -227,19 +227,6 @@ class AccessNode(Node):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
 
-    def draw_node(self, sdfg, graph):
-        desc = self.desc(sdfg)
-        if isinstance(desc, data.Stream):
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="oval",
-                                 style='dashed')
-        elif desc.transient:
-            return dot.draw_node(sdfg, graph, self, shape="oval")
-        else:
-            return dot.draw_node(sdfg, graph, self, shape="oval", style='bold')
-
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
@@ -332,9 +319,6 @@ class Tasklet(CodeNode):
     def name(self):
         return self._label
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="octagon")
-
     def validate(self, sdfg, state):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid tasklet name "%s"' % self.label)
@@ -358,9 +342,6 @@ class EmptyTasklet(Tasklet):
         in an SDFG. """
     def __init__(self, label=""):
         super(EmptyTasklet, self).__init__(label)
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, style="invis", shape="octagon")
 
     def validate(self, sdfg, state):
         pass
@@ -444,9 +425,6 @@ class NestedSDFG(CodeNode):
 
         return ret
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="doubleoctagon")
-
     def __str__(self):
         if not self.label:
             return "SDFG"
@@ -472,8 +450,9 @@ class NestedSDFG(CodeNode):
                 raise NameError('Data descriptor "%s" not found in nested '
                                 'SDFG connectors' % dname)
             if dname in connectors and desc.transient:
-                raise NameError('"%s" is a connector but its corresponding array is transient'
-                                % dname)
+                raise NameError(
+                    '"%s" is a connector but its corresponding array is transient'
+                    % dname)
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.undefined_symbols(False).keys()
@@ -555,11 +534,6 @@ class MapEntry(EntryNode):
     def map(self, val):
         self._map = val
 
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg, graph, self, shape="hexagon")
-        return dot.draw_node(sdfg, graph, self, shape="trapezium")
-
     def __str__(self):
         return str(self.map)
 
@@ -614,9 +588,6 @@ class MapExit(ExitNode):
     @property
     def label(self):
         return self._map.label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="invtrapezium")
 
     def __str__(self):
         return str(self.map)
@@ -751,19 +722,6 @@ class ConsumeEntry(EntryNode):
     def consume(self, val):
         self._consume = val
 
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="hexagon",
-                                 style='dashed')
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="trapezium",
-                             style='dashed')
-
     def __str__(self):
         return str(self.consume)
 
@@ -816,13 +774,6 @@ class ConsumeExit(ExitNode):
     @property
     def label(self):
         return self._consume.label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="invtrapezium",
-                             style='dashed')
 
     def __str__(self):
         return str(self.consume)
@@ -942,9 +893,6 @@ class Reduce(Node):
         self.identity = identity
         self.schedule = schedule
         self.debuginfo = debuginfo
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="invtriangle")
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -1099,6 +1047,3 @@ class LibraryNode(CodeNode):
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
         transformation_type._match_node = clc(match_node_name)
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="folder")
