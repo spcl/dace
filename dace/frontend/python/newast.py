@@ -3532,7 +3532,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                          find_new_name=True)
 
                     # Create an output entry for the connectors
-                    outputs[arrname] = dace.Memlet.from_array(new_arrname, arr)
+                    outputs[arrname] = dace.Memlet.from_array(
+                        new_arrname, newarr)
                     rets.append(new_arrname)
 
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
