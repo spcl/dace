@@ -4280,6 +4280,7 @@ def scope_symbols(dfg):
     iteration_variables = collections.OrderedDict()
     subset_symbols = collections.OrderedDict()
     sdict = dfg.scope_dict()
+    sdict_children = dfg.scope_dict(True)
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
         if not isinstance(n, dace.graph.nodes.EntryNode):
@@ -4332,11 +4333,18 @@ def scope_symbols(dfg):
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))
 
-    for edge in dfg.edges():
-        if edge.data.data:
-            subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
-                                  for symname, sym in edge.data.subset.free_symbols.items()
-                                  if symname not in iteration_variables)
+        for scnode in sdict_children[n]:
+            for edge in dfg.in_edges(scnode):
+                if edge.data.data:
+                    subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
+                                        for symname, sym in edge.data.subset.free_symbols.items()
+                                        if symname not in iteration_variables and symname not in dynamic_symbols)
+
+    for scnode in sdict_children[None]:
+        for edge in dfg.in_edges(scnode):
+            if edge.data.data:
+                subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
+                                    for symname, sym in edge.data.subset.free_symbols.items())
 
     return iteration_variables, subset_symbols
 
