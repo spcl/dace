@@ -880,6 +880,22 @@ class FPGACodeGen(TargetCodeGenerator):
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
 
+    def _is_innermost(self, scope, scope_dict):
+        to_search = list(scope)
+        while len(to_search) > 0:
+            x = to_search.pop()
+            if (isinstance(x, dace.graph.nodes.MapEntry)
+                    or isinstance(x, PipelineEntry)):
+                if not x.unroll:
+                    return False
+                to_search += scope_dict[x]
+            elif isinstance(x, dace.graph.nodes.NestedSDFG):
+                for state in x.sdfg:
+                    if not self._is_innermost(state.nodes(),
+                                              state.scope_dict(True)):
+                        return False
+        return True
+
     def _generate_MapEntry(self, sdfg, dfg, state_id, node, function_stream,
                            callsite_stream):
 
@@ -898,7 +914,9 @@ class FPGACodeGen(TargetCodeGenerator):
             callsite_stream.write('{', sdfg, state_id, node)
 
             # Pipeline innermost loops
-            scope = dfg.scope_dict(True)[node]
+            scope_dict = dfg.scope_dict(True)
+            scope = scope_dict[node]
+            is_innermost = self._is_innermost(scope, scope_dict)
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
@@ -911,8 +929,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_loop_pre(result, None, sdfg, state_id,
                                               node)
             else:
-                is_innermost = not any(
-                    [isinstance(x, dace.graph.nodes.EntryNode) for x in scope])
                 if is_innermost:
                     self.generate_pipeline_loop_pre(result, sdfg, state_id,
                                                     node)
@@ -1001,8 +1017,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_unroll_loop_post(result, None, sdfg, state_id,
                                                node)
             else:
-                is_innermost = not any(
-                    [isinstance(x, dace.graph.nodes.EntryNode) for x in scope])
                 if is_innermost:
                     self.generate_pipeline_loop_post(result, sdfg, state_id,
                                                      node)
