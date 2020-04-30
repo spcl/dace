@@ -913,7 +913,14 @@ class CodeProperty(Property):
         if obj is None:
             return None
 
-        ret = {'string_data': obj.as_string, 'language': obj.language.name}
+        # Two roundtrips to avoid issues in AST parsing/unparsing of negative
+        # numbers, i.e., "(-1)" becomes "(- 1)"
+        if obj.language == dace.dtypes.Language.Python:
+            code = unparse(ast.parse(obj.as_string))
+        else:
+            code = obj.as_string
+
+        ret = {'string_data': code, 'language': obj.language.name}
         return ret
 
     def from_json(self, tmp, sdfg=None):

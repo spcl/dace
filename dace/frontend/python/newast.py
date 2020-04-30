@@ -18,7 +18,7 @@ from dace.frontend.python.astutils import rname
 from dace.graph import nodes
 from dace.graph.labeling import propagate_memlet
 from dace.memlet import Memlet
-from dace.properties import LambdaProperty
+from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
@@ -1257,9 +1257,9 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
 
-    tasklet.code = code.format(arr='__ind_' + local_name,
-                               index=', '.join(
-                                   [symbolic.symstr(s) for s in newsubset]))
+    tasklet.code = CodeBlock(
+        code.format(arr='__ind_' + local_name,
+                    index=', '.join([symbolic.symstr(s) for s in newsubset])))
 
     # Create transient variable to trigger the indirect load
     tmp_name = '__' + local_name + '_value'

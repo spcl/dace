@@ -4545,7 +4545,7 @@ def replace_properties(node: Any, name: str, new_name: str):
                             'Replacement of %s with %s was not made '
                             'for string tasklet code of language %s' %
                             (name, new_name, lang))
-            else:
+            elif propval.code is not None:
                 for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
 
