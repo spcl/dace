@@ -225,4 +225,4 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 
 if __name__ == '__main__':
     import __main__ as main
-    pytest.main([main.__file__])
+    exit(pytest.main([main.__file__]))

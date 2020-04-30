@@ -102,4 +102,4 @@ def test_gte(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 if __name__ == '__main__':
     import __main__ as main
-    pytest.main([main.__file__])
+    exit(pytest.main([main.__file__]))
