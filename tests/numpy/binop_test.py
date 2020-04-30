@@ -101,5 +101,24 @@ def test_gte(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 
 if __name__ == '__main__':
-    import __main__ as main
-    exit(pytest.main([main.__file__]))
+    # generate this with
+    # cat binop_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
+    test_add()
+    test_sub()
+    test_mult()
+    test_div()
+    test_floordiv()
+    test_mod()
+    test_pow()
+    test_matmult()
+    test_lshift()
+    test_rshift()
+    test_bitor()
+    test_bitxor()
+    test_bit()
+    test_eq()
+    test_noteq()
+    test_lt()
+    test_lte()
+    test_gt()
+    test_gte()

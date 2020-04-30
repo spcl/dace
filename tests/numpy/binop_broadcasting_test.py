@@ -222,7 +222,41 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 #def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
 #    return A != B
 
-
 if __name__ == '__main__':
-    import __main__ as main
-    exit(pytest.main([main.__file__]))
+    # generate this with
+    # cat binop_broadcasting_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
+    test_subl1()
+    test_multl1()
+    test_bitorl1()
+    test_bitxorl1()
+    test_noteql1()
+    test_ltl1()
+    test_subr1()
+    test_multr1()
+    test_bitorr1()
+    test_bitxorr1()
+    test_noteqr1()
+    test_ltr1()
+    test_subl2()
+    test_multl2()
+    test_bitorl2()
+    test_bitxorl2()
+    test_noteql2()
+    test_ltl2()
+    test_subr2()
+    test_multr2()
+    test_bitorr2()
+    test_bitxorr2()
+    test_noteqr2()
+    test_ltr2()
+    test_subl3()
+    test_bitxorl3()
+    test_ltl3()
+    test_multr3()
+    test_bitorr3()
+    test_noteqr3()
+    test_subl4()
+    test_bitxorl4()
+    test_ltl4()
+    test_multr4()
+    test_bitorr4()
