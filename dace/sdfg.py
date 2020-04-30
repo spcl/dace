@@ -4031,7 +4031,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %
