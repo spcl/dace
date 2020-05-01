@@ -44,9 +44,6 @@ if __name__ == '__main__':
         Memlet.simple(p, '0', wcr_str='lambda a,b: a*b', wcr_identity=1))
     state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
 
-    # Left for debugging purposes
-    mysdfg.draw_to_file()
-
     mysdfg(A=input, s=sum, p=product, N=N)
 
     diff_sum = 5 * 20 - sum[0]

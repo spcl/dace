@@ -38,23 +38,17 @@ required:
                     on compilation. Defaults to the transformation CLI, empty
                     string or an invalid class name skips the process.
 
-            visualize:
-                type: bool
-                default: false
-                title: Visualize SDFG
-                description: Open a GraphViz window after every transformation.
-
             visualize_sdfv:
                 type: bool
                 default: false
                 title: Visualize SDFG
                 description: Open a SDFV in browser every transformation.
 
-            savedots:
+            save_intermediate:
                 type: bool
                 default: false
-                title: Save dot files
-                description: Save GraphViz .dot files after every transformation.
+                title: Save intermediate SDFGs
+                description: Save SDFG files after every transformation.
 
             automatic_strict_transformations:
                 type: bool

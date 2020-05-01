@@ -69,10 +69,10 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
 
 def test_fusion_simple():
     sdfg = fusion.to_sdfg()
-    sdfg.save(os.path.join('_dotgraphs', 'before1.sdfg'))
+    sdfg.save(os.path.join('_dacegraphs', 'before1.sdfg'))
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.save(os.path.join('_dotgraphs', 'after1.sdfg'))
+    sdfg.save(os.path.join('_dacegraphs', 'after1.sdfg'))
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
@@ -90,10 +90,10 @@ def test_multiple_fusions():
     num_nodes_before = len(
         [node for state in sdfg.nodes() for node in state.nodes()])
 
-    sdfg.save(os.path.join('_dotgraphs', 'before2.sdfg'))
+    sdfg.save(os.path.join('_dacegraphs', 'before2.sdfg'))
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.save(os.path.join('_dotgraphs', 'after2.sdfg'))
+    sdfg.save(os.path.join('_dacegraphs', 'after2.sdfg'))
 
     num_nodes_after = len(
         [node for state in sdfg.nodes() for node in state.nodes()])
@@ -121,14 +121,14 @@ def test_multiple_fusions():
 
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg()
-    sdfg.save(os.path.join('_dotgraphs', 'before3.sdfg'))
+    sdfg.save(os.path.join('_dacegraphs', 'before3.sdfg'))
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations(MapFusion)
     num_nodes_before = len(
         [node for state in sdfg.nodes() for node in state.nodes()])
     sdfg.apply_transformations(MapFusion)
     sdfg.apply_transformations(MapFusion)
-    sdfg.save(os.path.join('_dotgraphs', 'after3.sdfg'))
+    sdfg.save(os.path.join('_dacegraphs', 'after3.sdfg'))
 
     num_nodes_after = len(
         [node for state in sdfg.nodes() for node in state.nodes()])

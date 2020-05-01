@@ -430,12 +430,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         # Inner part
         result = inner_stream
 
-        if node.map.flatten:
-            # Performance counters for flattened maps include the calculations
-            # made to obtain the different axis indices
-            map_name = "__DACEMAP_%d_%d_iter" % (state_id, state.node_id(node))
-        else:
-            map_name = node.map.params[-1]
+        map_name = node.map.params[-1]
 
         result.write(
             self.perf_counter_start_measurement_string(unified_id, map_name),

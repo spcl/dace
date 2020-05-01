@@ -258,7 +258,7 @@ class Memlet(object):
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:
-                # Don't draw array if we're accessing a single element and it's zero
+                # Don't mention array if we're accessing a single element and it's zero
                 if all(s == 0 for s in self.subset.min_element()):
                     arrayNotation = False
         except TypeError:

@@ -1471,7 +1471,6 @@ class Pipeline(dace.graph.nodes.Map):
         self.init_overlap = init_overlap
         self.drain_size = drain_size
         self.drain_overlap = drain_overlap
-        self.flatten = True
 
     def iterator_str(self):
         return "__" + "".join(self.params)
