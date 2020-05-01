@@ -3005,28 +3005,16 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         return s
 
-    def _map_from_ndrange(self,
-                          name,
-                          schedule,
-                          unroll,
-                          ndrange,
-                          debuginfo=None):
+    def _make_iterators(self, ndrange):
         # Input can either be a dictionary or a list of pairs
         if isinstance(ndrange, list):
             params = [k for k, v in ndrange]
             ndrange = {k: v for k, v in ndrange}
         else:
             params = list(ndrange.keys())
-
         map_range = properties.SubsetProperty.from_string(", ".join(
             [ndrange[p] for p in params]))
-        map = nd.Map(name,
-                     params,
-                     map_range,
-                     schedule,
-                     unroll,
-                     debuginfo=debuginfo)
-        return map
+        return params, map_range
 
     def add_map(
             self,
@@ -3046,11 +3034,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = getdebuginfo(debuginfo)
-        map = self._map_from_ndrange(name,
-                                     schedule,
-                                     unroll,
-                                     ndrange,
-                                     debuginfo=debuginfo)
+        map = nd.Map(name,
+                     *self._make_iterators(ndrange),
+                     schedule=schedule,
+                     unroll=unroll,
+                     debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, map_exit])
@@ -3096,6 +3084,46 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         self.add_nodes_from([entry, exit])
         return entry, exit
+
+    def add_pipeline(
+            self,
+            name,
+            ndrange,
+            init_size=0,
+            init_overlap=False,
+            drain_size=0,
+            drain_overlap=False,
+            schedule=dace.dtypes.ScheduleType.FPGA_Device,
+            debuginfo=None,
+            **kwargs
+    ) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
+        """ Adds a pipeline entry and pipeline exit.
+            :param name:          Pipeline label
+            :param ndrange:       Mapping between range variable names and
+                                  their subsets (parsed from strings)
+            :param init_size:     Number of iterations of initialization phase.
+            :param init_overlap:  Whether the initialization phase overlaps
+                                  with the "main" streaming phase of the loop.
+            :param drain_size:    Number of iterations of draining phase.
+            :param drain_overlap: Whether the draining phase overlaps with
+                                  the "main" streaming phase of the loop.
+
+            :return: (map_entry, map_exit) node 2-tuple
+        """
+        debuginfo = getdebuginfo(debuginfo)
+        pipeline = nd.Pipeline(name,
+                               *self._make_iterators(ndrange),
+                               init_size=init_size,
+                               init_overlap=init_overlap,
+                               drain_size=drain_size,
+                               drain_overlap=drain_overlap,
+                               schedule=schedule,
+                               debuginfo=debuginfo,
+                               **kwargs)
+        pipeline_entry = nd.PipelineEntry(pipeline)
+        pipeline_exit = nd.PipelineExit(pipeline)
+        self.add_nodes_from([pipeline_entry, pipeline_exit])
+        return pipeline_entry, pipeline_exit
 
     def add_mapped_tasklet(
             self,
@@ -3163,11 +3191,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             location=location,
             debuginfo=debuginfo,
         )
-        map = self._map_from_ndrange(map_name,
-                                     schedule,
-                                     unroll_map,
-                                     map_ranges,
-                                     debuginfo=debuginfo)
+        map = nd.Map(map_name,
+                     *self._make_iterators(ndrange),
+                     schedule=schedule,
+                     unroll=unroll_map,
+                     debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, tasklet, map_exit])

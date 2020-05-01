@@ -928,7 +928,9 @@ class FPGACodeGen(TargetCodeGenerator):
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(x, (dace.graph.nodes.MapEntry, PipelineEntry))):
+            if (isinstance(
+                    x,
+                (dace.graph.nodes.MapEntry, dace.graph.nodes.PipelineEntry))):
                 if not x.unroll:
                     return False
                 to_search += scope_dict[x]
@@ -963,7 +965,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
-            if isinstance(node, PipelineEntry):
+            if isinstance(node, dace.graph.nodes.PipelineEntry):
                 for i in range(len(node.map.range)):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
@@ -978,7 +980,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
                                                    node)
             # Generate nested loops
-            if not isinstance(node, PipelineEntry):
+            if not isinstance(node, dace.graph.nodes.PipelineEntry):
                 for i, r in enumerate(node.map.range):
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1093,7 +1095,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # This was generated as unrolled processing elements, no need to
             # generate anything here
             return
-        if isinstance(node, PipelineExit):
+        if isinstance(node, dace.graph.nodes.PipelineExit):
             flat_it = node.pipeline.iterator_str()
             bound = node.pipeline.loop_bound_str()
             pipeline = node.pipeline
@@ -1408,101 +1410,3 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                                                None, host_code_stream)
             self._dispatcher.dispatch_initialize(sdfg, state, None, arr_node,
                                                  None, host_code_stream)
-
-
-# ------------------------------------------------------------------------------
-
-
-@dace.serialize.serializable
-class PipelineEntry(dace.graph.nodes.MapEntry):
-    @staticmethod
-    def map_type():
-        return Pipeline
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@dace.serialize.serializable
-class PipelineExit(dace.graph.nodes.MapExit):
-    @staticmethod
-    def map_type():
-        return Pipeline
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@make_properties
-class Pipeline(dace.graph.nodes.Map):
-    """ This a convenience-subclass of Map that allows easier implementation of
-        loop nests (using regular Map indices) that need a constant-sized
-        initialization and drain phase (e.g., N*M + c iterations), which would
-        otherwise need a flattened one-dimensional map.
-    """
-    init_size = Property(dtype=int,
-                         desc="Number of initialization iterations.")
-    init_overlap = Property(
-        dtype=int,
-        desc="Whether to increment regular map indices during initialization.")
-    drain_size = Property(dtype=int, desc="Number of drain iterations.")
-    drain_overlap = Property(
-        dtype=int,
-        desc="Whether to increment regular map indices during pipeline drain.")
-
-    def __init__(self,
-                 *args,
-                 init_size=0,
-                 init_overlap=False,
-                 drain_size=0,
-                 drain_overlap=False,
-                 **kwargs):
-        super(Pipeline, self).__init__(*args, **kwargs)
-        self.init_size = init_size
-        self.init_overlap = init_overlap
-        self.drain_size = drain_size
-        self.drain_overlap = drain_overlap
-        self.flatten = True
-
-    def iterator_str(self):
-        return "__" + "".join(self.params)
-
-    def loop_bound_str(self):
-        bound = 1
-        for begin, end, step in self.range:
-            bound *= (step + end - begin) // step
-        # Add init and drain phases when relevant
-        add_str = (" + " + sym2cpp(self.init_size)
-                   if self.init_size != 0 and not self.init_overlap else "")
-        add_str += (" + " + sym2cpp(self.drain_size)
-                    if self.drain_size != 0 and not self.drain_overlap else "")
-        return sym2cpp(bound) + add_str
-
-    def init_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           initialization phase."""
-        if self.init_size <= 0:
-            raise ValueError("No init condition exists for " + self.label)
-        return self.iterator_str() + "_init"
-
-    def drain_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           draining phase."""
-        if self.drain_size <= 0:
-            raise ValueError("No drain condition exists for " + self.label)
-        return self.iterator_str() + "_drain"
-
-
-PipelineEntry = indirect_properties(Pipeline,
-                                    lambda obj: obj.map)(PipelineEntry)
-
