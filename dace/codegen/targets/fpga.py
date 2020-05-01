@@ -1130,9 +1130,9 @@ class FPGACodeGen(TargetCodeGenerator):
             bound = node.pipeline.loop_bound_str()
             pipeline = node.pipeline
             cond = []
-            if pipeline.init_size > 0 and pipeline.init_overlap == False:
+            if pipeline.init_size != 0 and pipeline.init_overlap == False:
                 cond.append("!" + pipeline.init_condition())
-            if pipeline.drain_size > 0 and pipeline.drain_overlap == False:
+            if pipeline.drain_size != 0 and pipeline.drain_overlap == False:
                 cond.append("!" + pipeline.drain_condition())
             if len(cond) > 0:
                 callsite_stream.write("if ({}) {{".format(" && ".join(cond)))
