@@ -1,4 +1,5 @@
 import ast
+import copy
 import itertools
 import os
 import re
@@ -1053,6 +1054,7 @@ __kernel void \\
 
         used_streams = []
         for stmt in body:  # for each statement in tasklet body
+            stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
                 sdfg, self._dispatcher.defined_vars, memlets,
                 self._memory_widths, sdfg.constants)

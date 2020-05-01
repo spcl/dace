@@ -605,6 +605,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg,
                           state_id, node)
     for stmt in body:
+        stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
             rk = DaCeKeywordRemover(sdfg, memlets,
