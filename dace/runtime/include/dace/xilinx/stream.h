@@ -47,13 +47,13 @@ class FIFO {
   template <typename U>
   void push_blocking(U&& val) {
     #pragma HLS INLINE
-    return stream_.WriteBlocking(std::forward<U>(val));
+    stream_.WriteBlocking(std::forward<U>(val));
   }
 
   template <typename U>
   void push(U&& val) {
     #pragma HLS INLINE
-    return push_blocking(val);
+    push_blocking(val);
   }
 
   // ArrayView-compatible interface
@@ -61,7 +61,7 @@ class FIFO {
   template <typename U>
   void write(U&& val) {
     #pragma HLS INLINE
-    return push(std::forward<U>(val));
+    push(std::forward<U>(val));
   }
 
   template <typename U>

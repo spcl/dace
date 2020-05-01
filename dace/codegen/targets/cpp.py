@@ -94,9 +94,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
                                     src_node,
                                     dst_node,
                                     packed_types=False):
-    # Ignore vectorization flag is a hack to accommmodate FPGA behavior,
-    # where the pointer type is changed to a vector type, and addresses
-    # thus shouldn't take vectorization into account.
+    # TODO: Take both source and destination subset into account for computing
+    # copy shape.
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
