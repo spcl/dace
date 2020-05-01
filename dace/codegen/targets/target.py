@@ -197,6 +197,13 @@ class DefinedMemlets:
                 "Exited scope {} mismatched current scope {}".format(
                     parent.name, expected.name))
 
+    def has(self, name):
+        try:
+            self.get(name)
+            return True
+        except KeyError:
+            return False
+
     def get(self, name):
         for _, scope in reversed(self._scopes):
             if name in scope:

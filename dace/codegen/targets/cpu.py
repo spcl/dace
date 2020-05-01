@@ -212,7 +212,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                        packed_types=self._packed_types)
                 threadlocal = ""
                 threadlocal_stores = [
-                    dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register
+                    dtypes.StorageType.CPU_ThreadLocal,
+                    dtypes.StorageType.Register
                 ]
                 if (sdfg.arrays[nodedesc.sink].storage in threadlocal_stores
                         or nodedesc.storage in threadlocal_stores):
@@ -245,7 +246,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # TODO: immaterial arrays should not allocate memory
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or nodedesc.storage == dtypes.StorageType.Immaterial
-              or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
+              or (nodedesc.storage == dtypes.StorageType.Register
+                  and symbolic.issymbolic(arrsize, sdfg.constants))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
                 warnings.warn('Variable-length array %s with size %s '
@@ -262,6 +264,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 node,
             )
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
+
             if node.setzero:
                 callsite_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
@@ -287,6 +290,38 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
             return
+        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+            # Define pointer once
+            # NOTE: OpenMP threadprivate storage MUST be declared globally.
+            if not self._dispatcher.defined_vars.has(name):
+                function_stream.write(
+                    "{ctype} *{name};\n#pragma omp threadprivate({name})".
+                    format(ctype=nodedesc.dtype.ctype, name=name),
+                    sdfg,
+                    state_id,
+                    node,
+                )
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer)
+
+            # Allocate in each OpenMP thread
+            callsite_stream.write(
+                """
+                #pragma omp parallel
+                {{
+                    {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(
+                    ctype=nodedesc.dtype.ctype,
+                    name=name,
+                    arrsize=sym2cpp(arrsize)),
+                sdfg,
+                state_id,
+                node,
+            )
+            if node.setzero:
+                callsite_stream.write(
+                    "memset(%s, 0, sizeof(%s)*%s);" %
+                    (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
+            # Close OpenMP parallel section
+            callsite_stream.write('}')
         else:
             raise NotImplementedError("Unimplemented storage type " +
                                       str(nodedesc.storage))
@@ -360,9 +395,20 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register
-               and symbolic.issymbolic(arrsize, sdfg.constants))):
+                  and symbolic.issymbolic(arrsize, sdfg.constants))):
             callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
                                   node)
+        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+            # Deallocate in each OpenMP thread
+            callsite_stream.write(
+                """#pragma omp parallel
+                {{
+                    delete[] {name};
+                }}""".format(name=node.data),
+                sdfg,
+                state_id,
+                node,
+            )
         else:
             return
 
