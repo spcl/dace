@@ -2,6 +2,7 @@
 
 #include "hlslib/xilinx/Simulation.h"
 #include "hlslib/xilinx/Utility.h"
+#include "hlslib/xilinx/ShiftRegister.h"
 
 #include "dace/copy.h"
 #include "dace/types.h"

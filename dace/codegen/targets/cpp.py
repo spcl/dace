@@ -70,6 +70,9 @@ def copy_expr(
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
 
+    elif def_type == DefinedType.ShiftRegister:
+        return expr
+
     elif def_type in [
             DefinedType.Scalar, DefinedType.Stream, DefinedType.StreamView
     ]:

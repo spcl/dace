@@ -392,7 +392,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         memory_widths[key] = edge.data.veclen
                     else:
                         if (memory_widths[key] is not None
-                                and memory_widths[key] != edge.data.veclen):
+                                and memory_widths[key] != edge.data.veclen
+                                and desc.storage !=
+                                dace.StorageType.ShiftRegister):
                             # If the vector length is inconsistent, set it to 1
                             memory_widths[key] = 1
         # Inherit the parent memory width for all aliased nested arrays
@@ -555,12 +557,21 @@ class FPGACodeGen(TargetCodeGenerator):
                                                       DefinedType.Scalar)
                 else:
                     # Language-specific
-                    self.define_local_array(nodedesc.dtype, veclen, dataname,
-                                            arrsize_vec, nodedesc.storage,
-                                            nodedesc.shape, function_stream,
-                                            result, sdfg, state_id, node)
-                    self._dispatcher.defined_vars.add(dataname,
-                                                      DefinedType.Pointer)
+                    if (nodedesc.storage ==
+                            dace.dtypes.StorageType.ShiftRegister):
+                        self.define_shift_register(nodedesc.dtype, veclen,
+                                                   dataname, arrsize_vec,
+                                                   nodedesc.storage,
+                                                   nodedesc.shape,
+                                                   function_stream, result,
+                                                   sdfg, state_id, node)
+                    else:
+                        self.define_local_array(nodedesc.dtype, veclen,
+                                                dataname, arrsize_vec,
+                                                nodedesc.storage,
+                                                nodedesc.shape,
+                                                function_stream, result, sdfg,
+                                                state_id, node)
 
             else:
                 raise NotImplementedError("Unimplemented storage type " +

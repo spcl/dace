@@ -2,6 +2,7 @@ import collections
 import itertools
 import os
 import re
+import numpy as np
 
 import dace
 from dace import registry
@@ -159,19 +160,79 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
-    @staticmethod
-    def define_local_array(dtype, vector_length, var_name, array_size, storage,
-                           shape, function_stream, kernel_stream, sdfg,
-                           state_id, node):
+    def define_local_array(self, dtype, vector_length, var_name, array_size,
+                           storage, shape, function_stream, kernel_stream,
+                           sdfg, state_id, node):
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
             dtype.ctype, vector_length, var_name, cpp.sym2cpp(array_size)))
         if storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "complete\n".format(var_name))
+            kernel_stream.write(
+                "#pragma HLS ARRAY_PARTITION variable={} "
+                "complete\n".format(var_name), node, state_id, sdfg)
         elif len(shape) > 1:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "block factor={}\n".format(
-                                    var_name, shape[-2]))
+            kernel_stream.write(
+                "#pragma HLS ARRAY_PARTITION variable={} "
+                "block factor={}\n".format(var_name, shape[-2]), node,
+                state_id, sdfg)
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+
+    def _find_shift_register_accesses(self, sdfg, dfg, node, shift_width):
+        name = node.data
+        accesses = set()
+        to_search = list(dfg.out_edges(node))
+        unrolled_indices = {}
+        constants = sdfg.constants
+        for k, v in constants.items():
+            unrolled_indices[k] = [v]
+        while len(to_search) > 0:
+            e = to_search.pop()
+            if isinstance(
+                    e.dst,
+                (dace.graph.nodes.Tasklet, dace.graph.nodes.AccessNode)):
+                subset = e.data.subset
+                expr = (subset.at([0] * len(subset), subset.strides()) //
+                        shift_width)
+                symbols = [str(s) for s in expr.free_symbols]
+                for perm in itertools.product(*(unrolled_indices[s]
+                                                for s in symbols)):
+                    # Add every index of unrolled maps encountered
+                    accesses.add(
+                        dace.symbolic.evaluate(
+                            expr, {k: v
+                                   for k, v in zip(symbols, perm)}))
+            if isinstance(e.dst, dace.graph.nodes.EntryNode):
+                if e.dst.unroll:
+                    for i, rng in zip(e.dst.params, e.dst.range):
+                        unrolled_indices[str(i)] = np.arange(
+                            dace.symbolic.evaluate(rng[0], constants),
+                            dace.symbolic.evaluate(rng[1] + 1, constants),
+                            dace.symbolic.evaluate(rng[2], constants))
+            if isinstance(e.dst, dace.graph.nodes.NestedSDFG):
+                raise NotImplementedError("Shift register access inference "
+                                          "not implemented for nested reads.")
+            for ee in dfg.out_edges(e.dst):
+                if ee.data.data == name:
+                    to_search.append(ee)
+        return accesses
+
+    def define_shift_register(self, dtype, vector_length, var_name, array_size,
+                              storage, shape, function_stream, kernel_stream,
+                              sdfg, state_id, node):
+        state = sdfg.find_state(state_id)
+        # The vector length is determined by the write only
+        in_edges = state.in_edges(node)
+        if len(in_edges) != 1:
+            raise ValueError(
+                "Only one write supported for Xilinx shift registers.")
+        shift_width = in_edges[0].data.veclen
+        # We need to track down all accesses to this array
+        accesses = self._find_shift_register_accesses(sdfg, state, node,
+                                                      shift_width)
+        access_args = ", ".join(map(str, sorted(accesses)))
+        kernel_stream.write(
+            "hlslib::ShiftRegister<dace::vec<{}, {}>, {}> {};".format(
+                dtype, shift_width, access_args, var_name))
+        self._dispatcher.defined_vars.add(var_name, DefinedType.ShiftRegister)
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
@@ -272,6 +333,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             else:
                 return "dace::Write<{}, {}>({}, {});".format(
                     type_str, vector_length, write_expr, read_expr)
+
+    def make_shift_register_write(self, defined_type, type_str, var_name,
+                                  vector_length, write_expr, index, read_expr,
+                                  wcr, is_unpack, packing_factor):
+        return "{}.Shift({});".format(var_name, read_expr)
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
@@ -784,5 +850,17 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
-        self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node,
-                                      edge, None, callsite_stream)
+        memlet = edge.data
+        if (self._dispatcher.defined_vars.get(
+                memlet.data) == DefinedType.ShiftRegister):
+            offset = dace.codegen.targets.cpp.cpp_offset_expr(
+                sdfg.data(memlet.data),
+                memlet.subset,
+                packed_veclen=self._memory_widths[(memlet.data, sdfg)])
+            callsite_stream.write(
+                "dace::vec<{}, {}> {} = {}.Get<{}>();".format(
+                    sdfg.data(edge.data.data).dtype.ctype, edge.data.veclen,
+                    edge.dst_conn, edge.data.data, offset))
+        else:
+            self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node,
+                                          edge, None, callsite_stream)

@@ -179,6 +179,7 @@ class DefinedType(aenum.AutoNumberEnum):
     Stream = ()
     StreamArray = ()
     StreamView = ()
+    ShiftRegister = ()
 
 
 class DefinedMemlets:

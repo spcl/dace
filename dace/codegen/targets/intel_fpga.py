@@ -181,6 +181,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes,
                                                     var_name,
                                                     cpp.sym2cpp(array_size)))
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+
+    def define_shift_register(*args, **kwargs):
+        # Shift registers are just arrays on Intel
+        self.define_local_array(*args, **kwargs)
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
