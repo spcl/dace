@@ -458,6 +458,14 @@ class SDFG(OrderedDiGraph):
         except StopIteration:
             return False
 
+    @property
+    def build_folder(self) -> str:
+        """ Returns a relative path to the build cache folder for this SDFG. """
+        if Config.get_bool('testing', 'single_cache'):
+            return os.path.join('.dacecache', 'test')
+        else:
+            return os.path.join('.dacecache', self.name)
+
     def get_instrumentation_reports(self) -> \
             List['dace.codegen.instrumentation.InstrumentationReport']:
         """
@@ -468,7 +476,7 @@ class SDFG(OrderedDiGraph):
         # Avoid import loops
         from dace.codegen.instrumentation import InstrumentationReport
 
-        path = os.path.join('.dacecache', self.name, 'perf')
+        path = os.path.join(self.build_folder, 'perf')
         return [
             InstrumentationReport(os.path.join(path, fname))
             for fname in os.listdir(path) if fname.startswith('report-')
@@ -482,7 +490,7 @@ class SDFG(OrderedDiGraph):
         :return: A timestamped InstrumentationReport object, or None if does
                  not exist.
         """
-        path = os.path.join('.dacecache', self.name, 'perf')
+        path = os.path.join(self.build_folder, 'perf')
         files = [f for f in os.listdir(path) if f.startswith('report-')]
         if len(files) == 0:
             return None
@@ -673,7 +681,8 @@ class SDFG(OrderedDiGraph):
         """ Alias that returns the nodes (states) in this SDFG. """
         return self.nodes()
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
+    def all_nodes_recursive(
+            self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
         """ Iterate over all nodes in this SDFG, including states, nodes in
             states, and recursive states and nodes within nested SDFGs,
             returning tuples on the form (node, parent), where the parent is
@@ -1572,8 +1581,8 @@ class SDFG(OrderedDiGraph):
 
         if Config.get_bool("compiler", "use_cache"):
             # Try to see if a cached version of the binary exists
-            # print("looking for cached binary: " + compiler.get_binary_name(self.name))
-            binary_filename = compiler.get_binary_name(self.name)
+            binary_filename = compiler.get_binary_name(self.build_folder,
+                                                       self.name)
             if os.path.isfile(binary_filename):
                 # print("A cached binary was found!")
                 return compiler.load_from_file(self, binary_filename)
@@ -1607,10 +1616,11 @@ class SDFG(OrderedDiGraph):
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            sdfg, program_objects, os.path.join(".dacecache", sdfg.name))
+            sdfg, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder)
+        shared_library = compiler.configure_and_compile(
+            program_folder, sdfg.name)
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -2047,7 +2057,6 @@ class SDFG(OrderedDiGraph):
         return dace.Memlet.from_array(array, self.arrays[array])
 
 
-
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
     def memlet_path(self,
@@ -2194,6 +2203,7 @@ class MemletTrackingView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
 
 def trace_nested_access(node, state, sdfg):
     """ Given an AccessNode in a nested SDFG, trace the accessed memory
@@ -3137,11 +3147,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: A Reduce node
         """
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr,
-                           axes,
-                           identity,
-                           schedule,
-                           debuginfo=debuginfo)
+        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3890,7 +3896,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() -
+                              defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %

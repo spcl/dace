@@ -147,7 +147,7 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name,
+                'dace::perf::report.save("%s/perf");' % sdfg.build_folder,
                 sdfg)
 
         # Write closing brace of program
@@ -593,11 +593,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream.write(
             "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
 
-    def generate_code(self,
-                      sdfg: SDFG,
-                      schedule: Optional[dtypes.ScheduleType],
-                      sdfg_id: str = ""
-                      ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+    def generate_code(
+        self,
+        sdfg: SDFG,
+        schedule: Optional[dtypes.ScheduleType],
+        sdfg_id: str = ""
+    ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.

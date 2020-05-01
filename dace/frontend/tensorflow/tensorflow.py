@@ -140,14 +140,14 @@ class TFSession:
         pass
 
     def train(
-            self,
-            optimizer,
-            initializer,
-            iterations,
-            feed_dict,
-            gpu=False,
-            nodes=None,
-            output_gradients=False,
+        self,
+        optimizer,
+        initializer,
+        iterations,
+        feed_dict,
+        gpu=False,
+        nodes=None,
+        output_gradients=False,
     ):
         """ Trains a subgraph for the specified number of iterations and 
             returns requested nodes after training.
@@ -411,119 +411,95 @@ class TFSession:
             for node in total_nodes
         ]
 
-        if Config.get_bool("compiler", "use_cache"):
-            sdfg_filename = os.path.join(".dacecache", name, "program.sdfg")
-            sdfg_args_filename = os.path.join(".dacecache", name,
-                                              "sdfg_args.pickle")
-            assert os.path.isfile(sdfg_filename)
-            self.graph = SDFG.from_file(sdfg_filename)
-            handle = open(sdfg_args_filename, "rb")
-            sdfg_args = pickle.load(handle)
-            compiled_sdfg = self.graph.compile(optimizer=False)
-            ############################
-            # Create output numpy arrays
+        # Initialize a new SDFG
+        self.graph = SDFG(name)
+        self.graph.propagate = False
+        self.state = SDFGState("s0", self.graph)
+        self.graph.add_node(self.state)
+        self.visitedNodes.clear()
+        ############################
 
-            outputs = {
-                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-                for node, name in zip(total_nodes, total_output_names)
-                if name is not None and name not in sdfg_args
-            }
-            outputs.update({
-                k: v
-                for k, v in sdfg_args.items() if k in total_output_names
-            })
-        else:
-            # Initialize a new SDFG
-            self.graph = SDFG(name)
-            self.graph.propagate = False
-            self.state = SDFGState("s0", self.graph)
-            self.graph.add_node(self.state)
-            self.visitedNodes.clear()
-            ############################
+        ops = [
+            node if isinstance(node, tf.Operation) else node.op
+            for node in total_nodes
+        ]
+        self.kill = False
+        self.visit_backwards(ops)
+        if self.kill:
+            raise NotImplementedError("Nodes listed above are not implemented")
+        ############################
 
-            ops = [
-                node if isinstance(node, tf.Operation) else node.op
-                for node in total_nodes
-            ]
-            self.kill = False
-            self.visit_backwards(ops)
-            if self.kill:
-                raise NotImplementedError(
-                    "Nodes listed above are not implemented")
-            ############################
+        # Remove orphan nodes and register node types
+        node_types = {}
+        for state in self.graph.nodes():
+            for node in state.nodes():
+                if state.in_degree(node) + state.out_degree(node) == 0:
+                    state.remove_node(node)
+                    if node.label in self.constDict:
+                        del self.constDict[node.label]
+                elif isinstance(node, dace.graph.nodes.AccessNode):
+                    node_types[node.data] = node.desc(self.graph).dtype.type
+        self.graph._arg_types.update(self.callbackTypeDict)
+        self.graph.fill_scope_connectors()
+        ############################
+        # Set up arguments
+        sdfg_args = {}
+        sdfg_args.update(self.constDict)
+        sdfg_args.update(self.varDict)
+        sdfg_args.update(self.inpDict)
+        sdfg_args.update(self.initDict)
+        # Set scalar arguments to appropriate arrays of size 1
+        sdfg_args.update({
+            k:
+            (v if isinstance(v, np.ndarray) else np.array(v,
+                                                          dtype=node_types[k]))
+            for k, v in sdfg_args.items()
+        })
 
-            # Remove orphan nodes and register node types
-            node_types = {}
-            for state in self.graph.nodes():
-                for node in state.nodes():
-                    if state.in_degree(node) + state.out_degree(node) == 0:
-                        state.remove_node(node)
-                        if node.label in self.constDict:
-                            del self.constDict[node.label]
-                    elif isinstance(node, dace.graph.nodes.AccessNode):
-                        node_types[node.data] = node.desc(
-                            self.graph).dtype.type
-            self.graph._arg_types.update(self.callbackTypeDict)
-            self.graph.fill_scope_connectors()
-            ############################
-            # Set up arguments
-            sdfg_args = {}
-            sdfg_args.update(self.constDict)
-            sdfg_args.update(self.varDict)
-            sdfg_args.update(self.inpDict)
-            sdfg_args.update(self.initDict)
-            # Set scalar arguments to appropriate arrays of size 1
-            sdfg_args.update({
-                k: (v if isinstance(v, np.ndarray) else np.array(
-                    v, dtype=node_types[k]))
-                for k, v in sdfg_args.items()
-            })
+        ############################
+        # Create output numpy arrays
+        outputs = {
+            name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
+            for node, name in zip(total_nodes, total_output_names)
+            if name is not None and name not in sdfg_args
+        }
+        outputs.update(
+            {k: v
+             for k, v in sdfg_args.items() if k in total_output_names})
+        sdfg_args.update(outputs)
+        ############################
+        # Mark outputs as non-transients
+        for output in outputs:
+            self.graph.arrays[output].transient = False
+        ############################
+        # Compile the SDFG
+        if gpu:
+            #    self.graph.apply_gpu_transformations()
+            for aname, array in self.graph.arrays.items():
+                if array is None:
+                    continue
+                if array.storage in [
+                        dace.StorageType.Default,
+                        dace.StorageType.CPU_Heap,
+                ]:
+                    array.storage = dace.StorageType.CPU_Pinned
 
-            ############################
-            # Create output numpy arrays
-            outputs = {
-                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-                for node, name in zip(total_nodes, total_output_names)
-                if name is not None and name not in sdfg_args
-            }
-            outputs.update({
-                k: v
-                for k, v in sdfg_args.items() if k in total_output_names
-            })
-            sdfg_args.update(outputs)
-            ############################
-            # Mark outputs as non-transients
-            for output in outputs:
-                self.graph.arrays[output].transient = False
-            ############################
-            # Compile the SDFG
-            if gpu:
-                #    self.graph.apply_gpu_transformations()
-                for aname, array in self.graph.arrays.items():
-                    if array is None:
-                        continue
-                    if array.storage in [
-                            dace.StorageType.Default,
-                            dace.StorageType.CPU_Heap,
-                    ]:
-                        array.storage = dace.StorageType.CPU_Pinned
+            # Modify sdfg_args
+            # import numba.cuda
 
-                # Modify sdfg_args
-                # import numba.cuda
+            # for aname, arg in sdfg_args.items():
+            #    if isinstance(arg, np.ndarray):
+            #        sdfg_args[aname] = numba.cuda.pinned_array(
+            #            arg.shape, dtype=arg.dtype, strides=arg.strides
+            #        )
+            #        sdfg_args[aname][:] = arg
 
-                # for aname, arg in sdfg_args.items():
-                #    if isinstance(arg, np.ndarray):
-                #        sdfg_args[aname] = numba.cuda.pinned_array(
-                #            arg.shape, dtype=arg.dtype, strides=arg.strides
-                #        )
-                #        sdfg_args[aname][:] = arg
-
-            if patterns and len(patterns) > 0:
-                self.graph.apply_transformations(patterns,
-                                                 validate=validate,
-                                                 strict=strict)
-            compiled_sdfg = self.graph.compile(optimizer=False)
-            sdfg_args.update(self.callbackFunctionDict)
+        if patterns and len(patterns) > 0:
+            self.graph.apply_transformations(patterns,
+                                             validate=validate,
+                                             strict=strict)
+        compiled_sdfg = self.graph.compile(optimizer=False)
+        sdfg_args.update(self.callbackFunctionDict)
 
         ############################
         # Create the function that invokes the SDFG
@@ -563,15 +539,15 @@ class TFSession:
         return call_func
 
     def run(
-            self,
-            nodes,
-            feed_dict=None,
-            gpu=False,
-            transformations=None,
-            validate=False,
-            strict=True,
-            name=None,
-            winograd=False,
+        self,
+        nodes,
+        feed_dict=None,
+        gpu=False,
+        transformations=None,
+        validate=False,
+        strict=True,
+        name=None,
+        winograd=False,
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
@@ -3772,16 +3748,16 @@ class TFSession:
                 state.add_edge(otherNode, None, tasklet, None, innerMemlet)
 
     def add_out_memlets(
-            self,
-            outputList,
-            otherNode,
-            tasklet,
-            outputDims,
-            outputParams,
-            wcr=None,
-            wcr_identity=None,
-            identifier="out",
-            wcr_conflict=True,
+        self,
+        outputList,
+        otherNode,
+        tasklet,
+        outputDims,
+        outputParams,
+        wcr=None,
+        wcr_identity=None,
+        identifier="out",
+        wcr_conflict=True,
     ):
         """ Convenience function that adds two memlets for each output of the 
             node: external and internal to a given map.

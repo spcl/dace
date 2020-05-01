@@ -557,6 +557,14 @@ required:
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
 
+            single_cache:
+                type: bool
+                default: false
+                title: Use one build folder
+                description: >
+                    When generating code, use a single build folder as cache.
+                    Speeds up build time but disallows concurrent invocations.
+
     #############################################
     # DaCe library settings 
 
