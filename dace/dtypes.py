@@ -75,7 +75,7 @@ class AllocationLifetime(aenum.AutoNumberEnum):
     Scope = ()  # Allocated/Deallocated on innermost scope start/end
     State = ()  # Allocated throughout the containing state
     SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
-    TopLevel_SDFG = ()  # Allocated throughout the entire program (outer SDFG)
+    Global = ()  # Allocated throughout the entire program (outer SDFG)
     Persistent = ()  # Allocated throughout multiple invocations (init/exit)
 
 
