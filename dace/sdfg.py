@@ -3192,7 +3192,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             debuginfo=debuginfo,
         )
         map = nd.Map(map_name,
-                     *self._make_iterators(ndrange),
+                     *self._make_iterators(map_ranges),
                      schedule=schedule,
                      unroll=unroll_map,
                      debuginfo=debuginfo)
