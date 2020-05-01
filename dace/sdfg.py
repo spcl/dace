@@ -29,7 +29,7 @@ from dace.dtypes import validate_name
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
-                             DictProperty, OrderedDictProperty)
+                             DictProperty, OrderedDictProperty, CodeBlock)
 
 
 def getcaller() -> Tuple[str, int]:
@@ -197,11 +197,13 @@ class SDFG(OrderedDiGraph):
     global_code = CodeProperty(
         desc=
         "Code generated in a global scope on the frame-code generated file.",
-        default="")
+        default=CodeBlock("", dtypes.Language.CPP))
     init_code = CodeProperty(
-        desc="Code generated in the `__dapp_init` function.", default="")
+        desc="Code generated in the `__dace_init` function.",
+        default=CodeBlock("", dtypes.Language.CPP))
     exit_code = CodeProperty(
-        desc="Code generated in the `__dapp_exit` function.", default="")
+        desc="Code generated in the `__dace_exit` function.",
+        default=CodeBlock("", dtypes.Language.CPP))
 
     def __init__(self,
                  name: str,
@@ -238,9 +240,6 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
-        self.global_code = ''
-        self.init_code = ''
-        self.exit_code = ''
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -375,10 +374,9 @@ class SDFG(OrderedDiGraph):
             replace_dict(edge.data.assignments, name, new_name)
             for k, v in edge.data.assignments.items():
                 edge.data.assignments[k] = v.replace(name, new_name)
-            condition = CodeProperty.to_string(edge.data.condition)
-            edge.data.condition = condition.replace(name, new_name)
-            # for k, v in edge.data.condition.items():
-            #     edge.data.condition[k] = v.replace(name, new_name)
+            condition = edge.data.condition
+            edge.data.condition.as_string = condition.as_string.replace(
+                name, new_name)
 
         # Replace in states
         for state in self.nodes():
@@ -425,24 +423,15 @@ class SDFG(OrderedDiGraph):
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        self.global_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     def set_init_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dapp_init` function. """
-        self.init_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        """ Sets C++ code, generated in the `__dace_init` function. """
+        self.init_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     def set_exit_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dapp_exit` function. """
-        self.exit_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        """ Sets C++ code, generated in the `__dace_exit` function. """
+        self.exit_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     ##########################################
     # Instrumentation-related methods
@@ -539,13 +528,13 @@ class SDFG(OrderedDiGraph):
     def sdfg_list(self):
         return self._sdfg_list
 
-    def set_sourcecode(self, code, lang=None):
+    def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
             :param code: A string of source code.
             :param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        self.sourcecode = {'code_or_block': code, 'language': lang}
+        self.sourcecode = {'code': code, 'language': lang}
 
     @property
     def name(self):
@@ -673,7 +662,8 @@ class SDFG(OrderedDiGraph):
         """ Alias that returns the nodes (states) in this SDFG. """
         return self.nodes()
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
+    def all_nodes_recursive(
+            self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
         """ Iterate over all nodes in this SDFG, including states, nodes in
             states, and recursive states and nodes within nested SDFGs,
             returning tuples on the form (node, parent), where the parent is
@@ -1212,11 +1202,12 @@ class SDFG(OrderedDiGraph):
                   transient=False,
                   strides=None,
                   offset=None,
-                  toplevel=False,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
                   debuginfo=None,
                   allow_conflicts=False,
                   total_size=None,
-                  find_new_name=False):
+                  find_new_name=False,
+                  alignment=0):
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1252,7 +1243,8 @@ class SDFG(OrderedDiGraph):
                         transient=transient,
                         strides=strides,
                         offset=offset,
-                        toplevel=toplevel,
+                        lifetime=lifetime,
+                        alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size)
 
@@ -1268,7 +1260,7 @@ class SDFG(OrderedDiGraph):
                    storage=dtypes.StorageType.Default,
                    transient=False,
                    offset=None,
-                   toplevel=False,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
                    find_new_name=False):
         """ Adds a stream to the SDFG data descriptor store. """
@@ -1296,7 +1288,7 @@ class SDFG(OrderedDiGraph):
             storage=storage,
             transient=transient,
             offset=offset,
-            toplevel=toplevel,
+            lifetime=lifetime,
             debuginfo=debuginfo,
         )
 
@@ -1308,7 +1300,7 @@ class SDFG(OrderedDiGraph):
                    dtype,
                    storage=dtypes.StorageType.Default,
                    transient=False,
-                   toplevel=False,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
                    find_new_name=False):
         """ Adds a scalar to the SDFG data descriptor store. """
@@ -1331,7 +1323,7 @@ class SDFG(OrderedDiGraph):
             dtype,
             storage=storage,
             transient=transient,
-            toplevel=toplevel,
+            lifetime=lifetime,
             debuginfo=debuginfo,
         )
 
@@ -1346,11 +1338,12 @@ class SDFG(OrderedDiGraph):
                       materialize_func=None,
                       strides=None,
                       offset=None,
-                      toplevel=False,
+                      lifetime=dace.dtypes.AllocationLifetime.Scope,
                       debuginfo=None,
                       allow_conflicts=False,
                       total_size=None,
-                      find_new_name=False):
+                      find_new_name=False,
+                      alignment=0):
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1361,10 +1354,11 @@ class SDFG(OrderedDiGraph):
                               True,
                               strides,
                               offset,
-                              toplevel=toplevel,
+                              lifetime=dace.dtypes.AllocationLifetime.Scope,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
+                              alignment=alignment,
                               find_new_name=find_new_name)
 
     def temp_data_name(self):
@@ -1385,10 +1379,11 @@ class SDFG(OrderedDiGraph):
                            materialize_func=None,
                            strides=None,
                            offset=None,
-                           toplevel=False,
+                           lifetime=dace.dtypes.AllocationLifetime.Scope,
                            debuginfo=None,
                            allow_conflicts=False,
-                           total_size=None):
+                           total_size=None,
+                           alignment=0):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         return self.add_array(self.temp_data_name(),
@@ -1399,7 +1394,8 @@ class SDFG(OrderedDiGraph):
                               True,
                               strides,
                               offset,
-                              toplevel=toplevel,
+                              lifetime=lifetime,
+                              alignment=alignment,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size)
@@ -1490,10 +1486,9 @@ class SDFG(OrderedDiGraph):
 
         # Loop condition
         if condition_expr:
-            cond_ast = CodeProperty.from_string(condition_expr,
-                                                dtypes.Language.Python)
+            cond_ast = CodeBlock(condition_expr).code
         else:
-            cond_ast = CodeProperty.from_string('True', dtypes.Language.Python)
+            cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, ed.InterstateEdge(cond_ast))
         self.add_edge(guard, after_state,
                       ed.InterstateEdge(negate_expr(cond_ast)))
@@ -2194,6 +2189,7 @@ class MemletTrackingView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
 
 def trace_nested_access(node, state, sdfg):
     """ Given an AccessNode in a nested SDFG, trace the accessed memory
@@ -2916,13 +2912,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return map_entry, map_exit
 
     def add_consume(
-            self,
-            name,
-            elements: Tuple[str, str],
-            condition: str = None,
-            schedule=dtypes.ScheduleType.Default,
-            chunksize=1,
-            debuginfo=None,
+        self,
+        name,
+        elements: Tuple[str, str],
+        condition: str = None,
+        schedule=dtypes.ScheduleType.Default,
+        chunksize=1,
+        debuginfo=None,
+        language=dtypes.Language.Python
     ) -> Tuple[nd.ConsumeEntry, nd.ConsumeExit]:
         """ Adds consume entry and consume exit nodes.
             :param name:      Label
@@ -2932,8 +2929,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               None (by default) to consume until the stream
                               is empty for the first time. If false, will
                               consume forever.
-            :param schedule:  Consume schedule type
-            :param chunksize: Maximal number of elements to consume at a time
+            :param schedule:  Consume schedule type.
+            :param chunksize: Maximal number of elements to consume at a time.
+            :param debuginfo: Source code line information for debugging.
+            :param language:  Code language for ``condition``.
 
             :return: (consume_entry, consume_exit) node 2-tuple
         """
@@ -2946,7 +2945,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         debuginfo = getdebuginfo(debuginfo)
         consume = nd.Consume(name,
                              pe_tuple,
-                             condition,
+                             CodeBlock(condition, language),
                              schedule,
                              chunksize,
                              debuginfo=debuginfo)
@@ -3137,11 +3136,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: A Reduce node
         """
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr,
-                           axes,
-                           identity,
-                           schedule,
-                           debuginfo=debuginfo)
+        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3368,10 +3363,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                   transient=False,
                   strides=None,
                   offset=None,
-                  toplevel=False,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
                   debuginfo=None,
                   total_size=None,
-                  find_new_name=False):
+                  find_new_name=False,
+                  alignment=0):
         """ @attention: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
@@ -3388,10 +3384,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               transient,
                               strides,
                               offset,
-                              toplevel,
+                              lifetime,
                               debuginfo,
                               find_new_name=find_new_name,
-                              total_size=total_size)
+                              total_size=total_size,
+                              alignment=alignment)
         return self.add_access(name, debuginfo)
 
     def add_stream(
@@ -3404,7 +3401,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         storage=dtypes.StorageType.Default,
         transient=False,
         offset=None,
-        toplevel=False,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
@@ -3424,7 +3421,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             storage,
             transient,
             offset,
-            toplevel,
+            lifetime,
             debuginfo,
         )
         return self.add_access(name, debuginfo)
@@ -3435,7 +3432,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         dtype,
         storage=dtypes.StorageType.Default,
         transient=False,
-        toplevel=False,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
@@ -3446,7 +3443,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
-        self.parent.add_scalar(name, dtype, storage, transient, toplevel,
+        self.parent.add_scalar(name, dtype, storage, transient, lifetime,
                                debuginfo)
         return self.add_access(name, debuginfo)
 
@@ -3458,9 +3455,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                       materialize_func=None,
                       strides=None,
                       offset=None,
-                      toplevel=False,
+                      lifetime=dace.dtypes.AllocationLifetime.Scope,
                       debuginfo=None,
-                      total_size=None):
+                      total_size=None,
+                      alignment=0):
         """ @attention: This function is deprecated. """
         return self.add_array(name,
                               shape,
@@ -3470,9 +3468,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               True,
                               strides,
                               offset,
-                              toplevel,
+                              lifetime,
                               debuginfo,
-                              total_size=total_size)
+                              total_size=total_size,
+                              alignment=alignment)
 
     # SDFG queries
     ######################################
@@ -4405,24 +4404,24 @@ def replace_properties(node: Any, name: str, new_name: str):
                         (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
-            if isinstance(propval['code_or_block'], str):
+            if isinstance(propval.code, str):
                 if str(name) != str(new_name):
-                    lang = propval['language']
-                    newcode = propval['code_or_block']
+                    lang = propval.language
+                    newcode = propval.code
                     if not re.findall(r'[^\w]%s[^\w]' % name, newcode):
                         continue
 
                     if lang is dtypes.Language.CPP:  # Replace in C++ code
                         # Use local variables and shadowing to replace
                         replacement = 'auto %s = %s;\n' % (name, new_name)
-                        propval['code_or_block'] = replacement + newcode
+                        propval.code = replacement + newcode
                     else:
                         warnings.warn(
                             'Replacement of %s with %s was not made '
                             'for string tasklet code of language %s' %
                             (name, new_name, lang))
-            else:
-                for stmt in propval['code_or_block']:
+            elif propval.code is not None:
+                for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
 
 

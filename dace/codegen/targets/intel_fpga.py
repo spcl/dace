@@ -1,4 +1,5 @@
 import ast
+import copy
 import itertools
 import os
 import re
@@ -13,6 +14,7 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
 from dace.codegen.targets import cpp, fpga
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -1047,14 +1049,13 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         if not node.code:
             return ''
         # Not [], "" or None
-        if node.code_global:
-            if node.language is not dtypes.Language.CPP:
-                raise ValueError(
-                    "Global code only supported for C++ tasklets: got {}".
-                    format(node.language))
+        if node.code_global and node.code_global.code:
             function_stream.write(
-                type(node).__properties__["code_global"].to_string(
-                    node.code_global), sdfg, state_id, node)
+                codeblock_to_cpp(node.code_global),
+                sdfg,
+                state_id,
+                node,
+            )
             function_stream.write("\n", sdfg, state_id, node)
 
         # If raw C++ code, return the code directly
@@ -1068,7 +1069,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                 state_id, node)
             return
 
-        body = node.code
+        body = node.code.code
 
         callsite_stream.write('// Tasklet code (%s)\n' % node.label, sdfg,
                               state_id, node)
@@ -1102,6 +1103,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
 
         used_streams = []
         for stmt in body:  # for each statement in tasklet body
+            stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
                 sdfg, self._dispatcher.defined_vars, memlets,
                 self._memory_widths, sdfg.constants)
@@ -1352,4 +1354,3 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             node.func = new_node
 
         return self.generic_visit(node)
-

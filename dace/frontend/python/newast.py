@@ -21,7 +21,7 @@ from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
 from dace.graph import nodes
 from dace.graph.labeling import propagate_memlet
 from dace.memlet import Memlet
-from dace.properties import LambdaProperty
+from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
@@ -205,7 +205,7 @@ class StructTransformer(ast.NodeTransformer):
         #return ast.copy_location(new_node, node)
 
         node.func = ast.copy_location(
-            ast.Name(id='__DAPPSTRUCT_' + name, ctx=ast.Load()), node.func)
+            ast.Name(id='__DACESTRUCT_' + name, ctx=ast.Load()), node.func)
 
         return node
 
@@ -424,9 +424,9 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
 
-    tasklet.code = code.format(arr='__ind_' + local_name,
-                               index=', '.join(
-                                   [symbolic.symstr(s) for s in newsubset]))
+    tasklet.code = CodeBlock(
+        code.format(arr='__ind_' + local_name,
+                    index=', '.join([symbolic.symstr(s) for s in newsubset])))
 
     # Create transient variable to trigger the indirect load
     tmp_name = '__' + local_name + '_value'
@@ -660,7 +660,7 @@ class TaskletTransformer(ExtNodeTransformer):
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
                                    set(self.outputs.keys()),
-                                   self.extcode or tasklet_ast,
+                                   self.extcode or tasklet_ast.body,
                                    language=self.lang,
                                    code_global=self.globalcode,
                                    code_init=self.initcode,
@@ -2959,7 +2959,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 dtype = dace.complex128
             else:
                 raise NotImplementedError
-            name, _ = self.sdfg.add_temp_transient([1], dtype, toplevel=True)
+            name, _ = self.sdfg.add_temp_transient(
+                [1], dtype, lifetime=dtypes.AllocationLifetime.SDFG)
             self.numbers[node.n] = name
             init_state = None
             if not self.sdfg.nodes():
