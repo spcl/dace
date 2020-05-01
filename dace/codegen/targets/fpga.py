@@ -101,6 +101,11 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.CPU_Stack,
             dace.dtypes.StorageType.FPGA_Global, None, self)
 
+        # Inspect the vector length of all memlets leading to each memory, to
+        # make sure that they're consistent, and to allow us to instantiate the
+        # memories as vector types to enable HLS to generate wider data paths.
+        self._memory_widths = self.detect_memory_widths(sdfg)
+
     @property
     def has_initializer(self):
         return True
@@ -353,10 +358,13 @@ class FPGACodeGen(TargetCodeGenerator):
                             or edge.data.data is None):
                         continue
                     if (isinstance(edge.src, dace.graph.nodes.AccessNode) and
-                            isinstance(edge.dst, dace.graph.nodes.AccessNode)):
-                        # Vectorization is not relevant for memcopies, but if
-                        # this memory is not found anywhere else, we need to
-                        # set it to 1 later
+                            isinstance(edge.dst, dace.graph.nodes.AccessNode)
+                            and edge.data.veclen == 1):
+                        # Consistent vectorization is not enforced for
+                        # memcopies, but if this memory is not found anywhere
+                        # else, we need to set it to 1 later. Or, if a
+                        # vectorization width is set for this memcopy, we can
+                        # still use it.
                         if key not in memory_widths:
                             memory_widths[key] = None
                         continue
@@ -472,7 +480,6 @@ class FPGACodeGen(TargetCodeGenerator):
                     devptr_name = dataname
                     if isinstance(nodedesc, dace.data.Array):
                         # TODO: Distinguish between read, write, and read+write
-                        # TODO: Handle memory banks
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg = ""
                         if "bank" in nodedesc.location:
@@ -560,7 +567,8 @@ class FPGACodeGen(TargetCodeGenerator):
         pass  # Handled by destructor
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
-                   dst_storage, dst_schedule, edge, dfg, callsite_stream):
+                   dst_storage, dst_schedule, edge, dfg, function_stream,
+                   callsite_stream):
 
         u, v, memlet = edge.src, edge.dst, edge.data
 
@@ -677,6 +685,41 @@ class FPGACodeGen(TargetCodeGenerator):
 
             ctype = src_node.desc(sdfg).dtype.ctype
 
+            # For a single vector access, tolerate not having set a range
+            if copy_shape[-1] != 1:
+                # Adjust for vectorization length
+                copy_shape[-1] = copy_shape[-1] / memlet.veclen
+            # Check if we are copying between vectorized and non-vectorized
+            # types
+            memwidth_src = self._memory_widths[(src_node.data, sdfg)]
+            memwidth_dst = self._memory_widths[(dst_node.data, sdfg)]
+            if memwidth_src < memwidth_dst:
+                is_pack = True
+                is_unpack = False
+                packing_factor = memwidth_dst // memwidth_src
+                if memwidth_dst % memwidth_src != 0:
+                    raise ValueError(
+                        "Destination vectorization width {} "
+                        "is not divisible by source vectorization width {}.".
+                        format(memwidth_dst, memwidth_src))
+                self.generate_converter(False, ctype, packing_factor, dst_node,
+                                        state_id, sdfg, function_stream)
+            elif memwidth_src > memwidth_dst:
+                is_pack = False
+                is_unpack = True
+                packing_factor = memwidth_src // memwidth_dst
+                if memwidth_src % memwidth_dst != 0:
+                    raise ValueError(
+                        "Source vectorization width {} is not divisible "
+                        "by destination vectorization width {}.".format(
+                            memwidth_dst, memwidth_src))
+                self.generate_converter(True, ctype, packing_factor, dst_node,
+                                        state_id, sdfg, function_stream)
+            else:
+                is_pack = False
+                is_unpack = False
+                packing_factor = 1
+
             # TODO: detect in which cases we shouldn't unroll
             register_to_register = (src_node.desc(sdfg).storage
                                     == dace.dtypes.StorageType.FPGA_Registers
@@ -735,11 +778,13 @@ class FPGACodeGen(TargetCodeGenerator):
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
             src_index = " + ".join([
-                "__dace_copy{} * {}".format(i, sym2cpp(stride))
+                "__dace_copy{}{}".format(
+                    i, " * " + sym2cpp(stride) if stride != 1 else "")
                 for i, stride in enumerate(src_strides) if copy_shape[i] != 1
             ])
             dst_index = " + ".join([
-                "__dace_copy{} * {}".format(i, sym2cpp(stride))
+                "__dace_copy{}{}".format(
+                    i, " * " + sym2cpp(stride) if stride != 1 else "")
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
 
@@ -767,12 +812,14 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Language specific
             read_expr = self.make_read(src_def_type, ctype, src_node.label,
-                                       memlet.veclen, src_expr, src_index)
+                                       memlet.veclen, src_expr, src_index,
+                                       is_pack, packing_factor)
 
             # Language specific
             write_expr = self.make_write(dst_def_type, ctype, dst_node.label,
                                          memlet.veclen, dst_expr, dst_index,
-                                         read_expr, memlet.wcr)
+                                         read_expr, memlet.wcr, is_unpack,
+                                         packing_factor)
 
             callsite_stream.write(write_expr)
 
@@ -829,9 +876,6 @@ class FPGACodeGen(TargetCodeGenerator):
                     dace.dtypes.ScheduleType.Default,
                     dace.dtypes.ScheduleType.FPGA_Device
             ]:
-                # raise dace.codegen.codegen.CodegenError(
-                #     "Cannot produce FPGA code for {} node with schedule {}: ".
-                #     format(type(node).__name__, node.schedule, node))
                 print("WARNING: found schedule {} on {} node in FPGA code. "
                       "Ignoring.".format(node.schedule,
                                          type(node).__name__))
@@ -875,7 +919,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Emit actual copy
         self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
                         dst_storage, dst_schedule, edge, state_dfg,
-                        callsite_stream)
+                        function_stream, callsite_stream)
 
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
@@ -1220,16 +1264,11 @@ class FPGACodeGen(TargetCodeGenerator):
             callsite_stream.write(
                 self.make_write(def_type, dst_data.dtype.ctype,
                                 output_memlet.data, output_memlet.veclen,
-                                dst_expr, "", out_var, output_memlet.wcr),
-                sdfg, state_id, node)
+                                dst_expr, "", out_var, output_memlet.wcr,
+                                False, 1), sdfg, state_id, node)
 
     def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
                         function_stream, callsite_stream):
-
-        # Inspect the vector length of all memlets leading to each memory, to
-        # make sure that they're consistent, and to allow us to instantiate the
-        # memories as vector types to enable HLS to generate wider data paths.
-        self._memory_widths = type(self).detect_memory_widths(sdfg)
 
         if self._in_device_code:
             from dace.codegen.codegen import CodegenError
@@ -1453,3 +1492,4 @@ class Pipeline(dace.graph.nodes.Map):
 
 PipelineEntry = indirect_properties(Pipeline,
                                     lambda obj: obj.map)(PipelineEntry)
+
