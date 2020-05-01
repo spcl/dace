@@ -66,7 +66,7 @@ run_all() {
     run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
     # Test shift register abstraction with stencil code
-    run_sample fpga_stencil "\n"
+    run_sample fpga_stencil fpga_stencil_test "\n"
 
     # ### MAP TILING ####
     # First tile then transform
