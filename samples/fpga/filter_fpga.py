@@ -242,7 +242,6 @@ if __name__ == "__main__":
     B[:] = dace.float32(0)
 
     sdfg = make_sdfg(args["specialize"])
-    sdfg.draw_to_file()
     if args["specialize"]:
         sdfg.specialize(dict(N=N))
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio)

@@ -589,7 +589,6 @@ if __name__ == "__main__":
     A[:] = np.random.rand(N.get()).astype(dtype.type)
     B[:] = dtype(0)
 
-    sdfg.draw_to_file()
     if args["specialize"]:
         sdfg.specialize(dict(N=N))
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio)

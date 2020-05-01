@@ -35,8 +35,6 @@ if __name__ == '__main__':
     # state.add_edge(T, None, map_exit, 'IN_1', Memlet.simple(B, '0'))
     # state.add_edge(map_exit, 'OUT_1', B, None, Memlet.simple(B, '0'))
     #
-    # # Left for debugging purposes
-    # sdfg1.draw_to_file()
     #
     # try:
     #     sdfg1.validate()
@@ -65,9 +63,6 @@ if __name__ == '__main__':
     state.add_edge(T, None, map_exit, 'IN_1', Memlet.simple(B, '0'))
     state.add_edge(map_exit, 'OUT_1', tasklet_gen, 'a', Memlet.simple(B, '0'))
     state.add_edge(tasklet_gen, 'b', A, None, Memlet.simple(A, '0'))
-
-    # Left for debugging purposes
-    sdfg2.draw_to_file()
 
     try:
         sdfg2.validate()
@@ -105,9 +100,6 @@ if __name__ == '__main__':
     state.add_edge(map2_entry, 'OUT_1', T, None, Memlet.simple(T, 'i'))
     state.add_edge(T, None, map2_exit, 'IN_1', Memlet.simple(B, 'i'))
     state.add_edge(map2_exit, 'OUT_1', B, None, Memlet.simple(B, '0:N'))
-
-    # Left for debugging purposes
-    sdfg3.draw_to_file()
 
     try:
         sdfg3.validate()

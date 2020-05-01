@@ -77,12 +77,8 @@ sdfg.add_edge(loopstate0, loopstate1, dace.InterstateEdge())
 # Validate correctness of initial SDFG
 sdfg.validate()
 
-sdfg.draw_to_file('nofusion.dot')
-
 # Fuses redundant states and removes unnecessary transient arrays
 sdfg.apply_strict_transformations()
-
-sdfg.draw_to_file('withfusion.dot')
 
 ######################################
 if __name__ == '__main__':
