@@ -257,7 +257,7 @@ class CodeNode(Node):
     label = Property(dtype=str, desc="Name of the CodeNode")
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     environments = SetProperty(
         str,
@@ -473,6 +473,9 @@ class NestedSDFG(CodeNode):
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested '
                                 'SDFG connectors' % dname)
+            if dname in connectors and desc.transient:
+                raise NameError('"%s" is a connector but its corresponding array is transient'
+                                % dname)
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.undefined_symbols(False).keys()

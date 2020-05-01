@@ -55,7 +55,7 @@ class Data(object):
                         from_string=lambda x: dtypes.AllocationLifetime[x])
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
 

@@ -566,6 +566,12 @@ class DictProperty(Property):
         :param kwargs: Other keyword arguments (inherited from Property).
         """
         kwargs['dtype'] = dict
+        if not isinstance(key_type, type) and not callable(key_type):
+            raise TypeError(
+                "Expected type or callable, got: {}".format(key_type))
+        if not isinstance(value_type, type) and not callable(value_type):
+            raise TypeError(
+                "Expected type or callable, got: {}".format(value_type))
         super().__init__(*args, **kwargs)
         self.key_type = key_type
         self.value_type = value_type
@@ -609,6 +615,11 @@ class DictProperty(Property):
             }
         elif self.value_type not in (int, float, list, tuple, dict, str):
             saved_dictionary = {k: str(v) for k, v in saved_dictionary.items()}
+        else:
+            saved_dictionary = {
+                k: self.value_type(v)
+                for k, v in saved_dictionary.items()
+            }
 
         return saved_dictionary
 

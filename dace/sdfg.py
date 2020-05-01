@@ -1228,6 +1228,13 @@ subgraph cluster_state_{state} {{
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 
+    def view(self, filename=None):
+        """View this sdfg in the system's HTML viewer
+           :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        """
+        from diode.sdfv import view
+        view(self, filename=filename)
+
     @staticmethod
     def from_file(filename: str):
         """ Constructs an SDFG from a file.
@@ -2164,6 +2171,15 @@ subgraph cluster_state_{state} {{
 
         return program_code
 
+    def get_array_memlet(self, array: str):
+        """Convenience method to generate a Memlet that transfers a full array.
+
+           :param array: the name of the array
+           :return: a Memlet that fully transfers array
+        """
+        return dace.Memlet.from_array(array, self.arrays[array])
+
+
 
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
@@ -2508,7 +2524,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
@@ -4014,7 +4030,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %
