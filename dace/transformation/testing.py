@@ -73,7 +73,7 @@ class TransformationTester(Optimizer):
                 tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
                 match.apply(tsdfg)
 
-                sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+                sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
                 # Validate
                 if self.validate:

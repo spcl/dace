@@ -91,9 +91,6 @@ state.add_nedge(gC, C, dp.Memlet.simple('C', '0:M, 0:N'))
 # Validate GPU SDFG
 sdfg.validate()
 
-# Draw SDFG to file
-sdfg.draw_to_file()
-
 ######################################################################
 
 if __name__ == '__main__':

@@ -263,8 +263,6 @@ frontier2 = estate.add_transient('frontier2', [V],
                                  storage=storage)
 create_computation_state(estate, frontier2, frontier, 1)
 
-sdfg.draw_to_file()
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("edges", type=int, nargs="?", default=64)

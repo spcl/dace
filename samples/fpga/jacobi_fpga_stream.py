@@ -578,7 +578,6 @@ if __name__ == "__main__":
     #############################################
     # Run DaCe program
 
-    jacobi.draw_to_file()
     if args["specialize"]:
         jacobi(A=A)
     else:

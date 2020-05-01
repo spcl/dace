@@ -45,8 +45,6 @@ consume_exit.add_in_connector('IN_V')
 consume_exit.add_out_connector('OUT_S')
 consume_exit.add_out_connector('OUT_V')
 
-sdfg.draw_to_file()
-
 
 def fibonacci(v):
     """ Computes the Fibonacci sequence at point v. """
