@@ -6,7 +6,7 @@ SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH
 
 DACE_debugprint="${DACE_debugprint:-0}"
-DACE_experimental_test_serialization="${DACE_experimental_test_serialization:-1}"
+DACE_testing_serialization="${DACE_testing_serialization:-1}"
 DACE_optimizer_interface="${DACE_optimizer_interface:-dace.transformation.optimizer.SDFGOptimizer}"
 NOSTATUSBAR="${NOSTATUSBAR:-0}"
 ERRORS=0
