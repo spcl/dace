@@ -132,41 +132,42 @@ def make_compute_sdfg():
                                   transient=True,
                                   storage=dace.dtypes.StorageType.FPGA_Local,
                                   lifetime=dace.dtypes.AllocationLifetime.SDFG)
-    rows_out = post_shift.add_array("row_buffers", (2, W),
-                                    dtype,
-                                    transient=True,
-                                    storage=dace.dtypes.StorageType.FPGA_Local,
-                                    lifetime=dace.dtypes.AllocationLifetime.SDFG)
+    rows_out = post_shift.add_array(
+        "row_buffers", (2, W),
+        dtype,
+        transient=True,
+        storage=dace.dtypes.StorageType.FPGA_Local,
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
 
     window_buffer_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.Register,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_buffer_out = pre_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.Register,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_compute_in = loop_body.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.Register,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_shift_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.Register,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_shift_out = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.Register,
+        storage=dace.dtypes.StorageType.FPGA_Registers,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
 
     code = """\

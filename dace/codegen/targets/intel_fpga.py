@@ -175,7 +175,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                            storage, shape, function_stream, kernel_stream,
                            sdfg, state_id, node):
         vec_type = self.make_vector_type(dtype, vector_length, False)
-        if storage == dace.dtypes.StorageType.Register:
+        if storage == dace.dtypes.StorageType.FPGA_Registers:
             attributes = " __attribute__((register))"
         else:
             attributes = ""
@@ -759,7 +759,7 @@ __kernel void \\
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.Register)
+                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)):
                 self.generate_no_dependence_post(edge.src_conn,
                                                  callsite_stream, sdfg,

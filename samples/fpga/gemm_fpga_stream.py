@@ -481,13 +481,14 @@ def make_compute_sdfg():
                                      C_val_out_else, "0"))
 
     # Then state A
-    A_in = then_state_a.add_scalar("A_in",
-                                   dtype=dace.float32,
-                                   storage=dace.dtypes.StorageType.Register)
+    A_in = then_state_a.add_scalar(
+        "A_in",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     A_val_out = then_state_a.add_scalar(
         "A_val_out",
         dtype=dace.float32,
-        storage=dace.dtypes.StorageType.Register)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     then_state_a.add_memlet_path(
         A_in,
         A_val_out,
@@ -499,18 +500,20 @@ def make_compute_sdfg():
     A_val_in = compute_state.add_scalar(
         "A_val_in",
         dtype=dace.float32,
-        storage=dace.dtypes.StorageType.Register)
-    B_in = compute_state.add_scalar("B_in",
-                                    dtype=dace.float32,
-                                    storage=dace.dtypes.StorageType.Register)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
+    B_in = compute_state.add_scalar(
+        "B_in",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     C_val_in = compute_state.add_scalar(
         "C_val",
         dtype=dace.float32,
         transient=True,
-        storage=dace.dtypes.StorageType.Register)
-    C_out = compute_state.add_scalar("C_out",
-                                     dtype=dace.float32,
-                                     storage=dace.dtypes.StorageType.Register)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
+    C_out = compute_state.add_scalar(
+        "C_out",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     compute_state.add_memlet_path(A_val_in,
                                   compute_tasklet,
                                   memlet=dace.memlet.Memlet.simple(
@@ -542,12 +545,13 @@ def make_compute_sdfg():
                                 dtype=dace.float32,
                                 transient=True,
                                 lifetime=dace.dtypes.AllocationLifetime.SDFG,
-                                storage=dace.dtypes.StorageType.Register)
-    A_reg_out = state.add_scalar("A_reg",
-                                 dtype=dace.float32,
-                                 transient=True,
-                                 lifetime=dace.dtypes.AllocationLifetime.SDFG,
-                                 storage=dace.dtypes.StorageType.Register)
+                                storage=dace.dtypes.StorageType.FPGA_Registers)
+    A_reg_out = state.add_scalar(
+        "A_reg",
+        dtype=dace.float32,
+        transient=True,
+        lifetime=dace.dtypes.AllocationLifetime.SDFG,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
 
     state.add_memlet_path(A_pipe,
                           tasklet,

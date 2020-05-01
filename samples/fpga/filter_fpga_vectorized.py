@@ -110,7 +110,7 @@ def make_compute_state(state):
 
     count = state.add_scalar("count",
                              dtype=dace.uint32,
-                             storage=StorageType.Register)
+                             storage=StorageType.FPGA_Registers)
 
     # Inline Vivado HLS code
     code = """\
@@ -309,7 +309,7 @@ def make_write_sdfg():
     i_write_zero = loop_begin.add_scalar("i_write",
                                          dtype=dace.dtypes.uint32,
                                          transient=True,
-                                         storage=StorageType.Register)
+                                         storage=StorageType.FPGA_Registers)
     zero_tasklet = loop_begin.add_tasklet("zero", {}, {"i_write_out"},
                                           "i_write_out = 0")
     loop_begin.add_memlet_path(zero_tasklet,
@@ -350,11 +350,11 @@ def make_write_sdfg():
     i_write_in = state.add_scalar("i_write",
                                   dtype=dace.dtypes.uint32,
                                   transient=True,
-                                  storage=StorageType.Register)
+                                  storage=StorageType.FPGA_Registers)
     i_write_out = state.add_scalar("i_write",
                                    dtype=dace.dtypes.uint32,
                                    transient=True,
-                                   storage=StorageType.Register)
+                                   storage=StorageType.FPGA_Registers)
 
     tasklet = state.add_tasklet(
         "write", {"b_in", "valid_in", "i_write_in"}, {"b_out", "i_write_out"},

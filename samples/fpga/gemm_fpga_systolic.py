@@ -464,7 +464,7 @@ def make_compute_sdfg():
         "A_reg",
         dtype=dace.float32,
         transient=True,
-        storage=dace.dtypes.StorageType.Register)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     buffer_a_tasklet = buffer_a_state.add_tasklet(
         "buffer_a", {"a_in"}, {"a_reg", "a_out"}, "a_input = float(0)"
         "\nif n1 == P-p-1 or p < P - 1: a_input = a_in"
@@ -555,21 +555,24 @@ def make_compute_sdfg():
     A_val_in = compute_state.add_scalar(
         "A_val_in",
         dtype=dace.float32,
-        storage=dace.dtypes.StorageType.Register)
-    B_in = compute_state.add_stream("B_in",
-                                    dtype=dace.float32,
-                                    storage=dace.dtypes.StorageType.Register)
-    B_out = compute_state.add_stream("B_out",
-                                     dtype=dace.float32,
-                                     storage=dace.dtypes.StorageType.Register)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
+    B_in = compute_state.add_stream(
+        "B_in",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
+    B_out = compute_state.add_stream(
+        "B_out",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     C_val_in = compute_state.add_scalar(
         "C_val",
         dtype=dace.float32,
         transient=True,
-        storage=dace.dtypes.StorageType.Register)
-    C_out = compute_state.add_scalar("C_out",
-                                     dtype=dace.float32,
-                                     storage=dace.dtypes.StorageType.Register)
+        storage=dace.dtypes.StorageType.FPGA_Registers)
+    C_out = compute_state.add_scalar(
+        "C_out",
+        dtype=dace.float32,
+        storage=dace.dtypes.StorageType.FPGA_Registers)
     compute_state.add_memlet_path(A_val_in,
                                   compute_tasklet,
                                   memlet=dace.memlet.Memlet.simple(
@@ -606,7 +609,7 @@ def make_compute_sdfg():
     A_reg_in = state.add_scalar("A_reg",
                                 dtype=dace.float32,
                                 transient=True,
-                                storage=dace.dtypes.StorageType.Register)
+                                storage=dace.dtypes.StorageType.FPGA_Registers)
 
     C_buffer_in = state.add_array("C_buffer", [M],
                                   dtype=dace.float32,

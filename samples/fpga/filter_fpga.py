@@ -75,7 +75,7 @@ def make_nested_sdfg(parent):
     sdfg.add_scalar("outsize_buffer",
                     dtype=dace.uint32,
                     transient=True,
-                    storage=dace.dtypes.StorageType.Register)
+                    storage=dace.dtypes.StorageType.FPGA_Registers)
     sdfg.add_array("outsize_nested", [1],
                    dtype=dace.uint32,
                    storage=dace.dtypes.StorageType.FPGA_Global)

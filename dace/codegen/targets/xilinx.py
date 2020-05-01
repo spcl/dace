@@ -165,7 +165,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                            state_id, node):
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
             dtype.ctype, vector_length, var_name, cpp.sym2cpp(array_size)))
-        if storage == dace.dtypes.StorageType.Register:
+        if storage == dace.dtypes.StorageType.FPGA_Registers:
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "complete\n".format(var_name))
         elif len(shape) > 1:
@@ -772,7 +772,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array) and
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.Register)
+                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and edge.data.wcr is None):
                 self.generate_no_dependence_post(edge.src_conn,
                                                  callsite_stream, sdfg,
