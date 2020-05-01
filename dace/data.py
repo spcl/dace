@@ -533,8 +533,7 @@ class Stream(Data):
         if not with_types or for_call: return name
         if self.storage in [
                 dace.dtypes.StorageType.GPU_Global,
-                dace.dtypes.StorageType.GPU_Shared,
-                dace.dtypes.StorageType.GPU_Stack
+                dace.dtypes.StorageType.GPU_Shared
         ]:
             return 'dace::GPUStream<%s, %s> %s' % (str(
                 self.dtype.ctype), 'true' if sp.log(

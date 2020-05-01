@@ -29,7 +29,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
 
         cpu_storage = [
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
-            dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+            dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register
         ]
         for storage_type in cpu_storage:
             dispatcher.register_copy_dispatcher(dtypes.StorageType.Immaterial,

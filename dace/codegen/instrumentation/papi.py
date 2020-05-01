@@ -142,7 +142,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
 
         cpu_storage_types = [
             dtypes.StorageType.CPU_Heap,
-            dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_ThreadLocal,
             dtypes.StorageType.CPU_Pinned,
             dtypes.StorageType.Register,
         ]

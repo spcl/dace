@@ -63,8 +63,7 @@ class FPGACodeGen(TargetCodeGenerator):
             predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and all([
                 n.desc(sdfg).storage in [
                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
-                    StorageType.FPGA_Local, dace.dtypes.StorageType.
-                    FPGA_Registers
+                    StorageType.FPGA_Local, dace.dtypes.StorageType.Register
                 ] for n in state.data_nodes()
             ]))
 
@@ -74,7 +73,7 @@ class FPGACodeGen(TargetCodeGenerator):
         fpga_storage = [
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
-            dace.dtypes.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.Register,
         ]
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
@@ -93,12 +92,12 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.CPU_Heap, None, self)
         self._dispatcher.register_copy_dispatcher(
             dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.CPU_Stack, None, self)
+            dace.dtypes.StorageType.CPU_ThreadLocal, None, self)
         self._dispatcher.register_copy_dispatcher(
             dace.dtypes.StorageType.CPU_Heap,
             dace.dtypes.StorageType.FPGA_Global, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.dtypes.StorageType.CPU_Stack,
+            dace.dtypes.StorageType.CPU_ThreadLocal,
             dace.dtypes.StorageType.FPGA_Global, None, self)
 
         # Inspect the vector length of all memlets leading to each memory, to
@@ -239,10 +238,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    and n.desc(scope).storage ==
+                                    dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -266,8 +265,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                 (is_output, dataname, data))
                         global_data_names.add(dataname)
                     elif (data.storage == dace.dtypes.StorageType.FPGA_Local
-                          or data.storage
-                          == dace.dtypes.StorageType.FPGA_Registers):
+                          or data.storage == dace.dtypes.StorageType.Register):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -502,8 +500,8 @@ class FPGACodeGen(TargetCodeGenerator):
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
-            elif (nodedesc.storage == dace.dtypes.StorageType.FPGA_Local or
-                  nodedesc.storage == dace.dtypes.StorageType.FPGA_Registers):
+            elif (nodedesc.storage == dace.dtypes.StorageType.FPGA_Local
+                  or nodedesc.storage == dace.dtypes.StorageType.Register):
 
                 if not self._in_device_code:
                     raise dace.codegen.codegen.CodegenError(
@@ -574,13 +572,13 @@ class FPGACodeGen(TargetCodeGenerator):
 
         cpu_storage_types = [
             dace.dtypes.StorageType.CPU_Heap,
-            dace.dtypes.StorageType.CPU_Stack,
+            dace.dtypes.StorageType.CPU_ThreadLocal,
             dace.dtypes.StorageType.CPU_Pinned
         ]
         fpga_storage_types = [
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
-            dace.dtypes.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.Register,
         ]
 
         # Determine directionality
@@ -600,8 +598,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         host_to_device = (data_to_data and src_storage in cpu_storage_types and
                           dst_storage == dace.dtypes.StorageType.FPGA_Global)
-        device_to_host = (data_to_data and src_storage
-                          == dace.dtypes.StorageType.FPGA_Global
+        device_to_host = (data_to_data and
+                          src_storage == dace.dtypes.StorageType.FPGA_Global
                           and dst_storage in cpu_storage_types)
         device_to_device = (
             data_to_data and src_storage == dace.dtypes.StorageType.FPGA_Global
@@ -659,10 +657,10 @@ class FPGACodeGen(TargetCodeGenerator):
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
               and (((src_storage == dace.dtypes.StorageType.FPGA_Local
-                     or src_storage == dace.dtypes.StorageType.FPGA_Registers)
+                     or src_storage == dace.dtypes.StorageType.Register)
                     and dst_storage not in fpga_storage_types) or
                    ((dst_storage == dace.dtypes.StorageType.FPGA_Local
-                     or dst_storage == dace.dtypes.StorageType.FPGA_Registers)
+                     or dst_storage == dace.dtypes.StorageType.Register)
                     and src_storage not in fpga_storage_types))):
             raise NotImplementedError(
                 "Copies between host memory and FPGA "
@@ -721,10 +719,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (
+                src_node.desc(sdfg).storage == dace.dtypes.StorageType.Register
+                or
+                dst_node.desc(sdfg).storage == dace.dtypes.StorageType.Register
+            )
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -740,7 +739,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if (isinstance(node.desc(sdfg), dace.data.Array)
                             and node.desc(sdfg).storage in [
                                 dace.dtypes.StorageType.FPGA_Local,
-                                dace.StorageType.FPGA_Registers
+                                dace.StorageType.Register
                             ]):
                         # Language-specific
                         self.generate_no_dependence_pre(
@@ -828,7 +827,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if (isinstance(node.desc(sdfg), dace.data.Array)
                         and node.desc(sdfg).storage in [
                             dace.dtypes.StorageType.FPGA_Local,
-                            dace.StorageType.FPGA_Registers
+                            dace.StorageType.Register
                         ]):
                     # Language-specific
                     self.generate_no_dependence_post(node.data,
@@ -1152,8 +1151,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 octr += 1
             if ((isinstance(src_data, dace.data.Stream)
                  and src_data.is_stream_array()) or
-                (isinstance(src_data, dace.data.Array) and src_data.storage
-                 == dace.dtypes.StorageType.FPGA_Registers)):
+                (isinstance(src_data, dace.data.Array)
+                 and src_data.storage == dace.dtypes.StorageType.Register)):
                 # Unroll reads from registers and stream arrays
                 unroll_dim.append(True)
             else:
@@ -1505,4 +1504,3 @@ class Pipeline(dace.graph.nodes.Map):
 
 PipelineEntry = indirect_properties(Pipeline,
                                     lambda obj: obj.map)(PipelineEntry)
-

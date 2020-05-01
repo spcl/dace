@@ -78,7 +78,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ], self)
 
         cpu_storage = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
             dtypes.StorageType.Register
         ]
         dispatcher.register_array_dispatcher(cpu_storage, self)
@@ -117,12 +117,12 @@ class CPUCodeGen(TargetCodeGenerator):
         return False
 
     def generate_scope(
-            self,
-            sdfg: SDFG,
-            dfg_scope: ScopeSubgraphView,
-            state_id,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg: SDFG,
+        dfg_scope: ScopeSubgraphView,
+        state_id,
+        function_stream,
+        callsite_stream,
     ):
         entry_node = dfg_scope.source_nodes()[0]
         presynchronize_streams(sdfg, dfg_scope, state_id, entry_node,
@@ -211,7 +211,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                        packed_types=self._packed_types)
                 threadlocal = ""
                 threadlocal_stores = [
-                    dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+                    dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register
                 ]
                 if (sdfg.arrays[nodedesc.sink].storage in threadlocal_stores
                         or nodedesc.storage in threadlocal_stores):
@@ -244,13 +244,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # TODO: immaterial arrays should not allocate memory
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or nodedesc.storage == dtypes.StorageType.Immaterial
-              or (nodedesc.storage in [
-                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
-              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
+              or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
 
-            if nodedesc.storage in [
-                    dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
-            ]:
+            if nodedesc.storage == dtypes.StorageType.Register:
                 warnings.warn('Variable-length array %s with size %s '
                               'detected and was allocated on heap instead of '
                               '%s' %
@@ -270,8 +266,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     "memset(%s, 0, sizeof(%s)*%s);" %
                     (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
             return
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Stack
-              or nodedesc.storage == dtypes.StorageType.Register):
+        elif (nodedesc.storage == dtypes.StorageType.Register):
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
@@ -363,24 +358,23 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(nodedesc, data.Stream):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage in [
-                  dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
-              ] and symbolic.issymbolic(arrsize, sdfg.constants))):
+              or (nodedesc.storage == dtypes.StorageType.Register
+               and symbolic.issymbolic(arrsize, sdfg.constants))):
             callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
                                   node)
         else:
             return
 
     def copy_memory(
-            self,
-            sdfg,
-            dfg,
-            state_id,
-            src_node,
-            dst_node,
-            edge,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg,
+        dfg,
+        state_id,
+        src_node,
+        dst_node,
+        edge,
+        function_stream,
+        callsite_stream,
     ):
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
@@ -420,17 +414,17 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def _emit_copy(
-            self,
-            sdfg,
-            state_id,
-            src_node,
-            src_storage,
-            dst_node,
-            dst_storage,
-            dst_schedule,
-            edge,
-            dfg,
-            stream,
+        self,
+        sdfg,
+        state_id,
+        src_node,
+        src_storage,
+        dst_node,
+        dst_storage,
+        dst_schedule,
+        edge,
+        dfg,
+        stream,
     ):
         u, uconn, v, vconn, memlet = edge
 
@@ -1271,13 +1265,13 @@ class CPUCodeGen(TargetCodeGenerator):
                                callsite_stream)
 
     def _generate_NestedSDFG(
-            self,
-            sdfg,
-            dfg: ScopeSubgraphView,
-            state_id,
-            node: nodes.NestedSDFG,
-            function_stream: CodeIOStream,
-            callsite_stream: CodeIOStream,
+        self,
+        sdfg,
+        dfg: ScopeSubgraphView,
+        state_id,
+        node: nodes.NestedSDFG,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
     ):
         callsite_stream.write('{', sdfg, state_id, node)
         self._dispatcher.defined_vars.enter_scope(sdfg)
@@ -1375,13 +1369,13 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_MapEntry(
-            self,
-            sdfg,
-            dfg,
-            state_id,
-            node: nodes.MapEntry,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg,
+        dfg,
+        state_id,
+        node: nodes.MapEntry,
+        function_stream,
+        callsite_stream,
     ):
         state_dfg = sdfg.node(state_id)
         map_params = node.map.params
@@ -1594,13 +1588,13 @@ for (int {mapname}_iter = 0; {mapname}_iter < {mapname}_rng.size(); ++{mapname}_
         callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_ConsumeEntry(
-            self,
-            sdfg,
-            dfg,
-            state_id,
-            node: nodes.MapEntry,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg,
+        dfg,
+        state_id,
+        node: nodes.MapEntry,
+        function_stream,
+        callsite_stream,
     ):
         result = callsite_stream
 

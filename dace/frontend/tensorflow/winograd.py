@@ -528,7 +528,7 @@ def winograd_convolution(dace_session, tf_node):
     intermediateResultNode = state.add_transient("BtI",
                                                  bt.shape,
                                                  dace.float32,
-                                                 dace.StorageType.GPU_Stack,
+                                                 dace.StorageType.Register,
                                                  toplevel=False)
     intermediateResultNode.setzero = True
     state.add_edge(
@@ -584,7 +584,7 @@ def winograd_convolution(dace_session, tf_node):
         dace.ScheduleType.GPU_Device,
     )
     intermediateResultNode = state.add_transient("GF", g.shape, dace.float32,
-                                                 dace.StorageType.GPU_Stack)
+                                                 dace.StorageType.Register)
     intermediateResultNode.setzero = True
     processedKernelNode = state.add_transient(
         "U" + "_".join([
@@ -712,7 +712,7 @@ def winograd_convolution(dace_session, tf_node):
         dace.ScheduleType.GPU_Device,
     )
     intermediateResultNode = state.add_transient("AtM", at.shape, dace.float32,
-                                                 dace.StorageType.GPU_Stack)
+                                                 dace.StorageType.Register)
     intermediateResultNode.setzero = True
     transformedOutputNode = state.add_transient(
         "inv_txformed_output" + "_".join([str(tf_node.inputs[1].shape[-1])] +
