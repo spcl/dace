@@ -1145,14 +1145,15 @@ class Pipeline(Map):
         initialization and drain phase (e.g., N*M + c iterations), which would
         otherwise need a flattened one-dimensional map.
     """
-    init_size = Property(dtype=int,
-                         desc="Number of initialization iterations.")
+    init_size = SymbolicProperty(default=0,
+                                 desc="Number of initialization iterations.")
     init_overlap = Property(
-        dtype=int,
+        dtype=bool,
         desc="Whether to increment regular map indices during initialization.")
-    drain_size = Property(dtype=int, desc="Number of drain iterations.")
+    drain_size = SymbolicProperty(default=0,
+                                  desc="Number of drain iterations.")
     drain_overlap = Property(
-        dtype=int,
+        dtype=bool,
         desc="Whether to increment regular map indices during pipeline drain.")
 
     def __init__(self,
