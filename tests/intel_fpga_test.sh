@@ -65,6 +65,9 @@ run_all() {
     # Test removing degenerate loops that only have a single iteration
     run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
+    # Test shift register abstraction with stencil code
+    run_sample fpga_stencil "\n"
+
     # ### MAP TILING ####
     # First tile then transform
     run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"

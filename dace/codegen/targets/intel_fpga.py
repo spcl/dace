@@ -1,4 +1,5 @@
 import ast
+import functools
 import itertools
 import os
 import re
@@ -320,6 +321,26 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
+
+    def make_shift_register_write(self, defined_type, type_str, var_name,
+                                  vector_length, write_expr, index, read_expr,
+                                  wcr, is_unpack, packing_factor):
+        if defined_type != DefinedType.Pointer:
+            raise TypeError("Intel shift register must be an array: "
+                            "{} is {}".format(var_name, defined_type))
+        # Shift array
+        arr_size = functools.reduce(lambda a, b: a * b,
+                                    self._global_sdfg.data(var_name).shape, 1)
+        res = """
+#pragma unroll
+for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
+  {name}[u_{name}] = {name}[u_{name} + {veclen}];
+}}\n""".format(name=var_name, size=arr_size, veclen=vector_length)
+        # Then do write
+        res += self.make_write(defined_type, type_str, var_name, vector_length,
+                               write_expr, index, read_expr, wcr, is_unpack,
+                               packing_factor)
+        return res
 
     @staticmethod
     def make_reduction(sdfg, state_id, node, output_memlet, dtype,
@@ -1100,7 +1121,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                 defined_symbols.update(
                     {connector: sdfg.arrays[memlet.data].dtype})
 
-        used_streams = []
         for stmt in body:  # for each statement in tasklet body
             ocl_visitor = OpenCLDaceKeywordRemover(
                 sdfg, self._dispatcher.defined_vars, memlets,
@@ -1114,7 +1134,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                 self.generate_converter(unpack, dtype, veclen, node, state_id,
                                         sdfg, function_stream)
 
-            used_streams.extend(ocl_visitor.used_streams)
             if rk is not None:
                 result = StringIO()
                 cppunparse.CPPUnparser(rk,
@@ -1124,13 +1143,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                        defined_symbols=defined_symbols,
                                        type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
-
-        # In Intel OpenCL is not possible to have multiple access points to the same channel
-        for s in used_streams:
-            if used_streams.count(s) > 1:
-                raise dace.codegen.codegen.CodegenError(
-                    "Multiple access points for stream are forbidden in IntelFPGA (stream \"{}\" "
-                    "in tasklet \"{}\")".format(s, node.name))
 
     def generate_constants(self, sdfg, callsite_stream):
         # Use framecode's generate_constants, but substitute constexpr for
@@ -1243,8 +1255,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 value = value[1:]
             value = "{}({})".format(pack_str, value)
 
-        defined_type = self.defined_vars.get(memlet.data)
-        updated = node
+        defined_type = self.defined_vars.get(target)
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
@@ -1280,7 +1291,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         code_str = "{} = {};".format(target, value)
             updated = ast.Name(id=code_str)
 
-        elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
+        elif (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray):
             if memlet.num_accesses != 1:
                 updated = ast.Name(
                     id="write_channel_intel({}, {});".format(target, value))
@@ -1293,6 +1304,14 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         elif memlet is not None and memlet.num_accesses != 1:
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
+        elif defined_type == DefinedType.Scalar:
+            code_str = "{} = {};".format(target, value)
+            updated = ast.Name(id=code_str)
+        else:
+            raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
+                               "memory size {}, {} accesses".format(
+                                   target, defined_type, veclen_lhs,
+                                   memwidth_lhs, memlet.num_accesses))
 
         return ast.copy_location(updated, node)
 
@@ -1301,7 +1320,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             return self.generic_visit(node)
 
         memlet, nc, wcr = self.memlets[node.id]
-        defined_type = self.defined_vars.get(memlet.data)
+        defined_type = self.defined_vars.get(node.id)
         updated = node
 
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
@@ -1352,4 +1371,3 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             node.func = new_node
 
         return self.generic_visit(node)
-
