@@ -547,7 +547,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         return ""
 
     # Not [], "" or None
-    if node.code_global:
+    if node.code_global and node.code_global.code:
         function_stream.write(
             codeblock_to_cpp(node.code_global),
             sdfg,
