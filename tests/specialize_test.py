@@ -35,6 +35,10 @@ if __name__ == '__main__':
         dict(b=Memlet.simple(B, 'i,j')))
     state.add_edge(Atrans, None, me, None, Memlet.simple(Atrans, fullrange))
     state.add_edge(mx, None, B, None, Memlet.simple(B, fullrange))
+
+    spec_sdfg.fill_scope_connectors()
+    dp.propagate_labels_sdfg(spec_sdfg)
+    spec_sdfg.validate()
     ##########################################################################
 
     code_nonspec = spec_sdfg.generate_code()
