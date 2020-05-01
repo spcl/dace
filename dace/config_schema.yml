@@ -44,10 +44,10 @@ required:
                 title: Visualize SDFG
                 description: Open a SDFV in browser every transformation.
 
-            saveopts:
+            save_intermediate:
                 type: bool
                 default: false
-                title: Save optimized files
+                title: Save intermediate SDFGs
                 description: Save SDFG files after every transformation.
 
             automatic_strict_transformations:

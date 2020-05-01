@@ -208,9 +208,9 @@ class SDFGOptimizer(Optimizer):
 
         # Visualize SDFGs during optimization process
         VISUALIZE_SDFV = Config.get_bool('optimizer', 'visualize_sdfv')
-        SAVE_OPTS = Config.get_bool('optimizer', 'saveopts')
+        SAVE_INTERMEDIATE = Config.get_bool('optimizer', 'save_intermediate')
 
-        if SAVE_OPTS:
+        if SAVE_INTERMEDIATE:
             self.sdfg.save(os.path.join('_dacegraphs', 'before.sdfg'))
             if VISUALIZE_SDFV:
                 from diode import sdfv
@@ -271,7 +271,7 @@ class SDFGOptimizer(Optimizer):
             pattern_match.apply(sdfg)
             self.applied_patterns.add(type(pattern_match))
 
-            if SAVE_OPTS:
+            if SAVE_INTERMEDIATE:
                 filename = 'after_%d_%s_b4lprop' % (
                     pattern_counter + 1, type(pattern_match).__name__)
                 self.sdfg.save(os.path.join('_dacegraphs', filename + '.sdfg'))
@@ -281,7 +281,7 @@ class SDFGOptimizer(Optimizer):
 
             if True:
                 pattern_counter += 1
-                if SAVE_OPTS:
+                if SAVE_INTERMEDIATE:
                     filename = 'after_%d_%s' % (pattern_counter,
                                                 type(pattern_match).__name__)
                     self.sdfg.save(
