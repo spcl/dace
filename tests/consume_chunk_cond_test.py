@@ -55,8 +55,6 @@ consume_exit.add_in_connector('IN_V')
 consume_exit.add_out_connector('OUT_S')
 consume_exit.add_out_connector('OUT_V')
 
-sdfg.draw_to_file()
-
 if __name__ == '__main__':
     print('Fibonacci recursion using consume (with chunks, custom condition)')
     input = np.ndarray([1], np.int32)

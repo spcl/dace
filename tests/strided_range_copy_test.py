@@ -29,8 +29,6 @@ if __name__ == '__main__':
     E = np.random.rand(8, 8).astype(np.float32)
     F = np.random.rand(128, 128).astype(np.float32)
 
-    sr.draw_to_file()
-
     sr(A=A, B=B, C=C, D=D, E=E, F=F)
 
     diffs = [

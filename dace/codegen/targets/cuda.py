@@ -64,6 +64,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._in_device_code = False
         self._cpu_codegen = None
         self._block_dims = None
+        self._kernel_map = None
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda', '', 'cu',
                                       CUDACodeGen, 'CUDA')
         self._localcode = CodeIOStream()
@@ -1300,10 +1301,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # generator)
         kernel_stream.write('{', sdfg, state_id, node)
 
-        if not node.map.flatten:
-            # Add more opening braces for scope exit to close
-            for dim in range(len(node.map.range) - 1):
-                kernel_stream.write('{\n', sdfg, state_id, node)
+        # Add more opening braces for scope exit to close
+        for dim in range(len(node.map.range) - 1):
+            kernel_stream.write('{\n', sdfg, state_id, node)
 
         # Generate all index arguments for kernel grid
         krange = subsets.Range(kernel_map.range[::-1])
@@ -1353,6 +1353,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Dispatch internal code
         assert self._in_device_code == False
         self._in_device_code = True
+        self._kernel_map = kernel_map
         self._block_dims = block_dims
 
         # Emit internal array allocation (deallocation handled at MapExit)
@@ -1410,6 +1411,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 kernel_stream.write('}\n', sdfg, state_id, node)
 
         self._block_dims = None
+        self._kernel_map = None
         self._in_device_code = False
 
     def get_next_scope_entries(self, dfg, scope_entry):
@@ -1498,12 +1500,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                         tid=bname), sdfg, state_id,
                 scope_entry)
         else:
-            # If integer sets are used, only emit one opening curly brace
-            if scope_map.flatten:
+            for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', sdfg, state_id, scope_entry)
-            else:
-                for dim in range(len(scope_map.range)):
-                    callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         # Emit internal array allocation (deallocation handled at MapExit)
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)

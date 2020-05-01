@@ -44,8 +44,6 @@ state.add_nedge(b2, c1, dace.Memlet.simple('gB', '1', other_subset_str='1'))
 # Validate correctness of initial SDFG
 sdfg.validate()
 
-sdfg.draw_to_file()
-
 ######################################
 if __name__ == '__main__':
     print('Multi-stream copy test')
