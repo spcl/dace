@@ -24,6 +24,16 @@ from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
 
+_CPU_STORAGE_TYPES = {
+    dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.CPU_Stack,
+    dace.dtypes.StorageType.CPU_Pinned
+}
+_FPGA_STORAGE_TYPES = {
+    dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType.FPGA_Local,
+    dace.dtypes.StorageType.FPGA_Registers,
+    dace.dtypes.StorageType.ShiftRegister
+}
+
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
@@ -64,7 +74,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 n.desc(sdfg).storage in [
                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
                     StorageType.FPGA_Local, dace.dtypes.StorageType.
-                    FPGA_Registers
+                    FPGA_Registers, dace.dtypes.StorageType.ShiftRegister
                 ] for n in state.data_nodes()
             ]))
 
@@ -75,6 +85,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
             dace.dtypes.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.ShiftRegister,
         ]
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
@@ -265,9 +276,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             global_data_parameters.append(
                                 (is_output, dataname, data))
                         global_data_names.add(dataname)
-                    elif (data.storage == dace.dtypes.StorageType.FPGA_Local
-                          or data.storage
-                          == dace.dtypes.StorageType.FPGA_Registers):
+                    elif (data.storage
+                          in (dace.dtypes.StorageType.FPGA_Local,
+                              dace.dtypes.StorageType.FPGA_Registers,
+                              dace.dtypes.StorageType.ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -502,8 +514,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer)
 
-            elif (nodedesc.storage == dace.dtypes.StorageType.FPGA_Local or
-                  nodedesc.storage == dace.dtypes.StorageType.FPGA_Registers):
+            elif (nodedesc.storage in (dace.dtypes.StorageType.FPGA_Local,
+                                       dace.dtypes.StorageType.FPGA_Registers,
+                                       dace.dtypes.StorageType.ShiftRegister)):
 
                 if not self._in_device_code:
                     raise dace.codegen.codegen.CodegenError(
@@ -511,7 +524,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         "outside device code: {}".format(dataname))
                 if is_dynamically_sized:
                     raise ValueError(
-                        "Dynamic allocation of FPGA fast memory not allowed")
+                        "Dynamic allocation of FPGA "
+                        "fast memory not allowed: {}, size {}".format(
+                            dataname, arrsize))
 
                 # Absorb vector size into type and adjust array size
                 # accordingly
@@ -572,17 +587,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
         u, v, memlet = edge.src, edge.dst, edge.data
 
-        cpu_storage_types = [
-            dace.dtypes.StorageType.CPU_Heap,
-            dace.dtypes.StorageType.CPU_Stack,
-            dace.dtypes.StorageType.CPU_Pinned
-        ]
-        fpga_storage_types = [
-            dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.FPGA_Local,
-            dace.dtypes.StorageType.FPGA_Registers,
-        ]
-
         # Determine directionality
         if isinstance(
                 src_node,
@@ -598,11 +602,12 @@ class FPGACodeGen(TargetCodeGenerator):
         data_to_data = (isinstance(src_node, dace.graph.nodes.AccessNode)
                         and isinstance(dst_node, dace.graph.nodes.AccessNode))
 
-        host_to_device = (data_to_data and src_storage in cpu_storage_types and
-                          dst_storage == dace.dtypes.StorageType.FPGA_Global)
+        host_to_device = (data_to_data and src_storage in _CPU_STORAGE_TYPES
+                          and dst_storage
+                          == dace.dtypes.StorageType.FPGA_Global)
         device_to_host = (data_to_data and src_storage
                           == dace.dtypes.StorageType.FPGA_Global
-                          and dst_storage in cpu_storage_types)
+                          and dst_storage in _CPU_STORAGE_TYPES)
         device_to_device = (
             data_to_data and src_storage == dace.dtypes.StorageType.FPGA_Global
             and dst_storage == dace.dtypes.StorageType.FPGA_Global)
@@ -658,12 +663,14 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
-              and (((src_storage == dace.dtypes.StorageType.FPGA_Local
-                     or src_storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and dst_storage not in fpga_storage_types) or
-                   ((dst_storage == dace.dtypes.StorageType.FPGA_Local
-                     or dst_storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and src_storage not in fpga_storage_types))):
+              and (((src_storage in (dace.dtypes.StorageType.FPGA_Local,
+                                     dace.dtypes.StorageType.FPGA_Registers,
+                                     dace.dtypes.StorageType.ShiftRegister))
+                    and dst_storage not in _FPGA_STORAGE_TYPES) or
+                   ((dst_storage in (dace.dtypes.StorageType.FPGA_Local,
+                                     dace.dtypes.StorageType.FPGA_Registers,
+                                     dace.dtypes.StorageType.ShiftRegister))
+                    and src_storage not in _FPGA_STORAGE_TYPES))):
             raise NotImplementedError(
                 "Copies between host memory and FPGA "
                 "local memory not supported: from {} to {}".format(
@@ -673,6 +680,10 @@ class FPGACodeGen(TargetCodeGenerator):
 
             if memlet.wcr is not None:
                 raise NotImplementedError("WCR not implemented for copy edges")
+
+            if src_storage == dace.dtypes.StorageType.ShiftRegister:
+                raise NotImplementedError(
+                    "Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
@@ -689,6 +700,19 @@ class FPGACodeGen(TargetCodeGenerator):
             if copy_shape[-1] != 1:
                 # Adjust for vectorization length
                 copy_shape[-1] = copy_shape[-1] / memlet.veclen
+
+            if dst_storage == dace.dtypes.StorageType.ShiftRegister:
+                if len(copy_shape) != 1:
+                    raise ValueError(
+                        "Only single-dimensional writes "
+                        "to shift registers supported: {}{}".format(
+                            dst_node.data, copy_shape))
+                if copy_shape[-1] > memlet.veclen:
+                    raise ValueError(
+                        "Only a single (vector) element can be "
+                        "written to a shift register: {}{}".format(
+                            dst_node.data, copy_shape[-1]))
+
             # Check if we are copying between vectorized and non-vectorized
             # types
             memwidth_src = self._memory_widths[(src_node.data, sdfg)]
@@ -816,10 +840,16 @@ class FPGACodeGen(TargetCodeGenerator):
                                        is_pack, packing_factor)
 
             # Language specific
-            write_expr = self.make_write(dst_def_type, ctype, dst_node.label,
-                                         memlet.veclen, dst_expr, dst_index,
-                                         read_expr, memlet.wcr, is_unpack,
-                                         packing_factor)
+            if dst_storage == dace.dtypes.StorageType.ShiftRegister:
+                write_expr = self.make_shift_register_write(
+                    dst_def_type, ctype, dst_node.label, memlet.veclen,
+                    dst_expr, dst_index, read_expr, None, is_unpack,
+                    packing_factor)
+            else:
+                write_expr = self.make_write(dst_def_type, ctype,
+                                             dst_node.label, memlet.veclen,
+                                             dst_expr, dst_index, read_expr,
+                                             None, is_unpack, packing_factor)
 
             callsite_stream.write(write_expr)
 
@@ -1048,11 +1078,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 result.write(
                     "for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
                         it=flat_it, bound=node.pipeline.loop_bound_str()))
-                if pipeline.init_size > 0:
+                if pipeline.init_size != 0:
                     result.write("const bool {} = {} < {};\n".format(
                         node.pipeline.init_condition(), flat_it,
                         sym2cpp(pipeline.init_size)))
-                if pipeline.drain_size > 0:
+                if pipeline.drain_size != 0:
                     result.write("const bool {} = {} >= {};\n".format(
                         node.pipeline.drain_condition(), flat_it,
                         bound + (" - " + sym2cpp(pipeline.drain_size)
