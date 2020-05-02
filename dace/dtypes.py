@@ -15,14 +15,13 @@ class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
-    Immaterial = ()  # Needs materialize function
-    Register = ()  # Tasklet storage location
-    CPU_Pinned = ()  # NOTE: Can be DMA accessed from accelerators
-    CPU_Heap = ()  # NOTE: Allocated with new[]
-    CPU_Stack = ()  # NOTE: Allocated on stack
+    Immaterial = ()  # Data that is materialized on access
+    Register = ()  # Local data on registers, stack, or equivalent memory
+    CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = ()  # Host memory allocated on heap
+    CPU_ThreadLocal = ()  # Thread-local host memory
     GPU_Global = ()  # Global memory
     GPU_Shared = ()  # Shared memory
-    GPU_Stack = ()  # GPU registers
     FPGA_Global = ()  # Off-chip global memory (DRAM)
     FPGA_Local = ()  # On-chip memory (bulk storage)
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
@@ -112,10 +111,10 @@ SCOPEDEFAULT_STORAGE = {
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
-    ScheduleType.CPU_Multicore: StorageType.CPU_Stack,
+    ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
-    ScheduleType.GPU_ThreadBlock: StorageType.GPU_Stack,
-    ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.GPU_Stack,
+    ScheduleType.GPU_ThreadBlock: StorageType.Register,
+    ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
 }
 

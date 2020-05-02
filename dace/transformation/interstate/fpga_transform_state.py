@@ -61,7 +61,7 @@ class FPGATransformState(pattern_matching.Transformation):
                 if nodedesc.storage in [
                         dtypes.StorageType.CPU_Heap,
                         dtypes.StorageType.CPU_Pinned,
-                        dtypes.StorageType.CPU_Stack
+                        dtypes.StorageType.CPU_ThreadLocal
                 ]:
                     return False
 
