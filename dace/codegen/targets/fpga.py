@@ -968,15 +968,27 @@ class FPGACodeGen(TargetCodeGenerator):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
 
-            if node.map.unroll:
-                self.generate_unroll_loop_pre(result, None, sdfg, state_id,
-                                              node)
-            else:
-                if is_innermost:
-                    self.generate_pipeline_loop_pre(result, sdfg, state_id,
-                                                    node)
-                    self.generate_flatten_loop_pre(result, sdfg, state_id,
-                                                   node)
+            # Detect loops with single iterations and do not put directives
+            is_degenerate = False
+            if len(node.map.range) == 1:                         
+                begin, end, skip = node.map.range[0]
+                try:
+                    begin_val = evaluate(begin, sdfg.constants)
+                    skip_val = evaluate(skip, sdfg.constants)
+                    end_val = evaluate(end, sdfg.constants)
+                    is_degenerate = begin_val + skip_val > end_val
+                except TypeError:
+                    is_degenerate = False
+
+            if node.map.unroll and not is_degenerate:
+                self.generate_unroll_loop_pre(result, None, sdfg, state_id, node)
+
+            elif not is_degenerate:
+                self.generate_pipeline_loop_pre(result, sdfg, state_id, node)
+                self.generate_flatten_loop_pre(result, sdfg, state_id, node)
+
+
+
             # Generate nested loops
             if not isinstance(node, PipelineEntry):
                 for i, r in enumerate(node.map.range):
@@ -1025,7 +1037,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         begin_val = evaluate(begin, sdfg.constants)
                         skip_val = evaluate(skip, sdfg.constants)
                         end_val = evaluate(end, sdfg.constants)
-                        is_degenerate = begin_val + skip_val >= end_val
+                        is_degenerate = begin_val + skip_val > end_val
                     except TypeError:
                         is_degenerate = False
 
