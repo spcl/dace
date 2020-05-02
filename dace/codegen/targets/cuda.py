@@ -64,6 +64,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._in_device_code = False
         self._cpu_codegen = None
         self._block_dims = None
+        self._kernel_map = None
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda', '', 'cu',
                                       CUDACodeGen, 'CUDA')
         self._localcode = CodeIOStream()
@@ -961,9 +962,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         state = sdfg.nodes()[state_id]
 
         # If in device-level code, call appropriate function
-        if (self._toplevel_schedule == dtypes.ScheduleType.GPU_Device or
-            (state.scope_dict()[scope_entry] is not None and state.scope_dict(
-            )[scope_entry].map.schedule in dtypes.GPU_SCHEDULES)):
+        if self._kernel_map is not None and self._kernel_map.schedule in dtypes.GPU_SCHEDULES:
             self.generate_devicelevel_scope(sdfg, dfg_scope, state_id,
                                             function_stream, callsite_stream)
             return
@@ -1223,7 +1222,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         tb_maps = [
             node.map for node, parent in dfg_scope.scope_dict().items()
             if parent == kernelmap_entry and isinstance(node, nodes.EntryNode)
-            and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            # and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
         ]
         # Append thread-block maps from nested SDFGs
         for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
@@ -1234,8 +1234,11 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 tb_maps.extend([
                     n.map for state in node.sdfg.nodes()
                     for n in state.nodes() if isinstance(n, nodes.MapEntry)
-                    and n.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                    # and n.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                    and n.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
                 ])
+
+        print("JAN DEBUG 2: %s" % tb_maps)
 
         # Case (1): no thread-block maps
         if len(tb_maps) == 0:
@@ -1258,6 +1261,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
             return grid_size, block_size, False
 
+        print("JAN DEBUG 2: %s" % tb_maps)
+
         # Find all thread-block maps to determine overall block size
         block_size = [1, 1, 1]
         detected_block_sizes = [block_size]
@@ -1267,7 +1272,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
             # The partial trailing thread-block is emitted as an if-condition
             # that returns on some of the participating threads
-            tbsize = [symbolic.overapproximate(s) for s in tbsize]
+            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
+                tbsize = [128] # TODO don't hard-code block-size!!!
+            else:
+                tbsize = [symbolic.overapproximate(s) for s in tbsize]
 
             # Linearize (flatten) rest of dimensions to third
             if len(tbsize) > 3:
@@ -1326,6 +1334,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 block_expr = 'blockIdx.%s' % _named_idx(i)
                 # If we defaulted to 32 threads per block, offset by thread ID
                 if not has_tbmap:
+                    print("WHYYYYYY?")
                     block_expr = '(%s * %s + threadIdx.%s)' % (
                         block_expr, _topy(block_dims[i]), _named_idx(i))
 
@@ -1353,6 +1362,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Dispatch internal code
         assert self._in_device_code == False
         self._in_device_code = True
+        self._kernel_map = kernel_map
         self._block_dims = block_dims
 
         # Emit internal array allocation (deallocation handled at MapExit)
@@ -1410,6 +1420,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 kernel_stream.write('}\n', sdfg, state_id, node)
 
         self._block_dims = None
+        self._kernel_map = None
         self._in_device_code = False
 
     def get_next_scope_entries(self, dfg, scope_entry):
@@ -1454,6 +1465,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             total_block_size = 1
             for bdim in self._block_dims:
                 if symbolic.issymbolic(bdim, sdfg.constants):
+                    print("JAN DEBUG %s" % bdim)
                     raise ValueError(
                         'Block size has to be constant for block-wide '
                         'dynamic map schedule (got %s)' % str(bdim))
@@ -1469,33 +1481,40 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 raise NotImplementedError(
                     'Dynamic block map schedule only '
                     'implemented for 1D blocks currently')
-            pscope = sdict[scope_entry]
-            while pscope is not None and pscope.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
-                pscope = sdict[pscope]
-            if pscope is None:
-                callsite_stream.write('int __dace_tid = threadIdx.x;', sdfg,
-                                      state_id, scope_entry)
-                bname = '__dace_tid'
-            else:
-                bname = pscope.map.params[0]
 
             # Define all input connectors of this map entry
             # Note: no need for a C scope around these, as there will not be
             #       more than one dynamic thread-block map in a GPU device map
+            callsite_stream.write(
+                'unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;',
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                'if (%s < %s) {' % (self._kernel_map.params[0],
+                                    _topy(subsets.Range(self._kernel_map.range[::-1]).max_element()[0] + 1)),
+                sdfg, state_id, scope_entry)
+
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(
-                        sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg, state_id,
                     scope_entry)
 
             callsite_stream.write(
+                '__dace_dynmap_begin = {begin};\n'
+                '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0],
+                                                    end=scope_map.range[0][1] + 1),
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                '}',
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
                 'dace::DynamicMap<{bsize}>::template '
-                'schedule({begin}, {end}, {tid}, [&](auto {param}, '
-                'auto {tid}) {{'.format(bsize=total_block_size,
-                                        begin=scope_map.range[0][0],
-                                        end=scope_map.range[0][1] + 1,
-                                        param=scope_map.params[0],
-                                        tid=bname), sdfg, state_id,
+                'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
+                'auto {param}) {{'.format(bsize=total_block_size,
+                                          param=scope_map.params[0],
+                                          kmapIdx=self._kernel_map.params[0]), sdfg, state_id,
                 scope_entry)
         else:
             # If integer sets are used, only emit one opening curly brace
