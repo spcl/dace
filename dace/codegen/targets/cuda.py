@@ -1308,10 +1308,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # generator)
         kernel_stream.write('{', sdfg, state_id, node)
 
-        if not node.map.flatten:
-            # Add more opening braces for scope exit to close
-            for dim in range(len(node.map.range) - 1):
-                kernel_stream.write('{\n', sdfg, state_id, node)
+        # Add more opening braces for scope exit to close
+        for dim in range(len(node.map.range) - 1):
+            kernel_stream.write('{\n', sdfg, state_id, node)
 
         # Generate all index arguments for kernel grid
         krange = subsets.Range(kernel_map.range[::-1])
@@ -1517,12 +1516,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                           kmapIdx=self._kernel_map.params[0]), sdfg, state_id,
                 scope_entry)
         else:
-            # If integer sets are used, only emit one opening curly brace
-            if scope_map.flatten:
+            for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', sdfg, state_id, scope_entry)
-            else:
-                for dim in range(len(scope_map.range)):
-                    callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         # Emit internal array allocation (deallocation handled at MapExit)
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)

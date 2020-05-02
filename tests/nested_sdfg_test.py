@@ -57,10 +57,6 @@ if __name__ == '__main__':
     input[:] = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
     output[:] = dp.float32(0)
 
-    # Left for debugging purposes
-    nsdfg.sdfg.draw_to_file('nested_sdfg.dot')
-    mysdfg.draw_to_file()
-
     mysdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output - np.power(input, 5)) / (N.get() * N.get())

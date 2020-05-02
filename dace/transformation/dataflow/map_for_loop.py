@@ -49,7 +49,7 @@ class MapToForLoop(pattern_matching.Transformation):
         # Retrieve map entry and exit nodes.
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[MapToForLoop._map_entry]]
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
 
         loop_idx = map_entry.map.params[0]
         loop_from, loop_to, loop_step = map_entry.map.range[0]

@@ -34,7 +34,7 @@ bail() {
 run_sample() {
     # Args:
     #  1 - Relative path of FPGA test starting from test folder
-    #  2 - Name of the DAPP program
+    #  2 - Name of the DaCe program
     #  3 - a string indicating the list of input to pass to the python program (the transformation sequence)
     #  4 - program command line argument (if any)
 
@@ -58,6 +58,12 @@ run_all() {
     # Vectorization 2: first transform for FPGA then vectorize
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
     # Vectorization 3: TODO non vectorizable N
+
+    # Throw error when kernel names are too long
+    run_sample intel_fpga/name_too_long name_too_long "\n"
+    
+    # Test removing degenerate loops that only have a single iteration
+    run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
     # ### MAP TILING ####
     # First tile then transform

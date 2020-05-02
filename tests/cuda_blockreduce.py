@@ -35,8 +35,6 @@ sdfg.fill_scope_connectors()
 if __name__ == '__main__':
     print('Block reduction test')
 
-    sdfg.draw_to_file()
-
     Adata = np.random.rand(128).astype(np.float32)
     Bdata = np.random.rand(2).astype(np.float32)
     sdfg(A=Adata, B=Bdata)

@@ -1,4 +1,5 @@
 import ast
+import copy
 import itertools
 import os
 import re
@@ -13,6 +14,7 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
 from dace.codegen.targets import cpp, fpga
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -42,6 +44,10 @@ REDUCTION_TYPE_TO_PYEXPR = {
     dace.dtypes.ReductionType.Bitwise_Or: "|",
     dace.dtypes.ReductionType.Bitwise_Xor: "^"
 }
+
+
+class NameTooLongError(ValueError):
+    pass
 
 
 @registry.autoregister_params(name='intel_fpga')
@@ -228,44 +234,57 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         pass
 
     @staticmethod
-    def make_read(defined_type, type_str, var_name, vector_length, expr,
-                  index):
+    def make_read(defined_type, type_str, var_name, vector_length, expr, index,
+                  is_pack, packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "read_channel_intel({})".format(expr)
+            read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
             expr = expr.replace("[0]", "")
-            return "read_channel_intel({})".format(expr)
+            read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
-            return "*({}{})".format(expr, " + " + index if index else "")
+            read_expr = "*({}{})".format(expr, " + " + index if index else "")
         elif defined_type == DefinedType.Scalar:
-            return var_name
-        raise NotImplementedError(
-            "Unimplemented read type: {}".format(defined_type))
+            read_expr = var_name
+        else:
+            raise NotImplementedError(
+                "Unimplemented read type: {}".format(defined_type))
+        if is_pack:
+            return "pack_{}{}(&({}))".format(type_str, packing_factor,
+                                             read_expr)
+        else:
+            return read_expr
 
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr):
+                   index, read_expr, wcr, is_unpack, packing_factor):
         """
         Creates write expression, taking into account wcr if present
         """
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "write_channel_intel({}, {});".format(write_expr, read_expr)
-        elif defined_type == DefinedType.StreamArray:
-            if index != "0":
-                return "write_channel_intel({}[{}], {});".format(
-                    write_expr, index, read_expr)
+        if defined_type in [
+                DefinedType.Stream, DefinedType.StreamView,
+                DefinedType.StreamArray
+        ]:
+            if defined_type == DefinedType.StreamArray:
+                if index == "0":
+                    # remove "[0]" index as this is not allowed if the
+                    # subscripted values is not an array
+                    write_expr = write_expr.replace("[0]", "")
+                else:
+                    write_expr = "{}[{}]".format(write_expr, index)
+            if is_unpack:
+                return "\n".join("write_channel_intel({}, {}[{}]);".format(
+                    write_expr, read_expr, i) for i in range(packing_factor))
             else:
-                # remove "[0]" index as this is not allowed if the subscripted values is not an array
-                write_expr = write_expr.replace("[0]", "")
                 return "write_channel_intel({}, {});".format(
                     write_expr, read_expr)
         elif defined_type == DefinedType.Pointer:
             if wcr is not None:
-                if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
+                if (redtype != dace.dtypes.ReductionType.Min
+                        and redtype != dace.dtypes.ReductionType.Max):
                     return "{}[{}] = {}[{}] {} {};".format(
                         write_expr, index, write_expr, index,
                         REDUCTION_TYPE_TO_HLSLIB[redtype], read_expr)
@@ -277,7 +296,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
-                return "{}[{}] = {};".format(write_expr, index, read_expr)
+                if is_unpack:
+                    return "unpack_{}{}({}, &{}[{}]);".format(
+                        type_str, packing_factor, read_expr, write_expr, index)
+                else:
+                    return "{}[{}] = {};".format(write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -292,7 +315,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
-                return "{} = {};".format(var_name, read_expr)
+                if is_unpack:
+                    return "unpack_{}{}({}, {});".format(
+                        type_str, packing_factor, read_expr, var_name)
+                else:
+                    return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
 
@@ -482,12 +509,10 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_args_call = []
         added = set()
         # Split into arrays and scalars
-        arrays = sorted([
-            t for t in parameters if not isinstance(t[2], dace.data.Scalar)
-        ], key=lambda t: t[1])
-        scalars = [
-            t for t in parameters if isinstance(t[2], dace.data.Scalar)
-        ]
+        arrays = sorted(
+            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            key=lambda t: t[1])
+        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
         scalars += [(False, k, v) for k, v in symbol_parameters.items()]
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, pname, p in itertools.chain(arrays, scalars):
@@ -506,6 +531,16 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 kernel_args_call.append(pname)
 
         module_function_name = "module_" + name
+
+        # The official limit suggested by Intel is 61. However, the compiler
+        # can also append text to the module. Longest seen so far is
+        # "_cra_slave_inst", which is 15 characters, so we restrict to
+        # 61 - 15 = 46, and round down to 42 to be conservative.
+        if len(module_function_name) > 42:
+            raise NameTooLongError(
+                "Due to a bug in the Intel FPGA OpenCL compiler, "
+                "kernel names cannot be longer than 42 characters:\n\t{}".
+                format(module_function_name))
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -915,13 +950,15 @@ __kernel void \\
             src_def_type = self._dispatcher.defined_vars.get(connector)
             dst_def_type = self._dispatcher.defined_vars.get(data_name)
 
+            # TODO: implement vector conversion
             read_expr = self.make_read(src_def_type, memlet_type, connector,
-                                       memory_width, connector, None)
+                                       memory_width, connector, None, False, 1)
 
             # create write expression
+            # TODO: implement vector conversion
             write_expr = self.make_write(dst_def_type, memlet_type, data_name,
                                          memory_width, data_name, offset,
-                                         read_expr, memlet.wcr)
+                                         read_expr, memlet.wcr, False, 1)
 
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:
@@ -975,6 +1012,32 @@ __kernel void \\
                     callsite_stream.write("#undef {}".format(memlet_name),
                                           sdfg, sdfg.node_id(dfg), node)
 
+    def generate_converter(self, is_unpack, dtype, veclen, node, state_id,
+                           sdfg, function_stream):
+        if (is_unpack, dtype, veclen) in self.converters_generated:
+            return
+        if is_unpack:
+            function_stream.write(
+                """\
+void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
+    #pragma unroll
+    for (int u = 0; u < {veclen}; ++u) {{
+        ptr[u] = value[u];
+    }}
+}}\n\n""".format(dtype=dtype, veclen=veclen), sdfg, state_id, node)
+        else:
+            function_stream.write(
+                """\
+{dtype}{veclen} pack_{dtype}{veclen}({dtype} const *const ptr) {{
+    {dtype}{veclen} vec;
+    #pragma unroll
+    for (int u = 0; u < {veclen}; ++u) {{
+        vec[u] = ptr[u];
+    }}
+    return vec;
+}}\n\n""".format(dtype=dtype, veclen=veclen), sdfg, state_id, node)
+        self.converters_generated.add((is_unpack, dtype, veclen))
+
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):
         if node.label is None or node.label == "":
@@ -986,14 +1049,13 @@ __kernel void \\
         if not node.code:
             return ''
         # Not [], "" or None
-        if node.code_global:
-            if node.language is not dtypes.Language.CPP:
-                raise ValueError(
-                    "Global code only supported for C++ tasklets: got {}".
-                    format(node.language))
+        if node.code_global and node.code_global.code:
             function_stream.write(
-                type(node).__properties__["code_global"].to_string(
-                    node.code_global), sdfg, state_id, node)
+                codeblock_to_cpp(node.code_global),
+                sdfg,
+                state_id,
+                node,
+            )
             function_stream.write("\n", sdfg, state_id, node)
 
         # If raw C++ code, return the code directly
@@ -1007,7 +1069,7 @@ __kernel void \\
                 state_id, node)
             return
 
-        body = node.code
+        body = node.code.code
 
         callsite_stream.write('// Tasklet code (%s)\n' % node.label, sdfg,
                               state_id, node)
@@ -1041,6 +1103,7 @@ __kernel void \\
 
         used_streams = []
         for stmt in body:  # for each statement in tasklet body
+            stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
                 sdfg, self._dispatcher.defined_vars, memlets,
                 self._memory_widths, sdfg.constants)
@@ -1049,29 +1112,9 @@ __kernel void \\
             else:
                 rk = ocl_visitor.visit(stmt)
             # Generate width converters
-            for unpack, dtype, veclen in (ocl_visitor.width_converters -
-                                          self.converters_generated):
-                if unpack:
-                    function_stream.write(
-                        """\
-void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
-    #pragma unroll
-    for (int u = 0; u < {veclen}; ++u) {{
-        ptr[u] = value[u];
-    }}
-}}\n\n""".format(dtype=dtype, veclen=veclen), sdfg, state_id, node)
-                else:
-                    function_stream.write(
-                        """\
-{dtype}{veclen} pack_{dtype}{veclen}({dtype} const *const ptr) {{
-    {dtype}{veclen} vec;
-    #pragma unroll
-    for (int u = 0; u < {veclen}; ++u) {{
-        vec[u] = ptr[u];
-    }}
-    return vec;
-}}\n\n""".format(dtype=dtype, veclen=veclen), sdfg, state_id, node)
-            self.converters_generated |= ocl_visitor.width_converters
+            for unpack, dtype, veclen in ocl_visitor.width_converters:
+                self.generate_converter(unpack, dtype, veclen, node, state_id,
+                                        sdfg, function_stream)
 
             used_streams.extend(ocl_visitor.used_streams)
             if rk is not None:

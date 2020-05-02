@@ -41,8 +41,6 @@ state.add_memlet_path(tasklet,
                                                 'i',
                                                 num_accesses=-1))
 
-sdfg.draw_to_file()
-
 
 def toptr(arr):
     return arr.__array_interface__['data'][0]

@@ -4,6 +4,7 @@ import collections
 import dace
 import functools
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.graph import nodes
@@ -83,7 +84,7 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         for sd in sdfg.all_sdfgs_recursive():
-            global_stream.write(sd.global_code, sd)
+            global_stream.write(codeblock_to_cpp(sd.global_code), sd)
 
     def generate_header(self, sdfg: SDFG, used_environments: Set[str],
                         global_stream: CodeIOStream,
@@ -191,7 +192,7 @@ DACE_EXPORTED int __dace_init_%s(%s)
                 callsite_stream.write(env.init_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write(sdfg.init_code, sdfg)
+        callsite_stream.write(codeblock_to_cpp(sdfg.init_code), sdfg)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -206,7 +207,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
-        callsite_stream.write(sdfg.exit_code, sdfg)
+        callsite_stream.write(codeblock_to_cpp(sdfg.exit_code), sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -318,7 +319,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
 
-        condition_string = cppunparse.cppunparse(edge.data.condition, False)
+        condition_string = cppunparse.cppunparse(edge.data.condition.code,
+                                                 False)
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -433,7 +435,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             entry_edge = control.scope.entry.edge
                             condition = cppunparse.cppunparse(
-                                entry_edge.data.condition, False)
+                                entry_edge.data.condition.code, False)
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -496,7 +498,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             then_entry = then_scope.entry.edge
 
                             condition = cppunparse.cppunparse(
-                                then_entry.data.condition, False)
+                                then_entry.data.condition.code, False)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
@@ -593,11 +595,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream.write(
             "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
 
-    def generate_code(self,
-                      sdfg: SDFG,
-                      schedule: Optional[dtypes.ScheduleType],
-                      sdfg_id: str = ""
-                      ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+    def generate_code(
+        self,
+        sdfg: SDFG,
+        schedule: Optional[dtypes.ScheduleType],
+        sdfg_id: str = ""
+    ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.
