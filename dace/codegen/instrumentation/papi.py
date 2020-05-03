@@ -245,67 +245,6 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
             inner_stream.write("__perf_%s.enterCritical();\n" % node.label,
                                sdfg, state_id, node)
-        elif isinstance(node, nodes.Reduce):
-            unified_id = _unified_id(state.node_id(node), state_id)
-
-            input_size: str = PAPIUtils.get_memory_input_size(
-                node, sdfg, state_id)
-
-            # For measuring the memory bandwidth, we analyze the amount of data
-            # moved.
-            result = outer_stream
-            perf_expected_data_movement_sympy = 1
-
-            input_memlet = state.in_edges(node)[0].data
-            output_memlet = state.out_edges(node)[0].data
-            # If axes were not defined, use all input dimensions
-            input_dims = input_memlet.subset.dims()
-            output_dims = output_memlet.subset.data_dims()
-            axes = node.axes
-            if axes is None:
-                axes = tuple(range(input_dims))
-
-            isize = input_memlet.subset.size()
-            osize = input_memlet.subset.size()
-            for axis in range(output_dims):
-                perf_expected_data_movement_sympy *= osize[axis]
-            for axis in axes:
-                perf_expected_data_movement_sympy *= isize[axis]
-
-            if not dace.sdfg.is_parallel(state, node):
-                # We put a start marker, but only if we are in a serial state
-                result.write(
-                    self.perf_supersection_start_string(unified_id),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-            result.write(
-                self.perf_section_start_string(
-                    unified_id,
-                    sym2cpp(sp.simplify(perf_expected_data_movement_sympy)) +
-                    (" * (sizeof(%s) + sizeof(%s))" % (
-                        sdfg.arrays[output_memlet.data].dtype.ctype,
-                        sdfg.arrays[input_memlet.data].dtype.ctype,
-                    )),
-                    input_size,
-                ),
-                sdfg,
-                state_id,
-                node,
-            )
-
-            #############################################################
-            # Internal part
-            result = inner_stream
-            result.write(
-                self.perf_counter_start_measurement_string(
-                    unified_id, '__o%d' % (output_dims - 1)),
-                sdfg,
-                state_id,
-                node,
-            )
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
@@ -333,42 +272,6 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                     "__perf_store.addBytesMoved(%s);" %
                     PAPIUtils.get_tasklet_byte_accesses(
                         node, state, sdfg, state_id), sdfg, state_id, node)
-        elif isinstance(node, nodes.Reduce):
-            result = inner_stream
-            #############################################################
-            # Instrumentation: Post-Reduce (pre-braces)
-            byte_moved_measurement = "__perf_store.addBytesMoved(%s);\n"
-
-            # For reductions, we assume Read-Modify-Write for all operations
-            # Every reduction statement costs sizeof(input) + sizeof(output).
-            # This is wrong with some custom reductions or extending operations
-            # (e.g., i32 * i32 => i64)
-            # It also is wrong for write-avoiding min/max (min/max that only
-            # overwrite the reduced variable when it needs to be changed)
-
-            if node.instrument == dace.InstrumentationType.PAPI_Counters:
-                input_memlet = state.in_edges(node)[0].data
-                output_memlet = state.out_edges(node)[0].data
-                num_reduced_inputs = input_memlet.subset.num_elements()
-
-                result.write(
-                    byte_moved_measurement %
-                    ("%s * (sizeof(%s) + sizeof(%s))" %
-                     (sym2cpp(num_reduced_inputs),
-                      sdfg.arrays[output_memlet.data].dtype.ctype,
-                      sdfg.arrays[input_memlet.data].dtype.ctype)),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-                if not self.has_surrounding_perfcounters(node, state):
-                    result.write(
-                        self.perf_counter_end_measurement_string(unified_id),
-                        sdfg,
-                        state_id,
-                        node,
-                    )
 
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):

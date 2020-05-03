@@ -21,7 +21,10 @@ class MapReduceFusion(pm.Transformation):
     _tasklet = nodes.Tasklet('_')
     _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
     _in_array = nodes.AccessNode('_')
-    _reduce = nodes.Reduce('lambda: None', None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce()
+
     _out_array = nodes.AccessNode('_')
 
     @staticmethod

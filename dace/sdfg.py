@@ -1207,7 +1207,7 @@ class SDFG(OrderedDiGraph):
                   allow_conflicts=False,
                   total_size=None,
                   find_new_name=False,
-                  alignment=0):
+                  alignment=0) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -2042,7 +2042,6 @@ class SDFG(OrderedDiGraph):
         return dace.Memlet.from_array(array, self.arrays[array])
 
 
-
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
     def memlet_path(self,
@@ -2066,9 +2065,7 @@ class MemletTrackingView(object):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
-        while not isinstance(
-                curedge.src,
-            (nd.CodeNode, nd.AccessNode, nd.Reduce, nd.LibraryNode)):
+        while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode)):
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -2083,8 +2080,7 @@ class MemletTrackingView(object):
 
         # Prepend outgoing edges until reaching the sink node
         curedge = edge
-        while not isinstance(curedge.dst,
-                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+        while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
@@ -3118,13 +3114,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-        self,
-        wcr,
-        axes,
-        identity=None,
-        schedule=dtypes.ScheduleType.Default,
-        debuginfo=None,
-    ):
+            self,
+            wcr,
+            axes,
+            identity=None,
+            debuginfo=None,
+    ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
             :param axes: A tuple of axes to reduce the input memlet from, or
@@ -3135,8 +3130,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             :return: A Reduce node
         """
+        import dace.libraries.standard as stdlib  # Avoid import loop
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
+        result = stdlib.Reduce(wcr, axes, identity, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3684,16 +3680,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                             'WARNING: Use of uninitialized transient "%s" in state %s'
                             % (node.data, self.label))
 
-            if isinstance(node,
-                          nd.Reduce) and (len(self.in_edges(node)) != 1
-                                          or len(self.out_edges(node)) != 1):
-                raise InvalidSDFGNodeError(
-                    "Reduce node must have exactly one input and output edges",
-                    sdfg,
-                    state_id,
-                    nid,
-                )
-
             if (isinstance(node, nd.ConsumeEntry)
                     and "IN_stream" not in node.in_connectors):
                 raise InvalidSDFGNodeError(
@@ -3889,7 +3875,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() -
+                              defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %

@@ -176,11 +176,12 @@ def reduce(op, in_array, out_array=None, axis=None, identity=None):
         :param in_array: array to reduce.
         :param out_array: output array to write the result to. If `None`, a new array will be returned.
         :param axis: the axis or axes to reduce over. If `None`, all axes will be reduced.
-        :param identity: intial value for the reduction
+        :param identity: intial value for the reduction. If `None`, uses value stored in output.
         :return: `None` if out_array is given, or the newly created `out_array` if `out_array` is `None`.
     """
     # The function is empty because it is parsed in the Python frontend
     return None
+
 
 def elementwise(func, in_array, out_array=None):
     """ Applies a function to each element of the array
