@@ -268,9 +268,7 @@ def make_sdfg(specialize):
         storage=dace.dtypes.StorageType.FPGA_Global)
     merge_entry, merge_exit = state.add_map("merge", {"nb": "0:num_bins"},
                                             schedule=ScheduleType.FPGA_Device)
-    merge_reduce = state.add_reduce("lambda a, b: a + b", (0, ),
-                                    "0",
-                                    schedule=ScheduleType.FPGA_Device)
+    merge_reduce = state.add_reduce("lambda a, b: a + b", (0, ), "0")
     state.add_memlet_path(hist_pipes_in,
                           merge_entry,
                           merge_reduce,
