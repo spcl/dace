@@ -2,6 +2,7 @@
     transformation. """
 
 from dace import registry
+from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching as pm
@@ -84,7 +85,7 @@ class MapReduceFusion(pm.Transformation):
 
         return ' -> '.join(str(node) for node in [tasklet, map_exit, reduce])
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG):
         graph = sdfg.nodes()[self.state_id]
         tmap_exit = graph.nodes()[self.subgraph[MapReduceFusion._tmap_exit]]
         in_array = graph.nodes()[self.subgraph[MapReduceFusion._in_array]]
@@ -105,7 +106,7 @@ class MapReduceFusion(pm.Transformation):
 
         # Find which indices should be removed from new memlet
         input_edge = graph.in_edges(reduce_node)[0]
-        axes = reduce_node.axes or list(range(input_edge.data.subset))
+        axes = reduce_node.axes or list(range(len(input_edge.data.subset)))
         array_edge = graph.out_edges(reduce_node)[0]
 
         # Delete relevant edges and nodes
@@ -117,12 +118,12 @@ class MapReduceFusion(pm.Transformation):
             if i not in axes
         ]
         if len(filtered_subset) == 0:  # Output is a scalar
-            filtered_subset = [0]
+            filtered_subset = [(0, 0, 1)]
 
         # Modify edge from tasklet to map exit
         memlet_edge.data.data = out_array.data
         memlet_edge.data.wcr = reduce_node.wcr
-        memlet_edge.data.wcr_identity = reduce_node.identity
+        memlet_edge.data.wcr_identity = None
         memlet_edge.data.subset = type(
             memlet_edge.data.subset)(filtered_subset)
 
@@ -132,7 +133,24 @@ class MapReduceFusion(pm.Transformation):
             array_edge.dst_conn,
             Memlet(array_edge.data.data, array_edge.data.num_accesses,
                    array_edge.data.subset, array_edge.data.veclen,
-                   reduce_node.wcr, reduce_node.identity))
+                   reduce_node.wcr))
+
+        # Add initialization state as necessary
+        if reduce_node.identity is not None:
+            init_state = sdfg.add_state_before(graph)
+            init_state.add_mapped_tasklet(
+                'freduce_init',
+                [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2]))
+                 for i, r in enumerate(array_edge.data.subset)], {},
+                'out = %s' % reduce_node.identity, {
+                    'out':
+                    Memlet.simple(
+                        array_edge.data.data, ','.join([
+                            'o%d' % i
+                            for i in range(len(array_edge.data.subset))
+                        ]))
+                },
+                external_edges=True)
 
 
 @registry.autoregister_params(singlestate=True)
