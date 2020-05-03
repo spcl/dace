@@ -124,8 +124,8 @@ class ExpandReducePure(pm.ExpandTransformation):
         # an identity tasklet
         ime, imx = nstate.add_map(
             'reduce_values', {
-                '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
-                for i, axis in enumerate(axes)
+                '_i%d' % axis: '0:%s' % symstr(inedge.data.subset.size()[axis])
+                for axis in axes
             })
 
         # Add identity tasklet for reduction
