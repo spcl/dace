@@ -296,7 +296,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.Reduce)):
+                if isinstance(node, nodes.EntryNode):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
                     elif (isinstance(node, nodes.EntryNode)

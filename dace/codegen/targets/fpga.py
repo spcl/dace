@@ -239,10 +239,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    and n.desc(scope).storage ==
+                                    dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -266,8 +266,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                 (is_output, dataname, data))
                         global_data_names.add(dataname)
                     elif (data.storage == dace.dtypes.StorageType.FPGA_Local
-                          or data.storage
-                          == dace.dtypes.StorageType.FPGA_Registers):
+                          or data.storage ==
+                          dace.dtypes.StorageType.FPGA_Registers):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -600,8 +600,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         host_to_device = (data_to_data and src_storage in cpu_storage_types and
                           dst_storage == dace.dtypes.StorageType.FPGA_Global)
-        device_to_host = (data_to_data and src_storage
-                          == dace.dtypes.StorageType.FPGA_Global
+        device_to_host = (data_to_data and
+                          src_storage == dace.dtypes.StorageType.FPGA_Global
                           and dst_storage in cpu_storage_types)
         device_to_device = (
             data_to_data and src_storage == dace.dtypes.StorageType.FPGA_Global
@@ -721,10 +721,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(
+                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage ==
+                                    dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -928,7 +928,9 @@ class FPGACodeGen(TargetCodeGenerator):
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(x, (dace.graph.nodes.MapEntry, PipelineEntry))):
+            if (isinstance(
+                    x,
+                (dace.graph.nodes.MapEntry, dace.graph.nodes.PipelineEntry))):
                 if not x.unroll:
                     return False
                 to_search += scope_dict[x]
@@ -1246,4 +1248,3 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                                                None, host_code_stream)
             self._dispatcher.dispatch_initialize(sdfg, state, None, arr_node,
                                                  None, host_code_stream)
-
