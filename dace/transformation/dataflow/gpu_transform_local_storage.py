@@ -179,7 +179,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         gpu_storage_types = [
             dtypes.StorageType.GPU_Global,
             dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack,
         ]
 
         #######################################################

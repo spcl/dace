@@ -93,12 +93,12 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.CPU_Heap, None, self)
         self._dispatcher.register_copy_dispatcher(
             dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.CPU_Stack, None, self)
+            dace.dtypes.StorageType.CPU_ThreadLocal, None, self)
         self._dispatcher.register_copy_dispatcher(
             dace.dtypes.StorageType.CPU_Heap,
             dace.dtypes.StorageType.FPGA_Global, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.dtypes.StorageType.CPU_Stack,
+            dace.dtypes.StorageType.CPU_ThreadLocal,
             dace.dtypes.StorageType.FPGA_Global, None, self)
 
         # Inspect the vector length of all memlets leading to each memory, to
@@ -574,7 +574,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         cpu_storage_types = [
             dace.dtypes.StorageType.CPU_Heap,
-            dace.dtypes.StorageType.CPU_Stack,
+            dace.dtypes.StorageType.CPU_ThreadLocal,
             dace.dtypes.StorageType.CPU_Pinned
         ]
         fpga_storage_types = [
