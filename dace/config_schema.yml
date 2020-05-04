@@ -194,6 +194,14 @@ required:
                             explicit GPU block maps are not defined.
                         default: '32,1,1'
 
+                    dynamic_map_block_size:
+                        type: str
+                        title: Thread-Block size for GPU_ThreadBlock_Dynamic
+                        description: >
+                            Thread-Block size for maps using GPU_ThreadBlock_Dynamic
+                            scheduler.
+                        default: '128,1,1'
+
                     max_concurrent_streams:
                         type: int
                         title: Concurrent CUDA streams
