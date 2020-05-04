@@ -1247,15 +1247,16 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Case (1): no thread-block maps
         if len(tb_maps) == 0:
 
-            warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                          'block size of (%s)' %
-                          Config.get('compiler', 'cuda', 'default_block_size'))
             if has_dtbmap:
                 block_size = [
                     int(b) for b in Config.get('compiler', 'cuda',
                                                'dynamic_map_block_size').split(',')
                 ]
             else:
+                warnings.warn('Thread-block maps not found in kernel, assuming ' +
+                              'block size of (%s)' %
+                              Config.get('compiler', 'cuda', 'default_block_size'))
+
                 block_size = [
                     int(b) for b in Config.get('compiler', 'cuda',
                                                'default_block_size').split(',')
@@ -1281,8 +1282,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             # The partial trailing thread-block is emitted as an if-condition
             # that returns on some of the participating threads
             tbsize = [symbolic.overapproximate(s) for s in tbsize]
-
-            print("JAN DEBUG: %s" % tbsize)
 
             # Linearize (flatten) rest of dimensions to third
             if len(tbsize) > 3:
@@ -1470,7 +1469,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             total_block_size = 1
             for bdim in self._block_dims:
                 if symbolic.issymbolic(bdim, sdfg.constants):
-                    print("JAN DEBUG %s" % bdim)
                     raise ValueError(
                         'Block size has to be constant for block-wide '
                         'dynamic map schedule (got %s)' % str(bdim))
@@ -1515,7 +1513,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 sdfg, state_id, scope_entry)
 
             callsite_stream.write(
-                'dace::DynamicMap<true, true, {bsize}>::template '
+                'dace::DynamicMap<true, true, {bsize}>::'
                 'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
                 'auto {param}) {{'.format(bsize=total_block_size,
                                           param=scope_map.params[0],

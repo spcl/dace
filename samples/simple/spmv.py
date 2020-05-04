@@ -92,6 +92,9 @@ if __name__ == "__main__":
     if dace.Config.get_bool('profiling'):
         dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
 
+    print(b)
+    print(A_sparse.dot(x))
+
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H.get())
     print("Difference:", diff)
     print("==== Program end ====")
