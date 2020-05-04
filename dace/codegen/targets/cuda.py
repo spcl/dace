@@ -1219,7 +1219,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         tb_maps = [
             node.map for node, parent in dfg_scope.scope_dict().items()
             if parent == kernelmap_entry and isinstance(node, nodes.EntryNode)
-            # and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock
             and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
         ]
         # Append thread-block maps from nested SDFGs
@@ -1231,7 +1230,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 tb_maps.extend([
                     n.map for state in node.sdfg.nodes()
                     for n in state.nodes() if isinstance(n, nodes.MapEntry)
-                    # and n.schedule == dtypes.ScheduleType.GPU_ThreadBlock
                     and n.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
                 ])
 
@@ -1239,6 +1237,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                           if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
                           ]) > 0
 
+        # keep only thread-block maps
         tb_maps = [tbmap for tbmap in tb_maps if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
 
         # Case (1): no thread-block maps
