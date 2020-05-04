@@ -3,7 +3,7 @@ from __future__ import print_function
 
 import argparse
 import dace
-from dace.sdfg import has_dynamic_map_inputs
+import math
 import numpy as np
 import scipy
 
@@ -79,20 +79,10 @@ if __name__ == "__main__":
     A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
                                        shape=(H.get(), W.get()))
 
-    sdfg: dace.SDFG = spmv.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.MapEntry) and has_dynamic_map_inputs(
-                _, node):
-            node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
-
-    sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
+    spmv(A_row, A_col, A_val, x, b)
 
     if dace.Config.get_bool('profiling'):
         dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
-
-    print(b)
-    print(A_sparse.dot(x))
 
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H.get())
     print("Difference:", diff)
