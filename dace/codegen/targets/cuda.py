@@ -96,7 +96,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
         gpu_storage = [
             dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack, dtypes.StorageType.CPU_Pinned
+            dtypes.StorageType.CPU_Pinned
         ]
         dispatcher.register_array_dispatcher(gpu_storage, self)
         dispatcher.register_array_dispatcher(dtypes.StorageType.CPU_Pinned,
@@ -111,11 +111,9 @@ class CUDACodeGen(TargetCodeGenerator):
 
         # Register illegal copies
         cpu_unpinned_storage = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal
         ]
-        gpu_private_storage = [
-            dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Stack
-        ]
+        gpu_private_storage = [dtypes.StorageType.GPU_Shared]
         illegal_copy = IllegalCopy()
         for st in cpu_unpinned_storage:
             for gst in gpu_private_storage:
@@ -337,7 +335,7 @@ void __dace_exit_cuda({params}) {{
                         block_size=', '.join(_topy(self._block_dims)),
                         ptr=dataname,
                         elements=sym2cpp(arrsize)))
-        elif nodedesc.storage == dtypes.StorageType.GPU_Stack:
+        elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
             szstr = ' = {0}' if node.setzero else ''
@@ -447,7 +445,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             callsite_stream.write('cudaFreeHost(%s);\n' % dataname, sdfg,
                                   state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
-             nodedesc.storage == dtypes.StorageType.GPU_Stack:
+             nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
         else:
             raise NotImplementedError
@@ -605,12 +603,11 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         state_dfg = sdfg.nodes()[state_id]
 
         cpu_storage_types = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
             dtypes.StorageType.CPU_Pinned
         ]
         gpu_storage_types = [
-            dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack
+            dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared
         ]
 
         copy_shape = memlet.subset.bounding_box_size()
@@ -1891,9 +1888,9 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                 raise ValueError(
                     'Only full reduction is supported for block-wide reduce,'
                     ' please use ReduceExpansion')
-            if (input_data.desc(sdfg).storage != dtypes.StorageType.GPU_Stack
+            if (input_data.desc(sdfg).storage != dtypes.StorageType.Register
                     or output_data.desc(sdfg).storage !=
-                    dtypes.StorageType.GPU_Stack):
+                    dtypes.StorageType.Register):
                 raise ValueError(
                     'Block-wise reduction only supports GPU register inputs '
                     'and outputs')
