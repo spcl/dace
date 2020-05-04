@@ -241,8 +241,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
                     gpu_storage = [dtypes.StorageType.GPU_Global,
                                  dtypes.StorageType.GPU_Shared,
-                                 dtypes.StorageType.GPU_Stack,
-                                 dtypes.StorageType.CPU_Pinned]
+                                  dtypes.StorageType.CPU_Pinned]
                     if sdict[node] is None and not (nodedesc.storage in gpu_storage):
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
