@@ -72,27 +72,19 @@ class ExpandReducePure(pm.ExpandTransformation):
             nstate = nsdfg.add_state()
             nsdfg.add_edge(init_state, nstate, dace.InterstateEdge())
 
-            if len(axes) != input_dims:
-                # Add initialization as a map
-                init_state.add_mapped_tasklet(
-                    'reduce_init', {
-                        '_o%d' % i: '0:%s' % symstr(d)
-                        for i, d in enumerate(outedge.data.subset.size())
-                    }, {},
-                    'out = %s' % node.identity, {
-                        'out':
-                        dace.Memlet.simple(
-                            '_out', ','.join(
-                                ['_o%d' % i for i in range(output_dims)]))
-                    },
-                    external_edges=True)
-            else:
-                # Add initialization as a tasklet
-                t = init_state.add_tasklet('reduce_init', {}, {'out'},
-                                           'out = %s' % node.identity)
-                w = init_state.add_write('_out')
-                init_state.add_edge(t, 'out', w, None,
-                                    dace.Memlet.simple('_out', '0'))
+            # Add initialization as a map
+            init_state.add_mapped_tasklet(
+                'reduce_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(outedge.data.subset.size())
+                }, {},
+                'out = %s' % node.identity, {
+                    'out':
+                    dace.Memlet.simple(
+                        '_out', ','.join(
+                            ['_o%d' % i for i in range(output_dims)]))
+                },
+                external_edges=True)
         else:
             nstate = nsdfg.add_state()
         # END OF INIT
