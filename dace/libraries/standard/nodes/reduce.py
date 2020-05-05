@@ -179,7 +179,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         output_data = sdfg.arrays[outedge.data.data]
 
         # Get reduction type for OpenMP
-        redtype = detect_reduction_type(node.wcr)
+        redtype = detect_reduction_type(node.wcr, openmp=True)
         if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
             raise ValueError('Reduction type not supported for "%s"' %
                              node.wcr)

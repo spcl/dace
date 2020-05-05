@@ -59,11 +59,12 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     return ret
 
 
-def detect_reduction_type(wcr_str):
+def detect_reduction_type(wcr_str, openmp=False):
     """ Inspects a lambda function and tries to determine if it's one of the 
         built-in reductions that frameworks such as MPI can provide.
 
         :param wcr_str: A Python string representation of the lambda function.
+        :param openmp: Detect additional OpenMP reduction types.
         :return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
                  if not detected, or None if no reduction is found.
     """
@@ -110,9 +111,9 @@ def detect_reduction_type(wcr_str):
           and isinstance(wcr_ast.ops[0], ast.NotEq)):
         return dtypes.ReductionType.Logical_Xor
     # OpenMP extensions
-    elif result == a - b:
+    elif openmp and result == a - b:
         return dtypes.ReductionType.Sub
-    elif result == a / b:
+    elif openmp and result == a / b:
         return dtypes.ReductionType.Div
 
     return dtypes.ReductionType.Custom
