@@ -3300,7 +3300,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 src_conn, edges[0].src.label))
         if (not isinstance(memlet, dace.memlet.EmptyMemlet)
                 and hasattr(edges[-1].dst, "in_connectors")
-                and isinstance(edges[-1].dst, nd.CodeNode) and
+                and isinstance(edges[-1].dst, nd.CodeNode)
+                and not isinstance(edges[-1].dst, nd.LibraryNode) and
             (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
             raise ValueError("Input connector {} does not exist in {}".format(
                 dst_conn, edges[-1].dst.label))
