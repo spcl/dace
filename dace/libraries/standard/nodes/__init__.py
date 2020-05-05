@@ -1,1 +1,1 @@
-from .reduce import *
+from .reduce import Reduce

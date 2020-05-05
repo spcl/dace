@@ -3118,6 +3118,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             wcr,
             axes,
             identity=None,
+            schedule=dtypes.ScheduleType.Default,
             debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
@@ -3132,7 +3133,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         """
         import dace.libraries.standard as stdlib  # Avoid import loop
         debuginfo = getdebuginfo(debuginfo)
-        result = stdlib.Reduce(wcr, axes, identity, debuginfo=debuginfo)
+        result = stdlib.Reduce(wcr,
+                               axes,
+                               identity,
+                               schedule=schedule,
+                               debuginfo=debuginfo)
         self.add_node(result)
         return result
 
