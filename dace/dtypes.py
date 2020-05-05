@@ -237,6 +237,9 @@ class typeclass(object):
         """ Returns the ctypes version of the typeclass. """
         return _FFI_CTYPES[self.type]
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
+
     def is_complex(self):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
             return True
@@ -340,6 +343,9 @@ class pointer(typeclass):
         """ Returns the ctypes version of the typeclass. """
         return ctypes.POINTER(_FFI_CTYPES[self.type])
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
 
 def immaterial(dace_data, materialize_func):
     """ A data type with a materialize/serialize function. Data objects with
@@ -437,6 +443,9 @@ class struct(typeclass):
                             {"_fields_": fields})
         return struct_class
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
     def emit_definition(self):
         return """struct {name} {{
 {typ}
@@ -507,6 +516,9 @@ class callback(typeclass):
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
 
     def signature(self, name):
         from dace import data
