@@ -43,7 +43,7 @@ class ExpandReducePure(pm.ExpandTransformation):
         input_dims = len(inedge.data.subset)
         output_dims = len(outedge.data.subset)
         input_data = sdfg.arrays[inedge.data.data]
-        output_data = sdfg.arrays[inedge.data.data]
+        output_data = sdfg.arrays[outedge.data.data]
 
         # Standardize axes
         axes = node.axes if node.axes else [i for i in range(input_dims)]
@@ -53,7 +53,8 @@ class ExpandReducePure(pm.ExpandTransformation):
         nsdfg.add_array('_in',
                         inedge.data.subset.size(),
                         input_data.dtype,
-                        strides=input_data.strides)
+                        strides=input_data.strides,
+                        storage=input_data.storage)
         output_strides = None
         if len(axes) != input_dims:
             output_strides = [
@@ -62,7 +63,8 @@ class ExpandReducePure(pm.ExpandTransformation):
         nsdfg.add_array('_out',
                         outedge.data.subset.size(),
                         output_data.dtype,
-                        strides=output_strides)
+                        strides=output_strides,
+                        storage=output_data.storage)
 
         # If identity is defined, add an initialization state
         if node.identity is not None:
@@ -198,7 +200,7 @@ class Reduce(dace.graph.nodes.LibraryNode):
             wcrstr = str(redtype)
             wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
 
-        return 'Op: {op}, Axes: {axes}'.format(
+        return 'Reduce ({op}), Axes: {axes}'.format(
             axes=('all' if self.axes is None else str(self.axes)), op=wcrstr)
 
     def __label__(self, sdfg, state):
