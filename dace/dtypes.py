@@ -743,7 +743,8 @@ def ismodule_and_allowed(var):
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
     from dace.symbolic import symbol
-    return isconstant(var) or ismodule(var) or isinstance(var, symbol)
+    return isconstant(var) or ismodule(var) or isinstance(
+        var, symbol) or isinstance(var, typeclass)
 
 
 class _external_function(object):
