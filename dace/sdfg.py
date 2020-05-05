@@ -1354,7 +1354,7 @@ class SDFG(OrderedDiGraph):
                               True,
                               strides,
                               offset,
-                              lifetime=dace.dtypes.AllocationLifetime.Scope,
+                              lifetime=lifetime,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
