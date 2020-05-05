@@ -964,6 +964,13 @@ class LibraryNode(CodeNode):
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="If set, determines the default device mapping of "
+        "the node upon expansion, if expanded to a nested SDFG.",
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)

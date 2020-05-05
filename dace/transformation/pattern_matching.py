@@ -10,6 +10,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
 from dace.graph import labeling, graph as gr, nodes as nd, nxutil
+from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Dict, List, Tuple, Type, Union
@@ -214,6 +215,14 @@ class ExpandTransformation(Transformation):
         node = state.nodes()[self.subgraph[type(self)._match_node]]
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, dace.SDFG):
+            # Modify internal schedules according to node schedule
+            if node.schedule != ScheduleType.Default:
+                for nstate in expansion.nodes():
+                    topnodes = nstate.scope_dict(node_to_children=True)[None]
+                    for topnode in topnodes:
+                        if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
+                            topnode.schedule = node.schedule
+
             expansion = state.add_nested_sdfg(expansion,
                                               sdfg,
                                               node.in_connectors,
@@ -248,8 +257,9 @@ def collapse_multigraph_to_nx(
   """
 
     # Create the digraph nodes.
-    digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = (
-        [None] * graph.number_of_nodes())
+    digraph_nodes: List[Tuple[int, Dict[str,
+                                        nd.Node]]] = ([None] *
+                                                      graph.number_of_nodes())
     node_id = {}
     for i, node in enumerate(graph.nodes()):
         digraph_nodes[i] = (i, {'node': node})
