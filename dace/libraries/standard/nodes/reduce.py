@@ -50,20 +50,17 @@ class ExpandReducePure(pm.ExpandTransformation):
 
         # Create nested SDFG
         nsdfg = SDFG('reduce')
+
         nsdfg.add_array('_in',
                         inedge.data.subset.size(),
                         input_data.dtype,
                         strides=input_data.strides,
                         storage=input_data.storage)
-        output_strides = None
-        if len(axes) != input_dims:
-            output_strides = [
-                s for i, s in enumerate(output_data.strides) if i not in axes
-            ]
+
         nsdfg.add_array('_out',
                         outedge.data.subset.size(),
                         output_data.dtype,
-                        strides=output_strides,
+                        strides=output_data.strides,
                         storage=output_data.storage)
 
         # If identity is defined, add an initialization state
@@ -91,23 +88,29 @@ class ExpandReducePure(pm.ExpandTransformation):
 
         # (If axes != all) Add outer map, which corresponds to the output range
         if len(axes) != input_dims:
-            output_axes = [i for i in range(input_dims) if i not in axes]
+            # Interleave input and output axes to match input memlet
+            ictr, octr = 0, 0
+            input_subset = []
+            for i in range(input_dims):
+                if i in axes:
+                    input_subset.append('_i%d' % ictr)
+                    ictr += 1
+                else:
+                    input_subset.append('_o%d' % octr)
+                    octr += 1
+
             output_size = outedge.data.subset.size()
 
             ome, omx = nstate.add_map(
                 'reduce_output', {
                     '_o%d' % i: '0:%s' % symstr(sz)
-                    for i, sz in zip(output_axes, output_size)
+                    for i, sz in enumerate(outedge.data.subset.size())
                 })
-            outm = dace.Memlet.simple('_out',
-                                      ','.join(
-                                          ['_o%d' % i for i in output_axes]),
-                                      wcr_str=node.wcr)
-            inmm = dace.Memlet.simple(
-                '_in', ','.join([
-                    '_i%d' % i if i in axes else '_o%d' % i
-                    for i in range(input_dims)
-                ]))
+            outm = dace.Memlet.simple(
+                '_out',
+                ','.join(['_o%d' % i for i in range(output_dims)]),
+                wcr_str=node.wcr)
+            inmm = dace.Memlet.simple('_in', ','.join(input_subset))
         else:
             ome, omx = None, None
             outm = dace.Memlet.simple('_out', '0', wcr_str=node.wcr)
@@ -118,8 +121,8 @@ class ExpandReducePure(pm.ExpandTransformation):
         # an identity tasklet
         ime, imx = nstate.add_map(
             'reduce_values', {
-                '_i%d' % axis: '0:%s' % symstr(inedge.data.subset.size()[axis])
-                for axis in axes
+                '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
+                for i, axis in enumerate(sorted(axes))
             })
 
         # Add identity tasklet for reduction
@@ -154,9 +157,10 @@ class Reduce(dace.graph.nodes.LibraryNode):
     implementations = {
         'pure': ExpandReducePure,
     }  # 'OpenMP': ExpandReduceOpenMP,
-    # 'CUDA (atomic): ExpandReduceCUDA,
-    # 'CUDA (shared)': ExpandReduceCUDABlock,
-    # 'CUDA (warp-level intrinsics)': ExpandReduceCUDAWarp
+    # 'CUDA (device): ExpandReduceCUDADevice,
+    # 'CUDA (block)': ExpandReduceCUDABlock,
+    # 'CUDA (warp)': ExpandReduceCUDAWarp,
+    # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAllreduce
     default_implementation = 'pure'
 
     # Properties
@@ -169,6 +173,7 @@ class Reduce(dace.graph.nodes.LibraryNode):
                  wcr='lambda a, b: a',
                  axes=None,
                  identity=None,
+                 schedule=dtypes.ScheduleType.Default,
                  debuginfo=None,
                  **kwargs):
         super().__init__(name='Reduce', **kwargs)
@@ -176,6 +181,7 @@ class Reduce(dace.graph.nodes.LibraryNode):
         self.axes = axes
         self.identity = identity
         self.debuginfo = debuginfo
+        self.schedule = schedule
 
     @staticmethod
     def from_json(json_obj, context=None):
