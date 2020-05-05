@@ -63,3 +63,13 @@ if __name__ == '__main__':
     test_argmax_1()
     test_argmin_1()
     test_argmin_result_type()
+
+    # Test supported reduction with OpenMP library node implementation
+    from dace.libraries.standard import Reduce
+    Reduce.default_implementation = 'OpenMP'
+    test_sum()
+    test_sum_1()
+    test_max()
+    test_max_1()
+    test_min()
+    test_min_1()

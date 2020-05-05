@@ -12,18 +12,6 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_devicelevel, is_array_stream_view,
                        NodeNotExpandedError)
 
-_REDUCTION_TYPE_TO_OPENMP = {
-    dtypes.ReductionType.Max: 'max',
-    dtypes.ReductionType.Min: 'min',
-    dtypes.ReductionType.Sum: '+',
-    dtypes.ReductionType.Product: '*',
-    dtypes.ReductionType.Bitwise_And: '&',
-    dtypes.ReductionType.Logical_And: '&&',
-    dtypes.ReductionType.Bitwise_Or: '|',
-    dtypes.ReductionType.Logical_Or: '||',
-    dtypes.ReductionType.Bitwise_Xor: '^',
-}
-
 
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):

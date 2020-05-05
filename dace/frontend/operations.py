@@ -109,6 +109,11 @@ def detect_reduction_type(wcr_str):
     elif (isinstance(wcr_ast, ast.Compare)
           and isinstance(wcr_ast.ops[0], ast.NotEq)):
         return dtypes.ReductionType.Logical_Xor
+    # OpenMP extensions
+    elif result == a - b:
+        return dtypes.ReductionType.Sub
+    elif result == a / b:
+        return dtypes.ReductionType.Div
 
     return dtypes.ReductionType.Custom
 

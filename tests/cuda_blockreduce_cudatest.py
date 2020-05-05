@@ -12,7 +12,7 @@ B = state.add_array('B', (2, ), dace.float32)
 me, mx = state.add_map('mymap', dict(bi='0:2'))
 mei, mxi = state.add_map('mymap2', dict(i='0:32'))
 red = state.add_reduce('lambda a,b: a+b', None, 0)
-red.implementation = 'CUDA (shared)'
+red.implementation = 'CUDA (block)'
 tA = state.add_transient('tA', (2, ), dace.float32)
 tB = state.add_transient('tB', (1, ), dace.float32)
 write_tasklet = state.add_tasklet('writeout', {'inp'}, {'out'},

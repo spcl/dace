@@ -66,6 +66,10 @@ class ReductionType(aenum.AutoNumberEnum):
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
 
+    # Only supported in OpenMP
+    Sub = ()  # Subtraction
+    Div = ()  # Division
+
 
 @extensible_enum
 class AllocationLifetime(aenum.AutoNumberEnum):

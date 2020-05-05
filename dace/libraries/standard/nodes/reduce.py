@@ -147,6 +147,126 @@ class ExpandReducePure(pm.ExpandTransformation):
         return nsdfg
 
 
+@dace.library.expansion
+class ExpandReduceOpenMP(pm.ExpandTransformation):
+    """
+        OpenMP-based implementation of the reduce node
+    """
+    environments = []
+
+    _REDUCTION_TYPE_TO_OPENMP = {
+        dtypes.ReductionType.Max: ('max', '{o} = max({o}, {i});'),
+        dtypes.ReductionType.Min: ('min', '{o} = min({o}, {i});'),
+        dtypes.ReductionType.Sum: ('+', '{o} += {i};'),
+        dtypes.ReductionType.Product: ('*', '{o} *= {i};'),
+        dtypes.ReductionType.Bitwise_And: ('&', '{o} &= {i};'),
+        dtypes.ReductionType.Logical_And: ('&&', '{o} = {o} && {i};'),
+        dtypes.ReductionType.Bitwise_Or: ('|', '{o} |= {i};'),
+        dtypes.ReductionType.Logical_Or: ('||', '{o} = {o} || {i};'),
+        dtypes.ReductionType.Bitwise_Xor: ('^', '{o} ^= {i};'),
+        dtypes.ReductionType.Sub: ('-', '{o} -= {i};'),
+        dtypes.ReductionType.Div: ('/', '{o} /= {i};'),
+    }
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        node.validate(sdfg, state)
+        inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
+        input_dims = len(inedge.data.subset)
+        output_dims = len(outedge.data.subset)
+        input_data = sdfg.arrays[inedge.data.data]
+        output_data = sdfg.arrays[outedge.data.data]
+
+        # Get reduction type for OpenMP
+        redtype = detect_reduction_type(node.wcr)
+        if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
+            raise ValueError('Reduction type not supported for "%s"' %
+                             node.wcr)
+        omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
+
+        # Standardize axes
+        axes = node.axes if node.axes else [i for i in range(input_dims)]
+
+        outer_loops = len(axes) != input_dims
+
+        # Create OpenMP clause
+        if outer_loops:
+            code = '#pragma omp parallel for collapse({cdim})\n'.format(
+                cdim=output_dims)
+        else:
+            code = ''
+
+        from dace.codegen.targets.cpp import sym2cpp
+
+        # Output loops
+        out_offset = []
+        if outer_loops:
+            for i, sz in enumerate(outedge.data.subset.size()):
+                code += 'for (int _o{i} = 0; _o{i} < {sz}; ++_o{i}) {{\n'.format(
+                    i=i, sz=sym2cpp(sz))
+                out_offset.append('_o%d * %s' %
+                                  (i, sym2cpp(output_data.strides[i])))
+
+        # HACK: This works around the current codegen, which infers scalars
+        if outedge.data.subset.num_elements() == 1:
+            outexpr = '_out'
+        else:
+            outexpr = '_out[%s]' % ' + '.join(out_offset)
+        # END HACK
+
+        # Write identity value first
+        if node.identity is not None:
+            code += '%s = %s;\n' % (outexpr, node.identity)
+
+        # Reduction OpenMP clause
+        code += '#pragma omp parallel for collapse({cdim}) ' \
+          'reduction({rtype}: {oexpr})\n'.format(cdim=len(axes), rtype=omptype,
+            oexpr=outexpr)
+
+        # Reduction loops
+        for i, axis in enumerate(sorted(axes)):
+            sz = sym2cpp(inedge.data.subset.size()[axis])
+            code += 'for (int _i{i} = 0; _i{i} < {sz}; ++_i{i}) {{\n'.format(
+                i=i, sz=sz)
+
+        # Prepare input offset expression
+        in_offset = []
+        ictr, octr = 0, 0
+        for i in range(input_dims):
+            if i in axes:
+                result = '_i%d' % ictr
+                ictr += 1
+            else:
+                result = '_o%d' % octr
+                octr += 1
+            in_offset.append('%s * %s' %
+                             (result, sym2cpp(input_data.strides[i])))
+        in_offset = ' + '.join(in_offset)
+
+        # Reduction expression
+        code += expr.format(i='_in[%s]' % in_offset, o=outexpr)
+        code += '\n'
+
+        # Closing braces
+        code += '}\n' * len(axes)
+        if outer_loops:
+            code += '}\n' * output_dims
+
+        # Make tasklet
+        tnode = dace.nodes.Tasklet('reduce', {'_in'}, {'_out'},
+                                   code,
+                                   language=dace.Language.CPP)
+
+        # Rename outer connectors and add to node
+        inedge._dst_conn = '_in'
+        outedge._src_conn = '_out'
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
+
+        return tnode
+
+
 @dace.library.node
 class Reduce(dace.graph.nodes.LibraryNode):
     """ An SDFG node that reduces an N-dimensional array to an
@@ -156,7 +276,8 @@ class Reduce(dace.graph.nodes.LibraryNode):
     # Global properties
     implementations = {
         'pure': ExpandReducePure,
-    }  # 'OpenMP': ExpandReduceOpenMP,
+        'OpenMP': ExpandReduceOpenMP,
+    }  #
     # 'CUDA (device): ExpandReduceCUDADevice,
     # 'CUDA (block)': ExpandReduceCUDABlock,
     # 'CUDA (warp)': ExpandReduceCUDAWarp,
