@@ -225,11 +225,9 @@ def min_value(dtype):
     ctype = dtype.ctype
     if ctype == "bool":
         return "false"
-    elif ctype == "dace::float16":
-        return "6.10351562e-05"
-    elif ctype in ["double", "float"]:
+    elif ctype in ["double", "float", "dace::float16"]:
         # use the sign bit for floats
-        return "-" + _LIMITS[ctype].format("MAX")
+        return "-" + max_value(dtype)
     else:
         return _LIMITS[ctype].format("MIN")
 
