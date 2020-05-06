@@ -197,7 +197,7 @@ class StructTransformer(ast.NodeTransformer):
         struct = self._structs[name]
         name = struct.name
         fields = {rname(arg.arg): arg.value for arg in node.keywords}
-        if tuple(fields.keys()) != tuple(struct.fields.keys()):
+        if tuple(sorted(fields.keys())) != tuple(sorted(struct.fields.keys())):
             raise SyntaxError('Mismatch in fields in struct definition')
 
         # Create custom node
