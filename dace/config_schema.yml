@@ -202,6 +202,17 @@ required:
                             scheduler.
                         default: '128,1,1'
 
+                    dynamic_map_fine_grained:
+                        type: str
+                        title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
+                        description: >
+                            There are two ways to handle tasks smaller than warp size,
+                            either by dynamically redistributing the combined work of all
+                            threads in the warp equally across the warp (fine grained),
+                            or each warp works sequentially on its tasks (potential load
+                            imbalance).
+                        default: 'true'
+
                     max_concurrent_streams:
                         type: int
                         title: Concurrent CUDA streams

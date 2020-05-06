@@ -1297,6 +1297,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         #       kernel, raise an invalid SDFG exception and recommend
         #       overapproximation.
 
+        if has_dtbmap:  # both thread-block map and dynamic thread-block map exist at the same time
+            raise NotImplementedError("GOU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
+                                      "not supported in the same scope")
+
         return grid_size, block_size, True, has_dtbmap
 
     def generate_kernel_scope(
@@ -1509,12 +1513,14 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 sdfg, state_id, scope_entry)
 
             callsite_stream.write(
-                'dace::DynamicMap<true, true, {bsize}>::'
+                'dace::DynamicMap<{fine_grained}, {bsize}>::'
                 'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
-                'auto {param}) {{'.format(bsize=total_block_size,
-                                          param=scope_map.params[0],
-                                          kmapIdx=self._kernel_map.params[0]), sdfg, state_id,
-                scope_entry)
+                'auto {param}) {{'.format(fine_grained=Config.get('compiler', 'cuda', 'dynamic_map_fine_grained'),
+                                          bsize=total_block_size,
+                                          kmapIdx=self._kernel_map.params[0],
+                                          param=scope_map.params[0]),
+                sdfg, state_id, scope_entry)
+
         else:
             for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', sdfg, state_id, scope_entry)

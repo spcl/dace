@@ -242,7 +242,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                     gpu_storage = [dtypes.StorageType.GPU_Global,
                                  dtypes.StorageType.GPU_Shared,
                                   dtypes.StorageType.CPU_Pinned]
-                    if sdict[node] is None and not (nodedesc.storage in gpu_storage):
+                    if sdict[node] is None and nodedesc.storage not in gpu_storage:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
@@ -251,7 +251,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         if (self.toplevel_trans
                                 and not isinstance(nodedesc, data.Stream)):
                             nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
-                    elif not (nodedesc.storage in gpu_storage):
+                    elif nodedesc.storage not in gpu_storage:
                         # Make internal transients registers
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
