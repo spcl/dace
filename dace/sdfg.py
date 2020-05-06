@@ -26,11 +26,10 @@ from dace.frontend.python.astutils import ASTFindReplace
 from dace.graph import edges as ed, nodes as nd, labeling
 from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
 from dace.dtypes import validate_name
-from dace.graph import dot
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
-                             DictProperty, OrderedDictProperty)
+                             DictProperty, OrderedDictProperty, CodeBlock)
 
 
 def getcaller() -> Tuple[str, int]:
@@ -198,11 +197,13 @@ class SDFG(OrderedDiGraph):
     global_code = CodeProperty(
         desc=
         "Code generated in a global scope on the frame-code generated file.",
-        default="")
+        default=CodeBlock("", dtypes.Language.CPP))
     init_code = CodeProperty(
-        desc="Code generated in the `__dapp_init` function.", default="")
+        desc="Code generated in the `__dace_init` function.",
+        default=CodeBlock("", dtypes.Language.CPP))
     exit_code = CodeProperty(
-        desc="Code generated in the `__dapp_exit` function.", default="")
+        desc="Code generated in the `__dace_exit` function.",
+        default=CodeBlock("", dtypes.Language.CPP))
 
     def __init__(self,
                  name: str,
@@ -239,9 +240,6 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
-        self.global_code = ''
-        self.init_code = ''
-        self.exit_code = ''
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -376,10 +374,9 @@ class SDFG(OrderedDiGraph):
             replace_dict(edge.data.assignments, name, new_name)
             for k, v in edge.data.assignments.items():
                 edge.data.assignments[k] = v.replace(name, new_name)
-            condition = CodeProperty.to_string(edge.data.condition)
-            edge.data.condition = condition.replace(name, new_name)
-            # for k, v in edge.data.condition.items():
-            #     edge.data.condition[k] = v.replace(name, new_name)
+            condition = edge.data.condition
+            edge.data.condition.as_string = condition.as_string.replace(
+                name, new_name)
 
         # Replace in states
         for state in self.nodes():
@@ -426,24 +423,15 @@ class SDFG(OrderedDiGraph):
 
     def set_global_code(self, cpp_code: str):
         """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        self.global_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     def set_init_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dapp_init` function. """
-        self.init_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        """ Sets C++ code, generated in the `__dace_init` function. """
+        self.init_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     def set_exit_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dapp_exit` function. """
-        self.exit_code = {
-            'code_or_block': cpp_code,
-            'language': dace.dtypes.Language.CPP
-        }
+        """ Sets C++ code, generated in the `__dace_exit` function. """
+        self.exit_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
 
     ##########################################
     # Instrumentation-related methods
@@ -540,13 +528,13 @@ class SDFG(OrderedDiGraph):
     def sdfg_list(self):
         return self._sdfg_list
 
-    def set_sourcecode(self, code, lang=None):
+    def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
             :param code: A string of source code.
             :param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
         """
-        self.sourcecode = {'code_or_block': code, 'language': lang}
+        self.sourcecode = {'code': code, 'language': lang}
 
     @property
     def name(self):
@@ -674,7 +662,8 @@ class SDFG(OrderedDiGraph):
         """ Alias that returns the nodes (states) in this SDFG. """
         return self.nodes()
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
+    def all_nodes_recursive(
+            self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
         """ Iterate over all nodes in this SDFG, including states, nodes in
             states, and recursive states and nodes within nested SDFGs,
             returning tuples on the form (node, parent), where the parent is
@@ -979,142 +968,6 @@ class SDFG(OrderedDiGraph):
         """
         return ", ".join(self.signature_arglist(with_types, for_call))
 
-    def draw_to_file(self,
-                     filename="sdfg.dot",
-                     fill_connectors=True,
-                     recursive=True):
-        """ Draws the SDFG to a GraphViz (.dot) file.
-            :param filename: The file to draw the SDFG to (will be written to
-                             '_dotgraphs/<filename>').
-            :param fill_connectors: Whether to fill missing scope (e.g., "IN_")
-                                    connectors prior to drawing the graph.
-            :param recursive: If True, also draws nested SDFGs.
-        """
-        if fill_connectors:
-            self.fill_scope_connectors()
-
-        try:
-            os.makedirs("_dotgraphs")
-        # Python 2.x does not have FileExistsError
-        except OSError as e:
-            if e.errno == errno.EEXIST:
-                pass
-            else:
-                raise
-
-        with open(os.path.join("_dotgraphs", filename), "w") as outFile:
-            outFile.write(self.draw())
-
-        if recursive:
-            for state in self.nodes():
-                for node in state.nodes():
-                    if isinstance(node, dace.graph.nodes.NestedSDFG):
-                        node.sdfg.draw_to_file(filename=node.sdfg.name + "_" +
-                                               filename,
-                                               recursive=True)
-
-    def draw(self):
-        """ Creates a GraphViz representation of the full SDFG, including all
-            states and transitions.
-            :return: A string representing the SDFG in .dot format.
-        """
-
-        nodes = []
-
-        # Redirect all edges between states to point at the boundaries
-        edges = []
-        for ind, edge in enumerate(self.edges()):
-            srcState, dstState, data = edge
-            srcDotName = "state_" + str(self.node_id(srcState))
-            dstDotName = "state_" + str(self.node_id(dstState))
-            srcCluster = "cluster_" + srcDotName
-            dstCluster = "cluster_" + dstDotName
-
-            if len(srcState.nodes()) > 0:
-                srcNode = srcState.sink_nodes()[0]
-                srcName = "s%d_%d" % (self.node_id(srcState),
-                                      srcState.node_id(srcNode))
-            else:
-                srcName = "dummy_" + str(self.node_id(srcState))
-            if len(dstState.nodes()) > 0:
-                dstNode = dstState.source_nodes()[0]
-                dstName = "s%d_%d" % (self.node_id(dstState),
-                                      dstState.node_id(dstNode))
-            else:
-                dstName = "dummy_" + str(self.node_id(dstState))
-
-            if srcState != dstState:
-                edges.append(
-                    dot.draw_interstate_edge_by_name(
-                        srcName,
-                        dstName,
-                        edge,
-                        self,
-                        srcState,
-                        ltail=srcCluster,
-                        lhead=dstCluster,
-                    ))
-            else:
-                redName = srcDotName + "_to_" + dstDotName
-                nodes.append(dot.draw_invisible_node(redName))
-
-                edges.append(
-                    dot.draw_edge_explicit(
-                        srcName,
-                        redName,
-                        Edge(srcState, srcState, ed.RedirectEdge()),
-                        self,
-                        srcState,
-                        ltail=srcCluster,
-                    ))
-                edges.append(
-                    dot.draw_edge_explicit(redName,
-                                           dstName,
-                                           edge,
-                                           self,
-                                           srcState,
-                                           lhead=dstCluster))
-
-        # Mark first and last states
-        first = self.start_state
-
-        # A state is considered a last state if it has no outgoing edges that
-        # lead to another state
-        last = self.sink_nodes()
-
-        clusters = []
-        for state in self.nodes():
-            if state == first and state not in last:
-                clusterLabel = state.label + " (BEGIN)"
-                clusterColor = "#f7dede"
-            elif state in last and state != first:
-                clusterLabel = state.label + " (END)"
-                clusterColor = "#f7dede"
-            else:
-                clusterLabel = state.label
-                clusterColor = "#deebf7"
-            cluster = """
-subgraph cluster_state_{state} {{
-      label = "{label}";
-      labeljust = r;
-      bgcolor = "{color}"; color = "{color}";""".format(
-                state=self.node_id(state),
-                label=clusterLabel,
-                color=clusterColor)
-            subNodes, subEdges = dot.draw_graph(self, state, standalone=False)
-            cluster += "\n        ".join(subNodes + subEdges)
-            if len(subNodes) == 0:
-                cluster += "\n"
-                cluster += dot.draw_invisible_node("dummy_" +
-                                                   str(self.node_id(state)))
-            cluster += "\n}"
-            clusters.append(cluster)
-
-        return ("digraph SDFG {\n    outputorder=nodesfirst;\n" +
-                "    compound=true;\n" + "    newrank=true;\n" +
-                "\n    ".join(nodes + edges) + "\n" + "\n".join(clusters) +
-                "\n}")
-
     # TODO(later): Also implement the "_repr_svg_" method for static output
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
@@ -1238,6 +1091,13 @@ subgraph cluster_state_{state} {{
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 
+    def view(self, filename=None):
+        """View this sdfg in the system's HTML viewer
+           :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        """
+        from diode.sdfv import view
+        view(self, filename=filename)
+
     @staticmethod
     def from_file(filename: str):
         """ Constructs an SDFG from a file.
@@ -1342,11 +1202,12 @@ subgraph cluster_state_{state} {{
                   transient=False,
                   strides=None,
                   offset=None,
-                  toplevel=False,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
                   debuginfo=None,
                   allow_conflicts=False,
                   total_size=None,
-                  find_new_name=False):
+                  find_new_name=False,
+                  alignment=0):
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1382,7 +1243,8 @@ subgraph cluster_state_{state} {{
                         transient=transient,
                         strides=strides,
                         offset=offset,
-                        toplevel=toplevel,
+                        lifetime=lifetime,
+                        alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size)
 
@@ -1398,7 +1260,7 @@ subgraph cluster_state_{state} {{
                    storage=dtypes.StorageType.Default,
                    transient=False,
                    offset=None,
-                   toplevel=False,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
                    find_new_name=False):
         """ Adds a stream to the SDFG data descriptor store. """
@@ -1426,7 +1288,7 @@ subgraph cluster_state_{state} {{
             storage=storage,
             transient=transient,
             offset=offset,
-            toplevel=toplevel,
+            lifetime=lifetime,
             debuginfo=debuginfo,
         )
 
@@ -1438,7 +1300,7 @@ subgraph cluster_state_{state} {{
                    dtype,
                    storage=dtypes.StorageType.Default,
                    transient=False,
-                   toplevel=False,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
                    find_new_name=False):
         """ Adds a scalar to the SDFG data descriptor store. """
@@ -1461,7 +1323,7 @@ subgraph cluster_state_{state} {{
             dtype,
             storage=storage,
             transient=transient,
-            toplevel=toplevel,
+            lifetime=lifetime,
             debuginfo=debuginfo,
         )
 
@@ -1476,11 +1338,12 @@ subgraph cluster_state_{state} {{
                       materialize_func=None,
                       strides=None,
                       offset=None,
-                      toplevel=False,
+                      lifetime=dace.dtypes.AllocationLifetime.Scope,
                       debuginfo=None,
                       allow_conflicts=False,
                       total_size=None,
-                      find_new_name=False):
+                      find_new_name=False,
+                      alignment=0):
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1491,10 +1354,11 @@ subgraph cluster_state_{state} {{
                               True,
                               strides,
                               offset,
-                              toplevel=toplevel,
+                              lifetime=dace.dtypes.AllocationLifetime.Scope,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
+                              alignment=alignment,
                               find_new_name=find_new_name)
 
     def temp_data_name(self):
@@ -1515,10 +1379,11 @@ subgraph cluster_state_{state} {{
                            materialize_func=None,
                            strides=None,
                            offset=None,
-                           toplevel=False,
+                           lifetime=dace.dtypes.AllocationLifetime.Scope,
                            debuginfo=None,
                            allow_conflicts=False,
-                           total_size=None):
+                           total_size=None,
+                           alignment=0):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         return self.add_array(self.temp_data_name(),
@@ -1529,7 +1394,8 @@ subgraph cluster_state_{state} {{
                               True,
                               strides,
                               offset,
-                              toplevel=toplevel,
+                              lifetime=lifetime,
+                              alignment=alignment,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size)
@@ -1620,10 +1486,9 @@ subgraph cluster_state_{state} {{
 
         # Loop condition
         if condition_expr:
-            cond_ast = CodeProperty.from_string(condition_expr,
-                                                dtypes.Language.Python)
+            cond_ast = CodeBlock(condition_expr).code
         else:
-            cond_ast = CodeProperty.from_string('True', dtypes.Language.Python)
+            cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, ed.InterstateEdge(cond_ast))
         self.add_edge(guard, after_state,
                       ed.InterstateEdge(negate_expr(cond_ast)))
@@ -1730,7 +1595,7 @@ subgraph cluster_state_{state} {{
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
 
-        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
@@ -1912,7 +1777,7 @@ subgraph cluster_state_{state} {{
 
         except InvalidSDFGError:
             # If the SDFG is invalid, save it
-            self.save(os.path.join('_dotgraphs', 'invalid.sdfg'))
+            self.save(os.path.join('_dacegraphs', 'invalid.sdfg'))
             raise
 
     def is_valid(self) -> bool:
@@ -2161,13 +2026,21 @@ subgraph cluster_state_{state} {{
         if sdfg.propagate:
             labeling.propagate_labels_sdfg(sdfg)
 
-        sdfg.draw_to_file()
-        sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
 
         return program_code
+
+    def get_array_memlet(self, array: str):
+        """Convenience method to generate a Memlet that transfers a full array.
+
+           :param array: the name of the array
+           :return: a Memlet that fully transfers array
+        """
+        return dace.Memlet.from_array(array, self.arrays[array])
+
 
 
 class MemletTrackingView(object):
@@ -2316,6 +2189,7 @@ class MemletTrackingView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
 
 def trace_nested_access(node, state, sdfg):
     """ Given an AccessNode in a nested SDFG, trace the accessed memory
@@ -2512,7 +2386,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
@@ -2643,9 +2517,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     def memlets_for_array(self, arrayname):
         return [e for e in self.edges() if e[3].data == arrayname]
-
-    def draw_node(self, graph):
-        return dot.draw_node(graph, self, shape="Msquare")
 
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe
@@ -3041,13 +2912,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return map_entry, map_exit
 
     def add_consume(
-            self,
-            name,
-            elements: Tuple[str, str],
-            condition: str = None,
-            schedule=dtypes.ScheduleType.Default,
-            chunksize=1,
-            debuginfo=None,
+        self,
+        name,
+        elements: Tuple[str, str],
+        condition: str = None,
+        schedule=dtypes.ScheduleType.Default,
+        chunksize=1,
+        debuginfo=None,
+        language=dtypes.Language.Python
     ) -> Tuple[nd.ConsumeEntry, nd.ConsumeExit]:
         """ Adds consume entry and consume exit nodes.
             :param name:      Label
@@ -3057,8 +2929,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               None (by default) to consume until the stream
                               is empty for the first time. If false, will
                               consume forever.
-            :param schedule:  Consume schedule type
-            :param chunksize: Maximal number of elements to consume at a time
+            :param schedule:  Consume schedule type.
+            :param chunksize: Maximal number of elements to consume at a time.
+            :param debuginfo: Source code line information for debugging.
+            :param language:  Code language for ``condition``.
 
             :return: (consume_entry, consume_exit) node 2-tuple
         """
@@ -3071,7 +2945,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         debuginfo = getdebuginfo(debuginfo)
         consume = nd.Consume(name,
                              pe_tuple,
-                             condition,
+                             CodeBlock(condition, language),
                              schedule,
                              chunksize,
                              debuginfo=debuginfo)
@@ -3262,11 +3136,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :return: A Reduce node
         """
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr,
-                           axes,
-                           identity,
-                           schedule,
-                           debuginfo=debuginfo)
+        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3493,10 +3363,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                   transient=False,
                   strides=None,
                   offset=None,
-                  toplevel=False,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
                   debuginfo=None,
                   total_size=None,
-                  find_new_name=False):
+                  find_new_name=False,
+                  alignment=0):
         """ @attention: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
@@ -3513,10 +3384,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               transient,
                               strides,
                               offset,
-                              toplevel,
+                              lifetime,
                               debuginfo,
                               find_new_name=find_new_name,
-                              total_size=total_size)
+                              total_size=total_size,
+                              alignment=alignment)
         return self.add_access(name, debuginfo)
 
     def add_stream(
@@ -3529,7 +3401,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         storage=dtypes.StorageType.Default,
         transient=False,
         offset=None,
-        toplevel=False,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
@@ -3549,7 +3421,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             storage,
             transient,
             offset,
-            toplevel,
+            lifetime,
             debuginfo,
         )
         return self.add_access(name, debuginfo)
@@ -3560,7 +3432,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         dtype,
         storage=dtypes.StorageType.Default,
         transient=False,
-        toplevel=False,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
         """ @attention: This function is deprecated. """
@@ -3571,7 +3443,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Workaround to allow this legacy API
         if name in self.parent._arrays:
             del self.parent._arrays[name]
-        self.parent.add_scalar(name, dtype, storage, transient, toplevel,
+        self.parent.add_scalar(name, dtype, storage, transient, lifetime,
                                debuginfo)
         return self.add_access(name, debuginfo)
 
@@ -3583,9 +3455,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                       materialize_func=None,
                       strides=None,
                       offset=None,
-                      toplevel=False,
+                      lifetime=dace.dtypes.AllocationLifetime.Scope,
                       debuginfo=None,
-                      total_size=None):
+                      total_size=None,
+                      alignment=0):
         """ @attention: This function is deprecated. """
         return self.add_array(name,
                               shape,
@@ -3595,9 +3468,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               True,
                               strides,
                               offset,
-                              toplevel,
+                              lifetime,
                               debuginfo,
-                              total_size=total_size)
+                              total_size=total_size,
+                              alignment=alignment)
 
     # SDFG queries
     ######################################
@@ -4015,7 +3889,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %
@@ -4530,24 +4404,24 @@ def replace_properties(node: Any, name: str, new_name: str):
                         (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
-            if isinstance(propval['code_or_block'], str):
+            if isinstance(propval.code, str):
                 if str(name) != str(new_name):
-                    lang = propval['language']
-                    newcode = propval['code_or_block']
+                    lang = propval.language
+                    newcode = propval.code
                     if not re.findall(r'[^\w]%s[^\w]' % name, newcode):
                         continue
 
                     if lang is dtypes.Language.CPP:  # Replace in C++ code
                         # Use local variables and shadowing to replace
                         replacement = 'auto %s = %s;\n' % (name, new_name)
-                        propval['code_or_block'] = replacement + newcode
+                        propval.code = replacement + newcode
                     else:
                         warnings.warn(
                             'Replacement of %s with %s was not made '
                             'for string tasklet code of language %s' %
                             (name, new_name, lang))
-            else:
-                for stmt in propval['code_or_block']:
+            elif propval.code is not None:
+                for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
 
 

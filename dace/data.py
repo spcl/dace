@@ -48,23 +48,25 @@ class Data(object):
                        choices=dace.dtypes.StorageType,
                        default=dace.dtypes.StorageType.Default,
                        from_string=lambda x: dtypes.StorageType[x])
+    lifetime = Property(dtype=dace.dtypes.AllocationLifetime,
+                        desc='Data allocation span',
+                        choices=dace.dtypes.AllocationLifetime,
+                        default=dace.dtypes.AllocationLifetime.Scope,
+                        from_string=lambda x: dtypes.AllocationLifetime[x])
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
-    toplevel = Property(dtype=bool,
-                        desc="Allocate array outside of state",
-                        default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    def __init__(self, dtype, shape, transient, storage, location, toplevel,
+    def __init__(self, dtype, shape, transient, storage, location, lifetime,
                  debuginfo):
         self.dtype = dtype
         self.shape = shape
         self.transient = transient
         self.storage = storage
         self.location = location if location is not None else {}
-        self.toplevel = toplevel
+        self.lifetime = lifetime
         self.debuginfo = debuginfo
         self._validate()
 
@@ -89,6 +91,10 @@ class Data(object):
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
         return retdict
+
+    @property
+    def toplevel(self):
+        return self.lifetime is not dace.dtypes.AllocationLifetime.Scope
 
     def copy(self):
         raise RuntimeError(
@@ -126,12 +132,12 @@ class Scalar(Data):
                  storage=dace.dtypes.StorageType.Default,
                  allow_conflicts=False,
                  location=None,
-                 toplevel=False,
+                 lifetime=dace.dtypes.AllocationLifetime.Scope,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
         super(Scalar, self).__init__(dtype, shape, transient, storage,
-                                     location, toplevel, debuginfo)
+                                     location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -151,7 +157,7 @@ class Scalar(Data):
 
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage,
-                      self.allow_conflicts, self.location, self.toplevel,
+                      self.allow_conflicts, self.location, self.lifetime,
                       self.debuginfo)
 
     @property
@@ -253,6 +259,11 @@ class Array(Data):
                          desc='This pointer may alias with other pointers in '
                          'the same function')
 
+    alignment = Property(dtype=int,
+                         default=0,
+                         desc='Allocation alignment in bytes (0 uses '
+                         'compiler-default)')
+
     def __init__(self,
                  dtype,
                  shape,
@@ -264,12 +275,13 @@ class Array(Data):
                  strides=None,
                  offset=None,
                  may_alias=False,
-                 toplevel=False,
+                 lifetime=dace.dtypes.AllocationLifetime.Scope,
+                 alignment=0,
                  debuginfo=None,
                  total_size=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location,
-                                    toplevel, debuginfo)
+                                    lifetime, debuginfo)
 
         if shape is None:
             raise IndexError('Shape must not be None')
@@ -277,6 +289,7 @@ class Array(Data):
         self.allow_conflicts = allow_conflicts
         self.materialize_func = materialize_func
         self.may_alias = may_alias
+        self.alignment = alignment
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -299,7 +312,8 @@ class Array(Data):
         return Array(self.dtype, self.shape, self.materialize_func,
                      self.transient, self.allow_conflicts, self.storage,
                      self.location, self.strides, self.offset, self.may_alias,
-                     self.toplevel, self.debuginfo, self.total_size)
+                     self.lifetime, self.alignment, self.debuginfo,
+                     self.total_size)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -431,10 +445,6 @@ class Array(Data):
 
         return result
 
-    # OPERATORS
-    #def __add__(self, other):
-    #    return (self, None)
-
 
 @make_properties
 class Stream(Data):
@@ -455,7 +465,7 @@ class Stream(Data):
                  storage=dace.dtypes.StorageType.Default,
                  location=None,
                  offset=None,
-                 toplevel=False,
+                 lifetime=dace.dtypes.AllocationLifetime.Scope,
                  debuginfo=None):
 
         if shape is None:
@@ -472,7 +482,7 @@ class Stream(Data):
             self.offset = [0] * len(shape)
 
         super(Stream, self).__init__(dtype, shape, transient, storage,
-                                     location, toplevel, debuginfo)
+                                     location, lifetime, debuginfo)
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -508,7 +518,7 @@ class Stream(Data):
     def clone(self):
         return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
                       self.transient, self.storage, self.location, self.offset,
-                      self.toplevel, self.debuginfo)
+                      self.lifetime, self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
@@ -533,8 +543,7 @@ class Stream(Data):
         if not with_types or for_call: return name
         if self.storage in [
                 dace.dtypes.StorageType.GPU_Global,
-                dace.dtypes.StorageType.GPU_Shared,
-                dace.dtypes.StorageType.GPU_Stack
+                dace.dtypes.StorageType.GPU_Shared
         ]:
             return 'dace::GPUStream<%s, %s> %s' % (str(
                 self.dtype.ctype), 'true' if sp.log(

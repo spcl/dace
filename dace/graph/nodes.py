@@ -8,14 +8,14 @@ import itertools
 import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.graph import dot, graph
+from dace.graph import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties,
                              DataProperty, SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
-                             LibraryImplementationProperty)
+                             LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 import pydoc
@@ -227,19 +227,6 @@ class AccessNode(Node):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
 
-    def draw_node(self, sdfg, graph):
-        desc = self.desc(sdfg)
-        if isinstance(desc, data.Stream):
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="oval",
-                                 style='dashed')
-        elif desc.transient:
-            return dot.draw_node(sdfg, graph, self, shape="oval")
-        else:
-            return dot.draw_node(sdfg, graph, self, shape="oval", style='bold')
-
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
@@ -257,7 +244,7 @@ class CodeNode(Node):
     label = Property(dtype=str, desc="Name of the CodeNode")
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     environments = SetProperty(
         str,
@@ -280,14 +267,16 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    code = CodeProperty(desc="Tasklet code", default="")
+    code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
     code_global = CodeProperty(
-        desc="Global scope code needed for tasklet execution", default="")
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
     code_init = CodeProperty(
         desc="Extra code that is called on DaCe runtime initialization",
-        default="")
+        default=CodeBlock("", dtypes.Language.CPP))
     code_exit = CodeProperty(
-        desc="Extra code that is called on DaCe runtime cleanup", default="")
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -311,16 +300,16 @@ class Tasklet(CodeNode):
         # Properties
         # Set the language directly
         #self.language = language
-        self.code = {'code_or_block': code, 'language': language}
+        self.code = CodeBlock(code, language)
 
-        self.code_global = {'code_or_block': code_global, 'language': language}
-        self.code_init = {'code_or_block': code_init, 'language': language}
-        self.code_exit = {'code_or_block': code_exit, 'language': language}
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
     def language(self):
-        return self._code['language']
+        return self.code.language
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -331,9 +320,6 @@ class Tasklet(CodeNode):
     @property
     def name(self):
         return self._label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="octagon")
 
     def validate(self, sdfg, state):
         if not dtypes.validate_name(self.label):
@@ -358,9 +344,6 @@ class EmptyTasklet(Tasklet):
         in an SDFG. """
     def __init__(self, label=""):
         super(EmptyTasklet, self).__init__(label)
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, style="invis", shape="octagon")
 
     def validate(self, sdfg, state):
         pass
@@ -444,9 +427,6 @@ class NestedSDFG(CodeNode):
 
         return ret
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="doubleoctagon")
-
     def __str__(self):
         if not self.label:
             return "SDFG"
@@ -471,6 +451,10 @@ class NestedSDFG(CodeNode):
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested '
                                 'SDFG connectors' % dname)
+            if dname in connectors and desc.transient:
+                raise NameError(
+                    '"%s" is a connector but its corresponding array is transient'
+                    % dname)
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.undefined_symbols(False).keys()
@@ -552,11 +536,6 @@ class MapEntry(EntryNode):
     def map(self, val):
         self._map = val
 
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg, graph, self, shape="hexagon")
-        return dot.draw_node(sdfg, graph, self, shape="trapezium")
-
     def __str__(self):
         return str(self.map)
 
@@ -612,9 +591,6 @@ class MapExit(ExitNode):
     def label(self):
         return self._map.label
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="invtrapezium")
-
     def __str__(self):
         return str(self.map)
 
@@ -641,7 +617,6 @@ class Map(object):
                         from_string=lambda x: dtypes.ScheduleType[x],
                         default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    flatten = Property(dtype=bool, desc="Map loop flattening")
     collapse = Property(dtype=int,
                         default=1,
                         desc="How many dimensions to"
@@ -662,7 +637,6 @@ class Map(object):
                  ndrange,
                  schedule=dtypes.ScheduleType.Default,
                  unroll=False,
-                 flatten=False,
                  collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
@@ -672,7 +646,6 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.flatten = flatten
         self.collapse = 1
         self.params = params
         self.range = ndrange
@@ -748,19 +721,6 @@ class ConsumeEntry(EntryNode):
     def consume(self, val):
         self._consume = val
 
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="hexagon",
-                                 style='dashed')
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="trapezium",
-                             style='dashed')
-
     def __str__(self):
         return str(self.consume)
 
@@ -813,13 +773,6 @@ class ConsumeExit(ExitNode):
     @property
     def label(self):
         return self._consume.label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="invtrapezium",
-                             style='dashed')
 
     def __str__(self):
         return str(self.consume)
@@ -939,9 +892,6 @@ class Reduce(Node):
         self.identity = identity
         self.schedule = schedule
         self.debuginfo = debuginfo
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="invtriangle")
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -1096,6 +1046,3 @@ class LibraryNode(CodeNode):
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
         transformation_type._match_node = clc(match_node_name)
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="folder")

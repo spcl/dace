@@ -353,7 +353,6 @@ if __name__ == "__main__":
 
     A_Exp = A + P.get()
 
-    sdfg.draw_to_file()
     sdfg(A=A)
     # print("A: ", A)
     # print("A_Exp: ", A_Exp)

@@ -121,9 +121,8 @@ def parse_from_function(function, *compilation_args, strict=None):
             'optimizer', 'automatic_strict_transformations'))):
         sdfg.apply_strict_transformations()
 
-    # Drawing the SDFG (again) to a .dot file
-    sdfg.draw_to_file(recursive=True)
-    sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+    # Save the SDFG (again)
+    sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()

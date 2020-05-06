@@ -5,7 +5,7 @@ import dace
 from dace import symbolic
 from dace.graph.graph import Edge
 from dace.frontend.python import astutils
-from dace.properties import Property, CodeProperty, make_properties
+from dace.properties import Property, CodeProperty, make_properties, CodeBlock
 
 
 def assignments_from_string(astr):
@@ -41,20 +41,25 @@ class InterstateEdge(object):
         from_string=assignments_from_string,
         to_string=assignments_to_string)
     condition = CodeProperty(desc="Transition condition",
-                             default=ast.parse("1").body[0])
+                             default=CodeBlock("1"))
 
-    def __init__(self, condition=None, assignments=None):
+    def __init__(self, condition: CodeBlock = None, assignments=None):
 
         if condition is None:
-            condition = ast.parse("1").body[0]
+            condition = CodeBlock("1")
 
         if assignments is None:
             assignments = {}
 
-        self.condition = condition
+        if isinstance(condition, str):
+            self.condition = CodeBlock(condition)
+        elif isinstance(condition, ast.AST):
+            self.condition = CodeBlock([condition])
+        elif isinstance(condition, list):
+            self.condition = CodeBlock(condition)
+        else:
+            self.condition = condition
         self.assignments = assignments
-
-        self._dotOpts = {"minlen": 3, "color": "blue", "fontcolor": "blue"}
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
@@ -62,11 +67,10 @@ class InterstateEdge(object):
             self.condition).strip() == "1" or self.condition.as_string == "")
 
     def condition_sympy(self):
-        cond_ast = self.condition
-        return symbolic.pystr_to_symbolic(astutils.unparse(cond_ast))
+        return symbolic.pystr_to_symbolic(self.condition.as_string)
 
     def condition_symbols(self):
-        return dace.symbolic.symbols_in_ast(self.condition[0])
+        return dace.symbolic.symbols_in_ast(self.condition.code[0])
 
     def to_json(self, parent=None):
         ret = {
@@ -94,7 +98,7 @@ class InterstateEdge(object):
             ['%s=%s' % (k, v) for k, v in self.assignments.items()])
 
         # Edge with assigment only (no condition)
-        if astutils.unparse(self.condition) == '1':
+        if self.condition.as_string == '1':
             # Edge without conditions or assignments
             if len(self.assignments) == 0:
                 return ''
@@ -102,25 +106,10 @@ class InterstateEdge(object):
 
         # Edge with condition only (no assignment)
         if len(self.assignments) == 0:
-            return astutils.unparse(self.condition)
+            return self.condition.as_string
 
         # Edges with assigments and conditions
-        return astutils.unparse(self.condition) + '; ' + assignments
-
-    @property
-    def dotOpts(self):
-        result = {}
-        result.update(self._dotOpts)
-        result.update({'label': self.label})
-        return result
-
-
-class RedirectEdge(InterstateEdge):
-    """ An inter-state edge type used for rendering self-looping edges
-        on graph clusters in GraphViz. """
-    def __init__(self):
-        super(RedirectEdge, self).__init__()
-        self._dotOpts["arrowhead"] = "none"
+        return self.condition.as_string + '; ' + assignments
 
 
 ###############################################################################

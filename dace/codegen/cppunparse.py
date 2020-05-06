@@ -1190,6 +1190,8 @@ def py2cpp(code, expr_semicolon=True):
         return cppunparse(ast.parse(code), expr_semicolon)
     elif isinstance(code, ast.AST):
         return cppunparse(code, expr_semicolon)
+    elif isinstance(code, list):
+        return '\n'.join(py2cpp(stmt) for stmt in code)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)

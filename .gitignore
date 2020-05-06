@@ -142,7 +142,6 @@ src.VC.VC.opendb
 # DaCe
 .dacecache/
 out.sdfg
-*.dot
 *.out
 results.log
 perf.json
@@ -165,6 +164,7 @@ perfdata.db
 
 .idea/
 _dotgraphs/
+_dacegraphs/
 
 /dace/codegen/cmake-build-debug/
 

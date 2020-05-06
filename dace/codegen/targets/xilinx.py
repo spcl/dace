@@ -220,38 +220,58 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
     @staticmethod
-    def make_read(defined_type, type_str, var_name, vector_length, expr,
-                  index):
+    def make_read(defined_type, type_str, var_name, vector_length, expr, index,
+                  is_pack, packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "{}.pop()".format(expr)
-        if defined_type == DefinedType.StreamArray:
+            read_expr = "{}.pop()".format(expr)
+        elif defined_type == DefinedType.StreamArray:
             if " " in expr:
                 expr = "(" + expr + ")"
-            return "{}[{}].pop()".format(expr, index)
+            read_expr = "{}[{}].pop()".format(expr, index)
         elif defined_type == DefinedType.Scalar:
-            return var_name
+            read_expr = var_name
         else:
-            expr = expr + " + " + index if index else expr
+            if index is not None and index != "0":
+                read_expr = "{} + {}".format(expr, index)
+            else:
+                read_expr = expr
+        if is_pack:
+            return "dace::Pack<{}, {}>({})".format(type_str, packing_factor,
+                                                   read_expr)
+        else:
             return "dace::Read<{}, {}>({})".format(type_str, vector_length,
-                                                   expr)
+                                                   read_expr)
+
+    def generate_converter(*args, **kwargs):
+        pass  # Handled in C++
 
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr):
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "{}.push({});".format(write_expr, read_expr)
-        elif defined_type == DefinedType.StreamArray:
-            if not index:
-                index = "0"
-            return "{}[{}].push({}};".format(write_expr, index, read_expr)
+                   index, read_expr, wcr, is_unpack, packing_factor):
+        if defined_type in [
+                DefinedType.Stream, DefinedType.StreamView,
+                DefinedType.StreamArray
+        ]:
+            if defined_type == DefinedType.StreamArray:
+                write_expr = "{}[{}]".format(write_expr,
+                                             "0" if not index else index)
+            if is_unpack:
+                return "\n".join(
+                    "{}.push({}[{}]);".format(write_expr, read_expr, i)
+                    for i in range(packing_factor))
+            else:
+                return "{}.push({});".format(write_expr, read_expr)
         else:
             if defined_type == DefinedType.Scalar:
                 write_expr = var_name
+            elif index and index != "0":
+                write_expr = "{} + {}".format(write_expr, index)
+            if is_unpack:
+                return "dace::Unpack<{}, {}>({}, {});".format(
+                    type_str, packing_factor, read_expr, write_expr)
             else:
-                write_expr = (write_expr + " + " +
-                              index if index else write_expr)
-            return "dace::Write<{}, {}>({}, {});".format(
-                type_str, vector_length, write_expr, read_expr)
+                return "dace::Write<{}, {}>({}, {});".format(
+                    type_str, vector_length, write_expr, read_expr)
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
