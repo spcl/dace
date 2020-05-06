@@ -596,7 +596,7 @@ class BackwardPassGenerator:
             _, argminmax_input_arr = forward_sdfg.add_array(
                 "IN", shape=input_array.shape, dtype=input_array.dtype)
 
-            _, (argminmax_output, minmax_output) = _argminmax(
+            _, (minmax_output, argminmax_output) = _argminmax(
                 forward_sdfg,
                 state,
                 "IN",
@@ -677,7 +677,7 @@ class BackwardPassGenerator:
                 {"_reduce_out_grad"})
 
             tmp, _ = self.sdfg.add_temp_transient(output_array.shape,
-                                                  dtype=dace.int64)
+                                                  dtype=dace.int32)
             tmp_access = self.state.add_access(tmp)
 
             self.state.add_edge(new_node, argminmax_output, tmp_access, None,

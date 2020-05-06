@@ -506,9 +506,9 @@ def _argminmax(sdfg: SDFG,
         external_edges=True)
 
     if return_both:
-        outidx, outidxarr = sdfg.add_temp_transient(
+        outidx, outidxarr = sdfg.add_transient("__" + sdfg.temp_data_name(),
             sdfg.arrays[reduced_structs].shape, result_type)
-        outval, outvalarr = sdfg.add_temp_transient(
+        outval, outvalarr = sdfg.add_transient("__" + sdfg.temp_data_name(),
             sdfg.arrays[reduced_structs].shape, a_arr.dtype)
 
         nest.add_state().add_mapped_tasklet(
