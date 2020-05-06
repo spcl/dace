@@ -1298,7 +1298,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         #       overapproximation.
 
         if has_dtbmap:  # both thread-block map and dynamic thread-block map exist at the same time
-            raise NotImplementedError("GOU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
+            raise NotImplementedError("GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
                                       "not supported in the same scope")
 
         return grid_size, block_size, True, has_dtbmap
