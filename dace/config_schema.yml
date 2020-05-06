@@ -206,7 +206,7 @@ required:
                         type: bool
                         title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
                         description: >
-                            If true the scheduler will dynamically redistributing the
+                            If true the scheduler will dynamically redistribute the
                             combined work of all threads in the warp equally across the
                             warp (fine grained), otherwise or each warp works sequentially
                             only on its tasks (potential load imbalance).
