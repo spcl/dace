@@ -64,4 +64,4 @@ def test_dynamic_map():
 
 
 if __name__ == '__main__':
-    dynamic_map_test()
+    test_dynamic_map()
