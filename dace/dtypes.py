@@ -196,6 +196,37 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
+_LIMITS = {
+    'int': "INT_{}",
+    'float': "FLT_{}",
+    'char': "CHAR_{}",
+    'short': "SHRT_{}",
+    'long long': "LLONG_{}",
+    'unsigned char': "UCHAR_{}",
+    'unsigned short': "USHRT_{}",
+    'unsigned int': "UINT_{}",
+    'unsigned long long': "ULLONG_{}",
+    'double': "DBL_{}",
+    #'dace::float16': numpy.float16,
+}
+
+
+def max_value(dtype):
+    """Get a max value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "true"
+    else:
+        return _LIMITS[ctype].format("MAX")
+
+def min_value(dtype):
+    """Get a max value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "false"
+    else:
+        return _LIMITS[ctype].format("MIN")
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
