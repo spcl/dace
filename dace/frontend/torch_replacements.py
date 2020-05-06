@@ -69,4 +69,4 @@ def _softmax(sdfg: SDFG, state: SDFGState, inpname: str, dim: int):
                 out_name,
                 ','.join("__i" + str(i) for i in range(len(inparr.shape))))
         }, external_edges=True)
-    return out_name
+    return nest, out_name
