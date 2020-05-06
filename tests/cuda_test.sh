@@ -185,6 +185,8 @@ runall() {
     
     runtestargs instrumentation_test.py gpu
     runtestargs library/matmul_cudatest.py
+
+    runtestargs dynamic_tb_map_cudatest.py
 }
 
 
