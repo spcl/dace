@@ -1515,10 +1515,12 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             callsite_stream.write(
                 'dace::DynamicMap<{fine_grained}, {bsize}>::'
                 'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
-                'auto {param}) {{'.format(fine_grained=Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained'),
-                                          bsize=total_block_size,
-                                          kmapIdx=self._kernel_map.params[0],
-                                          param=scope_map.params[0]),
+                'auto {param}) {{'.format(
+                    fine_grained=('true' if Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained')
+                                  else 'false'),
+                    bsize=total_block_size,
+                    kmapIdx=self._kernel_map.params[0],
+                    param=scope_map.params[0]),
                 sdfg, state_id, scope_entry)
 
         else:
