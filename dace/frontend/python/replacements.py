@@ -380,7 +380,6 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.max')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    # HACK: reduce doesn't work if identity isn't specified (at the moment)
     return _reduce(sdfg,
                    state,
                    "lambda x, y: max(x, y)",
@@ -391,7 +390,6 @@ def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.min')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    # HACK: reduce doesn't work if identity isn't specified (at the moment)
     return _reduce(sdfg,
                    state,
                    "lambda x, y: min(x, y)",
@@ -453,9 +451,7 @@ def _argminmax(sdfg: SDFG,
 
     val_and_idx = dace.struct('_val_and_idx', val=a_arr.dtype, idx=result_type)
 
-    # HACK: at the time of writing, the reduce op on structs doesn't work unless we init the output
-    # array for that reason we will init the output array with (-1, +-inf) in the loop. This should
-    # be removed once the issue is resolved
+    # HACK: since identity cannot be specified for structs, we have to init the output array
     reduced_structs, reduced_struct_arr = sdfg.add_temp_transient(
         reduced_shape, val_and_idx)
 

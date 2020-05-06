@@ -207,7 +207,6 @@ _LIMITS = {
     'unsigned int': "UINT_{}",
     'unsigned long long': "ULLONG_{}",
     'double': "DBL_{}",
-    #'dace::float16': numpy.float16,
 }
 
 
@@ -216,14 +215,21 @@ def max_value(dtype):
     ctype = dtype.ctype
     if ctype == "bool":
         return "true"
+    elif ctype == "dace::float16":
+        return "65504.0"
     else:
         return _LIMITS[ctype].format("MAX")
 
 def min_value(dtype):
-    """Get a max value literal for `dtype`."""
+    """Get a min value literal for `dtype`."""
     ctype = dtype.ctype
     if ctype == "bool":
         return "false"
+    elif ctype == "dace::float16":
+        return "6.10351562e-05"
+    elif ctype in ["double", "float"]:
+        # use the sign bit for floats
+        return "-" + _LIMITS[ctype].format("MAX")
     else:
         return _LIMITS[ctype].format("MIN")
 

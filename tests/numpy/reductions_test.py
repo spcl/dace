@@ -92,12 +92,16 @@ def test_return_both():
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(sdfg, state, "IN", 1, "min", return_both=True)
+    _, (outval, outidx) = _argminmax(sdfg,
+                                     state,
+                                     "IN",
+                                     1,
+                                     "min",
+                                     return_both=True)
 
     IN = np.random.rand(10, 5, 3)
     OUT_IDX = np.zeros((10, 3), dtype=np.int32)
     OUT_VAL = np.zeros((10, 3), dtype=np.float64)
-
 
     sdfg.arrays[outval].transient = False
     sdfg.arrays[outidx].transient = False
@@ -107,8 +111,7 @@ def test_return_both():
     np.allclose(OUT_IDX, np.argmin(IN.copy(), axis=1))
     np.allclose(OUT_VAL, np.min(IN.copy(), axis=1))
 
-    
-    
+
 def test_argmin_result_type():
     @dace.program
     def test_argmin_result(A: dace.float64[10, 5, 3]):

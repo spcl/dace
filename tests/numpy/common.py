@@ -26,10 +26,13 @@ def compare_numpy_output(func):
             if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
                 res = np.random.rand(*ddesc.shape).astype(
                     getattr(np, ddesc.dtype.to_string()))
+                b = -10
+                a = 10
+                res = (b - a) * res + a
             elif ddesc.dtype in [
                     dace.int8, dace.int16, dace.int32, dace.int64, dace.bool
             ]:
-                res = np.random.randint(1, 3, size=ddesc.shape).astype(
+                res = np.random.randint(-3, 3, size=ddesc.shape).astype(
                     getattr(np, ddesc.dtype.to_string()))
             else:
                 raise ValueError("unsupported dtype {}".format(ddesc.dtype))
