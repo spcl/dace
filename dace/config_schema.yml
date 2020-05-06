@@ -206,11 +206,10 @@ required:
                         type: bool
                         title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
                         description: >
-                            There are two ways to handle tasks smaller than warp size,
-                            either by dynamically redistributing the combined work of all
-                            threads in the warp equally across the warp (fine grained),
-                            or each warp works sequentially on its tasks (potential load
-                            imbalance).
+                            If true the scheduler will dynamically redistributing the
+                            combined work of all threads in the warp equally across the
+                            warp (fine grained), otherwise or each warp works sequentially
+                            only on its tasks (potential load imbalance).
                         default: true
 
                     max_concurrent_streams:
