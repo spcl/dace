@@ -203,7 +203,7 @@ required:
                         default: '128,1,1'
 
                     dynamic_map_fine_grained:
-                        type: str
+                        type: bool
                         title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
                         description: >
                             There are two ways to handle tasks smaller than warp size,
@@ -591,4 +591,3 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
-
