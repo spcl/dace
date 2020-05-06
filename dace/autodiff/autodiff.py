@@ -24,6 +24,7 @@ import sympy as sp
 from sympy.parsing.sympy_parser import parse_expr
 from astunparse import unparse
 
+
 class AutoDiffException(Exception):
     """Base class for all exceptions related to automatic differentiation"""
     pass
@@ -50,13 +51,6 @@ def code_to_exprs(code: str, inputs: Set[str],
     inputs = list(inputs)
     outputs = list(outputs)
 
-    if type(code) is str:
-        # clean up the code
-        cleaned_code = unparse(ast.parse(code))
-    else:
-        # should be an ast
-        cleaned_code = unparse(code)
-
     code_fn = """
 def symbolic_execution({}):
     # define functions from cmath.h
@@ -80,7 +74,7 @@ def symbolic_execution({}):
     """
     code_fn = code_fn.format(
         ", ".join(inputs),
-        "\n".join("    " + line.strip() for line in cleaned_code.split("\n")),
+        "\n".join("    " + line.strip() for line in code.split("\n")),
         ", ".join(outputs))
 
     try:
@@ -97,7 +91,7 @@ def symbolic_execution({}):
     except Exception as e:
         raise AutoDiffException(
             "Exception occured while attempting to symbolically execute code:\n{}\n{}"
-            .format(cleaned_code)) from e
+            .format(code)) from e
 
 
 def _check_one(value):
@@ -346,7 +340,7 @@ class BackwardPassGenerator:
                                              array.dtype,
                                              storage=array.storage,
                                              transient=array.transient,
-                                             toplevel=array.toplevel)
+                                             lifetime=array.lifetime)
                     elif type(array) is dace.data.Array:
                         self.state.parent.add_array(
                             memlet.data + "_grad",
@@ -357,7 +351,7 @@ class BackwardPassGenerator:
                             transient=array.transient,
                             strides=array.strides,
                             offset=array.offset,
-                            toplevel=array.toplevel,
+                            lifetime=array.lifetime,
                             allow_conflicts=array.allow_conflicts,
                             total_size=array.total_size)
                     else:
@@ -370,8 +364,8 @@ class BackwardPassGenerator:
                 memlet.data = memlet.data + "_grad"
 
                 self.state.add_edge(
-                    self.reverse_map[dest_node], self.get_grad_name(input_conn, dest_node,
-                                                  False), rev,
+                    self.reverse_map[dest_node],
+                    self.get_grad_name(input_conn, dest_node, False), rev,
                     self.get_grad_name(output_conn, node, True), memlet)
 
             if isinstance(node, nd.AccessNode):
@@ -582,8 +576,7 @@ class BackwardPassGenerator:
                 },
                 external_edges=True)
 
-            return self.state.add_nested_sdfg(sdfg, None,
-                                              {"_reduce_in_grad"},
+            return self.state.add_nested_sdfg(sdfg, None, {"_reduce_in_grad"},
                                               {"_reduce_out_grad"})
 
         elif reduction_type in [
@@ -591,19 +584,25 @@ class BackwardPassGenerator:
         ]:
 
             if len(node.axes) != 1:
-                raise AutoDiffException("Currently, only minmax reductions along a single axis are supported")
+                raise AutoDiffException(
+                    "Currently, only minmax reductions along a single axis are supported"
+                )
 
             # in this case we need to modify the forward pass and add an argmin/argmax
-            forward_sdfg = SDFG("_forward_" + str(reduction_type).replace(".", "_") + "_")
+            forward_sdfg = SDFG("_forward_" +
+                                str(reduction_type).replace(".", "_") + "_")
             state = forward_sdfg.add_state()
 
-            _, argminmax_input_arr = forward_sdfg.add_array("IN",
-                                                    shape=input_array.shape,
-                                                    dtype=input_array.dtype)
+            _, argminmax_input_arr = forward_sdfg.add_array(
+                "IN", shape=input_array.shape, dtype=input_array.dtype)
 
             _, (argminmax_output, minmax_output) = _argminmax(
-                forward_sdfg, state, "IN", node.axes[0],
-                "min" if reduction_type is dtypes.ReductionType.Min else "max", return_val_too=True)
+                forward_sdfg,
+                state,
+                "IN",
+                node.axes[0],
+                "min" if reduction_type is dtypes.ReductionType.Min else "max",
+                return_both=True)
 
             forward_sdfg.arrays[argminmax_output].transient = False
             forward_sdfg.arrays[minmax_output].transient = False
@@ -611,19 +610,22 @@ class BackwardPassGenerator:
             in_edge = self.state.in_edges(node)[0]
             out_edge = self.state.out_edges(node)[0]
 
-
             # replace the node
-            new_node = self.state.add_nested_sdfg(forward_sdfg, None,
+            new_node = self.state.add_nested_sdfg(
+                forward_sdfg,
+                None,
                 inputs={"IN"},
                 outputs={argminmax_output, minmax_output})
 
-            self.state.add_edge(in_edge.src, in_edge.src_conn, new_node, "IN", in_edge.data)
-            self.state.add_edge(new_node, minmax_output, out_edge.dst, out_edge.dst_conn, out_edge.data)
+            self.state.add_edge(in_edge.src, in_edge.src_conn, new_node, "IN",
+                                in_edge.data)
+            self.state.add_edge(new_node, minmax_output, out_edge.dst,
+                                out_edge.dst_conn, out_edge.data)
 
             # in the backward pass, we simply pass along the gradient to the node to the argmin/max
 
-            
-            backward_sdfg = SDFG("_backward_" + str(reduction_type).replace(".", "_") + "_")
+            backward_sdfg = SDFG("_backward_" +
+                                 str(reduction_type).replace(".", "_") + "_")
             state = backward_sdfg.add_state()
 
             rev_input_conn_name = self.get_grad_name(output_grad_connectors[0],
@@ -631,18 +633,19 @@ class BackwardPassGenerator:
             rev_output_conn_name = self.get_grad_name(input_grad_connectors[0],
                                                       node, False)
 
-            _, rev_input_arr = backward_sdfg.add_array(rev_input_conn_name,
-                                              shape=output_array.shape,
-                                              dtype=output_array.dtype)
+            _, rev_input_arr = backward_sdfg.add_array(
+                rev_input_conn_name,
+                shape=output_array.shape,
+                dtype=output_array.dtype)
 
             # the argmin/max from the forward pass
-            _, argminmax_input_arr = backward_sdfg.add_array(argminmax_output,
-                                                    shape=output_array.shape,
-                                                    dtype=dace.int64)
+            _, argminmax_input_arr = backward_sdfg.add_array(
+                argminmax_output, shape=output_array.shape, dtype=dace.int64)
 
-            _, rev_output_arr = backward_sdfg.add_array(rev_output_conn_name,
-                                               shape=input_array.shape,
-                                               dtype=input_array.dtype)
+            _, rev_output_arr = backward_sdfg.add_array(
+                rev_output_conn_name,
+                shape=input_array.shape,
+                dtype=input_array.dtype)
 
             state.add_mapped_tasklet(
                 "_distribute_grad_" + str(reduction_type).replace(".", "_") +
@@ -661,29 +664,31 @@ class BackwardPassGenerator:
                         "0" if node.axes is None else ",".join(
                             "i" + str(i) for i in non_reduce_axes))
                 },
-                "__out = __in if {} == {} else 0".format('__argmax', 'i' + str(node.axes[0]))
-                , {
-                    "__out":
-                    Memlet.simple(rev_output_conn_name, ",".join(
-                        "i" + str(i) for i in all_axes))
-                },
+                "__out = __in if {} == {} else 0".format(
+                    '__argmax', 'i' + str(node.axes[0])), {
+                        "__out":
+                        Memlet.simple(rev_output_conn_name, ",".join(
+                            "i" + str(i) for i in all_axes))
+                    },
                 external_edges=True)
 
-            rev =  self.state.add_nested_sdfg(backward_sdfg, None,
-                                              {"_reduce_in_grad", argminmax_output},
-                                              {"_reduce_out_grad"})
+            rev = self.state.add_nested_sdfg(
+                backward_sdfg, None, {"_reduce_in_grad", argminmax_output},
+                {"_reduce_out_grad"})
 
-            tmp, _ = self.sdfg.add_temp_transient(output_array.shape, dtype=dace.int64)
+            tmp, _ = self.sdfg.add_temp_transient(output_array.shape,
+                                                  dtype=dace.int64)
             tmp_access = self.state.add_access(tmp)
 
-            self.state.add_edge(new_node, argminmax_output, tmp_access, None, self.sdfg.get_array_memlet(tmp))
-            self.state.add_edge(tmp_access, None, rev, argminmax_output, self.sdfg.get_array_memlet(tmp))
-
+            self.state.add_edge(new_node, argminmax_output, tmp_access, None,
+                                self.sdfg.get_array_memlet(tmp))
+            self.state.add_edge(tmp_access, None, rev, argminmax_output,
+                                self.sdfg.get_array_memlet(tmp))
 
             # remove the 'old' reduce node at the end
             self._post_grad_hooks.append(lambda: self.state.remove_node(node))
             return rev
-            
+
         else:
             raise AutoDiffException(
                 "Unsupported reduction type {} for reduce node".format(
@@ -707,8 +712,8 @@ class BackwardPassGenerator:
                     "Autodiff only supported for tasklets with scalar inputs and outputs"
                 ) from e
 
-        code_str = tasklet.code
-        if type(code_str) is ast.Module:
+        code_str = tasklet.code.code
+        if type(code_str) is not str:
             # unparse the tree
             code_str = unparse(code_str)
 
@@ -749,10 +754,9 @@ class BackwardPassGenerator:
                 rev_inputs |= _symbols_to_strings(
                     diff_expr.free_symbols) | {rev_input_grad_name}
 
-                rev_code[rev_output_grad_name].append("{input} * ({diff_expr})".format(
-                    input=rev_input_grad_name,
-                    diff_expr=str(diff_expr)))
-
+                rev_code[rev_output_grad_name].append(
+                    "{input} * ({diff_expr})".format(input=rev_input_grad_name,
+                                                     diff_expr=str(diff_expr)))
 
         code = ""
         for output, exprs in rev_code.items():
