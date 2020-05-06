@@ -1,6 +1,7 @@
 from functools import reduce
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import pytest
 
@@ -527,6 +528,24 @@ def test_reduce_max_node_1_axis():
         W=np.random.rand(7, 4, 3).astype(np.float64),
         Y=np.random.rand(4, 3).astype(np.float64))
 
+@correctness_test
+def test_softmax():
+    def torch_func(*, X):
+        Y = F.softmax(X, 1)
+        Z = Y.sum()
+        Z.backward()
+        return dict(X_grad=X.grad)
+
+    @dace.program
+    def dace_func(X: dace.float64[4, 5]):
+        Y = F.softmax(X, 1)
+        Z = np.sum(Y)
+        return Z
+
+    sdfg = dace_func.to_sdfg()
+
+    return SDFGBackwardRunner(sdfg, "__return"), torch_func, dict(
+        X=np.random.rand(4, 5).astype(np.float64))
 
 if __name__ == "__main__":
     for test in all_tests:
