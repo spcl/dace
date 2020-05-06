@@ -211,7 +211,7 @@ required:
                             threads in the warp equally across the warp (fine grained),
                             or each warp works sequentially on its tasks (potential load
                             imbalance).
-                        default: 'true'
+                        default: true
 
                     max_concurrent_streams:
                         type: int
