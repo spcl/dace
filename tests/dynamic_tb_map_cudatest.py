@@ -23,7 +23,7 @@ def spmv(A_row, A_col, A_val, x, b):
             out = a * in_x
 
 
-def dynamic_map_test():
+def test_dynamic_map():
     height = 1024
     width = 1024
 
