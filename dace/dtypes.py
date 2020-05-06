@@ -196,6 +196,58 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
+# Translation of types to C types
+_CTYPES = {
+    int: "int",
+    float: "float",
+    bool: "bool",
+    numpy.bool: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
+    numpy.float16: "dace::float16",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "dace::complex64",
+    numpy.complex128: "dace::complex128",
+}
+
+_LIMITS = {
+    'int': "INT_{}",
+    'float': "FLT_{}",
+    'char': "CHAR_{}",
+    'short': "SHRT_{}",
+    'long long': "LLONG_{}",
+    'unsigned char': "UCHAR_{}",
+    'unsigned short': "USHRT_{}",
+    'unsigned int': "UINT_{}",
+    'unsigned long long': "ULLONG_{}",
+    'double': "DBL_{}",
+    #'dace::float16': numpy.float16,
+}
+
+
+def max_value(dtype):
+    """Get a max value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "true"
+    else:
+        return _LIMITS[ctype].format("MAX")
+
+def min_value(dtype):
+    """Get a max value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "false"
+    else:
+        return _LIMITS[ctype].format("MIN")
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
