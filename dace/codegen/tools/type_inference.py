@@ -8,7 +8,6 @@
 
 import numpy as np
 import ast
-from dace.codegen.cppunparse import CPPLocals
 from dace import dtypes
 from dace.codegen import cppunparse
 from dace.symbolic import SymExpr
@@ -172,7 +171,6 @@ def _AsyncFunctionDef(t, symbols, inferred_symbols):
 
 def _generic_For(t, symbols, inferred_symbols):
     if isinstance(t.target, ast.Tuple):
-        # TODO this was not covered by current type inference
         if len(t.target.elts) == 1:
             (elt, ) = t.target.elts
             if elt.id not in symbols and elt not in inferred_symbols:
@@ -251,7 +249,7 @@ def _Name(t, symbols, inferred_symbols):
             inferred_type = cppunparse._py2c_typeconversion[t.id.strip("()")]
         elif t.id in symbols:
             # defined symbols could have dtypes, in case convert it to typeclass
-            inferred_type =  symbols[t.id]
+            inferred_type = symbols[t.id]
             if isinstance(inferred_type, np.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
         elif t.id in inferred_symbols:
@@ -265,6 +263,7 @@ def _NameConstant(t, symbols, inferred_symbols):
 
 def _Num(t, symbols, inferred_symbols):
     return dtypes.typeclass(type(t.n))
+    #return dtypes.typeclass(np.min_scalar_type(t.n).name)
 
 
 def _IfExp(t, symbols, inferred_symbols):
@@ -368,9 +367,10 @@ def _ExtSlice(t, symbols, inferred_symbols):
 # argument
 def _arg(t, symbols, inferred_symbols):
     if t.annotation:
-        _dispatch(t.annotation, symbols, inferred_symbols)
-    #Todo which type?
-    #self.locals.define(t.arg, t.lineno, self._indent)
+        #argument with annotation, we can derive the type
+        inferred_type = _dispatch(t.annotation, symbols, inferred_symbols)
+        inferred_symbols[t.arg] = inferred_type
+
 
 # others
 def _arguments(t, symbols, inferred_symbols):
