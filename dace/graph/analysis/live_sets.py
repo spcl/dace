@@ -47,7 +47,7 @@ def live_sets(sdfg):
         scope_dict = state.scope_dict(node_to_children=True)
         for n in scope_dict:
             if n is not None:
-                G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_nodes(n)[0])])
+                G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_node(n))])
                 G.remove_nodes_from(scope_dict[n])
 
         # Remove all nodes that are not AccessNodes or have incoming wcr edges
@@ -85,7 +85,7 @@ def live_sets(sdfg):
                     if n in ancestors[m] and successors[n].issubset(ancestors[m]):
                         alloc_dealloc[n.data][1].append(m)
 
-        #maybe remove descendant kill nodes
+        # maybe remove descendant kill nodes
         for a in alloc_dealloc:
             kill = alloc_dealloc[a][1].copy()
             for i in range(len(kill)):
@@ -98,104 +98,35 @@ def live_sets(sdfg):
 
         #### MAX LIVE SET
 
-        #generate garanteed live set for each node in G: itself and arrays of parents.
-        live = {}
-        for n in G:
-            live[n] = set()
-            if n.data in transients:
-                live[n].add(n.data)
-            live[n].update([x.data for x in G.predecessors(n) if x.data in transients])
-
-        #import matplotlib.pyplot as plt
-        #nx.draw_networkx(G, with_labels=True)
-        #plt.show()
-
-        #Do recursively from sink nodes: copmute max set for n
-        def maxset(n):
-            live_sum = sum([sdfg.arrays[x].total_size for x in live[n]])
-            parent_set = set().union(*([maxset(p) for p in G.predecessors(n)]))
-            parent_set_sum = sum([sdfg.arrays[x].total_size for x in parent_set])
-            if live_sum >= parent_set_sum:
-                maxset_n = live[n]
-            else:
-                maxset_n = parent_set
-            return maxset_n
-
-        for n in [node for node in G.nodes() if G.out_degree(node) == 0]:
-            m = maxset(n)
-            print(n, sum([sdfg.arrays[x].total_size for x in m]), memory_before, 100.0/memory_before*(memory_before - sum([sdfg.arrays[x].total_size for x in m])), m)
-
-        '''arrays = list(transients)
-
-        # find live variables for each node
-        ## Initialize dead dict
-        dead = {}
-        for n in G.nodes():
-            dead[n] = set()
-        ## for each array
-        for a in transients:
-            gen, kill = alloc_dealloc[a]
-            # for each ancestor of gen node add array to dead set
-            for i in range(len(gen)):
-                for anc in ancestors[gen[i]]:
-                    dead[anc].add(a)
-                dead[gen[i]].remove(a)
-            # for each descendant of kill node add array to dead set.
-            for i in range(len(kill)):
-                for desc in nx.descendants(G, kill[i]):
-                    dead[desc].add(a)
-
-        for d in dead:
-            dead[d] = transients - dead[d]
-
-        # from live sets generate graph where two arrays are connected if never live together.
-        Gp = nx.Graph()
-        for t in transients:
-            Gp.add_node(t)
-        for t in transients:
-            Gp.add_edges_from([(t,x) for x in Gp.nodes() if t != x])
-
-        for d in dead:
-            if d.data in transients:
-                for b in dead[d]:
-                    if d.data != b:
-                        if Gp.has_edge(d.data,b):
-                            Gp.remove_edge(d.data,b)
-
         import matplotlib.pyplot as plt
-        nx.draw_networkx(Gp, with_labels=True)
+        nx.draw_networkx(G, with_labels=True)
         plt.show()
 
-        # Now reduce arrays by selecting an edge and merging these arrays
-        # (maybe reduce graph to be more simple)
-        digraph = nx.DiGraph()
-        for (a,b) in Gp.edges():
-            if sdfg.arrays[a].total_size > sdfg.arrays[b].total_size:
-                digraph.add_edge(a,b)
+        # Get longest path
+        longest_path = nx.dag_longest_path(G)
 
-        import matplotlib.pyplot as plt
-        nx.draw_networkx(digraph, with_labels=True)
-        plt.show()
-        # check for consitency and repeat.'''
-        '''# Initialize dead dict
-        dead = {}
+        # Generate levels (maybe remove non-transients)
+        levels = {}
+        node_level = {}
+
+        for i in range(len(longest_path)):
+            levels[i] = set()
         for n in G.nodes():
-            dead[n] = set()
-        # for each array
-        for a in transients:
-            gen, kill = alloc_dealloc[a]
-            # for each ancestor of gen node add array to dead set
-            for i in range(len(gen)):
-                for anc in ancestors[gen[i]]:
-                    dead[anc].add(a)
-                dead[gen[i]].remove(a)
-            # for each descendant of kill node add array to dead set.
-            for i in range(len(kill)):
-                for desc in nx.descendants(G, kill[i]):
-                    dead[desc].add(a)
+            node_level[n] = float("inf")
+        for s in [node for node in G.nodes() if G.in_degree(node) == 0]:
+            levels[0].add(s)
+            node_level[s] = 0
 
-        print('dead: ', dead)
-        for d in dead:
-            dead[d] = transients - dead[d]
 
-        print('live: ', dead)'''
+
+        for l in range(0, len(longest_path)):
+            for n in levels[l]:
+                for s in G.successors(n):
+                    if all([node_level[x] < l+1 for x in G.predecessors(s)]):
+                        levels[l+1].add(s)
+                        node_level[s] = l
+        print('levels: ', levels)
+
+        # Find live set for each level
+        
+        # Take maximum of those as maximum live set
