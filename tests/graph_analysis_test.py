@@ -10,11 +10,11 @@ M = dace.symbol('M')
 N = dace.symbol('N')
 
 @dace.program
-def operation(A: dace.float64[M, M], B: dace.float64[M, M], C: dace.float64[M, N], D: dace.float64[M, N]):
-    tmp = dace.define_local([M, M, M], dtype=A.dtype)
-    E = dace.define_local([M,M], dtype=A.dtype)
+def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 10], D: dace.float64[5, 10]):
+    tmp = dace.define_local([5, 5, 5], dtype=A.dtype)
+    E = dace.define_local([5,5], dtype=A.dtype)
 
-    @dace.map(_[0:M, 0:M, 0:M])
+    @dace.map(_[0:5, 0:5, 0:5])
     def multiplication(i, j, k):
         in_A << A[i, k]
         in_B << B[k, j]
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=5)
-    parser.add_argument("N", type=int, nargs="?", default=100)
+    parser.add_argument("N", type=int, nargs="?", default=10)
     args = vars(parser.parse_args())
 
     M.value = args["M"]
@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
     sdfg = operation.to_sdfg(args)
     live_sets(sdfg=sdfg)
-    sdfg(A=A, B=B, C=C, D=D, M=M, N=N)
+    sdfg(A=A, B=B, C=C, D=D)
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B,D))
 
     diff = np.linalg.norm(C_regression - C) / (M.value * N.value)
