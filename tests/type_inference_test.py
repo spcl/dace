@@ -1,5 +1,7 @@
 import unittest
 import numpy as np
+from sympy.strategies import tryit
+
 from dace.codegen.tools import type_inference
 from dace import dtypes
 import ast
@@ -128,7 +130,46 @@ res = var1 + var3 * var2
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(float))
 
+    def testVarious(self):
+        # code snippets that contains constructs not directly involved in type inference
+        # (borrowed by astunparse tests)
 
+        while_code = """def g():
+    while True:
+        break
+    z = 3
+"""
+        inf_symbols = type_inference.infer(while_code, {})
+        self.assertEqual(inf_symbols["z"], dtypes.typeclass(int))
+
+        raise_from_code = """try:
+    1 / 0
+except ZeroDivisionError as e:
+    raise ArithmeticError from e
+"""
+        inf_symbols = type_inference.infer(raise_from_code, {})
+
+        try_except_finally_code = """try:
+    suite1
+except ex1:
+    suite2
+except ex2:
+    suite3
+else:
+    suite4
+finally:
+    suite5
+"""
+        inf_symbols = type_inference.infer(try_except_finally_code, {})
+
+        #function def with arguments
+        function_def_return_code ="""def f(arg : float):
+    res = 5 + arg
+    return res
+        """
+        inf_symbols = type_inference.infer(function_def_return_code, {})
+        self.assertEqual(inf_symbols["res"], dtypes.typeclass(np.float32))
+        self.assertEqual(inf_symbols["arg"], dtypes.typeclass(np.float32))
 
 
 
