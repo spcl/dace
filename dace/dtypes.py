@@ -15,14 +15,13 @@ class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
-    Immaterial = ()  # Needs materialize function
-    Register = ()  # Tasklet storage location
-    CPU_Pinned = ()  # NOTE: Can be DMA accessed from accelerators
-    CPU_Heap = ()  # NOTE: Allocated with new[]
-    CPU_Stack = ()  # NOTE: Allocated on stack
+    Immaterial = ()  # Data that is materialized on access
+    Register = ()  # Local data on registers, stack, or equivalent memory
+    CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = ()  # Host memory allocated on heap
+    CPU_ThreadLocal = ()  # Thread-local host memory
     GPU_Global = ()  # Global memory
     GPU_Shared = ()  # Shared memory
-    GPU_Stack = ()  # GPU registers
     FPGA_Global = ()  # Off-chip global memory (DRAM)
     FPGA_Local = ()  # On-chip memory (bulk storage)
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
@@ -69,6 +68,17 @@ class ReductionType(aenum.AutoNumberEnum):
 
 
 @extensible_enum
+class AllocationLifetime(aenum.AutoNumberEnum):
+    """ Options for allocation span (when to allocate/deallocate) of data. """
+
+    Scope = ()  # Allocated/Deallocated on innermost scope start/end
+    State = ()  # Allocated throughout the containing state
+    SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
+    Global = ()  # Allocated throughout the entire program (outer SDFG)
+    Persistent = ()  # Allocated throughout multiple invocations (init/exit)
+
+
+@extensible_enum
 class Language(aenum.AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
 
@@ -101,10 +111,10 @@ SCOPEDEFAULT_STORAGE = {
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
-    ScheduleType.CPU_Multicore: StorageType.CPU_Stack,
+    ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
-    ScheduleType.GPU_ThreadBlock: StorageType.GPU_Stack,
-    ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.GPU_Stack,
+    ScheduleType.GPU_ThreadBlock: StorageType.Register,
+    ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
 }
 
@@ -227,6 +237,9 @@ class typeclass(object):
         """ Returns the ctypes version of the typeclass. """
         return _FFI_CTYPES[self.type]
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
+
     def is_complex(self):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
             return True
@@ -330,6 +343,9 @@ class pointer(typeclass):
         """ Returns the ctypes version of the typeclass. """
         return ctypes.POINTER(_FFI_CTYPES[self.type])
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
 
 def immaterial(dace_data, materialize_func):
     """ A data type with a materialize/serialize function. Data objects with
@@ -427,6 +443,9 @@ class struct(typeclass):
                             {"_fields_": fields})
         return struct_class
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
     def emit_definition(self):
         return """struct {name} {{
 {typ}
@@ -497,6 +516,9 @@ class callback(typeclass):
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
 
     def signature(self, name):
         from dace import data
@@ -721,7 +743,8 @@ def ismodule_and_allowed(var):
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
     from dace.symbolic import symbol
-    return isconstant(var) or ismodule(var) or isinstance(var, symbol)
+    return isconstant(var) or ismodule(var) or isinstance(
+        var, symbol) or isinstance(var, typeclass)
 
 
 class _external_function(object):

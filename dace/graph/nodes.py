@@ -8,14 +8,14 @@ import itertools
 import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.graph import dot, graph
+from dace.graph import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties,
                              DataProperty, SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
-                             LibraryImplementationProperty)
+                             LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 import pydoc
@@ -56,21 +56,19 @@ class Node(object):
             scope_entry_node = None
 
         if scope_entry_node is not None:
-            ens = parent.exit_nodes(parent.entry_node(self))
-            scope_exit_nodes = [str(parent.node_id(x)) for x in ens]
+            ens = parent.exit_node(parent.entry_node(self))
+            scope_exit_node = str(parent.node_id(ens))
             scope_entry_node = str(parent.node_id(scope_entry_node))
         else:
             scope_entry_node = None
-            scope_exit_nodes = []
+            scope_exit_node = None
 
         # The scope exit of an entry node is the matching exit node
         if isinstance(self, EntryNode):
             try:
-                scope_exit_nodes = [
-                    str(parent.node_id(x)) for x in parent.exit_nodes(self)
-                ]
+                scope_exit_node = str(parent.node_id(parent.exit_node(self)))
             except RuntimeError:
-                scope_exit_nodes = []
+                scope_exit_node = None
 
         retdict = {
             "type": typestr,
@@ -78,7 +76,7 @@ class Node(object):
             "attributes": dace.serialize.all_properties_to_json(self),
             "id": parent.node_id(self),
             "scope_entry": scope_entry_node,
-            "scope_exits": scope_exit_nodes
+            "scope_exit": scope_exit_node
         }
         return retdict
 
@@ -184,7 +182,7 @@ class AccessNode(Node):
                       desc="Type of access to this array",
                       default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo2 = DebugInfoProperty()
+    debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
     def __init__(self,
@@ -194,7 +192,7 @@ class AccessNode(Node):
         super(AccessNode, self).__init__()
 
         # Properties
-        self.debuginfo2 = debuginfo
+        self.debuginfo = debuginfo
         self.access = access
         if not isinstance(data, str):
             raise TypeError('Data for AccessNode must be a string')
@@ -213,7 +211,7 @@ class AccessNode(Node):
         node._setzero = self._setzero
         node._in_connectors = self._in_connectors
         node._out_connectors = self._out_connectors
-        node.debuginfo2 = dcpy(self.debuginfo2)
+        node.debuginfo = dcpy(self.debuginfo)
         return node
 
     @property
@@ -228,19 +226,6 @@ class AccessNode(Node):
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
-
-    def draw_node(self, sdfg, graph):
-        desc = self.desc(sdfg)
-        if isinstance(desc, data.Stream):
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="oval",
-                                 style='dashed')
-        elif desc.transient:
-            return dot.draw_node(sdfg, graph, self, shape="oval")
-        else:
-            return dot.draw_node(sdfg, graph, self, shape="oval", style='bold')
 
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
@@ -259,7 +244,7 @@ class CodeNode(Node):
     label = Property(dtype=str, desc="Name of the CodeNode")
     location = DictProperty(
         key_type=str,
-        value_type=None,
+        value_type=dace.symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     environments = SetProperty(
         str,
@@ -282,14 +267,16 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    code = CodeProperty(desc="Tasklet code", default="")
+    code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
     code_global = CodeProperty(
-        desc="Global scope code needed for tasklet execution", default="")
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
     code_init = CodeProperty(
         desc="Extra code that is called on DaCe runtime initialization",
-        default="")
+        default=CodeBlock("", dtypes.Language.CPP))
     code_exit = CodeProperty(
-        desc="Extra code that is called on DaCe runtime cleanup", default="")
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -313,16 +300,16 @@ class Tasklet(CodeNode):
         # Properties
         # Set the language directly
         #self.language = language
-        self.code = {'code_or_block': code, 'language': language}
+        self.code = CodeBlock(code, language)
 
-        self.code_global = {'code_or_block': code_global, 'language': language}
-        self.code_init = {'code_or_block': code_init, 'language': language}
-        self.code_exit = {'code_or_block': code_exit, 'language': language}
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
     def language(self):
-        return self._code['language']
+        return self.code.language
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -333,9 +320,6 @@ class Tasklet(CodeNode):
     @property
     def name(self):
         return self._label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="octagon")
 
     def validate(self, sdfg, state):
         if not dtypes.validate_name(self.label):
@@ -360,9 +344,6 @@ class EmptyTasklet(Tasklet):
         in an SDFG. """
     def __init__(self, label=""):
         super(EmptyTasklet, self).__init__(label)
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, style="invis", shape="octagon")
 
     def validate(self, sdfg, state):
         pass
@@ -446,9 +427,6 @@ class NestedSDFG(CodeNode):
 
         return ret
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="doubleoctagon")
-
     def __str__(self):
         if not self.label:
             return "SDFG"
@@ -473,6 +451,10 @@ class NestedSDFG(CodeNode):
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested '
                                 'SDFG connectors' % dname)
+            if dname in connectors and desc.transient:
+                raise NameError(
+                    '"%s" is a connector but its corresponding array is transient'
+                    % dname)
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.undefined_symbols(False).keys()
@@ -530,8 +512,13 @@ class MapEntry(EntryNode):
         ret = clc(map=m)
 
         try:
-            # Set map reference to map exit
-            nid = int(json_obj['scope_exits'][0])
+            # Connection of the scope nodes
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+
             exit_node = context['sdfg_state'].node(nid)
             exit_node.map = m
         except IndexError:  # Exit node has a higher node ID
@@ -548,11 +535,6 @@ class MapEntry(EntryNode):
     @map.setter
     def map(self, val):
         self._map = val
-
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg, graph, self, shape="hexagon")
-        return dot.draw_node(sdfg, graph, self, shape="trapezium")
 
     def __str__(self):
         return str(self.map)
@@ -609,9 +591,6 @@ class MapExit(ExitNode):
     def label(self):
         return self._map.label
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="invtrapezium")
-
     def __str__(self):
         return str(self.map)
 
@@ -637,9 +616,7 @@ class Map(object):
                         choices=dtypes.ScheduleType,
                         from_string=lambda x: dtypes.ScheduleType[x],
                         default=dtypes.ScheduleType.Default)
-    is_async = Property(dtype=bool, desc="Map asynchronous evaluation")
     unroll = Property(dtype=bool, desc="Map unrolling")
-    flatten = Property(dtype=bool, desc="Map loop flattening")
     collapse = Property(dtype=int,
                         default=1,
                         desc="How many dimensions to"
@@ -660,8 +637,6 @@ class Map(object):
                  ndrange,
                  schedule=dtypes.ScheduleType.Default,
                  unroll=False,
-                 is_async=False,
-                 flatten=False,
                  collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
@@ -671,8 +646,6 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.is_async = is_async
-        self.flatten = flatten
         self.collapse = 1
         self.params = params
         self.range = ndrange
@@ -721,7 +694,12 @@ class ConsumeEntry(EntryNode):
 
         try:
             # Set map reference to map exit
-            nid = int(json_obj['scope_exits'][0])
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+
             exit_node = context['sdfg_state'].node(nid)
             exit_node.consume = c
         except IndexError:  # Exit node has a higher node ID
@@ -742,19 +720,6 @@ class ConsumeEntry(EntryNode):
     @consume.setter
     def consume(self, val):
         self._consume = val
-
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="hexagon",
-                                 style='dashed')
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="trapezium",
-                             style='dashed')
 
     def __str__(self):
         return str(self.consume)
@@ -808,13 +773,6 @@ class ConsumeExit(ExitNode):
     @property
     def label(self):
         return self._consume.label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="invtrapezium",
-                             style='dashed')
 
     def __str__(self):
         return str(self.consume)
@@ -925,18 +883,15 @@ class Reduce(Node):
     def __init__(self,
                  wcr,
                  axes,
-                 wcr_identity=None,
+                 identity=None,
                  schedule=dtypes.ScheduleType.Default,
                  debuginfo=None):
         super(Reduce, self).__init__()
         self.wcr = wcr  # type: ast._Lambda
         self.axes = axes
-        self.identity = wcr_identity
+        self.identity = identity
         self.schedule = schedule
         self.debuginfo = debuginfo
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="invtriangle")
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -1091,6 +1046,3 @@ class LibraryNode(CodeNode):
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
         transformation_type._match_node = clc(match_node_name)
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="folder")

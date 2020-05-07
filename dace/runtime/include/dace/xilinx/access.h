@@ -71,4 +71,24 @@ void Write(StreamView<T, vector_length, capacity> &stream_view,
   stream_view.push(value);
 }
 
+template <typename T, unsigned vector_length>
+vec<T, vector_length> Pack(T const *const ptr) {
+  #pragma HLS INLINE
+  vec<T, vector_length> val;
+  for (int i = 0; i < vector_length; ++i) {
+    #pragma HLS UNROLL
+    val[i] = ptr[i];
+  }
+  return val;
+}
+
+template <typename T, unsigned vector_length>
+void Unpack(vec<T, vector_length> const &val, T *const ptr) {
+  #pragma HLS INLINE
+  for (int i = 0; i < vector_length; ++i) {
+    #pragma HLS UNROLL
+    ptr[i] = val[i];
+  }
+}
+
 } // End namespace dace

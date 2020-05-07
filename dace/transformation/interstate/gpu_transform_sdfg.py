@@ -113,13 +113,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         and node.desc(sdfg).transient == False):
                     if (state.out_degree(node) > 0
                             and node.data not in input_nodes):
-                        # Special case: nodes that lead to dynamic map ranges
-                        # must stay on host
+                        # Special case: nodes that lead to top-level dynamic
+                        # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode)
                                     and last_edge.dst_conn and
-                                    not last_edge.dst_conn.startswith('IN_')):
+                                    not last_edge.dst_conn.startswith('IN_')
+                                    and sdict[last_edge.dst] is None):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
@@ -238,7 +239,10 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                             for e in state.out_edges(node)):
                         continue
 
-                    if sdict[node] is None:
+                    gpu_storage = [dtypes.StorageType.GPU_Global,
+                                 dtypes.StorageType.GPU_Shared,
+                                  dtypes.StorageType.CPU_Pinned]
+                    if sdict[node] is None and nodedesc.storage not in gpu_storage:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
@@ -246,8 +250,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         # Try to move allocation/deallocation out of loops
                         if (self.toplevel_trans
                                 and not isinstance(nodedesc, data.Stream)):
-                            nodedesc.toplevel = True
-                    else:
+                            nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
+                    elif nodedesc.storage not in gpu_storage:
                         # Make internal transients registers
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register

@@ -173,7 +173,7 @@ class InlineSDFG(pattern_matching.Transformation):
         nstate: SDFGState = nsdfg.nodes()[0]
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
-        nsdfg_scope_exit = (state.exit_nodes(nsdfg_scope_entry)[0]
+        nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry)
                             if nsdfg_scope_entry is not None else None)
 
         #######################################################
@@ -181,11 +181,12 @@ class InlineSDFG(pattern_matching.Transformation):
 
         # Global/init/exit code
         if nsdfg.global_code:
-            sdfg.set_global_code(sdfg.global_code + nsdfg.global_code)
+            sdfg.set_global_code(sdfg.global_code.code +
+                                 nsdfg.global_code.code)
         if nsdfg.init_code:
-            sdfg.set_init_code(sdfg.init_code + nsdfg.init_code)
+            sdfg.set_init_code(sdfg.init_code.code + nsdfg.init_code.code)
         if nsdfg.exit_code:
-            sdfg.set_exit_code(sdfg.exit_code + nsdfg.exit_code)
+            sdfg.set_exit_code(sdfg.exit_code.code + nsdfg.exit_code.code)
 
         # Constants
         for cstname, cstval in nsdfg.constants.items():

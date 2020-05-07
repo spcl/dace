@@ -784,7 +784,8 @@ class CPPUnparser:
             if infer_type:
                 if t.id.strip("()") in _py2c_typeconversion:
                     inferred_type = _py2c_typeconversion[t.id.strip("()")]
-                elif  self.defined_symbols is not None and self.defined_symbols.get(t.id) is not None:
+                elif self.defined_symbols is not None and self.defined_symbols.get(
+                        t.id) is not None:
                     # defined symbols could have dtypes, in case convert it to typeclass
                     inferred_type = self.defined_symbols.get(t.id)
                     if isinstance(inferred_type, np.dtype):
@@ -1032,7 +1033,10 @@ class CPPUnparser:
     def _BoolOp(self, t, infer_type=False):
         self.write("(", infer_type)
         s = " %s " % self.boolops[t.op.__class__]
-        interleave(lambda: self.write(s, infer_type), self.dispatch, t.values, infer_type=infer_type)
+        interleave(lambda: self.write(s, infer_type),
+                   self.dispatch,
+                   t.values,
+                   infer_type=infer_type)
         self.write(")", infer_type)
         return dace.dtypes.typeclass(np.bool) if infer_type else None
 
@@ -1184,6 +1188,10 @@ def cppunparse(node, expr_semicolon=True, locals=None):
 def py2cpp(code, expr_semicolon=True):
     if isinstance(code, str):
         return cppunparse(ast.parse(code), expr_semicolon)
+    elif isinstance(code, ast.AST):
+        return cppunparse(code, expr_semicolon)
+    elif isinstance(code, list):
+        return '\n'.join(py2cpp(stmt) for stmt in code)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)

@@ -67,10 +67,8 @@ class MapInterchange(pattern_matching.Transformation):
                     return False
 
         # Check the edges between the exits of the two maps.
-        inner_map_exits = graph.exit_nodes(inner_map_entry)
-        outer_map_exits = graph.exit_nodes(outer_map_entry)
-        inner_map_exit = inner_map_exits[0]
-        outer_map_exit = outer_map_exits[0]
+        inner_map_exit = graph.exit_node(inner_map_entry)
+        outer_map_exit = graph.exit_node(outer_map_entry)
 
         # Check that the destination of all the outgoing edges
         # from the inner map's exit is the outer map's exit.
@@ -102,13 +100,8 @@ class MapInterchange(pattern_matching.Transformation):
             MapInterchange._outer_map_entry]]
         inner_map_entry = graph.nodes()[self.subgraph[
             MapInterchange._inner_map_entry]]
-        inner_map_exits = graph.exit_nodes(inner_map_entry)
-        outer_map_exits = graph.exit_nodes(outer_map_entry)
-        if len(inner_map_exits) > 1 or len(outer_map_exits) > 1:
-            raise NotImplementedError('Map interchange does not work with ' +
-                                      'multiple map exits')
-        inner_map_exit = inner_map_exits[0]
-        outer_map_exit = outer_map_exits[0]
+        inner_map_exit = graph.exit_node(inner_map_entry)
+        outer_map_exit = graph.exit_node(outer_map_entry)
 
         # Switch connectors
         outer_map_entry.in_connectors, inner_map_entry.in_connectors = \

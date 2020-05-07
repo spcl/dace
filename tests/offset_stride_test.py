@@ -39,9 +39,6 @@ if __name__ == '__main__':
     state.add_edge(A_, None, map_entry, None, Memlet.simple(A_, '1:4,1:3'))
     state.add_edge(map_exit, None, B_, None, Memlet.simple(B_, '1:4,1:3'))
 
-    # Left for debugging purposes
-    mysdfg.draw_to_file()
-
     mysdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output[0:3, 0:2] - input[3:6, 4:6]) / N.get()

@@ -47,16 +47,7 @@ tests/xilinx_test.sh 0
           }
         }
         
-        stage('Test Intel FPGA') {
-          steps {
-            sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
-            export COVERAGE_RCFILE=`pwd`/.coveragerc
-            source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
-export DACE_debugprint=1
-tests/intel_fpga_test.sh 
-'''
-          }
-        }
+        
 
         stage('Test MPI') {
           steps {
@@ -69,6 +60,16 @@ tests/mpi_test.sh'''
         }
 
       }
+    }
+    stage('Test Intel FPGA') {
+          steps {
+            sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
+            export COVERAGE_RCFILE=`pwd`/.coveragerc
+            source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
+export DACE_debugprint=1
+tests/intel_fpga_test.sh 
+'''
+          }
     }
     stage('Report') {
       steps {
