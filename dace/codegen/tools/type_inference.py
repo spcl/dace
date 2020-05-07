@@ -1,6 +1,6 @@
 """
-    Type inference: traverse code and returns types for undefined symbols according to C semantics
-    Type inference is lenient: if something it not inferred (for example an unsupporte construct) it will not
+    Type inference: traverses code and returns types for all undefined symbols according to C semantics
+    infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
         return anything and it will not produce errors
 
     This module is inspired by astunparse: https://github.com/simonpercivall/astunparse
@@ -11,28 +11,34 @@ import ast
 from dace.codegen.cppunparse import CPPLocals
 from dace import dtypes
 from dace.codegen import cppunparse
+from dace.symbolic import SymExpr
+from dace.symbolic import symstr
+from sympy import Basic
 import sys
-#TODO: these are shared with cppunparse, factorize
 
 
-# entry point
 def infer(code, symbols):
     # symbols is a dict "str" -> dytpes.typeclass
     # we build also another dictionary `inferred_symbols` of the same type
     inferred_symbols = {}
-    # TODO convert all the possible paramters to AST
     if isinstance(code, str):
         _dispatch(ast.parse(code), symbols, inferred_symbols)
     elif isinstance(code, ast.AST):
         _dispatch(code, symbols, inferred_symbols)
+    elif isinstance(code, Basic) or isinstance(code, SymExpr):
+        _dispatch(symstr(code), symbols, inferred_symbols)
     elif isinstance(code, list):
-        #TODO
-        pass
+        # call infer for any code elements, maintaining a list of inferred_symbols so far
+        # defined symbols get updated with newly inferred symbols
+        defined_symbols = symbols.copy()
+        for c in code:
+            defined_symbols.update(inferred_symbols)
+            inf_symbols = infer(c, defined_symbols)
+            inferred_symbols.update(inf_symbols)
     return inferred_symbols
 
 
 def _dispatch(tree, symbols, inferred_symbols):
-    # TODO pass the appropriate variable (locals, defined symbols,...)
     """Dispatcher function, dispatching tree type T to method _T."""
     try:
         tree = iter(tree)
@@ -41,13 +47,7 @@ def _dispatch(tree, symbols, inferred_symbols):
     except TypeError:
         current_module = sys.modules[__name__]
         meth = getattr(current_module, "_" + tree.__class__.__name__)
-        print("Calling  "+  str(meth))
         return meth(tree, symbols, inferred_symbols)
-
-
-##
-# TODO: cleanup unneeded methods
-
 
 def _Module(tree, symbols, inferred_symbols):
     for stmt in tree.body:
@@ -100,18 +100,21 @@ def _Assign(t, symbols, inferred_symbols):
 
 
 def _AugAssign(t, symbols, inferred_symbols):
-    _dispatch(t.target, symbols,inferred_symbols)
+    _dispatch(t.target, symbols, inferred_symbols)
     # Operations that require a function call
     if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
         separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
-        _dispatch(t.target, symbols, inferred_symbols)
-        _dispatch(t.value, symbols, inferred_symbols)
+        if not t.target.id in symbols and not t.target.id in inferred_symbols:
+            _dispatch(t.target, symbols, inferred_symbols)
+            inferred_type = _dispatch(t.value, symbols, inferred_symbols)
+            inferred_symbols[t.target.id] = inferred_type
     else:
-        _dispatch(t.value, symbols, inferred_symbols)
+        if not t.target.id in symbols and not t.target.id in inferred_symbols:
+            inferred_type = _dispatch(t.value, symbols, inferred_symbols)
+            inferred_symbols[t.target.id] = inferred_type
 
 
 def _AnnAssign(t, symbols, inferred_symbols):
-
     if isinstance(t.target, ast.Tuple):
         if len(t.target.elts) > 1:
             _dispatch_lhs_tuple(t.target.elts, symbols, inferred_symbols)
@@ -272,7 +275,7 @@ def _IfExp(t, symbols, inferred_symbols):
 
 
 def _Tuple(t, symbols, inferred_symbols):
-    for (elt, ) in t.elts:
+    for elt in t.elts:
         _dispatch(elt, symbols, inferred_symbols)
 
 
@@ -313,7 +316,7 @@ def _BinOp(t, symbols, inferred_symbols):
 def _Compare(t, symbols, inferred_symbols):
     _dispatch(t.left, symbols, inferred_symbols)
     for o, e in zip(t.ops, t.comparators):
-        if o.__class__.__name__ not in self.cmpops:
+        if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
             continue
         _dispatch(e, symbols, inferred_symbols)
 
