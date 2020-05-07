@@ -954,7 +954,7 @@ class FPGACodeGen(TargetCodeGenerator):
             begin_val = evaluate(begin, sdfg.constants)
             skip_val = evaluate(skip, sdfg.constants)
             end_val = evaluate(end, sdfg.constants)
-            is_degenerate = begin_val + skip_val >= end_val
+            is_degenerate = begin_val + skip_val > end_val
             return is_degenerate, begin_val
         except TypeError:  # Cannot statically evaluate expression
             return False, begin
