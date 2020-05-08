@@ -250,19 +250,19 @@ class typeclass(object):
 
         config_data_types = Config.get('compiler', 'default_data_types')
         if wrapped_type is int:
-            if config_data_types == 'Python default':
+            if config_data_types.lower() == 'python':
                 wrapped_type = numpy.int64
-            elif config_data_types == 'C default':
+            elif config_data_types.lower() == 'c':
                 wrapped_type = numpy.int32
             else:
-                raise TypeError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
         elif wrapped_type is float:
-            if config_data_types == 'Python default':
+            if config_data_types.lower() == 'python':
                 wrapped_type = numpy.float64
-            elif config_data_types == 'C default':
+            elif config_data_types.lower() == 'c':
                 wrapped_type = numpy.float32
             else:
-                raise TypeError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
         elif wrapped_type is complex:
             wrapped_type = numpy.complex128
 

@@ -346,7 +346,7 @@ class CPPUnparser:
                     def_symbols = self.defined_symbols.copy()
                     def_symbols.update(
                         self.locals.get_name_type_associations())
-                    inferred_symbols = type_inference.infer(t, def_symbols)
+                    inferred_symbols = type_inference.infer_types(t, def_symbols)
                     inferred_type = inferred_symbols[target.id]
 
                     self.locals.define(target.id, t.lineno, self._indent,
@@ -400,7 +400,7 @@ class CPPUnparser:
                 # get the type indicated into the annotation
                 def_symbols = self.defined_symbols.copy()
                 def_symbols.update(self.locals.get_name_type_associations())
-                inferred_symbols = type_inference.infer(t, def_symbols)
+                inferred_symbols = type_inference.infer_types(t, def_symbols)
                 inferred_type = inferred_symbols[target.id]
 
                 self.locals.define(target.id, t.lineno, self._indent,
@@ -486,24 +486,15 @@ class CPPUnparser:
 
     def _Raise(self, t):
         self.fill("throw")
-        if six.PY3:
-            if not t.exc:
-                assert not t.cause
-                return
-            self.write(" ")
-            self.dispatch(t.exc)
-            if t.cause:
-                raise SyntaxError('Invalid C++')
-        else:
-            self.write(" ")
-            if t.type:
-                self.dispatch(t.type)
-            if t.inst:
-                self.write(", ")
-                self.dispatch(t.inst)
-            if t.tback:
-                self.write(", ")
-                self.dispatch(t.tback)
+
+        if not t.exc:
+            assert not t.cause
+            return
+        self.write(" ")
+        self.dispatch(t.exc)
+        if t.cause:
+            raise SyntaxError('Invalid C++')
+
         self.write(';')
 
     def _Try(self, t):
@@ -552,10 +543,7 @@ class CPPUnparser:
         if t.type:
             self.dispatch(t.type)
         if t.name:
-            if six.PY3:
-                self.write(t.name)
-            else:
-                self.dispatch(t.name)
+            self.write(t.name)
         self.write(')')
         self.enter()
         self.dispatch(t.body)
@@ -864,18 +852,7 @@ class CPPUnparser:
         self.write("(")
         self.write(self.unop[t.op.__class__.__name__])
         self.write(" ")
-        if six.PY2 and isinstance(t.op, ast.USub) and isinstance(
-                t.operand, ast.Num):
-            # If we're applying unary minus to a number, parenthesize the number.
-            # This is necessary: -2147483648 is different from -(2147483648) on
-            # a 32-bit machine (the first is an int, the second a long), and
-            # -7j is different from -(7j).  (The first has real part 0.0, the second
-            # has real part -0.0.)
-            self.write("(")
-            self.dispatch(t.operand)
-            self.write(")")
-        else:
-            self.dispatch(t.operand)
+        self.dispatch(t.operand)
         self.write(")")
 
     binop = {
@@ -1042,7 +1019,7 @@ class CPPUnparser:
             # Build dictionary with symbols
             def_symbols = self.defined_symbols.copy()
             def_symbols.update(self.locals.get_name_type_associations())
-            inferred_symbols = type_inference.infer(t, def_symbols)
+            inferred_symbols = type_inference.infer_types(t, def_symbols)
             inferred_type = inferred_symbols[t.arg]
             self.locals.define(t.arg, t.lineno, self._indent, inferred_type)
         else:
@@ -1058,11 +1035,6 @@ class CPPUnparser:
                 first = False
             else:
                 self.write(", ")
-
-            # ast.arg does not exist in python2
-            if six.PY2:
-                self.write("auto ")
-                self.locals.define(a.id, a.lineno, self._indent)
 
             self.dispatch(a)
             if d:

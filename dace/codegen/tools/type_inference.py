@@ -16,29 +16,50 @@ from sympy import Basic
 import sys
 
 
-def infer(code, symbols):
+def infer_types(code, symbols=None):
     """
     Perform type inference on the given code
     :param code: a string, AST, or symbolic expression
-    :param symbols: already known symbols with their types. This is a dictionary "symbol name" -> dytpes.typeclass
+    :param symbols: optional,  already known symbols with their types. This is a dictionary "symbol name" -> dytpes.typeclass:
     :return: a dictionary "symbol name" -> dtypes.typeclass of inferred symbols
     """
+    symbols = symbols or {}
     inferred_symbols = {}
     if isinstance(code, str):
         _dispatch(ast.parse(code), symbols, inferred_symbols)
     elif isinstance(code, ast.AST):
         _dispatch(code, symbols, inferred_symbols)
     elif isinstance(code, Basic) or isinstance(code, SymExpr):
-        _dispatch(symstr(code), symbols, inferred_symbols)
+        _dispatch(ast.parse(symstr(code)), symbols, inferred_symbols)
     elif isinstance(code, list):
         # call infer for any code elements, maintaining a list of inferred_symbols so far
         # defined symbols get updated with newly inferred symbols
         defined_symbols = symbols.copy()
         for c in code:
             defined_symbols.update(inferred_symbols)
-            inf_symbols = infer(c, defined_symbols)
+            inf_symbols = infer_types(c, defined_symbols)
             inferred_symbols.update(inf_symbols)
     return inferred_symbols
+
+
+def infer_expr_type(code, symbols=None):
+    """
+    Return inferred type of a given expression
+    :param code: code string (an expression) or symbolic expression
+    :param symbols: already defined symbols (if any) in a dictionary "symbol name" -> dytpes.typeclass:
+    :return: inferred type
+    """
+    symbols = symbols or {}
+    inferred_symbols = {}
+    if isinstance(code, str):
+        parsed_ast = ast.parse(code)
+        #it must be an expression
+        if isinstance(parsed_ast.body[0], ast.Expr):
+            return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
+        else:
+            raise TypeError("Expected an expression")
+    elif isinstance(code, Basic) or isinstance(code, SymExpr):
+        return _dispatch(ast.parse(symstr(code)), symbols, inferred_symbols)
 
 
 def _dispatch(tree, symbols, inferred_symbols):
@@ -64,11 +85,11 @@ def _Interactive(tree, symbols, inferred_symbols):
 
 
 def _Expression(tree, symbols, inferred_symbols):
-    _dispatch(tree.body, symbols, inferred_symbols)
+    return _dispatch(tree.body, symbols, inferred_symbols)
 
 
 def _Expr(tree, symbols, inferred_symbols):
-    _dispatch(tree.value, symbols, inferred_symbols)
+    return _dispatch(tree.value, symbols, inferred_symbols)
 
 
 def _dispatch_lhs_tuple(targets, symbols, inferred_symbols):
@@ -259,7 +280,9 @@ def _Name(t, symbols, inferred_symbols):
 
 
 def _NameConstant(t, symbols, inferred_symbols):
-    return dtypes.typeclass(np.result_type(t.value).name)
+    return dtypes.result_type_of(
+        dtypes.typeclass(type(t.value)),
+        dtypes.typeclass(np.min_scalar_type(t.value).name))
 
 
 def _Num(t, symbols, inferred_symbols):
@@ -268,7 +291,6 @@ def _Num(t, symbols, inferred_symbols):
     return dtypes.result_type_of(
         dtypes.typeclass(type(t.n)),
         dtypes.typeclass(np.min_scalar_type(t.n).name))
-    np.promote_types(np.min_scalar_type(t.n), dtypes.typeclass(type(t.n)).type)
 
 
 def _IfExp(t, symbols, inferred_symbols):

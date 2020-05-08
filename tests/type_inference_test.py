@@ -12,68 +12,85 @@ class TestTypeInference(unittest.TestCase):
 
         #bool
         code_str = "value=True"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(bool))
 
         # int
         code_str = "value = 1"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(int))
 
         # float
         code_str = "value = 1.1"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
 
         # assignment with previous symbols
         prev_symbols = {"char_num": dtypes.typeclass(np.int8)}
         code_str = "value =  char_num"
-        inf_symbols = type_inference.infer(code_str, prev_symbols)
+        inf_symbols = type_inference.infer_types(code_str, prev_symbols)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int8))
 
         # aug assignment
         code_str = "value += 1.1"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
 
         # annotated assignments
         # in this case conversion is stricter (int-> int32)
         code_str = "value : int  = 1"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int32))
 
         # type conversion
         # in this case conversion is stricter (int-> int32)
         code_str = "value = int(1.1)"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int32))
 
         code_str = "value = float(1)"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
+
+
+    def testInferExpr(self):
+
+        code_str = "5 + 3.5"
+        inf_type = type_inference.infer_expr_type(code_str)
+        self.assertEqual(inf_type, dtypes.typeclass(float))
+
+        prev_symbols = {"n": dtypes.typeclass(int)}
+        code_str = "5 + n"
+        inf_type = type_inference.infer_expr_type(code_str, prev_symbols)
+        self.assertEqual(inf_type, dtypes.typeclass(int))
+
+        #invalid code
+        code_str = "a = 5 + 3.5"
+        self.assertRaises(TypeError, lambda: type_inference.infer_expr_type(code_str))
+
 
     def testExpressionAssignment(self):
 
         code_str = "res = 5 + 3.1"
-        symbols = type_inference.infer(code_str, {})
+        symbols = type_inference.infer_types(code_str)
         self.assertEqual(symbols["res"], dtypes.typeclass(float))
 
         code_str = "res = 5 + 1"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(int))
 
         # use already defined symbol
         code_str = "res2 = 1 + res"
-        symbols = type_inference.infer(code_str, symbols)
+        symbols = type_inference.infer_types(code_str, symbols)
         self.assertEqual(symbols["res2"], dtypes.typeclass(float))
 
         code_str = "res3 = 1 + int(res*res2)"
-        symbols = type_inference.infer(code_str, symbols)
+        symbols = type_inference.infer_types(code_str, symbols)
         self.assertEqual(symbols["res3"], dtypes.typeclass(int))
 
     def testAssignmentIf(self):
         code_str = "res = 5 if(x>10) else 3.1"
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
 
     def testIf(self):
@@ -83,19 +100,21 @@ elif cond2:
     b = 1.2*3.4
 else:
     c = True"""
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["a"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["b"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["c"], dtypes.typeclass(bool))
+
 
     def testFunction(self):
         code_str = """def f():
     x = 2
     y = 7.5
         """
-        inf_symbols = type_inference.infer(code_str, {})
+        inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["x"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["y"], dtypes.typeclass(float))
+
 
     def testInputAST(self):
         # infer input parameter is an AST
@@ -112,20 +131,22 @@ res = var1 + var3 * var2
             "in_x": dtypes.typeclass(np.float32),
             "in_y": dtypes.typeclass(np.float32)
         }
-        inf_symbols = type_inference.infer(code_str, defined_symbols)
+        inf_symbols = type_inference.infer_types(code_str, defined_symbols)
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(np.int32))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(np.int32))
         self.assertEqual(inf_symbols["var3"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
+
 
     def testInputList(self):
         # infer input parameter is a list of code_string
         code1 = "var1 = x + 1.1"
         code2 = "var2 = var1 + 2"
         defined_symbols = {"x": dtypes.typeclass(int)}
-        inf_symbols = type_inference.infer([code1, code2], defined_symbols)
+        inf_symbols = type_inference.infer_types([code1, code2], defined_symbols)
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(float))
+
 
     def testVarious(self):
         # code snippets that contains constructs not directly involved in type inference
@@ -136,7 +157,7 @@ res = var1 + var3 * var2
         break
     z = 3
 """
-        inf_symbols = type_inference.infer(while_code, {})
+        inf_symbols = type_inference.infer_types(while_code)
         self.assertEqual(inf_symbols["z"], dtypes.typeclass(int))
 
         raise_from_code = """try:
@@ -144,7 +165,7 @@ res = var1 + var3 * var2
 except ZeroDivisionError as e:
     raise ArithmeticError from e
 """
-        inf_symbols = type_inference.infer(raise_from_code, {})
+        inf_symbols = type_inference.infer_types(raise_from_code)
 
         try_except_finally_code = """try:
     suite1
@@ -157,14 +178,20 @@ else:
 finally:
     suite5
 """
-        inf_symbols = type_inference.infer(try_except_finally_code, {})
+        inf_symbols = type_inference.infer_types(try_except_finally_code)
+
+        #for loop
+        for_loop_code = """for x in range(6):
+    res += 1"""
+        inf_symbols = type_inference.infer_types(for_loop_code)
+        self.assertEqual(inf_symbols["res"], dtypes.typeclass(int))
 
         #function def with arguments
         function_def_return_code = """def f(arg : float):
     res = 5 + arg
     return res
         """
-        inf_symbols = type_inference.infer(function_def_return_code, {})
+        inf_symbols = type_inference.infer_types(function_def_return_code)
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(np.float32))
         self.assertEqual(inf_symbols["arg"], dtypes.typeclass(np.float32))
 
@@ -175,12 +202,12 @@ finally:
         code_str = """value1 = 10
 value2=3.14
 value3=5000000000"""
-        inf_symbols = type_inference.infer(code_str, {})
-        if config_data_types == "Python default":
+        inf_symbols = type_inference.infer_types(code_str)
+        if config_data_types.lower() == "python":
             self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int64))
             self.assertEqual(inf_symbols["value2"],
                              dtypes.typeclass(np.float64))
-        elif config_data_types == "C default":
+        elif config_data_types.lower() == "c":
             self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int32))
             self.assertEqual(inf_symbols["value2"],
                              dtypes.typeclass(np.float32))
