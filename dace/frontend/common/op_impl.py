@@ -46,8 +46,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
     cnode = tasklet_node
 
     gpu_storage_types = [
-        dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared,
-        dace.dtypes.StorageType.GPU_Stack
+        dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared
     ]
 
     #######################################################

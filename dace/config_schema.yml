@@ -194,6 +194,24 @@ required:
                             explicit GPU block maps are not defined.
                         default: '32,1,1'
 
+                    dynamic_map_block_size:
+                        type: str
+                        title: Thread-Block size for GPU_ThreadBlock_Dynamic
+                        description: >
+                            Thread-Block size for maps using GPU_ThreadBlock_Dynamic
+                            scheduler.
+                        default: '128,1,1'
+
+                    dynamic_map_fine_grained:
+                        type: bool
+                        title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
+                        description: >
+                            If true the scheduler will dynamically redistribute the
+                            combined work of all threads in the warp equally across the
+                            warp (fine grained). Otherwise, each warp works sequentially
+                            only on its tasks (potential load imbalance).
+                        default: true
+
                     max_concurrent_streams:
                         type: int
                         title: Concurrent CUDA streams
@@ -572,4 +590,3 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
-
