@@ -1,7 +1,6 @@
 import unittest
 import numpy as np
-from sympy.strategies import tryit
-
+from dace.config import Config
 from dace.codegen.tools import type_inference
 from dace import dtypes
 import ast
@@ -25,6 +24,7 @@ class TestTypeInference(unittest.TestCase):
         code_str = "value = 1.1"
         inf_symbols = type_inference.infer(code_str, {})
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
+
 
         # assignment with previous symbols
         prev_symbols = {"char_num": dtypes.typeclass(np.int8)}
@@ -170,6 +170,26 @@ finally:
         inf_symbols = type_inference.infer(function_def_return_code, {})
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(np.float32))
         self.assertEqual(inf_symbols["arg"], dtypes.typeclass(np.float32))
+
+    def testDefaultDataTypes(self):
+        # check that configuration about defult data types is enforced
+        config_data_types = Config.get('compiler', 'default_data_types')
+
+        code_str = """value1 = 10
+value2=3.14
+value3=5000000000"""
+        inf_symbols = type_inference.infer(code_str, {})
+        if config_data_types == "Python default":
+            self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int64))
+            self.assertEqual(inf_symbols["value2"], dtypes.typeclass(np.float64))
+        elif config_data_types == "C default":
+            self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int32))
+            self.assertEqual(inf_symbols["value2"], dtypes.typeclass(np.float32))
+
+        # in any case, value3 needs uint64
+        self.assertEqual(inf_symbols["value3"], dtypes.typeclass(np.uint64))
+
+
 
 
 

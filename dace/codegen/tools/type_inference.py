@@ -17,8 +17,12 @@ import sys
 
 
 def infer(code, symbols):
-    # symbols is a dict "str" -> dytpes.typeclass
-    # we build also another dictionary `inferred_symbols` of the same type
+    """
+    Perform type inference on the given code
+    :param code: a string, AST, or symbolic expression
+    :param symbols: already known symbols with their types. This is a dictionary "symbol name" -> dytpes.typeclass
+    :return: a dictionary "symbol name" -> dytpes.typeclass of inferred symbols
+    """
     inferred_symbols = {}
     if isinstance(code, str):
         _dispatch(ast.parse(code), symbols, inferred_symbols)
@@ -68,8 +72,6 @@ def _Expr(tree, symbols, inferred_symbols):
 
 def _dispatch_lhs_tuple(targets, symbols, inferred_symbols):
     for target in targets:
-        # TODO which type?
-        # self.locals.define(target.id, target.lineno, self._indent)
         _dispatch(target, symbols, inferred_symbols)
 
 
@@ -90,11 +92,7 @@ def _Assign(t, symbols, inferred_symbols):
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
             inferred_symbols[target.id] = inferred_type
 
-        # dispatch target and infer its type
         inferred_type = _dispatch(target, symbols, inferred_symbols)
-        # TODO: not clear to me what it was doing in cppunparse
-        #self.dtype = inferred_type
-    #TODO not clear if this should remain and what to do with inferred_type
     _dispatch(t.value, symbols, inferred_symbols)
 
 
@@ -262,8 +260,10 @@ def _NameConstant(t, symbols, inferred_symbols):
 
 
 def _Num(t, symbols, inferred_symbols):
-    return dtypes.typeclass(type(t.n))
-    #return dtypes.typeclass(np.min_scalar_type(t.n).name)
+    # get the minimum between the minimum type needed to represent this number and the corresponding default data types
+    # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
+    return dtypes.result_type_of(dtypes.typeclass(type(t.n)), dtypes.typeclass(np.min_scalar_type(t.n).name))
+    np.promote_types(np.min_scalar_type(t.n), dtypes.typeclass(type(t.n)).type)
 
 
 def _IfExp(t, symbols, inferred_symbols):
