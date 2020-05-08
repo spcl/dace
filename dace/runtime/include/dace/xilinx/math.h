@@ -1,11 +1,17 @@
 /**
-    Additonal math function support for Xilinx
+    Support for additional math operators on Xilinx
 */
 
 #pragma once
 
-// Make abs work on Xilinx with vector types and compatible with Intel
-template <typename T>
-DACE_CONSTEXPR DACE_HDFI T fabs(const T& a) {
-    return (a < 0) ? a * -1 : a;
+// fabs support for xilinx
+template <typename T, int vector_length>
+DACE_CONSTEXPR DACE_HDFI hlslib::DataPack<T, vector_length> fabs(const hlslib::DataPack<T, vector_length>& a) {
+    hlslib::DataPack<T, vector_length> res;
+    for (int i = 0; i < vector_length; ++i) {
+        #pragma HLS UNROLL
+        const auto elem = a[i];
+        res[i] = elem < 0 ? -elem : elem;
+    }
+    return res;
 }
