@@ -200,6 +200,41 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
+_LIMITS = {
+    'int': "INT_{}",
+    'float': "FLT_{}",
+    'char': "CHAR_{}",
+    'short': "SHRT_{}",
+    'long long': "LLONG_{}",
+    'unsigned char': "UCHAR_{}",
+    'unsigned short': "USHRT_{}",
+    'unsigned int': "UINT_{}",
+    'unsigned long long': "ULLONG_{}",
+    'double': "DBL_{}",
+}
+
+
+def max_value(dtype):
+    """Get a max value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "true"
+    elif ctype == "dace::float16":
+        return "65504.0"
+    else:
+        return _LIMITS[ctype].format("MAX")
+
+def min_value(dtype):
+    """Get a min value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "false"
+    elif ctype in ["double", "float", "dace::float16"]:
+        # use the sign bit for floats
+        return "-" + max_value(dtype)
+    else:
+        return _LIMITS[ctype].format("MIN")
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -240,6 +275,9 @@ class typeclass(object):
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
         return _FFI_CTYPES[self.type]
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
 
     def is_complex(self):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
@@ -344,6 +382,9 @@ class pointer(typeclass):
         """ Returns the ctypes version of the typeclass. """
         return ctypes.POINTER(_FFI_CTYPES[self.type])
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
 
 def immaterial(dace_data, materialize_func):
     """ A data type with a materialize/serialize function. Data objects with
@@ -441,6 +482,9 @@ class struct(typeclass):
                             {"_fields_": fields})
         return struct_class
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
     def emit_definition(self):
         return """struct {name} {{
 {typ}
@@ -511,6 +555,9 @@ class callback(typeclass):
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
 
     def signature(self, name):
         from dace import data
@@ -735,7 +782,8 @@ def ismodule_and_allowed(var):
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
     from dace.symbolic import symbol
-    return isconstant(var) or ismodule(var) or isinstance(var, symbol)
+    return isconstant(var) or ismodule(var) or isinstance(
+        var, symbol) or isinstance(var, typeclass)
 
 
 class _external_function(object):

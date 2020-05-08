@@ -292,10 +292,10 @@ class CompiledSDFG(object):
                 # Create an array with the properties of the SDFG array
                 self._return_arrays.append(
                     np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
-                               arr.dtype.type,
+                               arr.dtype.as_numpy_dtype(),
                                buffer=np.zeros(
                                    [symbolic.evaluate(arr.total_size, syms)],
-                                   arr.dtype.type),
+                                   arr.dtype.as_numpy_dtype()),
                                strides=[
                                    symbolic.evaluate(s, syms) * arr.dtype.bytes
                                    for s in arr.strides

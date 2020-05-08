@@ -3,6 +3,7 @@ import collections
 import functools
 import itertools
 import re
+import warnings
 import sympy as sp
 import numpy as np
 
@@ -876,9 +877,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     dace.dtypes.ScheduleType.Default,
                     dace.dtypes.ScheduleType.FPGA_Device
             ]:
-                print("WARNING: found schedule {} on {} node in FPGA code. "
-                      "Ignoring.".format(node.schedule,
-                                         type(node).__name__))
+                warnings.warn("Found schedule {} on {} node in FPGA code. "
+                              "Ignoring.".format(node.schedule,
+                                                 type(node).__name__))
 
             getattr(self, method_name)(sdfg, dfg, state_id, node,
                                        function_stream, callsite_stream)
@@ -924,22 +925,39 @@ class FPGACodeGen(TargetCodeGenerator):
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
 
-    def _is_innermost(self, scope, scope_dict):
+    def _is_innermost(self, scope, scope_dict, sdfg):
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(
-                    x,
-                (dace.graph.nodes.MapEntry, dace.graph.nodes.PipelineEntry))):
-                if not x.unroll:
+            if (isinstance(x, (dace.graph.nodes.MapEntry, PipelineEntry))):
+                # Degenerate loops should not be pipelined
+                fully_degenerate = True
+                for begin, end, skip in x.map.range:
+                    if not self._is_degenerate(begin, end, skip, sdfg)[0]:
+                        fully_degenerate = False
+                        break
+                # Non-unrolled, non-degenerate loops must be pipelined, so we
+                # are not innermost
+                if not x.unroll and not fully_degenerate:
                     return False
                 to_search += scope_dict[x]
             elif isinstance(x, dace.graph.nodes.NestedSDFG):
                 for state in x.sdfg:
                     if not self._is_innermost(state.nodes(),
-                                              state.scope_dict(True)):
+                                              state.scope_dict(True), x.sdfg):
                         return False
         return True
+
+    @staticmethod
+    def _is_degenerate(begin, end, skip, sdfg):
+        try:
+            begin_val = evaluate(begin, sdfg.constants)
+            skip_val = evaluate(skip, sdfg.constants)
+            end_val = evaluate(end, sdfg.constants)
+            is_degenerate = begin_val + skip_val > end_val
+            return is_degenerate, begin_val
+        except TypeError:  # Cannot statically evaluate expression
+            return False, begin
 
     def _generate_MapEntry(self, sdfg, dfg, state_id, node, function_stream,
                            callsite_stream):
@@ -961,7 +979,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Pipeline innermost loops
             scope_dict = dfg.scope_dict(True)
             scope = scope_dict[node]
-            is_innermost = self._is_innermost(scope, scope_dict)
+            is_innermost = self._is_innermost(scope, scope_dict, sdfg)
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
@@ -970,17 +988,31 @@ class FPGACodeGen(TargetCodeGenerator):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
 
-            if node.map.unroll:
-                self.generate_unroll_loop_pre(result, None, sdfg, state_id,
-                                              node)
-            else:
-                if is_innermost:
+            is_degenerate = []
+            degenerate_values = []
+            for begin, end, skip in node.map.range:
+                # If we know at compile-time that a loop will only have a
+                # single iteration, we can replace it with a simple assignment
+                b, val = self._is_degenerate(begin, end, skip, sdfg)
+                is_degenerate.append(b)
+                degenerate_values.append(val)
+            fully_degenerate = all(is_degenerate)
+
+            if not fully_degenerate:
+                if node.map.unroll:
+                    self.generate_unroll_loop_pre(result, None, sdfg, state_id,
+                                                  node)
+                elif is_innermost:
                     self.generate_pipeline_loop_pre(result, sdfg, state_id,
                                                     node)
-                    self.generate_flatten_loop_pre(result, sdfg, state_id,
-                                                   node)
+
             # Generate nested loops
             if not isinstance(node, dace.graph.nodes.PipelineEntry):
+
+                if is_innermost and not fully_degenerate:
+                    self.generate_flatten_loop_pre(result, sdfg, state_id,
+                                                   node)
+
                 for i, r in enumerate(node.map.range):
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1021,20 +1053,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         # is the case in a tiled map
                         pass
 
-                    # If we know at compile-time that this loop will only have
-                    # a single iteration, replace it with a simple assignment
-                    try:
-                        begin_val = evaluate(begin, sdfg.constants)
-                        skip_val = evaluate(skip, sdfg.constants)
-                        end_val = evaluate(end, sdfg.constants)
-                        is_degenerate = begin_val + skip_val >= end_val
-                    except TypeError:
-                        is_degenerate = False
-
-                    if is_degenerate:
+                    if is_degenerate[i]:
                         result.write(
                             "{{\nconst {} {} = {}; // Degenerate loop".format(
-                                loop_var_type, var, begin_val))
+                                loop_var_type, var, degenerate_values[i]))
                     else:
                         result.write(
                             "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
@@ -1058,11 +1080,11 @@ class FPGACodeGen(TargetCodeGenerator):
                         bound + (" - " + sym2cpp(pipeline.drain_size)
                                  if pipeline.drain_size != 0 else "")))
 
-            if node.map.unroll:
-                self.generate_unroll_loop_post(result, None, sdfg, state_id,
-                                               node)
-            else:
-                if is_innermost:
+            if not fully_degenerate:
+                if node.map.unroll:
+                    self.generate_unroll_loop_post(result, None, sdfg,
+                                                   state_id, node)
+                elif is_innermost:
                     self.generate_pipeline_loop_post(result, sdfg, state_id,
                                                      node)
                     self.generate_flatten_loop_post(result, sdfg, state_id,
