@@ -53,13 +53,14 @@ def infer_expr_type(code, symbols=None):
     inferred_symbols = {}
     if isinstance(code, str):
         parsed_ast = ast.parse(code)
-        #it must be an expression
-        if isinstance(parsed_ast.body[0], ast.Expr):
-            return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
-        else:
-            raise TypeError("Expected an expression")
     elif isinstance(code, Basic) or isinstance(code, SymExpr):
-        return _dispatch(ast.parse(symstr(code)), symbols, inferred_symbols)
+        parsed_ast = ast.parse(symstr(code))
+
+    # The parsed AST must only contain one expression
+    if isinstance(parsed_ast.body[0], ast.Expr):
+        return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
+    else:
+        raise TypeError("Expected an expression")
 
 
 def _dispatch(tree, symbols, inferred_symbols):

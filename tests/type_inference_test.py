@@ -1,5 +1,6 @@
 import unittest
 import numpy as np
+import sympy as sp
 from dace.config import Config
 from dace.codegen.tools import type_inference
 from dace import dtypes
@@ -52,7 +53,6 @@ class TestTypeInference(unittest.TestCase):
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
 
-
     def testInferExpr(self):
 
         code_str = "5 + 3.5"
@@ -66,8 +66,8 @@ class TestTypeInference(unittest.TestCase):
 
         #invalid code
         code_str = "a = 5 + 3.5"
-        self.assertRaises(TypeError, lambda: type_inference.infer_expr_type(code_str))
-
+        self.assertRaises(TypeError,
+                          lambda: type_inference.infer_expr_type(code_str))
 
     def testExpressionAssignment(self):
 
@@ -105,7 +105,6 @@ else:
         self.assertEqual(inf_symbols["b"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["c"], dtypes.typeclass(bool))
 
-
     def testFunction(self):
         code_str = """def f():
     x = 2
@@ -114,7 +113,6 @@ else:
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["x"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["y"], dtypes.typeclass(float))
-
 
     def testInputAST(self):
         # infer input parameter is an AST
@@ -137,16 +135,43 @@ res = var1 + var3 * var2
         self.assertEqual(inf_symbols["var3"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
 
-
     def testInputList(self):
         # infer input parameter is a list of code_string
         code1 = "var1 = x + 1.1"
         code2 = "var2 = var1 + 2"
         defined_symbols = {"x": dtypes.typeclass(int)}
-        inf_symbols = type_inference.infer_types([code1, code2], defined_symbols)
+        inf_symbols = type_inference.infer_types([code1, code2],
+                                                 defined_symbols)
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(float))
 
+    def testSymbolic(self):
+        # Define some sympy symbols to work with
+        n = sp.Symbol('n')
+        m = sp.Symbol('m')
+
+        defined_symbols = {'n': dtypes.typeclass(np.float64)}
+        inf_symbol = type_inference.infer_expr_type(n + 5, defined_symbols)
+        self.assertEqual(inf_symbol, dtypes.typeclass(np.float64))
+
+        defined_symbols = {'n': dtypes.typeclass(np.int8)}
+        inf_symbol = type_inference.infer_expr_type(n * 5, defined_symbols)
+        self.assertEqual(inf_symbol, dtypes.typeclass(int))
+
+        defined_symbols = {'n': dtypes.typeclass(np.int8)}
+        inf_symbol = type_inference.infer_expr_type(n * 5.0, defined_symbols)
+        self.assertEqual(inf_symbol, dtypes.typeclass(int))
+
+        defined_symbols = {'n': dtypes.typeclass(np.int8)}
+        inf_symbol = type_inference.infer_expr_type(n * 5.01, defined_symbols)
+        self.assertEqual(inf_symbol, dtypes.typeclass(float))
+
+        defined_symbols = {
+            'n': dtypes.typeclass(np.int8),
+            'm': dtypes.typeclass(np.float32)
+        }
+        inf_symbol = type_inference.infer_expr_type(n * m + n, defined_symbols)
+        self.assertEqual(inf_symbol, dtypes.typeclass(np.float32))
 
     def testVarious(self):
         # code snippets that contains constructs not directly involved in type inference
