@@ -52,6 +52,7 @@ def _dispatch(tree, symbols, inferred_symbols):
         meth = getattr(current_module, "_" + tree.__class__.__name__)
         return meth(tree, symbols, inferred_symbols)
 
+
 def _Module(tree, symbols, inferred_symbols):
     for stmt in tree.body:
         _dispatch(stmt, symbols, inferred_symbols)
@@ -86,8 +87,9 @@ def _Assign(t, symbols, inferred_symbols):
                 _dispatch_lhs_tuple(target.elts, symbols, inferred_symbols)
             target = target.elts[0]
 
-        if not isinstance(target, (
-                ast.Subscript, ast.Attribute)) and not target.id in symbols and not target.id in inferred_symbols:
+        if not isinstance(
+                target, (ast.Subscript, ast.Attribute)
+        ) and not target.id in symbols and not target.id in inferred_symbols:
             # the target is not already defined: we should try to infer the type looking at the value
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
             inferred_symbols[target.id] = inferred_type
@@ -100,7 +102,8 @@ def _AugAssign(t, symbols, inferred_symbols):
     _dispatch(t.target, symbols, inferred_symbols)
     # Operations that require a function call
     if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
-        separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
+        separator, func = cppunparse.CPPUnparser.funcops[
+            t.op.__class__.__name__]
         if not t.target.id in symbols and not t.target.id in inferred_symbols:
             _dispatch(t.target, symbols, inferred_symbols)
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
@@ -262,7 +265,9 @@ def _NameConstant(t, symbols, inferred_symbols):
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
-    return dtypes.result_type_of(dtypes.typeclass(type(t.n)), dtypes.typeclass(np.min_scalar_type(t.n).name))
+    return dtypes.result_type_of(
+        dtypes.typeclass(type(t.n)),
+        dtypes.typeclass(np.min_scalar_type(t.n).name))
     np.promote_types(np.min_scalar_type(t.n), dtypes.typeclass(type(t.n)).type)
 
 
@@ -285,7 +290,8 @@ def _UnaryOp(t, symbols, inferred_symbols):
 def _BinOp(t, symbols, inferred_symbols):
     # Operations that require a function call
     if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
-        separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
+        separator, func = cppunparse.CPPUnparser.funcops[
+            t.op.__class__.__name__]
 
         # get the type of left and right operands for type inference
         type_left = _dispatch(t.left, symbols, inferred_symbols)
@@ -294,12 +300,14 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n and t.right.n >= 0):
+        if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
+                and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
+            return dtypes.result_type_of(type_left,
+                                         dtypes.typeclass(np.uint32))
         else:
             type_left = _dispatch(t.left, symbols, inferred_symbols)
             type_right = _dispatch(t.right, symbols, inferred_symbols)
@@ -458,9 +466,11 @@ def _Ellipsis(t, symbols, inferred_symbols):
 def _alias(t, symbols, inferred_symbols):
     pass
 
+
 ###########################################
 # Invalid C/C++ will do not infer anything
 ##########################################
+
 
 def _Import(t, symbols, inferred_symbols):
     # Nothing to infer
@@ -532,6 +542,7 @@ def _ListComp(t, symbols, inferred_symbols):
 
 def _GeneratorExp(t, symbols, inferred_symbols):
     pass
+
 
 def _SetComp(t, symbols, inferred_symbols):
     pass

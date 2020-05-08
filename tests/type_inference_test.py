@@ -5,8 +5,8 @@ from dace.codegen.tools import type_inference
 from dace import dtypes
 import ast
 
-class TestTypeInference(unittest.TestCase):
 
+class TestTypeInference(unittest.TestCase):
     def testSimpleAssignement(self):
         # simple assignment tests
 
@@ -24,7 +24,6 @@ class TestTypeInference(unittest.TestCase):
         code_str = "value = 1.1"
         inf_symbols = type_inference.infer(code_str, {})
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
-
 
         # assignment with previous symbols
         prev_symbols = {"char_num": dtypes.typeclass(np.int8)}
@@ -72,8 +71,6 @@ class TestTypeInference(unittest.TestCase):
         symbols = type_inference.infer(code_str, symbols)
         self.assertEqual(symbols["res3"], dtypes.typeclass(int))
 
-
-
     def testAssignmentIf(self):
         code_str = "res = 5 if(x>10) else 3.1"
         inf_symbols = type_inference.infer(code_str, {})
@@ -91,7 +88,6 @@ else:
         self.assertEqual(inf_symbols["b"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["c"], dtypes.typeclass(bool))
 
-
     def testFunction(self):
         code_str = """def f():
     x = 2
@@ -100,7 +96,6 @@ else:
         inf_symbols = type_inference.infer(code_str, {})
         self.assertEqual(inf_symbols["x"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["y"], dtypes.typeclass(float))
-
 
     def testInputAST(self):
         # infer input parameter is an AST
@@ -113,13 +108,15 @@ res = var1 + var3 * var2
 
         #create AST
         tree = ast.parse(code_str)
-        defined_symbols = {"in_x": dtypes.typeclass(np.float32), "in_y": dtypes.typeclass(np.float32)}
+        defined_symbols = {
+            "in_x": dtypes.typeclass(np.float32),
+            "in_y": dtypes.typeclass(np.float32)
+        }
         inf_symbols = type_inference.infer(code_str, defined_symbols)
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(np.int32))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(np.int32))
         self.assertEqual(inf_symbols["var3"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
-
 
     def testInputList(self):
         # infer input parameter is a list of code_string
@@ -163,7 +160,7 @@ finally:
         inf_symbols = type_inference.infer(try_except_finally_code, {})
 
         #function def with arguments
-        function_def_return_code ="""def f(arg : float):
+        function_def_return_code = """def f(arg : float):
     res = 5 + arg
     return res
         """
@@ -181,18 +178,16 @@ value3=5000000000"""
         inf_symbols = type_inference.infer(code_str, {})
         if config_data_types == "Python default":
             self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int64))
-            self.assertEqual(inf_symbols["value2"], dtypes.typeclass(np.float64))
+            self.assertEqual(inf_symbols["value2"],
+                             dtypes.typeclass(np.float64))
         elif config_data_types == "C default":
             self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int32))
-            self.assertEqual(inf_symbols["value2"], dtypes.typeclass(np.float32))
+            self.assertEqual(inf_symbols["value2"],
+                             dtypes.typeclass(np.float32))
 
         # in any case, value3 needs uint64
         self.assertEqual(inf_symbols["value3"], dtypes.typeclass(np.uint64))
 
 
-
-
-
 if __name__ == "__main__":
     unittest.main()
-

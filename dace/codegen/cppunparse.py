@@ -144,7 +144,6 @@ class CPPLocals(LocalScheme):
             locals_dict[local_name] = dtype
         return locals_dict
 
-
     def clear_scope(self, from_indentation):
         """Clears all locals defined in indentation 'from_indentation' and deeper"""
         toremove = set()
@@ -345,7 +344,8 @@ class CPPUnparser:
                     # Perform type inference
                     # Build dictionary with symbols
                     def_symbols = self.defined_symbols.copy()
-                    def_symbols.update(self.locals.get_name_type_associations())
+                    def_symbols.update(
+                        self.locals.get_name_type_associations())
                     inferred_symbols = type_inference.infer(t, def_symbols)
                     inferred_type = inferred_symbols[target.id]
 
@@ -359,7 +359,7 @@ class CPPUnparser:
             # dispatch target
             self.dispatch(target)
             #if not infer_type:
-             #   inferred_type = self.dispatch(target, True)
+            #   inferred_type = self.dispatch(target, True)
             #self.dtype = inferred_type
 
         self.write(" = ")
@@ -713,7 +713,6 @@ class CPPUnparser:
         result = tree.s
         self._write_constant(result)
 
-
     format_conversions = {97: 'a', 114: 'r', 115: 's'}
 
     def _FormattedValue(self, t):
@@ -742,13 +741,11 @@ class CPPUnparser:
                 self.dispatch(value)
         self.write("'''")
 
-
     def _Name(self, t):
         if t.id in _py2c_reserved:
             self.write(_py2c_reserved[t.id])
         else:
             self.write(t.id)
-
 
     def _NameConstant(self, t):
         self.write(_py2c_nameconst[t.value])
@@ -848,7 +845,10 @@ class CPPUnparser:
         # interleave(lambda: self.write(", "), write_pair, zip(t.keys, t.values))
         # self.write("}")
 
-    def _Tuple(self, t,):
+    def _Tuple(
+        self,
+        t,
+    ):
         self.write("std::make_tuple(")
         if len(t.elts) == 1:
             (elt, ) = t.elts
@@ -964,9 +964,7 @@ class CPPUnparser:
     def _BoolOp(self, t):
         self.write("(")
         s = " %s " % self.boolops[t.op.__class__]
-        interleave(lambda: self.write(s),
-                   self.dispatch,
-                   t.values)
+        interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 
     def _Attribute(self, t):
