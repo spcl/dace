@@ -257,10 +257,7 @@ class CPPUnparser:
                 self.dispatch(t)
         except TypeError:
             meth = getattr(self, "_" + tree.__class__.__name__)
-            try:
-                return meth(tree)
-            except TypeError:
-                return meth(tree)
+            return meth(tree)
 
     ############### Unparsing methods ######################
     # There should be one method per concrete grammar type #
@@ -905,9 +902,9 @@ class CPPUnparser:
             self.write(func + "(")
 
             # get the type of left and right operands for type inference
-            type_left = self.dispatch(t.left)
+            self.dispatch(t.left)
             self.write(separator + " ")
-            type_right = self.dispatch(t.right)
+            self.dispatch(t.right)
 
             self.write(")")
         # Special case for integer power
@@ -918,6 +915,7 @@ class CPPUnparser:
                 if t.right.n == 0:
                     self.write("1")
                 else:
+                    self.dispatch(t.left)
                     for i in range(int(t.right.n) - 1):
                         self.write(" * ")
                         self.dispatch(t.left)
