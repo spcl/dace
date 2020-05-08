@@ -21,7 +21,7 @@ def infer(code, symbols):
     Perform type inference on the given code
     :param code: a string, AST, or symbolic expression
     :param symbols: already known symbols with their types. This is a dictionary "symbol name" -> dytpes.typeclass
-    :return: a dictionary "symbol name" -> dytpes.typeclass of inferred symbols
+    :return: a dictionary "symbol name" -> dtypes.typeclass of inferred symbols
     """
     inferred_symbols = {}
     if isinstance(code, str):
