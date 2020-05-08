@@ -51,7 +51,7 @@ class CodeLibraryNode(LibraryNode):
             this node.
             :param inputs: A dictionary mapping input names (on node connectors)
                            to data descriptors based on incoming memlets.
-            :param inputs: A dictionary mapping output names (on node connectors)
+            :param outputs: A dictionary mapping output names (on node connectors)
                            to data descriptors based on outgoing memlets.
             :return: A string representing C++ code to be injected instead
                      of this node.
