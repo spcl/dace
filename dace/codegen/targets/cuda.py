@@ -959,9 +959,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         state = sdfg.nodes()[state_id]
 
         # If in device-level code, call appropriate function
-        if (self._toplevel_schedule == dtypes.ScheduleType.GPU_Device or
-            (state.scope_dict()[scope_entry] is not None and state.scope_dict(
-            )[scope_entry].map.schedule in dtypes.GPU_SCHEDULES)):
+        if self._kernel_map is not None and self._kernel_map.schedule in dtypes.GPU_SCHEDULES:
             self.generate_devicelevel_scope(sdfg, dfg_scope, state_id,
                                             function_stream, callsite_stream)
             return
@@ -1040,7 +1038,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             symbol_sigs.append('cub::GridBarrier __gbar')
 
         # Comprehend grid/block dimensions from scopes
-        grid_dims, block_dims, tbmap = self.get_kernel_dimensions(dfg_scope)
+        grid_dims, block_dims, tbmap, dtbmap = self.get_kernel_dimensions(dfg_scope)
 
         kernel_args = [
             sdfg.arrays[p].signature(False, name=p) for p in sorted(params)
@@ -1067,7 +1065,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map,
                                    kernel_name, grid_dims, block_dims, tbmap,
-                                   kernel_args_typed, self._globalcode,
+                                   dtbmap, kernel_args_typed, self._globalcode,
                                    kernel_stream)
 
         # Write kernel prototype
@@ -1221,7 +1219,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         tb_maps = [
             node.map for node, parent in dfg_scope.scope_dict().items()
             if parent == kernelmap_entry and isinstance(node, nodes.EntryNode)
-            and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
         ]
         # Append thread-block maps from nested SDFGs
         for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
@@ -1232,19 +1230,33 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 tb_maps.extend([
                     n.map for state in node.sdfg.nodes()
                     for n in state.nodes() if isinstance(n, nodes.MapEntry)
-                    and n.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                    and n.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
                 ])
+
+        has_dtbmap = len([tbmap for tbmap in tb_maps
+                          if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+                          ]) > 0
+
+        # keep only thread-block maps
+        tb_maps = [tbmap for tbmap in tb_maps if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
 
         # Case (1): no thread-block maps
         if len(tb_maps) == 0:
 
-            warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                          'block size of (%s)' %
-                          Config.get('compiler', 'cuda', 'default_block_size'))
-            block_size = [
-                int(b) for b in Config.get('compiler', 'cuda',
-                                           'default_block_size').split(',')
-            ]
+            if has_dtbmap:
+                block_size = [
+                    int(b) for b in Config.get('compiler', 'cuda',
+                                               'dynamic_map_block_size').split(',')
+                ]
+            else:
+                warnings.warn('Thread-block maps not found in kernel, assuming ' +
+                              'block size of (%s)' %
+                              Config.get('compiler', 'cuda', 'default_block_size'))
+
+                block_size = [
+                    int(b) for b in Config.get('compiler', 'cuda',
+                                               'default_block_size').split(',')
+                ]
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
             int_ceil = sympy.Function('int_ceil')
@@ -1254,7 +1266,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)
             ]
 
-            return grid_size, block_size, False
+            return grid_size, block_size, False, has_dtbmap
 
         # Find all thread-block maps to determine overall block size
         block_size = [1, 1, 1]
@@ -1285,12 +1297,16 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         #       kernel, raise an invalid SDFG exception and recommend
         #       overapproximation.
 
-        return grid_size, block_size, True
+        if has_dtbmap:  # both thread-block map and dynamic thread-block map exist at the same time
+            raise NotImplementedError("GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
+                                      "not supported in the same scope")
+
+        return grid_size, block_size, True, has_dtbmap
 
     def generate_kernel_scope(
         self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int,
         kernel_map: nodes.Map, kernel_name: str, grid_dims: list,
-        block_dims: list, has_tbmap: bool, kernel_params: list,
+        block_dims: list, has_tbmap: bool, has_dtbmap: bool, kernel_params: list,
         function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
@@ -1322,7 +1338,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             else:
                 block_expr = 'blockIdx.%s' % _named_idx(i)
                 # If we defaulted to 32 threads per block, offset by thread ID
-                if not has_tbmap:
+                if not has_tbmap or has_dtbmap:
                     block_expr = '(%s * %s + threadIdx.%s)' % (
                         block_expr, _topy(block_dims[i]), _named_idx(i))
 
@@ -1372,7 +1388,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
-        if has_tbmap == False:
+        if has_tbmap == False and has_dtbmap == False:
             dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
             minels = krange.min_element()
             maxels = krange.max_element()
@@ -1403,7 +1419,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                            kernel_stream,
                                            skip_entry_node=True)
 
-        if has_tbmap == False:
+        if has_tbmap == False and has_dtbmap == False:
             for _ in kernel_map.params:
                 kernel_stream.write('}\n', sdfg, state_id, node)
 
@@ -1468,34 +1484,45 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 raise NotImplementedError(
                     'Dynamic block map schedule only '
                     'implemented for 1D blocks currently')
-            pscope = sdict[scope_entry]
-            while pscope is not None and pscope.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
-                pscope = sdict[pscope]
-            if pscope is None:
-                callsite_stream.write('int __dace_tid = threadIdx.x;', sdfg,
-                                      state_id, scope_entry)
-                bname = '__dace_tid'
-            else:
-                bname = pscope.map.params[0]
 
             # Define all input connectors of this map entry
             # Note: no need for a C scope around these, as there will not be
             #       more than one dynamic thread-block map in a GPU device map
+            callsite_stream.write(
+                'unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;',
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                'if (%s < %s) {' % (self._kernel_map.params[0],
+                                    _topy(subsets.Range(self._kernel_map.range[::-1]).max_element()[0] + 1)),
+                sdfg, state_id, scope_entry)
+
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(
-                        sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg, state_id,
                     scope_entry)
 
             callsite_stream.write(
-                'dace::DynamicMap<{bsize}>::template '
-                'schedule({begin}, {end}, {tid}, [&](auto {param}, '
-                'auto {tid}) {{'.format(bsize=total_block_size,
-                                        begin=scope_map.range[0][0],
-                                        end=scope_map.range[0][1] + 1,
-                                        param=scope_map.params[0],
-                                        tid=bname), sdfg, state_id,
-                scope_entry)
+                '__dace_dynmap_begin = {begin};\n'
+                '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0],
+                                                    end=scope_map.range[0][1] + 1),
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                '}',
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                'dace::DynamicMap<{fine_grained}, {bsize}>::'
+                'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
+                'auto {param}) {{'.format(
+                    fine_grained=('true' if Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained')
+                                  else 'false'),
+                    bsize=total_block_size,
+                    kmapIdx=self._kernel_map.params[0],
+                    param=scope_map.params[0]),
+                sdfg, state_id, scope_entry)
+
         else:
             for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', sdfg, state_id, scope_entry)
