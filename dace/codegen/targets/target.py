@@ -102,23 +102,6 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        """ Generates code for initializing an array, outputting to the given
-            code streams.
-            :param sdfg: The SDFG to generate code from.
-            :param dfg: The SDFG state to generate code from.
-            :param state_id: The node ID of the state in the given SDFG.
-            :param node: The data node to generate initialization for.
-            :param function_stream: A `CodeIOStream` object that will be
-                                    generated outside the calling code, for
-                                    use when generating global functions.
-            :param callsite_stream: A `CodeIOStream` object that points
-                                    to the current location (call-site)
-                                    in the code.
-        """
-        raise NotImplementedError('Abstract class')
-
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         """ Generates code for deallocating an array, outputting to the given
@@ -532,17 +515,6 @@ class TargetDispatcher(object):
         self._used_targets.add(self._array_dispatchers[storage])
 
         self._array_dispatchers[storage].allocate_array(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream)
-
-    def dispatch_initialize(self, sdfg, dfg, state_id, node, function_stream,
-                            callsite_stream):
-        """ Dispatches a code generator for a data initialization. """
-
-        nodedesc = node.desc(sdfg)
-        storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
-        self._array_dispatchers[storage].initialize_array(
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
