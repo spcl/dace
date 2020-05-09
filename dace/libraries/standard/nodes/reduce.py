@@ -4,11 +4,12 @@ import ast
 from copy import deepcopy as dcpy
 import dace
 import itertools
+import functools
 import dace.serialize
 import dace.library
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, devicelevel_block_size
 from dace.graph import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
@@ -24,7 +25,7 @@ import pydoc
 import warnings
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching as pm
-from dace.symbolic import symstr
+from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.cpp import unparse_cr_split, cpp_array_expr
@@ -340,8 +341,6 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                          symstr(node.identity))
 
         # Obtain some SDFG-related information
-        input_access = state.memlet_path(input_edge)[0].src
-        output_access = state.memlet_path(output_edge)[-1].dst
         input_memlet = input_edge.data
         reduce_shape = input_memlet.subset.bounding_box_size()
         num_items = ' * '.join(symstr(s) for s in reduce_shape)
@@ -362,8 +361,8 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
 
         if (not reduce_all_axes) and (not reduce_last_axes):
             raise NotImplementedError(
-                'Multiple axis reductions not supported on GPUs. Please '
-                'apply ReduceExpansion or make reduce axes to be last in the array'
+                'Multiple axis reductions not supported on GPUs. Please use '
+                'the pure expansion or make reduce axes the last in the array.'
             )
 
         # Verify that data is on the GPU
@@ -496,69 +495,143 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         return tnode
 
 
-# TODO: Convert to ExpandReduceCUDA/CUB/...
-'''
-def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        
+@dace.library.expansion
+class ExpandReduceCUDABlock(pm.ExpandTransformation):
+    """
+        GPU implementation of the reduce node across a thread-block (uses CUB).
+    """
+    environments = [CUDA]
 
-        # Block-wide reduction
-        elif node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-            input_dims = input_memlet.subset.dims()
-            # Checks
-            if not self._in_device_code:
-                raise ValueError('Block-wide GPU reduction must occur within'
-                                 ' a GPU kernel')
-            for bdim in self._block_dims:
-                if symbolic.issymbolic(bdim, sdfg.constants):
-                    raise ValueError(
-                        'Block size has to be constant for block-wide '
-                        'reduction (got %s)' % str(bdim))
-            if (node.axes is not None and len(node.axes) < input_dims):
-                raise ValueError(
-                    'Only full reduction is supported for block-wide reduce,'
-                    ' please use ReduceExpansion')
-            if (input_data.desc(sdfg).storage != dtypes.StorageType.GPU_Stack
-                    or output_data.desc(sdfg).storage !=
-                    dtypes.StorageType.GPU_Stack):
-                raise ValueError(
-                    'Block-wise reduction only supports GPU register inputs '
-                    'and outputs')
-            if redtype in _SPECIAL_RTYPES:
-                raise ValueError('%s block reduction not supported' % redtype)
+    _SPECIAL_RTYPES = {
+        dtypes.ReductionType.Min_Location: 'ArgMin',
+        dtypes.ReductionType.Max_Location: 'ArgMax',
+    }
 
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        node.validate(sdfg, state)
+        input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
+        input_dims = len(input_edge.data.subset)
+        input_data = sdfg.arrays[input_edge.data.data]
+        output_data = sdfg.arrays[output_edge.data.data]
+
+        # Setup all locations in which code will be written
+        cuda_globalcode = CodeIOStream()
+        localcode = CodeIOStream()
+
+        # Try to autodetect reduction type
+        redtype = detect_reduction_type(node.wcr)
+
+        node_id = state.node_id(node)
+        state_id = sdfg.node_id(state)
+        idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name,
+                                               state=state_id,
+                                               node=node_id)
+
+        # Obtain some SDFG-related information
+        input_memlet = input_edge.data
+        output_memlet = output_edge.data
+        output_type = 'dace::vec<%s, %s>' % (
+            sdfg.arrays[output_memlet.data].dtype.ctype, output_memlet.veclen)
+
+        if node.identity is None:
+            raise ValueError('For device reduce nodes, initial value must be '
+                             'specified')
+
+        # Create a functor or use an existing one for reduction
+        if redtype == dtypes.ReductionType.Custom:
+            body, [arg1, arg2] = unparse_cr_split(sdfg, node.wcr)
+            cuda_globalcode.write(
+                """
+        struct __reduce_{id} {{
+            template <typename T>
+            DACE_HDFI T operator()(const T &{arg1}, const T &{arg2}) const {{
+                {contents}
+            }}
+        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), sdfg,
+                state_id, node_id)
+            reduce_op = ', __reduce_' + idstr + '(), ' + symstr(node.identity)
+        elif redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES:
+            reduce_op = ''
+        else:
             credtype = 'dace::ReductionType::' + str(
                 redtype)[str(redtype).find('.') + 1:]
-            if redtype == dtypes.ReductionType.Custom:
-                redop = '__reduce_%s()' % idstr
-            else:
-                redop = 'dace::_wcr_fixed<%s, %s>()' % (credtype, output_type)
+            reduce_op = ((', dace::_wcr_fixed<%s, %s>()' %
+                          (credtype, output_type)) + ', ' +
+                         symstr(node.identity))
 
-            # Allocate shared memory for block reduce
-            self.cuda_initcode.write(
-                """
-            typedef cub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
-            __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
-                """.format(id=idstr,
-                           type=output_data.desc(sdfg).dtype.ctype,
-                           numthreads=' * '.join(
-                               str(s) for s in self._block_dims)), sdfg,
-                state_id, node)
+        # Try to obtain the number of threads in the block, or use the default
+        # configuration
+        block_threads = devicelevel_block_size(sdfg, state, node)
+        if block_threads is not None:
+            block_threads = functools.reduce(lambda a, b: a * b, block_threads,
+                                             1)
 
-            # TODO(later): If less than the whole block is participating,
-            #              use special CUB function
-            output = cpp_array_expr(sdfg, output_memlet)
-            callsite_stream.write(
-                """
-                {output} = BlockReduce_{id}(temp_storage_{id}).Reduce({input}, {redop});
-                """.format(id=idstr,
-                           redop=redop,
-                           input=input_memlet.data,
-                           output=output), sdfg, state_id, node)
+        # Checks
+        if block_threads is None:
+            raise ValueError('Block-wide GPU reduction must occur within'
+                             ' a GPU kernel')
+        if issymbolic(block_threads, sdfg.constants):
+            raise ValueError('Block size has to be constant for block-wide '
+                             'reduction (got %s)' % str(block_threads))
+        if (node.axes is not None and len(node.axes) < input_dims):
+            raise ValueError(
+                'Only full reduction is supported for block-wide reduce,'
+                ' please use the pure expansion')
+        if (input_data.storage != dtypes.StorageType.Register
+                or output_data.storage != dtypes.StorageType.Register):
+            raise ValueError(
+                'Block-wise reduction only supports GPU register inputs '
+                'and outputs')
+        if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
+            raise ValueError('%s block reduction not supported' % redtype)
 
-            return
+        credtype = 'dace::ReductionType::' + str(
+            redtype)[str(redtype).find('.') + 1:]
+        if redtype == dtypes.ReductionType.Custom:
+            redop = '__reduce_%s()' % idstr
+        else:
+            redop = 'dace::_wcr_fixed<%s, %s>()' % (credtype, output_type)
 
-'''
+        # Allocate shared memory for block reduce
+        localcode.write("""
+        typedef cub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
+        __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
+            """.format(id=idstr,
+                       type=output_data.dtype.ctype,
+                       numthreads=block_threads))
+
+        input = (input_memlet.data + ' + ' +
+                 cpp_array_expr(sdfg, input_memlet, with_brackets=False))
+        output = cpp_array_expr(sdfg, output_memlet)
+        localcode.write("""
+            {output} = BlockReduce_{id}(temp_storage_{id}).Reduce({input}, {redop});
+            """.format(id=idstr,
+                       redop=redop,
+                       input=input_memlet.data,
+                       output=output))
+
+        # Make tasklet
+        tnode = dace.nodes.Tasklet('reduce', {'_in'}, {'_out'},
+                                   localcode.getvalue(),
+                                   language=dace.Language.CPP)
+
+        # Add the rest of the code
+        sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
+
+        # Rename outer connectors and add to node
+        input_edge._dst_conn = '_in'
+        output_edge._src_conn = '_out'
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
+
+        # HACK: Workaround to avoid issues with code generator inferring reads
+        # and writes when it shouldn't.
+        input_edge.data.num_accesses = dtypes.DYNAMIC
+        output_edge.data.num_accesses = dtypes.DYNAMIC
+
+        return tnode
 
 
 @dace.library.node
@@ -572,7 +645,7 @@ class Reduce(dace.graph.nodes.LibraryNode):
         'pure': ExpandReducePure,
         'OpenMP': ExpandReduceOpenMP,
         'CUDA (device)': ExpandReduceCUDADevice,
-        # 'CUDA (block)': ExpandReduceCUDABlock,
+        'CUDA (block)': ExpandReduceCUDABlock,
         # 'CUDA (warp)': ExpandReduceCUDAWarp,
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAllreduce
     }

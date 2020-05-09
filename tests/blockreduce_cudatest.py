@@ -1,5 +1,6 @@
 import numpy as np
 import dace
+from dace.transformation.interstate import GPUTransformSDFG
 from dace.memlet import Memlet
 
 # Create SDFG
@@ -37,7 +38,8 @@ if __name__ == '__main__':
 
     Adata = np.random.rand(128).astype(np.float32)
     Bdata = np.random.rand(2).astype(np.float32)
-    sdfg.apply_gpu_transformations()
+    sdfg.apply_transformations(GPUTransformSDFG,
+                               options={'sequential_innermaps': False})
     sdfg(A=Adata, B=Bdata)
 
     B_regression = np.zeros(2, dtype=np.float32)

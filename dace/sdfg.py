@@ -4420,6 +4420,51 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
     return False
 
 
+def devicelevel_block_size(
+        sdfg: SDFG, state: SDFGState,
+        node: dace.graph.nodes.Node) -> Tuple[symbolic.SymExpr]:
+    """ Returns the current thread-block size if the given node is enclosed in
+        a GPU kernel, or None otherwise.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: A tuple of sizes or None if the node is not in device-level 
+                 code.
+    """
+    while sdfg is not None:
+        sdict = state.scope_dict()
+        scope = sdict[node]
+        while scope is not None:
+            if scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                return tuple(scope.map.range.size())
+            elif scope.schedule == dtypes.ScheduleType.GPU_Device:
+                # No thread-block map, use config default
+                return tuple(
+                    int(s) for s in Config.get(
+                        'compiler', 'cuda', 'default_block_size').split(','))
+            elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
+                # Dynamic thread-block map, use configured value
+                return tuple(
+                    int(s)
+                    for s in Config.get('compiler', 'cuda',
+                                        'dynamic_map_block_size').split(','))
+
+            scope = sdict[scope]
+        # Traverse up nested SDFGs
+        if sdfg.parent is not None:
+            if isinstance(sdfg.parent, SDFGState):
+                parent = sdfg.parent.parent
+            else:
+                parent = sdfg.parent
+            state, node = next(
+                (s, n) for s in parent.nodes() for n in s.nodes()
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+        else:
+            parent = sdfg.parent
+        sdfg = parent
+    return None
+
+
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
     if symlist is None:
