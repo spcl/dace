@@ -4,6 +4,9 @@
 from dace import registry
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG
+from dace.symbolic import symstr
 from dace.transformation import pattern_matching as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
@@ -11,11 +14,18 @@ from dace.transformation.dataflow.map_fusion import MapFusion
 
 
 @registry.autoregister_params(singlestate=True)
+@make_properties
 class MapReduceFusion(pm.Transformation):
     """ Implements the map-reduce-fusion transformation.
         Fuses a map with an immediately following reduction, where the array
         between the map and the reduction is not used anywhere else.
     """
+
+    no_init = Property(
+        dtype=bool,
+        default=False,
+        desc='If enabled, does not create initialization states '
+        'for reduce nodes with identity')
 
     _tasklet = nodes.Tasklet('_')
     _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
@@ -84,7 +94,7 @@ class MapReduceFusion(pm.Transformation):
 
         return ' -> '.join(str(node) for node in [tasklet, map_exit, reduce])
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG):
         graph = sdfg.nodes()[self.state_id]
         tmap_exit = graph.nodes()[self.subgraph[MapReduceFusion._tmap_exit]]
         in_array = graph.nodes()[self.subgraph[MapReduceFusion._in_array]]
@@ -122,7 +132,6 @@ class MapReduceFusion(pm.Transformation):
         # Modify edge from tasklet to map exit
         memlet_edge.data.data = out_array.data
         memlet_edge.data.wcr = reduce_node.wcr
-        memlet_edge.data.wcr_identity = reduce_node.identity
         memlet_edge.data.subset = type(
             memlet_edge.data.subset)(filtered_subset)
 
@@ -132,7 +141,25 @@ class MapReduceFusion(pm.Transformation):
             array_edge.dst_conn,
             Memlet(array_edge.data.data, array_edge.data.num_accesses,
                    array_edge.data.subset, array_edge.data.veclen,
-                   reduce_node.wcr, reduce_node.identity))
+                   reduce_node.wcr))
+
+        # Create initialization state if necessary
+        if reduce_node.identity is not None and self.no_init is False:
+            init_state = sdfg.add_state_before(graph, 'wcr_init')
+            init_state.add_mapped_tasklet(
+                'wcr_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(array_edge.data.subset.size())
+                }, {},
+                'out = %s' % reduce_node.identity, {
+                    'out':
+                    Memlet.simple(
+                        array_edge.data.data, ','.join([
+                            '_o%d' % i
+                            for i in range(len(array_edge.data.subset))
+                        ]))
+                },
+                external_edges=True)
 
 
 @registry.autoregister_params(singlestate=True)
