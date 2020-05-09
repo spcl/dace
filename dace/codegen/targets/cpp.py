@@ -546,16 +546,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     if not node.code:
         return ""
 
-    # Not [], "" or None
-    if node.code_global and node.code_global.code:
-        function_stream.write(
-            codeblock_to_cpp(node.code_global),
-            sdfg,
-            state_id,
-            node,
-        )
-        function_stream.write("\n", sdfg, state_id, node)
-
     # If raw C++ code, return the code directly
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a CUDA stream,

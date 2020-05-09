@@ -2042,7 +2042,6 @@ class SDFG(OrderedDiGraph):
         return dace.Memlet.from_array(array, self.arrays[array])
 
 
-
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
     def memlet_path(self,
@@ -2787,9 +2786,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         outputs: Set[str],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
-        code_global: str = "",
-        code_init: str = "",
-        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -2801,9 +2797,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             outputs,
             code,
             language,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -2964,9 +2957,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             outputs: Dict[str, mm.Memlet],
             schedule=dtypes.ScheduleType.Default,
             unroll_map=False,
-            code_global="",
-            code_init="",
-            code_exit="",
             location=None,
             language=dtypes.Language.Python,
             debuginfo=None,
@@ -2987,9 +2977,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :param schedule:   Map schedule
             :param unroll_map: True if map should be unrolled in code
                                generation
-            :param code_global: (optional) Global code (outside functions)
-            :param code_init:  Initialization code (in __dace_init_* functions)
-            :param code_exit:  Finalization code (in __dace_exit_* functions)
             :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
@@ -3015,9 +3002,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             set(outputs.keys()),
             code,
             language=language,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -3889,7 +3873,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() -
+                              defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %
