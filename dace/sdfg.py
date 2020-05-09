@@ -432,8 +432,9 @@ class SDFG(OrderedDiGraph):
         one of the generated code files.
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code. 
-                         Options are "frame", "openmp", "cuda", "xilinx", 
-                         "intel_fpga", or any code generator name.
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
         """
         self.global_code[location] = CodeBlock(cpp_code,
                                                dace.dtypes.Language.CPP)
@@ -444,11 +445,12 @@ class SDFG(OrderedDiGraph):
         one of the generated code files.
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code. 
-                         Options are "frame", "openmp", "cuda", "xilinx", 
-                         "intel_fpga", or any code generator name.
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
         """
         self.init_code[location] = CodeBlock(cpp_code,
-                                             dace.dtypes.Language.CPP)
+                                             dtypes.Language.CPP)
 
     def set_exit_code(self, cpp_code: str, location: str = 'frame'):
         """ 
@@ -456,11 +458,12 @@ class SDFG(OrderedDiGraph):
         one of the generated code files.
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code. 
-                         Options are "frame", "openmp", "cuda", "xilinx", 
-                         "intel_fpga", or any code generator name.
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
         """
         self.exit_code[location] = CodeBlock(cpp_code,
-                                             dace.dtypes.Language.CPP)
+                                             dtypes.Language.CPP)
 
     def append_global_code(self, cpp_code: str, location: str = 'frame'):
         """ 
@@ -468,9 +471,12 @@ class SDFG(OrderedDiGraph):
         one of the generated code files.
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code. 
-                         Options are "frame", "openmp", "cuda", "xilinx", 
-                         "intel_fpga", or any code generator name.
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
         """
+        if location not in self.global_code:
+            self.global_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.global_code[location].code += cpp_code
 
     def append_init_code(self, cpp_code: str, location: str = 'frame'):
@@ -479,9 +485,12 @@ class SDFG(OrderedDiGraph):
         one of the generated code files.
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code. 
-                         Options are "frame", "openmp", "cuda", "xilinx", 
-                         "intel_fpga", or any code generator name.
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
         """
+        if location not in self.init_code:
+            self.init_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.init_code[location].code += cpp_code
 
     def append_exit_code(self, cpp_code: str, location: str = 'frame'):
@@ -490,9 +499,12 @@ class SDFG(OrderedDiGraph):
         one of the generated code files.
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code. 
-                         Options are "frame", "openmp", "cuda", "xilinx", 
-                         "intel_fpga", or any code generator name.
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
         """
+        if location not in self.exit_code:
+            self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.exit_code[location].code += cpp_code
 
     ##########################################

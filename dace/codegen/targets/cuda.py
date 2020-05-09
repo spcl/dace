@@ -18,7 +18,8 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       cpp_array_expr, synchronize_streams,
-                                      memlet_copy_to_absolute_strides)
+                                      memlet_copy_to_absolute_strides,
+                                      codeblock_to_cpp)
 from dace.codegen.targets.framecode import \
     set_default_schedule_and_storage_types
 
@@ -149,6 +150,20 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
         fileheader = CodeIOStream()
         self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
 
+        initcode = CodeIOStream()
+        for sd in self._global_sdfg.all_sdfgs_recursive():
+            if None in sd.init_code:
+                initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
+            initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
+        initcode.write(self._initcode)
+
+        exitcode = CodeIOStream()
+        for sd in self._global_sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
+        exitcode.write(self._exitcode)
+
         self._codeobject.code = """
 #include <cuda_runtime.h>
 #include <dace/dace.h>
@@ -214,8 +229,8 @@ void __dace_exit_cuda({params}) {{
 
 {localcode}
 """.format(params=self._global_sdfg.signature(),
-           initcode=self._initcode.getvalue(),
-           exitcode=self._exitcode.getvalue(),
+           initcode=initcode.getvalue(),
+           exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),

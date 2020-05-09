@@ -88,6 +88,8 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.global_code:
+                global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
             if backend in sd.global_code:
                 global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
                                     sd)
@@ -198,7 +200,10 @@ DACE_EXPORTED int __dace_init_%s(%s)
                 callsite_stream.write(env.init_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write(codeblock_to_cpp(sdfg.init_code['frame']), sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
+            callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -213,7 +218,10 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
-        callsite_stream.write(codeblock_to_cpp(sdfg.exit_code['frame']), sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
