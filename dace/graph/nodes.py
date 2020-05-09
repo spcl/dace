@@ -268,15 +268,6 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
-    code_global = CodeProperty(
-        desc="Global scope code needed for tasklet execution",
-        default=CodeBlock("", dtypes.Language.CPP))
-    code_init = CodeProperty(
-        desc="Extra code that is called on DaCe runtime initialization",
-        default=CodeBlock("", dtypes.Language.CPP))
-    code_exit = CodeProperty(
-        desc="Extra code that is called on DaCe runtime cleanup",
-        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -290,21 +281,11 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
-                 code_global="",
-                 code_init="",
-                 code_exit="",
                  location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
-        # Properties
-        # Set the language directly
-        #self.language = language
         self.code = CodeBlock(code, language)
-
-        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
-        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
-        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property

@@ -36,8 +36,8 @@ namespace dace {
 
         // empty field so the compiler doesn't get confused when empty_type is used instead of fg_type
         struct empty_type {
-            index_type src[0];  // outer map index
-            index_type data[0]; // inner map index
+            index_type src[1];  // outer map index
+            index_type data[1]; // inner map index
         };
 
         struct tb_type {
