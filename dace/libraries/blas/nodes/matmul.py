@@ -1,6 +1,7 @@
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 from dace.data import Array
+from dace.symbolic import symstr
 import dace.library
 import dace.properties
 import dace.graph.nodes
@@ -124,14 +125,12 @@ class ExpandMatMulPure(ExpandTransformation):
 
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
-
-        sdfg = dace.SDFG(node.label + "_sdfg")
-        state = sdfg.add_state(node.label + "_state")
-
+        # Get metadata from parent SDFG
         ((edge_a, outer_array_a, shape_a, strides_a),
          (edge_b, outer_array_b, shape_b,
           strides_b)) = _get_matmul_inputs(node, parent_state, parent_sdfg)
-        cdesc = parent_sdfg.arrays[parent_state.out_edges(node)[0].data.data]
+        outedge = parent_state.out_edges(node)[0]
+        cdesc = parent_sdfg.arrays[outedge.data.data]
         bopt = get_batchmm_opts(shape_a, strides_a, shape_b, strides_b,
                                 cdesc.shape, cdesc.strides)
 
@@ -150,9 +149,29 @@ class ExpandMatMulPure(ExpandTransformation):
             raise ValueError("Input matrices must have same storage")
         storage = outer_array_a.storage
 
+        # Create replacement SDFG
+        sdfg = dace.SDFG(node.label + "_sdfg")
+
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, storage=storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, storage=storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, storage=storage)
+
+        # Add an initialization state
+        init_state = sdfg.add_state()
+        init_state.add_mapped_tasklet(
+            'matmul_init', {
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(outedge.data.subset.size())
+            }, {},
+            'out = 0', {
+                'out':
+                dace.Memlet.simple(
+                    '_c', ','.join(
+                        ['_o%d' % i for i in range(len(cdesc.shape))]))
+            },
+            external_edges=True)
+
+        state = sdfg.add_state_after(init_state, node.label + "_state")
 
         if not bopt:
             state.add_mapped_tasklet('_MatMult_', {
@@ -170,8 +189,7 @@ class ExpandMatMulPure(ExpandTransformation):
                                          dace.Memlet.simple(
                                              "_c",
                                              '__i0, __i1',
-                                             wcr_str='lambda x, y: x + y',
-                                             wcr_identity=0)
+                                             wcr_str='lambda x, y: x + y')
                                      },
                                      external_edges=True)
         else:  # Batched matrix multiplication
@@ -192,10 +210,8 @@ class ExpandMatMulPure(ExpandTransformation):
                 },
                 '__c = __a * __b', {
                     '__c':
-                    dace.Memlet.simple("_c",
-                                       '__i0, __i1, __i2',
-                                       wcr_str='lambda x, y: x + y',
-                                       wcr_identity=0)
+                    dace.Memlet.simple(
+                        "_c", '__i0, __i1, __i2', wcr_str='lambda x, y: x + y')
                 },
                 external_edges=True)
 
