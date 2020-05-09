@@ -156,7 +156,7 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
                 initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
             if 'cuda' in sd.init_code:
                 initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
-        initcode.write(self._initcode)
+        initcode.write(self._initcode.getvalue())
 
         exitcode = CodeIOStream()
         for sd in self._global_sdfg.all_sdfgs_recursive():
@@ -164,7 +164,7 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
                 exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
             if 'cuda' in sd.exit_code:
                 exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
-        exitcode.write(self._exitcode)
+        exitcode.write(self._exitcode.getvalue())
 
         self._codeobject.code = """
 #include <cuda_runtime.h>
