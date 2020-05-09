@@ -159,15 +159,13 @@ class ExpandMatMulPure(ExpandTransformation):
         # Add an initialization state
         init_state = sdfg.add_state()
         init_state.add_mapped_tasklet(
-            'matmul_init', {
-                '_o%d' % i: '0:%s' % symstr(d)
-                for i, d in enumerate(outedge.data.subset.size())
-            }, {},
+            'matmul_init',
+            {'_o%d' % i: '0:%s' % symstr(d)
+             for i, d in enumerate(shape_c)}, {},
             'out = 0', {
                 'out':
                 dace.Memlet.simple(
-                    '_c', ','.join(
-                        ['_o%d' % i for i in range(len(cdesc.shape))]))
+                    '_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))
             },
             external_edges=True)
 
