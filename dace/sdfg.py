@@ -194,16 +194,18 @@ class SDFG(OrderedDiGraph):
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
 
-    global_code = CodeProperty(
-        desc=
-        "Code generated in a global scope on the frame-code generated file.",
-        default=CodeBlock("", dtypes.Language.CPP))
-    init_code = CodeProperty(
-        desc="Code generated in the `__dace_init` function.",
-        default=CodeBlock("", dtypes.Language.CPP))
-    exit_code = CodeProperty(
-        desc="Code generated in the `__dace_exit` function.",
-        default=CodeBlock("", dtypes.Language.CPP))
+    global_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in a global scope on the generated files.")
+    init_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in the `__dace_init` function.")
+    exit_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in the `__dace_exit` function.")
 
     def __init__(self,
                  name: str,
@@ -240,6 +242,9 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -421,17 +426,74 @@ class SDFG(OrderedDiGraph):
             raise ValueError("Invalid state ID")
         self._start_state = states[state_id]
 
-    def set_global_code(self, cpp_code: str):
-        """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_global_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in a global scope on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are "frame", "openmp", "cuda", "xilinx", 
+                         "intel_fpga", or any code generator name.
+        """
+        self.global_code[location] = CodeBlock(cpp_code,
+                                               dace.dtypes.Language.CPP)
 
-    def set_init_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dace_init` function. """
-        self.init_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_init_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in the __dace_init_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are "frame", "openmp", "cuda", "xilinx", 
+                         "intel_fpga", or any code generator name.
+        """
+        self.init_code[location] = CodeBlock(cpp_code,
+                                             dace.dtypes.Language.CPP)
 
-    def set_exit_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dace_exit` function. """
-        self.exit_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in the __dace_exit_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are "frame", "openmp", "cuda", "xilinx", 
+                         "intel_fpga", or any code generator name.
+        """
+        self.exit_code[location] = CodeBlock(cpp_code,
+                                             dace.dtypes.Language.CPP)
+
+    def append_global_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in a global scope on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are "frame", "openmp", "cuda", "xilinx", 
+                         "intel_fpga", or any code generator name.
+        """
+        self.global_code[location].code += cpp_code
+
+    def append_init_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in the __dace_init_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code. 
+                         Options are "frame", "openmp", "cuda", "xilinx", 
+                         "intel_fpga", or any code generator name.
+        """
+        self.init_code[location].code += cpp_code
+
+    def append_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in the __dace_exit_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code. 
+                         Options are "frame", "openmp", "cuda", "xilinx", 
+                         "intel_fpga", or any code generator name.
+        """
+        self.exit_code[location].code += cpp_code
 
     ##########################################
     # Instrumentation-related methods

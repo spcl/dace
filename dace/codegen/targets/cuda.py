@@ -147,7 +147,7 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
     # Generate final code
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
-        self._frame.generate_fileheader(self._global_sdfg, fileheader)
+        self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
 
         self._codeobject.code = """
 #include <cuda_runtime.h>

@@ -583,7 +583,8 @@ class DictProperty(Property):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
             val = {
-                self.key_type(k): self.value_type(v)
+                k if isinstance(k, self.key_type) else self.key_type(k):
+                v if isinstance(v, self.value_type) else self.value_type(v)
                 for k, v in val.items()
             }
         super(DictProperty, self).__set__(obj, val)
@@ -912,6 +913,44 @@ class CodeBlock(object):
             self.code = ast.parse(code).body
         else:
             self.code = code
+
+    def to_json(self):
+        # Two roundtrips to avoid issues in AST parsing/unparsing of negative
+        # numbers, i.e., "(-1)" becomes "(- 1)"
+        if self.language == dace.dtypes.Language.Python and self.code is not None:
+            code = unparse(ast.parse(self.as_string))
+        else:
+            code = self.as_string
+
+        ret = {'string_data': code, 'language': self.language.name}
+        return ret
+
+    @staticmethod
+    def from_json(tmp, sdfg=None):
+        if tmp is None:
+            return None
+        try:
+            lang = tmp['language']
+        except:
+            lang = None
+
+        if lang == "NoCode":
+            return None
+
+        if lang is None:
+            lang = dace.dtypes.Language.Python
+        elif lang.endswith("Python"):
+            lang = dace.dtypes.Language.Python
+        elif lang.endswith("CPP"):
+            lang = dace.dtypes.Language.CPP
+
+        try:
+            cdata = tmp['string_data']
+        except:
+            print("UNRECOGNIZED CODE JSON: " + str(tmp))
+            cdata = ""
+
+        return CodeBlock(cdata, lang)
 
 
 class CodeProperty(Property):
