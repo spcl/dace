@@ -1103,7 +1103,6 @@ def scalar_array_multiplication(state: State,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=wcr_conflict))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1203,7 +1202,6 @@ def scalar_array_multiplication_s(alpha_label: str,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=wcr_conflict))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1267,7 +1265,6 @@ def constant_array_multiplication(state: State,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1327,7 +1324,6 @@ def unary_array_op(state: State,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',

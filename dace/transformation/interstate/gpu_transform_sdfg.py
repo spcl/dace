@@ -134,7 +134,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None and e.data.wcr_identity is None:
+                if e.data.wcr is not None:
                     if (e.data.data not in input_nodes
                             and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append(
