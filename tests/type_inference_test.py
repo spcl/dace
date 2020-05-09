@@ -55,11 +55,11 @@ class TestTypeInference(unittest.TestCase):
         # in this case conversion is stricter (int-> int32)
         code_str = "value = int(1.1)"
         inf_symbols = type_inference.infer_types(code_str)
-        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int32))
+        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int))
 
         code_str = "value = float(1)"
         inf_symbols = type_inference.infer_types(code_str)
-        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
+        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float))
 
     def testInferExpr(self):
 
@@ -138,8 +138,8 @@ res = var1 + var3 * var2
             "in_y": dtypes.typeclass(np.float32)
         }
         inf_symbols = type_inference.infer_types(code_str, defined_symbols)
-        self.assertEqual(inf_symbols["var1"], dtypes.typeclass(np.int32))
-        self.assertEqual(inf_symbols["var2"], dtypes.typeclass(np.int32))
+        self.assertEqual(inf_symbols["var1"], dtypes.typeclass(int))
+        self.assertEqual(inf_symbols["var2"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["var3"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
 
@@ -237,8 +237,8 @@ finally:
     return res
         """
         inf_symbols = type_inference.infer_types(function_def_return_code)
-        self.assertEqual(inf_symbols["res"], dtypes.typeclass(np.float32))
-        self.assertEqual(inf_symbols["arg"], dtypes.typeclass(np.float32))
+        self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
+        self.assertEqual(inf_symbols["arg"], dtypes.typeclass(float))
 
     def testDefaultDataTypes(self):
         # check that configuration about defult data types is enforced
