@@ -194,16 +194,18 @@ class SDFG(OrderedDiGraph):
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
 
-    global_code = CodeProperty(
-        desc=
-        "Code generated in a global scope on the frame-code generated file.",
-        default=CodeBlock("", dtypes.Language.CPP))
-    init_code = CodeProperty(
-        desc="Code generated in the `__dace_init` function.",
-        default=CodeBlock("", dtypes.Language.CPP))
-    exit_code = CodeProperty(
-        desc="Code generated in the `__dace_exit` function.",
-        default=CodeBlock("", dtypes.Language.CPP))
+    global_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in a global scope on the generated files.")
+    init_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in the `__dace_init` function.")
+    exit_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in the `__dace_exit` function.")
 
     def __init__(self,
                  name: str,
@@ -240,6 +242,9 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -421,17 +426,86 @@ class SDFG(OrderedDiGraph):
             raise ValueError("Invalid state ID")
         self._start_state = states[state_id]
 
-    def set_global_code(self, cpp_code: str):
-        """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_global_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in a global scope on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        self.global_code[location] = CodeBlock(cpp_code,
+                                               dace.dtypes.Language.CPP)
 
-    def set_init_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dace_init` function. """
-        self.init_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_init_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in the __dace_init_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        self.init_code[location] = CodeBlock(cpp_code,
+                                             dtypes.Language.CPP)
 
-    def set_exit_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dace_exit` function. """
-        self.exit_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in the __dace_exit_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        self.exit_code[location] = CodeBlock(cpp_code,
+                                             dtypes.Language.CPP)
+
+    def append_global_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in a global scope on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.global_code:
+            self.global_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.global_code[location].code += cpp_code
+
+    def append_init_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in the __dace_init_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.init_code:
+            self.init_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.init_code[location].code += cpp_code
+
+    def append_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in the __dace_exit_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.exit_code:
+            self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.exit_code[location].code += cpp_code
 
     ##########################################
     # Instrumentation-related methods
@@ -2783,9 +2857,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         outputs: Set[str],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
-        code_global: str = "",
-        code_init: str = "",
-        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -2797,9 +2868,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             outputs,
             code,
             language,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -2960,9 +3028,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             outputs: Dict[str, mm.Memlet],
             schedule=dtypes.ScheduleType.Default,
             unroll_map=False,
-            code_global="",
-            code_init="",
-            code_exit="",
             location=None,
             language=dtypes.Language.Python,
             debuginfo=None,
@@ -2983,9 +3048,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :param schedule:   Map schedule
             :param unroll_map: True if map should be unrolled in code
                                generation
-            :param code_global: (optional) Global code (outside functions)
-            :param code_init:  Initialization code (in __dace_init_* functions)
-            :param code_exit:  Finalization code (in __dace_exit_* functions)
             :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
@@ -3011,9 +3073,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             set(outputs.keys()),
             code,
             language=language,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )

@@ -6,7 +6,7 @@ import inspect
 import numpy
 import re
 from functools import wraps
-
+from dace.config import Config
 from dace.registry import extensible_enum
 
 
@@ -251,10 +251,22 @@ class typeclass(object):
                 wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
+
+        config_data_types = Config.get('compiler', 'default_data_types')
         if wrapped_type is int:
-            wrapped_type = numpy.int64
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.int64
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.int32
+            else:
+                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
         elif wrapped_type is float:
-            wrapped_type = numpy.float64
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.float64
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.float32
+            else:
+                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
         elif wrapped_type is complex:
             wrapped_type = numpy.complex128
 
