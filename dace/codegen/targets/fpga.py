@@ -929,7 +929,9 @@ class FPGACodeGen(TargetCodeGenerator):
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(x, (dace.graph.nodes.MapEntry, PipelineEntry))):
+            if (isinstance(
+                    x,
+                (dace.graph.nodes.MapEntry, dace.graph.nodes.PipelineEntry))):
                 # Degenerate loops should not be pipelined
                 fully_degenerate = True
                 for begin, end, skip in x.map.range:
