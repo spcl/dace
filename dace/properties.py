@@ -583,8 +583,7 @@ class DictProperty(Property):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
             val = {
-                k if isinstance(k, self.key_type) else self.key_type(k):
-                v if isinstance(v, self.value_type) else self.value_type(v)
+                self.key_type(k): self.value_type(v)
                 for k, v in val.items()
             }
         super(DictProperty, self).__set__(obj, val)
@@ -887,8 +886,13 @@ class CodeBlock(object):
         language is Python, or a string otherwise.
     """
     def __init__(self,
-                 code: Union[str, List[ast.AST]],
+                 code: Union[str, List[ast.AST], 'CodeBlock'],
                  language: dace.dtypes.Language = dace.dtypes.Language.Python):
+        if isinstance(code, CodeBlock):
+            self.code = code.code
+            self.language = code.language
+            return
+
         self.language = language
 
         # Convert to the right type
