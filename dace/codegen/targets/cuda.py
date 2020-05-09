@@ -25,11 +25,6 @@ from dace.codegen.targets.framecode import \
 
 from dace.codegen import cppunparse
 
-_SPECIAL_RTYPES = {
-    dtypes.ReductionType.Min_Location: 'ArgMin',
-    dtypes.ReductionType.Max_Location: 'ArgMax',
-}
-
 
 def prod(iterable):
     return functools.reduce(sympy.mul.Mul, iterable, 1)
