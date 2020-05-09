@@ -111,17 +111,7 @@ required:
                 description: >
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
-
-            default_data_types:
-                type : str
-                default: Python
-                title : Default data types
-                descrition: >
-                    Specify the default data types to use in generating code.
-                    If "Python", Python's semantics will be followed (i.e., `float`  and `int`
-                    are represented using 64 bits). If the property is set to "C", C's semantcs will be
-                    used (`float` and `int` are represented using 32bits).
-
+                   
             fpga_vendor:
                 type: str
                 default: xilinx 
