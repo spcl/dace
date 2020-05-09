@@ -90,9 +90,10 @@ _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
-    "int": dace.dtypes.typeclass(np.int32),
-    "float": dace.dtypes.typeclass(np.float32),
-    "float64": dace.dtypes.typeclass(np.float64)
+    "int": dace.dtypes.typeclass(int),
+    "float": dace.dtypes.typeclass(float),
+    "float64": dace.dtypes.typeclass(np.float64),
+    "str": dace.dtypes.pointer(dace.dtypes.int8)
 }
 
 

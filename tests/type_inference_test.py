@@ -26,6 +26,11 @@ class TestTypeInference(unittest.TestCase):
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
 
+        # string: should return a char*
+        code_str = "value = 'hello'"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.pointer(dtypes.int8))
+
         # assignment with previous symbols
         prev_symbols = {"char_num": dtypes.typeclass(np.int8)}
         code_str = "value =  char_num"
@@ -38,10 +43,13 @@ class TestTypeInference(unittest.TestCase):
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
 
         # annotated assignments
-        # in this case conversion is stricter (int-> int32)
         code_str = "value : int  = 1"
         inf_symbols = type_inference.infer_types(code_str)
-        self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int32))
+        self.assertEqual(inf_symbols["value"], dtypes.typeclass(int))
+
+        code_str = "value : str"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.pointer(dtypes.int8))
 
         # type conversion
         # in this case conversion is stricter (int-> int32)
@@ -173,6 +181,24 @@ res = var1 + var3 * var2
         inf_symbol = type_inference.infer_expr_type(n * m + n, defined_symbols)
         self.assertEqual(inf_symbol, dtypes.typeclass(np.float32))
 
+    def testForLoop(self):
+        # for loop
+        for_loop_code = """for x in range(6):
+            res += 1"""
+        inf_symbols = type_inference.infer_types(for_loop_code)
+        self.assertEqual(inf_symbols["res"], dtypes.typeclass(int))
+
+        #It is not possible to annotate the type of the variable in the loop guard
+        # But it is ok to do so outside of the loop
+        # https://stackoverflow.com/questions/41641449/how-do-i-annotate-types-in-a-for-loop/41641489#41641489
+        for_loop_code = """i: int
+for i in range(5):
+    x += i"""
+        inf_symbols = type_inference.infer_types(for_loop_code)
+        self.assertEqual(inf_symbols["x"], dtypes.typeclass(int))
+        self.assertEqual(inf_symbols["i"], dtypes.typeclass(int))
+
+
     def testVarious(self):
         # code snippets that contains constructs not directly involved in type inference
         # (borrowed by astunparse tests)
@@ -204,12 +230,6 @@ finally:
     suite5
 """
         inf_symbols = type_inference.infer_types(try_except_finally_code)
-
-        #for loop
-        for_loop_code = """for x in range(6):
-    res += 1"""
-        inf_symbols = type_inference.infer_types(for_loop_code)
-        self.assertEqual(inf_symbols["res"], dtypes.typeclass(int))
 
         #function def with arguments
         function_def_return_code = """def f(arg : float):
