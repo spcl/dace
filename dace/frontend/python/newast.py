@@ -614,9 +614,6 @@ class TaskletTransformer(ExtNodeTransformer):
 
         self.extcode = None
         self.lang = lang
-        self.globalcode = ''
-        self.initcode = ''
-        self.exitcode = ''
         self.location = location
 
         self.nested = nested
@@ -662,9 +659,6 @@ class TaskletTransformer(ExtNodeTransformer):
                                    set(self.outputs.keys()),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
-                                   code_global=self.globalcode,
-                                   code_init=self.initcode,
-                                   code_exit=self.exitcode,
                                    location=self.location,
                                    debuginfo=locinfo)
 

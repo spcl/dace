@@ -1046,10 +1046,6 @@ class CPUCodeGen(TargetCodeGenerator):
         outer_stream_end = CodeIOStream()
         inner_stream = CodeIOStream()
 
-        # Add code to init and exit functions
-        self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
-        self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
-
         state_dfg = sdfg.nodes()[state_id]
 
         # Prepare preamble and code for after memlets

@@ -18,7 +18,8 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       cpp_array_expr, synchronize_streams,
-                                      memlet_copy_to_absolute_strides)
+                                      memlet_copy_to_absolute_strides,
+                                      codeblock_to_cpp)
 from dace.codegen.targets.framecode import \
     set_default_schedule_and_storage_types
 
@@ -147,7 +148,23 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
     # Generate final code
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
-        self._frame.generate_fileheader(self._global_sdfg, fileheader)
+        self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
+
+        initcode = CodeIOStream()
+        for sd in self._global_sdfg.all_sdfgs_recursive():
+            if None in sd.init_code:
+                initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
+            if 'cuda' in sd.init_code:
+                initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
+        initcode.write(self._initcode.getvalue())
+
+        exitcode = CodeIOStream()
+        for sd in self._global_sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            if 'cuda' in sd.exit_code:
+                exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
+        exitcode.write(self._exitcode.getvalue())
 
         self._codeobject.code = """
 #include <cuda_runtime.h>
@@ -214,8 +231,8 @@ void __dace_exit_cuda({params}) {{
 
 {localcode}
 """.format(params=self._global_sdfg.signature(),
-           initcode=self._initcode.getvalue(),
-           exitcode=self._exitcode.getvalue(),
+           initcode=initcode.getvalue(),
+           exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),
@@ -1033,7 +1050,8 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             symbol_sigs.append('cub::GridBarrier __gbar')
 
         # Comprehend grid/block dimensions from scopes
-        grid_dims, block_dims, tbmap, dtbmap = self.get_kernel_dimensions(dfg_scope)
+        grid_dims, block_dims, tbmap, dtbmap = self.get_kernel_dimensions(
+            dfg_scope)
 
         kernel_args = [
             sdfg.arrays[p].signature(False, name=p) for p in sorted(params)
@@ -1214,7 +1232,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         tb_maps = [
             node.map for node, parent in dfg_scope.scope_dict().items()
             if parent == kernelmap_entry and isinstance(node, nodes.EntryNode)
-            and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+            and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
+                                  dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
         ]
         # Append thread-block maps from nested SDFGs
         for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
@@ -1224,29 +1243,37 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
                 tb_maps.extend([
                     n.map for state in node.sdfg.nodes()
-                    for n in state.nodes() if isinstance(n, nodes.MapEntry)
-                    and n.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+                    for n in state.nodes()
+                    if isinstance(n, nodes.MapEntry) and n.schedule in (
+                        dtypes.ScheduleType.GPU_ThreadBlock,
+                        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
                 ])
 
-        has_dtbmap = len([tbmap for tbmap in tb_maps
-                          if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
-                          ]) > 0
+        has_dtbmap = len([
+            tbmap for tbmap in tb_maps
+            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+        ]) > 0
 
         # keep only thread-block maps
-        tb_maps = [tbmap for tbmap in tb_maps if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
+        tb_maps = [
+            tbmap for tbmap in tb_maps
+            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+        ]
 
         # Case (1): no thread-block maps
         if len(tb_maps) == 0:
 
             if has_dtbmap:
                 block_size = [
-                    int(b) for b in Config.get('compiler', 'cuda',
-                                               'dynamic_map_block_size').split(',')
+                    int(b)
+                    for b in Config.get('compiler', 'cuda',
+                                        'dynamic_map_block_size').split(',')
                 ]
             else:
-                warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                              'block size of (%s)' %
-                              Config.get('compiler', 'cuda', 'default_block_size'))
+                warnings.warn(
+                    'Thread-block maps not found in kernel, assuming ' +
+                    'block size of (%s)' %
+                    Config.get('compiler', 'cuda', 'default_block_size'))
 
                 block_size = [
                     int(b) for b in Config.get('compiler', 'cuda',
@@ -1293,16 +1320,19 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         #       overapproximation.
 
         if has_dtbmap:  # both thread-block map and dynamic thread-block map exist at the same time
-            raise NotImplementedError("GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
-                                      "not supported in the same scope")
+            raise NotImplementedError(
+                "GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
+                "not supported in the same scope")
 
         return grid_size, block_size, True, has_dtbmap
 
-    def generate_kernel_scope(
-        self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int,
-        kernel_map: nodes.Map, kernel_name: str, grid_dims: list,
-        block_dims: list, has_tbmap: bool, has_dtbmap: bool, kernel_params: list,
-        function_stream: CodeIOStream, kernel_stream: CodeIOStream):
+    def generate_kernel_scope(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView,
+                              state_id: int, kernel_map: nodes.Map,
+                              kernel_name: str, grid_dims: list,
+                              block_dims: list, has_tbmap: bool,
+                              has_dtbmap: bool, kernel_params: list,
+                              function_stream: CodeIOStream,
+                              kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
@@ -1485,35 +1515,37 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 sdfg, state_id, scope_entry)
 
             callsite_stream.write(
-                'if (%s < %s) {' % (self._kernel_map.params[0],
-                                    _topy(subsets.Range(self._kernel_map.range[::-1]).max_element()[0] + 1)),
-                sdfg, state_id, scope_entry)
+                'if (%s < %s) {' %
+                (self._kernel_map.params[0],
+                 _topy(
+                     subsets.Range(self._kernel_map.range[::-1]).max_element()
+                     [0] + 1)), sdfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                    self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn), sdfg, state_id,
                     scope_entry)
 
             callsite_stream.write(
                 '__dace_dynmap_begin = {begin};\n'
-                '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0],
-                                                    end=scope_map.range[0][1] + 1),
-                sdfg, state_id, scope_entry)
+                '__dace_dynmap_end = {end};'.format(
+                    begin=scope_map.range[0][0],
+                    end=scope_map.range[0][1] + 1), sdfg, state_id,
+                scope_entry)
 
-            callsite_stream.write(
-                '}',
-                sdfg, state_id, scope_entry)
+            callsite_stream.write('}', sdfg, state_id, scope_entry)
 
             callsite_stream.write(
                 'dace::DynamicMap<{fine_grained}, {bsize}>::'
                 'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
                 'auto {param}) {{'.format(
-                    fine_grained=('true' if Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained')
-                                  else 'false'),
+                    fine_grained=('true' if Config.get_bool(
+                        'compiler', 'cuda', 'dynamic_map_fine_grained') else
+                                  'false'),
                     bsize=total_block_size,
                     kmapIdx=self._kernel_map.params[0],
-                    param=scope_map.params[0]),
-                sdfg, state_id, scope_entry)
+                    param=scope_map.params[0]), sdfg, state_id, scope_entry)
 
         else:
             for dim in range(len(scope_map.range)):
