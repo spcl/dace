@@ -185,6 +185,8 @@ class SymExpr(object):
             return SymExpr(self.expr * other, self.approx * other)
         return self * pystr_to_symbolic(other)
 
+    __rmul__ = __mul__
+
     def __div__(self, other):
         if isinstance(other, SymExpr):
             return SymExpr(self.expr / other.expr, self.approx / other.approx)

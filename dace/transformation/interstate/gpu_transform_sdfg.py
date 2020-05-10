@@ -294,15 +294,16 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 if len(in_edges) == 0:
                     state.add_nedge(me, gcode, memlet.EmptyMemlet())
         #######################################################
-        # Step 6: Change all top-level maps and Reduce nodes to GPU schedule
+        # Step 6: Change all top-level maps and library nodes to GPU schedule
 
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.Reduce)):
+                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, nodes.EntryNode)
+                    elif (isinstance(node,
+                                     (nodes.EntryNode, nodes.LibraryNode))
                           and self.sequential_innermaps):
                         node.schedule = dtypes.ScheduleType.Sequential
 
