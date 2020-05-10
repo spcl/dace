@@ -78,8 +78,7 @@ def make_compute_state(sdfg):
     read_memlet = dace.memlet.Memlet.simple(a, "i, j")
     write_memlet = dace.memlet.Memlet.simple(hist,
                                              "0:num_bins",
-                                             wcr_str="lambda a, b: a + b",
-                                             wcr_identity=0)
+                                             wcr_str="lambda a, b: a + b")
 
     state.add_memlet_path(a, entry, tasklet, memlet=read_memlet, dst_conn="a")
     state.add_memlet_path(tasklet,

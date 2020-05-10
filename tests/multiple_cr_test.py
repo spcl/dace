@@ -33,7 +33,7 @@ if __name__ == '__main__':
     state.add_edge(map_entry, None, t1, 'a', Memlet.simple(A, 'i'))
     state.add_edge(
         t1, 'b', map_exit, None,
-        Memlet.simple(s, '0', wcr_str='lambda a,b: a+b', wcr_identity=0))
+        Memlet.simple(s, '0', wcr_str='lambda a,b: a+b'))
     state.add_edge(map_exit, None, s, None, Memlet.simple(s, '0'))
 
     # Tasklet 2
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     state.add_edge(map_entry, None, t2, 'a', Memlet.simple(A, 'i'))
     state.add_edge(
         t2, 'b', map_exit, None,
-        Memlet.simple(p, '0', wcr_str='lambda a,b: a*b', wcr_identity=1))
+        Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
     state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
 
     mysdfg(A=input, s=sum, p=product, N=N)

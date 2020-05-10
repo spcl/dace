@@ -257,9 +257,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
                                                global_stream, callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, sid, node,
-                                                 global_stream,
-                                                 callsite_stream)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -654,9 +651,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     self._dispatcher.dispatch_allocate(sdfg, state, None, node,
                                                        global_stream,
                                                        callsite_stream)
-                    self._dispatcher.dispatch_initialize(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
                     allocated.add(node.data)
 
         # Allocate inter-state variables
@@ -668,15 +662,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             callsite_stream.write(
                 '%s;\n' %
                 (isvarType.signature(with_types=True, name=isvarName)), sdfg)
-
-        # Initialize parameter arrays
-        for argnode in dtypes.deduplicate(sdfg.input_arrays() +
-                                          sdfg.output_arrays()):
-            # Ignore transient arrays
-            if argnode.desc(sdfg).transient: continue
-            self._dispatcher.dispatch_initialize(sdfg, sdfg, None, argnode,
-                                                 global_stream,
-                                                 callsite_stream)
 
         callsite_stream.write('\n', sdfg)
 

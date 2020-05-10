@@ -361,11 +361,6 @@ void __dace_exit_cuda({params}) {{
 
         callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        # No need (for now)
-        pass
-
     def allocate_stream(self, sdfg, dfg, state_id, node, function_stream,
                         callsite_stream):
         nodedesc = node.desc(sdfg)
@@ -1400,9 +1395,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
                                                child, function_stream,
                                                kernel_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 kernel_stream)
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
@@ -1559,9 +1551,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
                                                child, function_stream,
                                                callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:

@@ -314,65 +314,6 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("Unimplemented storage type " +
                                       str(nodedesc.storage))
 
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        if isinstance(dfg, SDFG):
-            result = StringIO()
-            for sid, state in enumerate(dfg.nodes()):
-                if node in state.nodes():
-                    self.initialize_array(sdfg, state, sid, node,
-                                          function_stream, callsite_stream)
-                    break
-            return
-
-        parent_node = dfg.scope_dict()[node]
-        nodedesc = node.desc(sdfg)
-        name = node.data
-
-        # Traverse the DFG, looking for WCR with an identity element
-        def traverse(u, uconn, v, vconn, d):
-            if d.wcr:
-                if d.data == name:
-                    if d.wcr_identity is not None:
-                        return d.wcr_identity
-            return None
-
-        identity = None
-        if parent_node is not None:
-            for u, uconn, v, vconn, d, s in nxutil.traverse_sdfg_scope(
-                    dfg, parent_node):
-                identity = traverse(u, uconn, v, vconn, d)
-                if identity is not None:
-                    break
-        else:
-            for u, uconn, v, vconn, d in dfg.edges():
-                identity = traverse(u, uconn, v, vconn, d)
-                if identity is not None:
-                    break
-
-        if identity is None:
-            return
-
-        # If we should generate an initialization expression
-        if isinstance(nodedesc, data.Scalar):
-            callsite_stream.write("%s = %s;\n" % (name, sym2cpp(identity)),
-                                  sdfg, state_id, node)
-            return
-
-        params = [name, sym2cpp(identity)]
-        shape = [sym2cpp(s) for s in nodedesc.shape]
-        params.append(" * ".join(shape))
-
-        # Faster
-        if identity == 0:
-            params[-1] += " * sizeof(%s[0])" % name
-            callsite_stream.write("memset(%s);\n" % (", ".join(params)), sdfg,
-                                  state_id, node)
-            return
-
-        callsite_stream.write("dace::InitArray(%s);\n" % (", ".join(params)),
-                              sdfg, state_id, node)
-
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         nodedesc = node.desc(sdfg)
@@ -1507,8 +1448,6 @@ class CPUCodeGen(TargetCodeGenerator):
             allocated.add(child.data)
             self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
                                                None, result)
-            self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
-                                                 None, result)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1683,8 +1622,6 @@ class CPUCodeGen(TargetCodeGenerator):
             allocated.add(child.data)
             self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
                                                None, result)
-            self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
-                                                 None, result)
 
             # Generate register definitions for inter-tasklet memlets
             scope_dict = dfg.scope_dict()

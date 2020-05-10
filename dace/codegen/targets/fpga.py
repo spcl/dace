@@ -141,9 +141,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
-                self._dispatcher.dispatch_initialize(sdfg, state, state_id,
-                                                     node, function_stream,
-                                                     callsite_stream)
             # Generate kernel code
             self.generate_kernel(sdfg, state, state.label, subgraphs,
                                  function_stream, callsite_stream)
@@ -164,9 +161,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
-                self._dispatcher.dispatch_initialize(sdfg, state, state_id,
-                                                     node, function_stream,
-                                                     callsite_stream)
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
 
@@ -887,9 +881,6 @@ class FPGACodeGen(TargetCodeGenerator):
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
 
-    def initialize_array(self, *args, **kwargs):
-        pass
-
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
 
@@ -1105,8 +1096,6 @@ class FPGACodeGen(TargetCodeGenerator):
             allocated.add(child.data)
             self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
                                                None, result)
-            self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
-                                                 None, result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
@@ -1270,5 +1259,3 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         for arr_node in nested_global_transients:
             self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
                                                None, host_code_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, None, arr_node,
-                                                 None, host_code_stream)

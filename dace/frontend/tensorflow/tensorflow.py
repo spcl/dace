@@ -8,12 +8,15 @@ import os
 import pickle
 import re
 import math
+from typing import Any, List
 
 import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState, dtypes
+from dace.data import Scalar
 from dace.graph import labeling
 from dace.graph.nodes import Tasklet, NestedSDFG
+from dace.symbolic import symstr, SymExpr
 from dace.frontend.tensorflow.winograd import winograd_convolution
 from dace.frontend.tensorflow.transformations.redundant_array import (
     TensorflowRedundantArray)
@@ -436,8 +439,8 @@ class TFSession:
             # Initialize a new SDFG
             self.graph = SDFG(name)
             self.graph.propagate = False
-            self.state = SDFGState("s0", self.graph)
-            self.graph.add_node(self.state)
+            self.reinitState = self.graph.add_state("reinitialization")
+            self.state = self.graph.add_state_after(self.reinitState, "s0")
             self.visitedNodes.clear()
             ############################
 
@@ -648,13 +651,15 @@ class TFSession:
         """ Visit a specific node in the graph, creating the SDFG. """
         try:
             func = getattr(self, "visit_" + node.type)
-            func(node)
         except AttributeError:
             # Only stop processing after all node types have been visited,
             # so that we know which implementations are missing.
             print("MISSING IMPLEMENTATION:", node.type)
             self.visit_callback(node)
-        # mark node as visited
+            self.visitedNodes.add(node)
+            return
+
+        func(node)
         self.visitedNodes.add(node)
 
     def visit_callback(self, node):
@@ -1430,6 +1435,7 @@ class TFSession:
             Memlet.simple(stdevNode, ",".join([backpropParams[-1]])),
         )
         # auxGradsTasklet out-edges
+        self.add_init(gammaPrime.data, 0.0)
         self.state.add_edge(
             auxGradsTasklet,
             "gamma_prime",
@@ -1439,7 +1445,6 @@ class TFSession:
                 gammaPrime,
                 ",".join([backpropParams[-1]]),
                 wcr_str="lambda a,b: a+b",
-                wcr_identity=float(0),
             ),
         )
         self.state.add_edge(
@@ -1447,13 +1452,11 @@ class TFSession:
             None,
             gammaPrime,
             None,
-            Memlet.simple(
-                gammaPrime,
-                ",".join(gammaDims),
-                wcr_str="lambda a,b: a+b",
-                wcr_identity=float(0),
-            ),
+            Memlet.simple(gammaPrime,
+                          ",".join(gammaDims),
+                          wcr_str="lambda a,b: a+b"),
         )
+        self.add_init(betaPrime.data, 0.0)
         self.state.add_edge(
             auxGradsTasklet,
             "beta_prime",
@@ -1463,7 +1466,6 @@ class TFSession:
                 betaPrime,
                 ",".join([backpropParams[-1]]),
                 wcr_str="lambda a, b: a+b",
-                wcr_identity=float(0),
             ),
         )
         self.state.add_edge(
@@ -1471,12 +1473,9 @@ class TFSession:
             None,
             betaPrime,
             None,
-            Memlet.simple(
-                betaPrime,
-                ",".join(gammaDims),
-                wcr_str="lambda a, b: a+b",
-                wcr_identity=float(0),
-            ),
+            Memlet.simple(betaPrime,
+                          ",".join(gammaDims),
+                          wcr_str="lambda a, b: a+b"),
         )
         # second map in-edges
         # self.add_in_memlets(
@@ -1927,12 +1926,9 @@ class TFSession:
 
         for i, out in enumerate(outputList):
             name = "out"
-            memlet = Memlet.simple(
-                out,
-                ",".join(outputParams[i]),
-                wcr_str="lambda a,b: a+b",
-                wcr_identity=0,
-            )
+            memlet = Memlet.simple(out,
+                                   ",".join(outputParams[i]),
+                                   wcr_str="lambda a,b: a+b")
             state.add_edge(tasklet, name, minexit, None, memlet)
 
         self.reinitCR(outputList[0], outputParams, outputDims, "0")
@@ -2016,6 +2012,7 @@ class TFSession:
                 outputList[0].desc(self.graph).dtype,
                 storage=dace.StorageType.Register,
             )
+            reduce_node.setzero = True
 
             mapParams = []
             outputParams = []
@@ -2062,7 +2059,6 @@ class TFSession:
                                               dict(zip(mapParams, mapRange)))
             mapEntry2, mapExit2 = state.add_map(
                 mapLabel + "_inner", dict(zip(mapParams2, mapRange2)))
-            self.reinitCR(outputList[0], outputParams, outputDims, "0")
             tasklet = state.add_tasklet(
                 mapLabel, {"j0", "j1"}, {"out"},
                 "out = j0 * j1;")  # printf(\"%f\\t\", j0);")
@@ -2080,8 +2076,7 @@ class TFSession:
                 name = "out"
                 memlet = Memlet.simple(reduce_node,
                                        "0",
-                                       wcr_str="lambda a,b: a+b",
-                                       wcr_identity=0)
+                                       wcr_str="lambda a,b: a+b")
                 state.add_edge(tasklet, name, mapExit2, None, memlet)
                 state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
@@ -2212,7 +2207,6 @@ class TFSession:
                 out,
                 ",".join(outputParams[i]),
                 wcr_str="lambda a, b: max(a,b)",
-                wcr_identity=-99999999999,
                 wcr_conflict=False,
             )
             state.add_edge(tasklet, name, mapExit2, None, memlet)
@@ -2303,10 +2297,10 @@ class TFSession:
             transient=True,
             storage=dace.StorageType.Register,
         )
+        temp_node.setzero = True
         memletTempNode = Memlet.simple(str(temp_node),
                                        "0",
-                                       wcr_str="lambda a, b: a+b",
-                                       wcr_identity=0)
+                                       wcr_str="lambda a, b: a+b")
         memletTempNode_nocr = Memlet.simple(str(temp_node), "0")
         memletOutputInner = Memlet.simple(outputList[0],
                                           ",".join(outputParams[0]))
@@ -2385,7 +2379,6 @@ class TFSession:
             Memlet.simple(
                 outputNode,
                 ",".join(outputParams),
-                wcr_identity=0,
                 wcr_str="lambda a,b: a+b",
             ),
         )
@@ -2572,7 +2565,6 @@ class TFSession:
                 tempList[0],
                 ",".join(innerParams[0]),
                 wcr_str="lambda a, b: a+b",
-                wcr_identity=0,
             ),
         )
 
@@ -2866,6 +2858,7 @@ class TFSession:
             outputList[0].desc(self.graph).dtype,
             storage=dace.StorageType.Register,
         )
+        reduce_node.setzero = True
 
         if padding > 0:
             self.add_out_memlets(
@@ -2896,7 +2889,6 @@ class TFSession:
             )
 
         else:
-            self.reinitCR(outputList[0], outputParams, outputDims, "0")
             self.add_out_memlets(
                 outputList,
                 mapExit,
@@ -2918,7 +2910,6 @@ class TFSession:
             #paddedOutput if padding > 0 else outputList[0],
             "0",
             wcr_str="lambda a,b: a+b",
-            wcr_identity=0,
         )
         state.add_edge(tasklet, "out", mapExit2, None, memlet)
         state.add_edge(mapExit2, None, reduce_node, None, memlet)
@@ -3036,8 +3027,7 @@ class TFSession:
             outputList[0].desc(self.graph).dtype,
             storage=dace.StorageType.Register,
         )
-
-        self.reinitCR(outputList[0], outputParams, outputDims, "0")
+        reduce_node.setzero = True
 
         self.add_out_memlets(
             outputList,
@@ -3063,7 +3053,6 @@ class TFSession:
             #out,
             "0",
             wcr_str="lambda a,b: a+b",
-            wcr_identity=0,
         )
         state.add_edge(tasklet, "out", mapExit2, None, memlet)
         state.add_edge(mapExit2, None, reduce_node, None, memlet)
@@ -3806,7 +3795,7 @@ class TFSession:
             :param wcr: (optional) Write-conflict resolution function (as
                         string).
             :param wcr_identity: (optional) Identity element for write-conflict
-                                 resolution.
+                                 resolution. Will be appended to init state.
             :param identifier: This is the base identifier for the out connector
                                 of the tasklet. Default value is "out". If there are
                                 multiple out connectors, each is numbered from zero.
@@ -3826,11 +3815,12 @@ class TFSession:
                 name = identifier
 
             if out.data not in connected_nodes:
+                if wcr_identity is not None:
+                    self.add_init(out.data, wcr_identity)
                 outerMemlet = Memlet.simple(
                     out,
                     ",".join(outputDims[i]),
                     wcr_str=wcr,
-                    wcr_identity=wcr_identity,
                     wcr_conflict=wcr_conflict,
                 )
                 state.add_edge(otherNode, None, out, None, outerMemlet)
@@ -3839,7 +3829,6 @@ class TFSession:
                 out,
                 ",".join(outputParams[i]),
                 wcr_str=wcr,
-                wcr_identity=wcr_identity,
                 wcr_conflict=wcr_conflict,
             )
 
@@ -3920,48 +3909,43 @@ class TFSession:
             outputList.append(outputNode)
         return outputList
 
-    def reinitCR(self, inp, params, dims, identity):
+    def add_init(self, arrname: str, value: Any):
+        """ Adds an initialization map for a tensor in the init state.
+            :param arrname: The tensor name to initialize.
+            :param dims: The range (as a string) to use for initialization.
+            :param value: A value to set it to (converted to C++ string).
+        """
+        state: dace.SDFGState = self.reinitState
+        data = self.graph.arrays[arrname]
+
+        if isinstance(data, Scalar):
+            state.add_mapped_tasklet('reinit_%s' % arrname,
+                                     [('unused', '0:1')], {},
+                                     'out = %s' % value,
+                                     {'out': dace.Memlet.simple(arrname, '0')},
+                                     external_edges=True)
+        else:
+            state.add_mapped_tasklet(
+                'reinit_%s' % arrname, [('o%d' % i, '0:%s' % symstr(shp))
+                                        for i, shp in enumerate(data.shape)],
+                {},
+                'out = %s' % value, {
+                    'out':
+                    dace.Memlet.simple(
+                        arrname, ','.join('o%d' % i
+                                          for i in range(len(data.shape))))
+                },
+                external_edges=True)
+
+    def reinitCR(self, inp: dace.nodes.AccessNode, params, dims, identity):
         """ Adds a reinitialization map to a `reinit` state, setting inputs
             to their initial values. Only used in training mode.
             :param inp: DaCe access node.
             :param params: List of string parameters to `inp`.
             :param dims: List of strings dimensions of `inp`.
-            :param identity: Identity value of the CR node (as a string)
+            :param identity: Identity value of the CR node (as a string).
         """
-
-        if self.training:
-            # Swap current state and reinitState
-            self.state, self.reinitState = self.reinitState, self.state
-            node = inp
-            state = self.state
-            dtype = node.desc(self.graph).dtype
-            label = node.label
-
-            # Mark node as non-transient as we need to set it from the outside
-            # the SDFG.
-            node.desc(self.graph).transient = False
-
-            shape = dace.properties.ShapeProperty.from_string(
-                str(inp.desc(self.graph).shape))
-            # Add input, output and map to reinitState
-            inputNode = state.add_array(label, shape, dtype)
-            outputNode = state.add_array(label, shape, dtype)
-            mapEntry, mapExit = state.add_map(label,
-                                              dict(zip(params[0], dims[0])))
-
-            # Output is set to identity
-            tasklet = state.add_tasklet(label, set(), {"out"},
-                                        "out = " + identity)
-            state.add_edge(mapEntry, None, tasklet, None, EmptyMemlet())
-            self.add_out_memlets([outputNode], mapExit, tasklet, dims, params)
-            # Add numpy array with identity value to the reinit dict.
-            npArray = np.full(shape, int(identity)).astype(
-                node.desc(self.graph).dtype.type)
-            self.reinitDict.update({label: npArray})
-            # Swap state back
-            self.reinitState, self.state = self.state, self.reinitState
-        else:
-            pass
+        return self.add_init(inp.data, identity)
 
     def inputPadding(self, node, inpnode, inp, outputSize, kernelSize, strides,
                      inputDims):

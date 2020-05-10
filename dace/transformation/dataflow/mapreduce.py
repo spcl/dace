@@ -5,6 +5,9 @@ from dace import registry
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG
+from dace.symbolic import symstr
 from dace.transformation import pattern_matching as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
@@ -12,11 +15,18 @@ from dace.transformation.dataflow.map_fusion import MapFusion
 
 
 @registry.autoregister_params(singlestate=True)
+@make_properties
 class MapReduceFusion(pm.Transformation):
     """ Implements the map-reduce-fusion transformation.
         Fuses a map with an immediately following reduction, where the array
         between the map and the reduction is not used anywhere else.
     """
+
+    no_init = Property(
+        dtype=bool,
+        default=False,
+        desc='If enabled, does not create initialization states '
+        'for reduce nodes with identity')
 
     _tasklet = nodes.Tasklet('_')
     _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
@@ -126,7 +136,6 @@ class MapReduceFusion(pm.Transformation):
         # Modify edge from tasklet to map exit
         memlet_edge.data.data = out_array.data
         memlet_edge.data.wcr = reduce_node.wcr
-        memlet_edge.data.wcr_identity = None
         memlet_edge.data.subset = type(
             memlet_edge.data.subset)(filtered_subset)
 
