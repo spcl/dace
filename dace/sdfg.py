@@ -1281,7 +1281,7 @@ class SDFG(OrderedDiGraph):
                   allow_conflicts=False,
                   total_size=None,
                   find_new_name=False,
-                  alignment=0):
+                  alignment=0) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1428,7 +1428,7 @@ class SDFG(OrderedDiGraph):
                               True,
                               strides,
                               offset,
-                              lifetime=dace.dtypes.AllocationLifetime.Scope,
+                              lifetime=lifetime,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
@@ -2139,9 +2139,7 @@ class MemletTrackingView(object):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
-        while not isinstance(
-                curedge.src,
-            (nd.CodeNode, nd.AccessNode, nd.Reduce, nd.LibraryNode)):
+        while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode)):
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -2156,8 +2154,7 @@ class MemletTrackingView(object):
 
         # Prepend outgoing edges until reaching the sink node
         curedge = edge
-        while not isinstance(curedge.dst,
-                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+        while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
@@ -3176,13 +3173,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-        self,
-        wcr,
-        axes,
-        identity=None,
-        schedule=dtypes.ScheduleType.Default,
-        debuginfo=None,
-    ):
+            self,
+            wcr,
+            axes,
+            identity=None,
+            schedule=dtypes.ScheduleType.Default,
+            debuginfo=None,
+    ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
             :param axes: A tuple of axes to reduce the input memlet from, or
@@ -3193,8 +3190,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             :return: A Reduce node
         """
+        import dace.libraries.standard as stdlib  # Avoid import loop
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
+        result = stdlib.Reduce(wcr,
+                               axes,
+                               identity,
+                               schedule=schedule,
+                               debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3351,13 +3353,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Verify that connectors exist
         if (not isinstance(memlet, dace.memlet.EmptyMemlet)
                 and hasattr(edges[0].src, "out_connectors")
-                and isinstance(edges[0].src, nd.CodeNode) and
+                and isinstance(edges[0].src, nd.CodeNode)
+                and not isinstance(edges[0].src, nd.LibraryNode) and
             (src_conn is None or src_conn not in edges[0].src.out_connectors)):
             raise ValueError("Output connector {} does not exist in {}".format(
                 src_conn, edges[0].src.label))
         if (not isinstance(memlet, dace.memlet.EmptyMemlet)
                 and hasattr(edges[-1].dst, "in_connectors")
-                and isinstance(edges[-1].dst, nd.CodeNode) and
+                and isinstance(edges[-1].dst, nd.CodeNode)
+                and not isinstance(edges[-1].dst, nd.LibraryNode) and
             (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
             raise ValueError("Input connector {} does not exist in {}".format(
                 dst_conn, edges[-1].dst.label))
@@ -3741,16 +3745,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         warnings.warn(
                             'WARNING: Use of uninitialized transient "%s" in state %s'
                             % (node.data, self.label))
-
-            if isinstance(node,
-                          nd.Reduce) and (len(self.in_edges(node)) != 1
-                                          or len(self.out_edges(node)) != 1):
-                raise InvalidSDFGNodeError(
-                    "Reduce node must have exactly one input and output edges",
-                    sdfg,
-                    state_id,
-                    nid,
-                )
 
             if (isinstance(node, nd.ConsumeEntry)
                     and "IN_stream" not in node.in_connectors):
@@ -4424,6 +4418,51 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
             parent = sdfg.parent
         sdfg = parent
     return False
+
+
+def devicelevel_block_size(
+        sdfg: SDFG, state: SDFGState,
+        node: dace.graph.nodes.Node) -> Tuple[symbolic.SymExpr]:
+    """ Returns the current thread-block size if the given node is enclosed in
+        a GPU kernel, or None otherwise.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: A tuple of sizes or None if the node is not in device-level 
+                 code.
+    """
+    while sdfg is not None:
+        sdict = state.scope_dict()
+        scope = sdict[node]
+        while scope is not None:
+            if scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                return tuple(scope.map.range.size())
+            elif scope.schedule == dtypes.ScheduleType.GPU_Device:
+                # No thread-block map, use config default
+                return tuple(
+                    int(s) for s in Config.get(
+                        'compiler', 'cuda', 'default_block_size').split(','))
+            elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
+                # Dynamic thread-block map, use configured value
+                return tuple(
+                    int(s)
+                    for s in Config.get('compiler', 'cuda',
+                                        'dynamic_map_block_size').split(','))
+
+            scope = sdict[scope]
+        # Traverse up nested SDFGs
+        if sdfg.parent is not None:
+            if isinstance(sdfg.parent, SDFGState):
+                parent = sdfg.parent.parent
+            else:
+                parent = sdfg.parent
+            state, node = next(
+                (s, n) for s in parent.nodes() for n in s.nodes()
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+        else:
+            parent = sdfg.parent
+        sdfg = parent
+    return None
 
 
 def _replsym(symlist, symrepl):

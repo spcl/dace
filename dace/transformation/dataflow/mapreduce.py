@@ -2,6 +2,7 @@
     transformation. """
 
 from dace import registry
+from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.graph import nodes, nxutil
 from dace.properties import Property, make_properties
@@ -30,7 +31,10 @@ class MapReduceFusion(pm.Transformation):
     _tasklet = nodes.Tasklet('_')
     _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
     _in_array = nodes.AccessNode('_')
-    _reduce = nodes.Reduce('lambda: None', None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce()
+
     _out_array = nodes.AccessNode('_')
 
     @staticmethod
@@ -115,7 +119,7 @@ class MapReduceFusion(pm.Transformation):
 
         # Find which indices should be removed from new memlet
         input_edge = graph.in_edges(reduce_node)[0]
-        axes = reduce_node.axes or list(range(input_edge.data.subset))
+        axes = reduce_node.axes or list(range(len(input_edge.data.subset)))
         array_edge = graph.out_edges(reduce_node)[0]
 
         # Delete relevant edges and nodes
@@ -127,7 +131,7 @@ class MapReduceFusion(pm.Transformation):
             if i not in axes
         ]
         if len(filtered_subset) == 0:  # Output is a scalar
-            filtered_subset = [0]
+            filtered_subset = [(0, 0, 1)]
 
         # Modify edge from tasklet to map exit
         memlet_edge.data.data = out_array.data
@@ -143,19 +147,18 @@ class MapReduceFusion(pm.Transformation):
                    array_edge.data.subset, array_edge.data.veclen,
                    reduce_node.wcr))
 
-        # Create initialization state if necessary
-        if reduce_node.identity is not None and self.no_init is False:
-            init_state = sdfg.add_state_before(graph, 'wcr_init')
+        # Add initialization state as necessary
+        if reduce_node.identity is not None:
+            init_state = sdfg.add_state_before(graph)
             init_state.add_mapped_tasklet(
-                'wcr_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(array_edge.data.subset.size())
-                }, {},
+                'freduce_init',
+                [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2]))
+                 for i, r in enumerate(array_edge.data.subset)], {},
                 'out = %s' % reduce_node.identity, {
                     'out':
                     Memlet.simple(
                         array_edge.data.data, ','.join([
-                            '_o%d' % i
+                            'o%d' % i
                             for i in range(len(array_edge.data.subset))
                         ]))
                 },

@@ -544,52 +544,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
-    @staticmethod
-    def make_reduction(sdfg, state_id, node, output_memlet, dtype,
-                       vector_length_in, vector_length_out, output_type,
-                       reduction_type, callsite_stream, iterators_inner,
-                       input_subset, identity, out_var, in_var):
-        """
-        Generates reduction loop body
-        """
-        axes = node.axes
-
-        # If axes were not defined, use all input dimensions
-        if axes is None:
-            axes = tuple(range(input_subset.dims()))
-
-        # generate library call
-        reduction_cpp = "dace::Reduce<{}, {}, {}, {}<{}>>".format(
-            dtype.ctype, vector_length_in, vector_length_out,
-            REDUCTION_TYPE_TO_HLSLIB[reduction_type], dtype.ctype)
-
-        # Check if this is the first iteration of accumulating into this
-        # location
-
-        is_first_iteration = " && ".join([
-            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
-            for i, axis in enumerate(axes)
-        ])
-        if identity is not None:
-            # If this is the first iteration, set the previous value to be
-            # identity, otherwise read the value from the output location
-            prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
-                                                     is_first_iteration,
-                                                     identity, out_var), sdfg,
-                state_id, node)
-            callsite_stream.write(
-                "{} = {}({}, {});".format(out_var, reduction_cpp, prev_var,
-                                          in_var), sdfg, state_id, node)
-        else:
-            # If this is the first iteration, assign the value read from the
-            # input directly to the output
-            callsite_stream.write(
-                "{} = ({}) ? ({}) : {}({}, {});".format(
-                    out_var, is_first_iteration, in_var, reduction_cpp,
-                    out_var, in_var), sdfg, state_id, node)
-
     def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
                                  kernel_stream, function_stream,
                                  callsite_stream):
