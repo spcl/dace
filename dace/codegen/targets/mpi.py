@@ -124,9 +124,6 @@ void __dace_exit_mpi({params}) {{
             self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
                                                child, function_stream,
                                                callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,

@@ -141,9 +141,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
-                self._dispatcher.dispatch_initialize(sdfg, state, state_id,
-                                                     node, function_stream,
-                                                     callsite_stream)
             # Generate kernel code
             self.generate_kernel(sdfg, state, state.label, subgraphs,
                                  function_stream, callsite_stream)
@@ -164,9 +161,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
-                self._dispatcher.dispatch_initialize(sdfg, state, state_id,
-                                                     node, function_stream,
-                                                     callsite_stream)
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
 
@@ -887,9 +881,6 @@ class FPGACodeGen(TargetCodeGenerator):
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
 
-    def initialize_array(self, *args, **kwargs):
-        pass
-
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
 
@@ -929,7 +920,9 @@ class FPGACodeGen(TargetCodeGenerator):
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(x, (dace.graph.nodes.MapEntry, PipelineEntry))):
+            if (isinstance(
+                    x,
+                (dace.graph.nodes.MapEntry, dace.graph.nodes.PipelineEntry))):
                 # Degenerate loops should not be pipelined
                 fully_degenerate = True
                 for begin, end, skip in x.map.range:
@@ -983,7 +976,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
-            if isinstance(node, PipelineEntry):
+            if isinstance(node, dace.graph.nodes.PipelineEntry):
                 for i in range(len(node.map.range)):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
@@ -1007,7 +1000,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
 
             # Generate nested loops
-            if not isinstance(node, PipelineEntry):
+            if not isinstance(node, dace.graph.nodes.PipelineEntry):
 
                 if is_innermost and not fully_degenerate:
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
@@ -1103,8 +1096,6 @@ class FPGACodeGen(TargetCodeGenerator):
             allocated.add(child.data)
             self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
                                                None, result)
-            self._dispatcher.dispatch_initialize(sdfg, dfg, state_id, child,
-                                                 None, result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
@@ -1117,7 +1108,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # This was generated as unrolled processing elements, no need to
             # generate anything here
             return
-        if isinstance(node, PipelineExit):
+        if isinstance(node, dace.graph.nodes.PipelineExit):
             flat_it = node.pipeline.iterator_str()
             bound = node.pipeline.loop_bound_str()
             pipeline = node.pipeline
@@ -1141,168 +1132,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
-
-    def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-
-        end_braces = 0
-
-        axes = node.axes
-        input_memlet = dfg.in_edges(node)[0].data
-        src_data = sdfg.arrays[input_memlet.data]
-        output_edge = dfg.out_edges(node)[0]
-        output_memlet = output_edge.data
-        dst_data = sdfg.arrays[output_memlet.data]
-
-        output_type = self.make_vector_type(dst_data.dtype,
-                                            output_memlet.veclen, False)
-
-        # If axes were not defined, use all input dimensions
-        input_dims = input_memlet.subset.dims()
-        output_dims = output_memlet.subset.data_dims()
-        if axes is None:
-            axes = tuple(range(input_dims))
-        output_axes = [a for a in range(input_dims) if a not in axes]
-
-        # Obtain variable names per output and reduction axis
-        axis_vars = []
-        unroll_dim = []
-        octr = 0
-        for d in range(input_dims):
-            if d in axes:
-                axis_vars.append('__i%d' % d)
-            else:
-                axis_vars.append('__o%d' % octr)
-                octr += 1
-            if ((isinstance(src_data, dace.data.Stream)
-                 and src_data.is_stream_array()) or
-                (isinstance(src_data, dace.data.Array) and
-                 src_data.storage == dace.dtypes.StorageType.FPGA_Registers)):
-                # Unroll reads from registers and stream arrays
-                unroll_dim.append(True)
-            else:
-                unroll_dim.append(False)
-
-        # We want to pipeline the last non-unrolled dimension
-        pipeline_dim = -1
-        for i in itertools.chain(axes, output_axes):
-            if not unroll_dim[i]:
-                pipeline_dim = i
-
-        if node.identity is not None:
-            identity = sym2cpp(node.identity)
-        else:
-            identity = None
-
-        # Determine reduction type
-        reduction_type = operations.detect_reduction_type(node.wcr)
-        if reduction_type == dace.dtypes.ReductionType.Custom:
-            raise NotImplementedError("Custom reduction for FPGA is NYI")
-
-        # Initialize accumulator variable if we're collapsing to a single value
-        all_axes_collapsed = (len(axes) == input_dims)
-        if all_axes_collapsed:
-            accumulator = "_{}_accumulator".format(output_memlet.data)
-            init_value = ""
-            if identity is not None:
-                init_value = " = " + identity
-            elif reduction_type == dace.dtypes.ReductionType.Sum:
-                # Set initial value to zero. Helpful for single cycle clock accumulator in Intel.
-                init_value = " = 0"
-            callsite_stream.write(
-                "{} {}{};".format(output_type, accumulator, init_value), sdfg,
-                state_id, node)
-
-        # Generate inner loops (for each collapsed dimension)
-        input_subset = input_memlet.subset
-        iterators_inner = ["__i{}".format(axis) for axis in axes]
-        for i, axis in enumerate(axes):
-            if axis == pipeline_dim:
-                self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                state_id, node)
-                self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
-                                               node)
-            if unroll_dim[axis]:
-                self.generate_unroll_loop_pre(callsite_stream, None, sdfg,
-                                              state_id, node)
-            callsite_stream.write(
-                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'
-                .format(var=iterators_inner[i],
-                        begin=input_subset[axis][0],
-                        end=input_subset[axis][1] + 1,
-                        skip=input_subset[axis][2]), sdfg, state_id, node)
-            if axis == pipeline_dim:
-                self.generate_pipeline_loop_post(callsite_stream, sdfg,
-                                                 state_id, node)
-                self.generate_flatten_loop_post(callsite_stream, sdfg,
-                                                state_id, node)
-            if unroll_dim[axis]:
-                self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                               state_id, node)
-            end_braces += 1
-
-        # Generate outer loops (over different output locations)
-        output_subset = output_memlet.subset
-        iterators_outer = ["__o{}".format(axis) for axis in range(output_dims)]
-        for i, axis in enumerate(output_axes):
-            if axis == pipeline_dim:
-                self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                state_id, node)
-                self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id,
-                                               node)
-            if unroll_dim[axis]:
-                self.generate_unroll_loop_pre(callsite_stream, None, sdfg,
-                                              state_id, node)
-            callsite_stream.write(
-                'for (size_t {var} = {begin}; {var} < {end}; {var} += {skip}) {{'
-                .format(var=iterators_outer[i],
-                        begin=output_subset[i][0],
-                        end=output_subset[i][1] + 1,
-                        skip=output_subset[i][2]), sdfg, state_id, node)
-            if axis == pipeline_dim:
-                self.generate_pipeline_loop_post(callsite_stream, sdfg,
-                                                 state_id, node)
-                self.generate_flatten_loop_post(callsite_stream, sdfg,
-                                                state_id, node)
-            if unroll_dim[axis]:
-                self.generate_unroll_loop_post(callsite_stream, None, sdfg,
-                                               state_id, node)
-            end_braces += 1
-
-        # Input and output variables
-        out_var = (accumulator if all_axes_collapsed else cpp_array_expr(
-            sdfg, output_memlet, offset=iterators_outer,
-            relative_offset=False))
-        in_var = cpp_array_expr(sdfg,
-                                input_memlet,
-                                offset=axis_vars,
-                                relative_offset=False)
-
-        # generate reduction code
-
-        self.make_reduction(sdfg, state_id, node, output_memlet,
-                            dst_data.dtype, input_memlet.veclen,
-                            output_memlet.veclen, output_type, reduction_type,
-                            callsite_stream, iterators_inner, input_subset,
-                            identity, out_var, in_var)
-
-        # Generate closing braces
-        for i in range(end_braces):
-            callsite_stream.write('}', sdfg, state_id, node)
-
-        if all_axes_collapsed:
-            dst_expr = output_memlet.data
-            offset = cpp_offset_expr(dst_data,
-                                     output_memlet.subset,
-                                     packed_veclen=output_memlet.veclen)
-            if offset:
-                dst_expr += " + " + offset
-            def_type = self._dispatcher.defined_vars.get(output_memlet.data)
-            callsite_stream.write(
-                self.make_write(def_type, dst_data.dtype.ctype,
-                                output_memlet.data, output_memlet.veclen,
-                                dst_expr, "", out_var, output_memlet.wcr,
-                                False, 1), sdfg, state_id, node)
 
     def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
                         function_stream, callsite_stream):
@@ -1430,101 +1259,3 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         for arr_node in nested_global_transients:
             self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
                                                None, host_code_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, None, arr_node,
-                                                 None, host_code_stream)
-
-
-# ------------------------------------------------------------------------------
-
-
-@dace.serialize.serializable
-class PipelineEntry(dace.graph.nodes.MapEntry):
-    @staticmethod
-    def map_type():
-        return Pipeline
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@dace.serialize.serializable
-class PipelineExit(dace.graph.nodes.MapExit):
-    @staticmethod
-    def map_type():
-        return Pipeline
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@make_properties
-class Pipeline(dace.graph.nodes.Map):
-    """ This a convenience-subclass of Map that allows easier implementation of
-        loop nests (using regular Map indices) that need a constant-sized
-        initialization and drain phase (e.g., N*M + c iterations), which would
-        otherwise need a flattened one-dimensional map.
-    """
-    init_size = Property(dtype=int,
-                         desc="Number of initialization iterations.")
-    init_overlap = Property(
-        dtype=int,
-        desc="Whether to increment regular map indices during initialization.")
-    drain_size = Property(dtype=int, desc="Number of drain iterations.")
-    drain_overlap = Property(
-        dtype=int,
-        desc="Whether to increment regular map indices during pipeline drain.")
-
-    def __init__(self,
-                 *args,
-                 init_size=0,
-                 init_overlap=False,
-                 drain_size=0,
-                 drain_overlap=False,
-                 **kwargs):
-        super(Pipeline, self).__init__(*args, **kwargs)
-        self.init_size = init_size
-        self.init_overlap = init_overlap
-        self.drain_size = drain_size
-        self.drain_overlap = drain_overlap
-
-    def iterator_str(self):
-        return "__" + "".join(self.params)
-
-    def loop_bound_str(self):
-        bound = 1
-        for begin, end, step in self.range:
-            bound *= (step + end - begin) // step
-        # Add init and drain phases when relevant
-        add_str = (" + " + sym2cpp(self.init_size)
-                   if self.init_size != 0 and not self.init_overlap else "")
-        add_str += (" + " + sym2cpp(self.drain_size)
-                    if self.drain_size != 0 and not self.drain_overlap else "")
-        return sym2cpp(bound) + add_str
-
-    def init_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           initialization phase."""
-        if self.init_size <= 0:
-            raise ValueError("No init condition exists for " + self.label)
-        return self.iterator_str() + "_init"
-
-    def drain_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           draining phase."""
-        if self.drain_size <= 0:
-            raise ValueError("No drain condition exists for " + self.label)
-        return self.iterator_str() + "_drain"
-
-
-PipelineEntry = indirect_properties(Pipeline,
-                                    lambda obj: obj.map)(PipelineEntry)

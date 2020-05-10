@@ -203,8 +203,7 @@ def make_nested_sdfg(parent):
                           memlet=dace.memlet.Memlet.simple(
                               b_buffer,
                               "0",
-                              wcr_str="lambda a, b: a + b",
-                              wcr_identity=0))
+                              wcr_str="lambda a, b: a + b"))
 
     return sdfg
 
