@@ -1,5 +1,6 @@
 from six import StringIO
 import collections
+import enum
 import functools
 import itertools
 import re
@@ -24,6 +25,11 @@ from dace.codegen.targets.cpp import (cpp_offset_expr, cpp_array_expr, sym2cpp,
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
+
+
+class MemoryType(enum.Enum):
+    DDR = enum.auto()
+    HBM = enum.auto()
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -54,6 +60,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
+        self._bank_assignments = {}  # {(data name, sdfg): type, id}
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
@@ -477,6 +484,8 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg = ""
+                        # We just need some unique ID here, so count how many
+                        # assignments have been made so far
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
@@ -488,6 +497,12 @@ class FPGACodeGen(TargetCodeGenerator):
                             memory_bank_arg = (
                                 "hlslib::ocl::MemoryBank::bank{}, ".format(
                                     bank))
+                            # (memory type, bank id)
+                            self._bank_assignments[(dataname,
+                                                    sdfg)] = (MemoryType.DDR,
+                                                              bank)
+                        else:
+                            self._bank_assignments[(dataname, sdfg)] = None
                         result.write(
                             "auto {} = dace::fpga::_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
