@@ -6,10 +6,10 @@ import dace.library
 import dace.properties
 import dace.graph.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts,
+from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts)
+from dace.libraries.blas.nodes.matmul import (_get_matmul_inputs,
                                               _get_batchmm_opts,
                                               _get_codegen_gemm_opts)
-from dace.libraries.blas.nodes.matmul import _get_matmul_inputs
 from .. import environments
 
 

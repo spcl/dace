@@ -7,91 +7,9 @@ import dace.library
 import dace.graph.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
-from dace.libraries.blas.nodes.matmul import _get_matmul_inputs
+from dace.libraries.blas.nodes.matmul import (_get_matmul_inputs,
+                                              _get_codegen_gemm_opts)
 from .. import environments
-
-
-def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape,
-                      c_strides) -> Dict[str, Any]:
-    """
-    Detects whether a matrix multiplication is a batched matrix multiplication
-    and returns its parameters (strides, batch size), or an empty dictionary if
-    batched multiplication is not detected.
-    :param a: Data descriptor for the first tensor.
-    :param b: Data descriptor for the second tensor.
-    :param c: Data descriptor for the output tensor (optional).
-    :return: A dictionary with the following keys: sa,sb,sc (strides for a, b,
-             and c); and b (batch size).
-    """
-    if len(a_shape) > 3 or len(b_shape) > 3 or (c_shape and len(c_shape) > 3):
-        raise ValueError('Tensor dimensions too large for (batched) matrix '
-                         'multiplication')
-    if len(a_shape) <= 2 and len(b_shape) <= 2:
-        return {}
-
-    batch = None
-    stride_a, stride_b, stride_c = 0, 0, 0
-    if len(a_shape) == 3:
-        batch = a_shape[0]
-        stride_a = a_strides[0]
-    if len(b_shape) == 3:
-        if batch and batch != b_shape[0]:
-            raise ValueError('Batch size mismatch for matrix multiplication')
-        batch = b_shape[0]
-        stride_b = b_strides[0]
-    if c_shape and len(c_shape) == 3:
-        if batch and batch != c_shape[0]:
-            raise ValueError('Batch size mismatch for matrix multiplication')
-        batch = c_shape[0]
-        stride_c = c_strides[0]
-
-    if batch is None:
-        return {}
-
-    return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch}
-
-
-def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
-                           cdtype, func) -> Dict[str, Any]:
-    """ Get option map for GEMM code generation (with column-major order). """
-    # Avoid import loops
-    from dace.codegen.targets.common import sym2cpp
-
-    (_, _, ashape, astride), (_, _, bshape,
-                              bstride) = _get_matmul_inputs(node, state, sdfg)
-    opt = get_gemm_opts(astride, bstride, cdesc.strides)
-    bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cdesc.shape,
-                             cdesc.strides)
-    opt['x'] = '_a'
-    opt['y'] = '_b'
-    opt['M'] = sym2cpp(ashape[-2])
-    opt['N'] = sym2cpp(bshape[-1])
-    opt['K'] = sym2cpp(ashape[-1])
-    opt['lda'] = sym2cpp(opt['lda'])
-    opt['ldb'] = sym2cpp(opt['ldb'])
-    opt['ldc'] = sym2cpp(opt['ldc'])
-
-    if opt['swap']:
-        if bopt:
-            bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
-        opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
-        opt['x'], opt['y'] = opt['y'], opt['x']
-        opt['ta'], opt['tb'] = opt['tb'], opt['ta']
-        opt['M'], opt['N'] = opt['N'], opt['M']
-
-    opt['alpha'] = alpha
-    opt['beta'] = beta
-    opt['dtype'] = cdtype
-    opt['func'] = func
-    if bopt:
-        opt['stride_a'] = sym2cpp(bopt['sa'])
-        opt['stride_b'] = sym2cpp(bopt['sb'])
-        opt['stride_c'] = sym2cpp(bopt['sc'])
-        opt['BATCH'] = sym2cpp(bopt['b'])
-    else:
-        opt['BATCH'] = None
-
-    return opt
 
 
 def _is_complex(dtype):
