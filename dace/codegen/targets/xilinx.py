@@ -167,9 +167,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                         memory_bank) in self._interface_assignments.items():
                     if kernel_name != name:
                         continue
-                    bank_assignment_code.append("{},{},{},{}".format(
-                        kernel_name, interface_name, memory_type.name,
-                        memory_bank))
+                    bank_assignment_code.append("{},{},{}".format(
+                        interface_name, memory_type.name, memory_bank))
             # Create file even if there are no assignments
             kernel_code_objs.append(
                 CodeObject("{}_memory_interfaces".format(name),
