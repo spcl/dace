@@ -28,10 +28,13 @@ def live_sets(sdfg):
         for a in state.all_transients():
             arrays[a] += 1
 
+    shared_transients = set()
     transients = set()
     for a in arrays:
         if arrays[a] == 1:
             transients.add(a)
+        if arrays[a] > 1:
+            shared_transients.add(a)
 
     #for each state
     for state in sdfg.states():
@@ -48,7 +51,10 @@ def live_sets(sdfg):
         for n in scope_dict:
             if n is not None:
                 G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_node(n))])
-                G.remove_nodes_from(scope_dict[n])
+                for m in scope_dict[n]:
+                    if m
+
+                G.remove_nodes_from(scope_dict[n]) #Todo: remove transients for AccessNodes removed here
 
         # Remove all nodes that are not AccessNodes or have incoming wcr edges
         # and connect their predecessors and successors
@@ -96,21 +102,26 @@ def live_sets(sdfg):
                         except:
                             continue
 
-        #### MAX LIVE SET
+        #todo: This is a fix, arrays are removed when mappings are collapsed. Need to account for that
+        for a in list(alloc_dealloc.keys()):
+            if alloc_dealloc[a][0] == [] or alloc_dealloc[a][1] == []:
+                alloc_dealloc.pop(a)
+                transients.remove(a)
 
+        #### MAX LIVE SET
         import matplotlib.pyplot as plt
         nx.draw_networkx(G, with_labels=True)
         plt.show()
 
         # Get longest path
-        longest_path = nx.dag_longest_path(G)
+        longest_path = nx.dag_longest_path(G) #evtl nicht mal wirklich nötig
 
         # Generate levels (maybe remove non-transients)
-        levels = {}
+        levels = []
         node_level = {}
 
         for i in range(len(longest_path)):
-            levels[i] = set()
+            levels.append(set())
         for n in G.nodes():
             node_level[n] = float("inf")
         for s in [node for node in G.nodes() if G.in_degree(node) == 0]:
@@ -118,15 +129,60 @@ def live_sets(sdfg):
             node_level[s] = 0
 
 
-
         for l in range(0, len(longest_path)):
             for n in levels[l]:
                 for s in G.successors(n):
                     if all([node_level[x] < l+1 for x in G.predecessors(s)]):
                         levels[l+1].add(s)
-                        node_level[s] = l
+                        node_level[s] = l+1
         print('levels: ', levels)
 
         # Find live set for each level
-        
+
+        # For each node add another entry in levels to mark end of liveness
+        transient_levels = []
+
+        for i in range(len(levels)):
+            transient_levels.append(set())
+
+        for t in transients:
+            start, end = alloc_dealloc[t]
+            transient_levels[node_level[start[0]]].add(t)
+            transient_levels[node_level[end[0]]].add(t)
+
+        print(transient_levels)
+
         # Take maximum of those as maximum live set
+        liveSet = set()
+        size = 0
+        maxLiveSet = set()
+        maxSize = 0
+
+        for l in range(len(transient_levels)):
+            new = transient_levels[l] - liveSet
+            old = liveSet.intersection(transient_levels[l])
+
+            # add new occuring arrays to LiveSet of this level
+            for t in new:
+                liveSet.add(t)
+                size += sdfg.arrays[t].total_size
+
+            # compare LiveSet of this level to maxLiveSet
+            if size > maxSize:
+                maxSize = size
+                maxLiveSet = liveSet.copy()
+
+            # remove arrays that appeared a second time, marking end of liveness
+            for t in old:
+                liveSet.remove(t)
+                size -= sdfg.arrays[t].total_size
+
+        print('MaxLiveSet:', maxLiveSet, 'maxSize:', maxSize)
+        size = 0
+        for t in transients:
+            size += sdfg.arrays[t].total_size
+
+        print('memory_before:', size)
+    # for all states add maxLiveSets together and add transients used in multiple states
+
+    # generate alloc_dealloc table for whole graph / specify state and node. Null value if need to be allocated at beginning.
