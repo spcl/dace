@@ -150,20 +150,29 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         are_assigned = [
             v is not None for v in self._interface_assignments.values()
         ]
+        bank_assignment_code = []
         if any(are_assigned):
             if not all(are_assigned):
                 raise RuntimeError("Some, but not all global memory arrays "
                                    "were assigned to memory banks: {}".format(
                                        self._interface_assignments))
-            bank_assignment_code = []
-            for (kernel_name, interface_name), (
-                    memory_type,
-                    memory_bank) in self._interface_assignments.items():
-                bank_assignment_code.append("{},{},{},{}".format(
-                    kernel_name, interface_name, memory_type.name,
-                    memory_bank))
+            are_assigned = True
+        else:
+            are_assigned = False
+        for name, _ in self._host_codes:
+            # Only iterate over assignments if any exist
+            if are_assigned:
+                for (kernel_name, interface_name), (
+                        memory_type,
+                        memory_bank) in self._interface_assignments.items():
+                    if kernel_name != name:
+                        continue
+                    bank_assignment_code.append("{},{},{},{}".format(
+                        kernel_name, interface_name, memory_type.name,
+                        memory_bank))
+            # Create file even if there are no assignments
             kernel_code_objs.append(
-                CodeObject("{}_memory_interfaces".format(self._program_name),
+                CodeObject("{}_memory_interfaces".format(name),
                            "\n".join(bank_assignment_code),
                            "csv",
                            XilinxCodeGen,
