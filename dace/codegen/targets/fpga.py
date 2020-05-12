@@ -484,8 +484,6 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg = ""
-                        # We just need some unique ID here, so count how many
-                        # assignments have been made so far
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
