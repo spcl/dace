@@ -60,7 +60,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
-        self._bank_assignments = {}  # {(data name, sdfg): type, id}
+        self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
