@@ -130,8 +130,7 @@ def make_compute_state(sdfg):
 
     wcr_memlet = dace.memlet.Memlet.simple(y_buffer,
                                            "n",
-                                           wcr_str="lambda a, b: a + b",
-                                           wcr_identity=0)
+                                           wcr_str="lambda a, b: a + b")
 
     state.add_memlet_path(a,
                           cols_entry,

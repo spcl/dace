@@ -614,9 +614,6 @@ class TaskletTransformer(ExtNodeTransformer):
 
         self.extcode = None
         self.lang = lang
-        self.globalcode = ''
-        self.initcode = ''
-        self.exitcode = ''
         self.location = location
 
         self.nested = nested
@@ -662,9 +659,6 @@ class TaskletTransformer(ExtNodeTransformer):
                                    set(self.outputs.keys()),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
-                                   code_global=self.globalcode,
-                                   code_init=self.initcode,
-                                   code_exit=self.exitcode,
                                    location=self.location,
                                    debuginfo=locinfo)
 
@@ -884,7 +878,6 @@ class TaskletTransformer(ExtNodeTransformer):
                         out_memlet.num_accesses = memlet.num_accesses
                         out_memlet.veclen = memlet.veclen
                         out_memlet.wcr = memlet.wcr
-                        out_memlet.wcr_identity = memlet.wcr_identity
                         out_memlet.wcr_conflict = memlet.wcr_conflict
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
@@ -2802,8 +2795,7 @@ class ProgramVisitor(ExtNodeVisitor):
                        src_expr.accesses,
                        subsets.Range.from_array(self.sdfg.arrays[src_name]),
                        1,
-                       wcr=dst_expr.wcr,
-                       wcr_identity=dst_expr.wcr_identity))
+                       wcr=dst_expr.wcr))
             return
 
         # Calling reduction or other SDFGs / functions
@@ -3099,8 +3091,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('slice_%s_%d' % (array, node.lineno))
         rnode = self.last_state.add_read(array)
         if _subset_has_indirection(expr.subset):
-            memlet = Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                            expr.wcr_identity)
+            memlet = Memlet(array, expr.accesses, expr.subset, 1, expr.wcr)
             tmp = self.sdfg.temp_data_name()
             return add_indirection_subgraph(self.sdfg, self.last_state, rnode,
                                             None, memlet, tmp, self)
@@ -3114,7 +3105,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.last_state.add_nedge(
                 rnode, wnode,
                 Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                       expr.wcr_identity, other_subset))
+                       other_subset))
             return tmp
 
     ##################################

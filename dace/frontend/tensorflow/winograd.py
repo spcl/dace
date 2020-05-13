@@ -256,15 +256,6 @@ def mm(
             ldb=ldb,
             ldc=ldc,
         ),
-        #     code_global="""
-        # #include <cublas_v2.h>
-        # """,
-        #    # Initialization code (called in __dace_init())
-        #    code_init="""
-        # """,
-        #    # Teardown code (called in __dace_exit())
-        #    code_exit="""
-        # """,
         language=dace.dtypes.Language.CPP,
     )
 
