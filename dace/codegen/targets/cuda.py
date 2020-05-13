@@ -1217,21 +1217,21 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         grid_size = grid_size + [1] * (3 - len(grid_size))
 
         # Obtain thread-block maps for case (2)
+        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
         tb_maps = [
-            node.map for node, parent in dfg_scope.scope_dict().items()
-            if parent == kernelmap_entry and isinstance(node, nodes.EntryNode)
-            and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
-                                  dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+            node.map for node in subgraph.nodes()
+            if isinstance(node, nodes.EntryNode) and node.schedule in (
+                dtypes.ScheduleType.GPU_ThreadBlock,
+                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
         ]
         # Append thread-block maps from nested SDFGs
-        for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
+        for node in subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 set_default_schedule_and_storage_types(node.sdfg,
                                                        node.schedule)
 
                 tb_maps.extend([
-                    n.map for state in node.sdfg.nodes()
-                    for n in state.nodes()
+                    n.map for n, _ in node.sdfg.all_nodes_recursive()
                     if isinstance(n, nodes.MapEntry) and n.schedule in (
                         dtypes.ScheduleType.GPU_ThreadBlock,
                         dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
