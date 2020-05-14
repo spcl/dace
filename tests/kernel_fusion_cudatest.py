@@ -43,8 +43,7 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
         dace.ScheduleType.GPU_Device)
 
     tasklet1 = state.add_tasklet('code_a', {'a'}, {'t'}, 't = a * 5')
-    tasklet2 = state.add_tasklet('code_b', {'t'}, {'b'},
-                                 'b = t + 1;  printf("Hello from %d\\n", j);')
+    tasklet2 = state.add_tasklet('code_b', {'t'}, {'b'}, 'b = t + 1')
 
     a = state.add_access('A')
     tmp = state.add_access('tmp')
@@ -145,19 +144,7 @@ def test_fused_mixedtb():
     _check_results(sdfg)
 
 
-def test_mismatch_tb():
-    result = False
-    try:
-        sdfg = _construct_graph(256, 64)
-        _check_results(sdfg)
-    except:
-        print('Exception successfully caught')
-        result = True
-    assert result is True
-
-
 if __name__ == '__main__':
     test_fused_notb()
     test_fused_tb()
     test_fused_mixedtb()
-    test_mismatch_tb()
