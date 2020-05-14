@@ -53,11 +53,6 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                        callsite_stream):
         callsite_stream.write("// allocate array\n", sdfg, state_id, node)
 
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        callsite_stream.write("// initialize_array " + node.data + "\n", sdfg,
-                              state_id, node)
-
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         callsite_stream.write("// deallocate_array", sdfg, state_id, node)

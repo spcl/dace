@@ -10,8 +10,7 @@ class CUDAEventProvider(InstrumentationProvider):
         global_stream.write('#include <cuda_runtime.h>')
 
         # For other file headers
-        sdfg.set_global_code(sdfg.global_code.code +
-                             '\n#include <cuda_runtime.h>')
+        sdfg.append_global_code('\n#include <cuda_runtime.h>', None)
 
     def _idstr(self, sdfg, state, node):
         if state is not None:

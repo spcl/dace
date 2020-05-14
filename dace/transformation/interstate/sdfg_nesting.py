@@ -180,13 +180,12 @@ class InlineSDFG(pattern_matching.Transformation):
         # Collect and update top-level SDFG metadata
 
         # Global/init/exit code
-        if nsdfg.global_code:
-            sdfg.set_global_code(sdfg.global_code.code +
-                                 nsdfg.global_code.code)
-        if nsdfg.init_code:
-            sdfg.set_init_code(sdfg.init_code.code + nsdfg.init_code.code)
-        if nsdfg.exit_code:
-            sdfg.set_exit_code(sdfg.exit_code.code + nsdfg.exit_code.code)
+        for loc, code in nsdfg.global_code.items():
+            sdfg.append_global_code(code.code, loc)
+        for loc, code in nsdfg.init_code.items():
+            sdfg.append_init_code(code.code, loc)
+        for loc, code in nsdfg.exit_code.items():
+            sdfg.append_exit_code(code.code, loc)
 
         # Constants
         for cstname, cstval in nsdfg.constants.items():

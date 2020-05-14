@@ -324,70 +324,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             "Unimplemented write type: {}".format(defined_type))
 
     @staticmethod
-    def make_reduction(sdfg, state_id, node, output_memlet, dtype,
-                       vector_length_in, vector_length_out, output_type,
-                       reduction_type, callsite_stream, iterators_inner,
-                       input_subset, identity, out_var, in_var):
-        """
-        Generates reduction loop body
-        """
-        axes = node.axes
-
-        # If axes were not defined, use all input dimensions
-        if axes is None:
-            axes = tuple(range(input_subset.dims()))
-
-        # Check if this is the first iteration of accumulating into this
-        # location
-
-        is_first_iteration = " && ".join([
-            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
-            for i, axis in enumerate(axes)
-        ])
-
-        if identity is not None:
-            # If this is the first iteration, set the previous value to be
-            # identity, otherwise read the value from the output location
-            prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
-                                                     is_first_iteration,
-                                                     identity, out_var), sdfg,
-                state_id, node)
-            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = {} {} {};".format(
-                        out_var, prev_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
-            else:
-                # use max/min opencl builtins
-                callsite_stream.write(
-                    "{} = {}{}({}, {});".format(
-                        out_var, ("f" if output_type == "float"
-                                  or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var,
-                        in_var), sdfg, state_id, node)
-
-        else:
-            # If this is the first iteration, assign the value read from the
-            # input directly to the output
-            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {} {} {};".format(
-                        out_var, is_first_iteration, in_var, out_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
-            else:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {}{}({}, {});".format(
-                        out_var, is_first_iteration, in_var,
-                        ("f" if output_type == "float"
-                         or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], out_var,
-                        in_var), sdfg, state_id, node)
-
-    @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
                                    node):
         kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
@@ -424,9 +360,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                callsite_stream, kernel_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 callsite_stream,
-                                                 kernel_stream)
 
         kernel_stream.write("\n")
 
@@ -628,9 +561,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream,
                                                module_body_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 module_stream,
-                                                 module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
@@ -1048,15 +978,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         # Not [], "" or None
         if not node.code:
             return ''
-        # Not [], "" or None
-        if node.code_global and node.code_global.code:
-            function_stream.write(
-                codeblock_to_cpp(node.code_global),
-                sdfg,
-                state_id,
-                node,
-            )
-            function_stream.write("\n", sdfg, state_id, node)
 
         # If raw C++ code, return the code directly
         if node.language != dtypes.Language.Python:

@@ -3,6 +3,7 @@ import numpy as np
 from dace.config import Config
 import dace.library
 import dace.properties
+from dace.symbolic import symstr
 import dace.graph.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.properties import Property
@@ -64,7 +65,6 @@ class ExpandGemmPure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
-        state = sdfg.add_state(node.label + "_state")
 
         ((edge_a, outer_array_a, shape_a), (edge_b, outer_array_b, shape_b),
          c_inputs) = _get_gemm_inputs(node, parent_state, parent_sdfg)
@@ -112,6 +112,9 @@ class ExpandGemmPure(ExpandTransformation):
             mul_program = "__out = {} * __a * __b".format(
                 _cast_to_dtype_str(node.alpha, dtype_a))
 
+        init_state = sdfg.add_state(node.label + "_initstate")
+        state = sdfg.add_state_after(init_state, node.label + "_state")
+
         if c_inputs is None or node.beta == 0:
             mul_out, mul_out_array = "_y", array_y
             output_nodes = None
@@ -122,7 +125,20 @@ class ExpandGemmPure(ExpandTransformation):
             access_tmp = state.add_read(tmp)
             output_nodes = {mul_out: access_tmp}
 
-        # multiplication map
+        # Initialization map
+        init_state.add_mapped_tasklet(
+            'gemm_init',
+            {'_o%d' % i: '0:%s' % symstr(d)
+             for i, d in enumerate(shape_y)}, {},
+            'out = 0', {
+                'out':
+                dace.Memlet.simple(
+                    mul_out, ','.join(
+                        ['_o%d' % i for i in range(len(shape_y))]))
+            },
+            external_edges=True)
+
+        # Multiplication map
         state.add_mapped_tasklet(
             "_GEMM_",
             {"__i%d" % i: "0:%s" % s
@@ -136,10 +152,8 @@ class ExpandGemmPure(ExpandTransformation):
              },
             mul_program, {
                 "__out":
-                dace.Memlet.simple(mul_out,
-                                   "__i0, __i1",
-                                   wcr_str="lambda x, y: x + y",
-                                   wcr_identity=0)
+                dace.Memlet.simple(
+                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
             },
             external_edges=True,
             output_nodes=output_nodes)
