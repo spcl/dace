@@ -187,6 +187,7 @@ runall() {
     runtestargs library/matmul_cudatest.py
 
     runtestargs dynamic_tb_map_cudatest.py
+    runtestargs kernel_fusion_cudatest.py
 }
 
 
