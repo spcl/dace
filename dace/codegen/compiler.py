@@ -228,7 +228,9 @@ class CompiledSDFG(object):
                     print(
                         'WARNING: Casting scalar argument "%s" from %s to %s' %
                         (a, type(arg).__name__, atype.dtype.type))
-            elif isinstance(atype, dt.Array) and atype.dtype.type != arg.dtype:
+            elif isinstance(
+                    atype,
+                    dt.Array) and atype.dtype.as_numpy_dtype() != arg.dtype:
                 print('WARNING: Passing %s array argument "%s" to a %s array' %
                       (arg.dtype, a, atype.dtype.type.__name__))
 
