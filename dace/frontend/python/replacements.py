@@ -516,20 +516,22 @@ def _argminmax(sdfg: SDFG,
             inputs={
                 '__in':
                 Memlet.simple(
-                    reduced_structs, ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
+                    reduced_structs, ','.join('__i%d' % i
+                                              for i in range(len(a_arr.shape))
+                                              if i != axis))
             },
             code="__out_val = __in.val\n__out_idx = __in.idx",
             outputs={
                 '__out_val':
                 Memlet.simple(
-                    outval,
-                    ','.join('__i%d' % i for i in range(len(a_arr.shape))
-                             if i != axis)),
+                    outval, ','.join('__i%d' % i
+                                     for i in range(len(a_arr.shape))
+                                     if i != axis)),
                 '__out_idx':
                 Memlet.simple(
-                    outidx,
-                    ','.join('__i%d' % i for i in range(len(a_arr.shape))
-                             if i != axis))
+                    outidx, ','.join('__i%d' % i
+                                     for i in range(len(a_arr.shape))
+                                     if i != axis))
             },
             external_edges=True)
 
@@ -831,7 +833,6 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
-    # TODO: Apply numpy broadcast rules
     if len(arr1.shape) > 3 or len(arr2.shape) > 3:
         raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
                           'not supported')

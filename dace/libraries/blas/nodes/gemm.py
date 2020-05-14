@@ -10,6 +10,7 @@ from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
 from dace.libraries.blas.nodes.matmul import (_get_matmul_inputs,
                                               _get_codegen_gemm_opts)
 from .. import environments
+import numpy as np
 
 
 def _is_complex(dtype):
@@ -45,16 +46,14 @@ class ExpandGemmPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a), (edge_b, outer_array_b, shape_b),
-         c_inputs) = _get_matmul_inputs(node, parent_state, parent_sdfg)
+        ((edge_a, outer_array_a, shape_a, strides_a),
+         (edge_b, outer_array_b, shape_b,
+          strides_b)) = _get_matmul_inputs(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_y = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a,
+        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a,
                                                          dtype_b).type]
-        if c_inputs is not None:
-            edge_c, outer_array_c, shape_c = c_inputs
-            dtype_c = outer_array_c.dtype.type
 
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
@@ -70,7 +69,7 @@ class ExpandGemmPure(ExpandTransformation):
                 or trans_shape_a[1] != trans_shape_b[0]):
             raise SyntaxError("Matrix sizes must match")
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
-        shape_y = (M, N)
+        shape_c = (M, N)
 
         if outer_array_a.storage != outer_array_b.storage:
             raise ValueError("Input matrices must have same storage")
@@ -78,12 +77,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, storage=storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, storage=storage)
-        if c_inputs is not None:
-            _, array_c = sdfg.add_array("_c",
-                                        shape_c,
-                                        dtype_c,
-                                        storage=storage)
-        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, storage=storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, storage=storage)
 
         if node.alpha == 1.0:
             mul_program = "__out = __a * __b"
@@ -94,12 +88,12 @@ class ExpandGemmPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if c_inputs is None or node.beta == 0:
-            mul_out, mul_out_array = "_y", array_y
+        if node.beta == 0:
+            mul_out, mul_out_array = "_c", array_c
             output_nodes = None
         else:
             mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-                shape_y, dtype_y, storage=storage)
+                shape_c, dtype_c, storage=storage)
 
             access_tmp = state.add_read(tmp)
             output_nodes = {mul_out: access_tmp}
@@ -108,12 +102,12 @@ class ExpandGemmPure(ExpandTransformation):
         init_state.add_mapped_tasklet(
             'gemm_init',
             {'_o%d' % i: '0:%s' % symstr(d)
-             for i, d in enumerate(shape_y)}, {},
+             for i, d in enumerate(shape_c)}, {},
             'out = 0', {
                 'out':
                 dace.Memlet.simple(
                     mul_out, ','.join(
-                        ['_o%d' % i for i in range(len(shape_y))]))
+                        ['_o%d' % i for i in range(len(shape_c))]))
             },
             external_edges=True)
 
@@ -137,20 +131,18 @@ class ExpandGemmPure(ExpandTransformation):
             external_edges=True,
             output_nodes=output_nodes)
 
-        if c_inputs is not None and node.beta != 0:
+        if node.beta != 0:
             add_program = "__y = ({} * __c) + __tmp".format(
                 _cast_to_dtype_str(node.beta, dtype_a))
 
             # manually broadcasting C to [M, N]
-            if shape_c == [M, N]:
+            if list(shape_c) == [M, N]:
                 memlet_idx = '__i0, __i1'
-            elif shape_c == [1, N]:
+            elif list(shape_c) == [1, N]:
                 memlet_idx = '0, __i1'
-            elif shape_c == [M, 1]:
+            elif list(shape_c) == [M, 1]:
                 memlet_idx = '__i0, 0'
-            elif shape_c == [
-                    N,
-            ]:
+            elif list(shape_c) == [N]:
                 memlet_idx = '__i1'
             else:
                 raise ValueError(
@@ -164,7 +156,7 @@ class ExpandGemmPure(ExpandTransformation):
                      "__c": dace.Memlet.simple("_c", memlet_idx),
                      "__tmp": dace.Memlet.simple(mul_out, "__i0, __i1"),
                  },
-                add_program, {"__y": dace.Memlet.simple("_y", "__i0, __i1")},
+                add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
                 external_edges=True,
                 input_nodes={mul_out: access_tmp})
 
@@ -397,8 +389,8 @@ class Gemm(dace.graph.nodes.LibraryNode):
                  beta=0):
         super().__init__(name,
                          location=location,
-                         inputs={"_a", "_b", "_c"},
-                         outputs={"_y"})
+                         inputs={"_a", "_b"},
+                         outputs={"_c"})
         self.dtype = dtype
         self.transA = transA
         self.transB = transB
@@ -419,17 +411,19 @@ class Gemm(dace.graph.nodes.LibraryNode):
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size1 = subset.size()
-            if dst_conn == '_c':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size2 = subset.size()
+
+        if self.transA:
+            size0 = list(reversed(size0))
+        if self.transB:
+            size1 = list(reversed(size1))
+
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError(
                 "Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
-        if len(size0) != 2 or len(size1) != 2 or len(size2) != 2:
+        if len(size0) != 2 or len(size1) != 2:
             raise ValueError(
                 "matrix-matrix product only supported on matrices")
         if size0[1] != size1[0]:
@@ -445,5 +439,3 @@ class Gemm(dace.graph.nodes.LibraryNode):
             raise ValueError(
                 "Output to matrix-matrix product must agree in the m and n "
                 "dimensions")
-        if size2 is not None and size2 != size3:
-            raise ValueError("Sizes of input and output C-matrix do not match")

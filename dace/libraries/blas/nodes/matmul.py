@@ -1,4 +1,5 @@
 import dace
+from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 
 
@@ -72,6 +73,7 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     """ Get option map for GEMM code generation (with column-major order). """
     # Avoid import loops
     from dace.codegen.targets.common import sym2cpp
+    from dace.libraries.blas.blas_helpers import get_gemm_opts
 
     (_, _, ashape, astride), (_, _, bshape,
                               bstride) = _get_matmul_inputs(node, state, sdfg)
@@ -123,7 +125,7 @@ class SpecializeMatMul(
         size_b = b[2]
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
-            import dace.libraries.blas.nodes.gemm.Gemm as Gemm
+            from dace.libraries.blas.nodes.gemm import Gemm
             gemm = Gemm(node.name,
                         dtype=node.dtype,
                         location=node.location,
@@ -174,6 +176,6 @@ class MatMul(dace.graph.nodes.LibraryNode):
     def __init__(self, name, dtype=None, location=None):
         super().__init__(name,
                          location=location,
-                         inputs={"_a", "_b", "_c"},
-                         outputs={"_y"})
+                         inputs={"_a", "_b"},
+                         outputs={"_c"})
         self.dtype = dtype
