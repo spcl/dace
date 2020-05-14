@@ -134,7 +134,7 @@ def live_sets(sdfg):
             if not alloc:
                 transient_levels[0].add(t)
             else:
-                transient_levels[node_level[lloc[0]]].add(t)
+                transient_levels[node_level[alloc[0]]].add(t)
             if not dealloc:
                 transient_levels[len(levels)-1].add(t)
             else:
