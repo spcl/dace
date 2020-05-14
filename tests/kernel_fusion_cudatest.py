@@ -29,7 +29,9 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
     sdfg.add_array('hB', [size], dace.float64)
     state = sdfg.add_state()
 
-    fme, fmx = state.add_map('fused_kernel', dict(i='0:1024'),
+    # For compatibility, schedule fused kernel with the smallest concurrent
+    # number of blocks
+    fme, fmx = state.add_map('fused_kernel', dict(i='0:2'),
                              dace.ScheduleType.GPU_Device)
     ime1, imx1 = state.add_map(
         'kernel_a',

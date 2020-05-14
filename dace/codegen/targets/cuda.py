@@ -1111,7 +1111,8 @@ void __dace_runkernel_{fname}({fargs})
             self._localcode.write(
                 '    %s.Setup(%s);\n' % (gbar, ' * '.join(_topy(grid_dims))),
                 sdfg, state_id, node)
-            extra_kernel_args.append(gbar)
+            extra_kernel_args.append('(void *)((cub::GridBarrier *)&%s)' %
+                                     gbar)
 
         # Compute dynamic shared memory
         dynsmem_size = 0
@@ -1148,8 +1149,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             .format(kname=kernel_name,
                     kargs=', '.join([
                         '(void *)&' + arg
-                        for arg in kernel_args + extra_kernel_args
-                    ]),
+                        for arg in kernel_args] + extra_kernel_args),
                     gdims=','.join(_topy(grid_dims)),
                     bdims=','.join(_topy(block_dims)),
                     dynsmem=_topy(dynsmem_size),
