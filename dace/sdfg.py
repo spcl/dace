@@ -4295,8 +4295,9 @@ def scope_symbols(dfg):
         into (iteration variables, symbols used in subsets). """
     iteration_variables = collections.OrderedDict()
     subset_symbols = collections.OrderedDict()
-    sdict = dfg.scope_dict()
-    sdict_children = dfg.scope_dict(True)
+    parent_scopes = dfg.scope_dict(False)
+    sibling_scopes = dfg.scope_dict(True)
+    all_dynamic_symbols = set()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
         if not isinstance(n, dace.graph.nodes.EntryNode):
@@ -4304,10 +4305,10 @@ def scope_symbols(dfg):
         if isinstance(n, dace.graph.nodes.MapEntry):
             # Collect dynamic map range symbols from parent scopes
             dynamic_symbols = set()
-            parent = n
-            while parent is not None:
-                dynamic_symbols |= parent.in_connectors
-                parent = sdict[parent]
+            x = n
+            while x is not None:
+                dynamic_symbols |= x.in_connectors
+                x = parent_scopes[x]
 
             for param in n.params:
                 iteration_variables[param] = dt.Scalar(
@@ -4333,10 +4334,10 @@ def scope_symbols(dfg):
         elif isinstance(n, dace.graph.nodes.ConsumeEntry):
             # Collect dynamic map range symbols from parent scopes
             dynamic_symbols = set()
-            parent = n
-            while parent is not None:
-                dynamic_symbols |= parent.in_connectors
-                parent = sdict[parent]
+            x = n
+            while x is not None:
+                dynamic_symbols |= x.in_connectors
+                x = parent_scopes[x]
 
             # Add PE index as iteration variable
             iteration_variables[n.consume.pe_index] = dt.Scalar(
@@ -4349,19 +4350,28 @@ def scope_symbols(dfg):
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))
 
-        for scnode in sdict_children[n]:
-            for edge in dfg.in_edges(scnode):
+        all_dynamic_symbols |= dynamic_symbols
+
+        for sibling_scope in sibling_scopes[n]:
+            for edge in dfg.in_edges(sibling_scope):
                 if edge.data.data:
                     subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
                                         for symname, sym in edge.data.subset.free_symbols.items()
-                                        if symname not in iteration_variables and symname not in dynamic_symbols)
+                                        if symname not in iteration_variables)
+                                        
 
-    for scnode in sdict_children[None]:
-        for edge in dfg.in_edges(scnode):
+    for sibling_scope in sibling_scopes[None]:
+        for edge in dfg.in_edges(sibling_scope):
             if edge.data.data:
                 subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
-                                    for symname, sym in edge.data.subset.free_symbols.items())
+                                    for symname, sym in edge.data.subset.free_symbols.items()
+                                    if symname not in iteration_variables)
 
+    for x in all_dynamic_symbols:
+        try:
+            del subset_symbols[x]
+        except:
+            pass
     return iteration_variables, subset_symbols
 
 
