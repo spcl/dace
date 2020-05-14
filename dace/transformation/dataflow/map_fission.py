@@ -59,8 +59,7 @@ class MapFission(pattern_matching.Transformation):
         graph = (subgraph
                  if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
         sdict = subgraph.scope_dict(node_to_children=True)
-        ns = [(n,
-               graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else
+        ns = [(n, graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else
               (n, n) for n in sdict[None]
               if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
@@ -296,7 +295,7 @@ class MapFission(pattern_matching.Transformation):
                     mapsize,
                     desc.dtype,
                     desc.storage,
-                    toplevel=desc.toplevel,
+                    lifetime=desc.lifetime,
                     debuginfo=desc.debuginfo,
                     allow_conflicts=desc.allow_conflicts,
                     find_new_name=True)

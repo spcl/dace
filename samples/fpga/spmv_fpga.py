@@ -203,8 +203,7 @@ def make_nested_sdfg(parent):
                           memlet=dace.memlet.Memlet.simple(
                               b_buffer,
                               "0",
-                              wcr_str="lambda a, b: a + b",
-                              wcr_identity=0))
+                              wcr_str="lambda a, b: a + b"))
 
     return sdfg
 
@@ -390,7 +389,6 @@ if __name__ == "__main__":
     spmv = make_sdfg(args["specialize"])
     if args["specialize"]:
         spmv.specialize(dict(H=H, W=W, nnz=nnz))
-    spmv.draw_to_file()
     spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 
     if dace.Config.get_bool('profiling'):

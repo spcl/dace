@@ -58,7 +58,9 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     )
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _reduce = nodes.Reduce("lambda: None", None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce("lambda: None", None)
 
     @staticmethod
     def expressions():
@@ -123,12 +125,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         elif expr_index == 1:
             reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
 
-            # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule == dtypes.ScheduleType.MPI
-                    or reduce.schedule == dtypes.ScheduleType.GPU_Device
-                    or reduce.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
-                return False
-
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
@@ -183,7 +179,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         gpu_storage_types = [
             dtypes.StorageType.GPU_Global,
             dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack,
         ]
 
         #######################################################

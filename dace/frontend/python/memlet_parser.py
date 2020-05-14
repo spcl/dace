@@ -12,8 +12,7 @@ from dace.symbolic import pystr_to_symbolic
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
-MemletExpr = namedtuple('MemletExpr',
-                        ['name', 'accesses', 'wcr', 'wcr_identity', 'subset'])
+MemletExpr = namedtuple('MemletExpr', ['name', 'accesses', 'wcr', 'subset'])
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -152,7 +151,6 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
     # Determine number of accesses to the memlet (default is the slice size)
     num_accesses = None
     write_conflict_resolution = None
-    wcr_identity = None
     # Detects expressions of the form "A(2)[...]", "A(300)", "A(1, sum)[:]"
     if isinstance(node, ast.Call):
         if len(node.args) < 1 or len(node.args) > 3:
@@ -179,8 +177,7 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
     if num_accesses is None:
         num_accesses = subset.num_elements()
 
-    return MemletExpr(arrname, num_accesses, write_conflict_resolution,
-                      wcr_identity, subset)
+    return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset)
 
 
 def parse_memlet(visitor, src: MemletType, dst: MemletType,
@@ -213,5 +210,4 @@ def parse_memlet(visitor, src: MemletType, dst: MemletType,
                             expr.accesses,
                             expr.subset,
                             1,
-                            wcr=expr.wcr,
-                            wcr_identity=expr.wcr_identity)
+                            wcr=expr.wcr)

@@ -51,19 +51,6 @@ tasklet = state.add_tasklet(
                 &beta,
                 c, M);
     ''',
-    # Global code (top of file, can be used for includes and global variables)
-    code_global='''
-    #include <cublas_v2.h>
-    cublasHandle_t handle;
-    ''',
-    # Initialization code (called in __dace_init())
-    code_init='''
-    cublasCreate(&handle);
-    ''',
-    # Teardown code (called in __dace_exit())
-    code_exit='''
-    cublasDestroy(handle);
-    ''',
     # Language (C++ in this case)
     language=dp.Language.CPP)
 
@@ -86,13 +73,19 @@ state.add_nedge(A, gA, dp.Memlet.simple('gA', '0:M, 0:K'))
 state.add_nedge(B, gB, dp.Memlet.simple('gB', '0:K, 0:N'))
 state.add_nedge(gC, C, dp.Memlet.simple('C', '0:M, 0:N'))
 
+# Add CUBLAS initialization and teardown code
+# Global code (top of file, can be used for includes and global variables)
+sdfg.append_global_code('''#include <cublas_v2.h>
+cublasHandle_t handle;''')
+# Initialization code (called in __dace_init())
+sdfg.append_init_code('cublasCreate(&handle);')
+# Teardown code (called in __dace_exit())
+sdfg.append_exit_code('cublasDestroy(handle);')
+
 ######################################################################
 
 # Validate GPU SDFG
 sdfg.validate()
-
-# Draw SDFG to file
-sdfg.draw_to_file()
 
 ######################################################################
 

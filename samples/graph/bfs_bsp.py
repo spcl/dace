@@ -203,8 +203,7 @@ if d < dep:
                   -1,
                   dp.subsets.Indices([0]),
                   1,
-                  wcr='lambda a,b: a+b',
-                  wcr_identity=0))
+                  wcr='lambda a,b: a+b'))
     dstate.add_edge(
         ctask, 'out_frontier', nmx, 'IN_F',
         dp.Memlet(out_frontier_stream, -1,
@@ -221,8 +220,7 @@ if d < dep:
                   -1,
                   dp.subsets.Indices([0]),
                   1,
-                  wcr='lambda a,b: a+b',
-                  wcr_identity=0))
+                  wcr='lambda a,b: a+b'))
     dstate.add_edge(
         nmx, 'OUT_F', mx, 'IN_F',
         dp.Memlet.from_array(out_frontier_stream.data,
@@ -238,8 +236,7 @@ if d < dep:
                   -1,
                   dp.subsets.Indices([0]),
                   1,
-                  wcr='lambda a,b: a+b',
-                  wcr_identity=0))
+                  wcr='lambda a,b: a+b'))
     dstate.add_edge(
         mx, 'OUT_F', out_frontier_stream, None,
         dp.Memlet.from_array(out_frontier_stream.data,
@@ -262,8 +259,6 @@ frontier2 = estate.add_transient('frontier2', [V],
                                  dtype=vtype,
                                  storage=storage)
 create_computation_state(estate, frontier2, frontier, 1)
-
-sdfg.draw_to_file()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

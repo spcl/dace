@@ -124,7 +124,7 @@ namespace dace {
             #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
                 atomicMin(ptr, value);
             #else
-                wcr_custom<T>::reduce(
+                wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Min, T>(), ptr, value);
             #endif
         }
@@ -143,8 +143,8 @@ namespace dace {
             #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
                 atomicMax(ptr, value);
             #else
-              wcr_custom<T>::reduce(
-                  _wcr_fixed<ReductionType::Max, T>(), ptr, value);
+                wcr_custom<T>::reduce_atomic(
+                    _wcr_fixed<ReductionType::Max, T>(), ptr, value);
             #endif
         }
 

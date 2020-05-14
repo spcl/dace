@@ -10,7 +10,6 @@ def test_output():
     A = np.random.rand(5, 3)
     B = np.zeros((5, 3))
     prog(A=A.copy(), B=B)
-    breakpoint()
 
     diff = np.linalg.norm(np.log(A) - B)
     print('Difference:', diff)
@@ -25,7 +24,6 @@ def test_output_none():
     A = np.random.rand(5, 3)
     B = np.zeros((5, 3))
     prog(A=A.copy(), B=B)
-    breakpoint()
 
     diff = np.linalg.norm(np.log(A) - B)
     print('Difference:', diff)
