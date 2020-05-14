@@ -1641,7 +1641,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     #                     state_id, scope_entry)
                     varname, expr = declarations.pop(0)
                     callsite_stream.write(
-                        'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{ // JAN'
+                        'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'
                         .format(varname=varname,
                                 expr=expr,
                                 cond=condition,
@@ -1652,13 +1652,16 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     # callsite_stream.write('// {', sdfg, state_id, scope_entry)
                     varname, expr = declarations.pop(0)
                     callsite_stream.write(
-                        'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{ // JAN'
-                        .format(varname=varname,
-                                expr=expr,
-                                cond='WHY NO CONDITION???',
-                                stride=self._grid_dims[i] if has_tbmap else
-                                (kmap_max[i] + 1 - kmap_min[i])), sdfg,
-                        state_id, node)
+                        'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'
+                        .format(
+                            varname=varname,
+                            expr=expr,
+                            cond='false',  # Will enter loop only once
+                            stride=self._grid_dims[i] if has_tbmap else
+                            (kmap_max[i] + 1 - kmap_min[i])),
+                        sdfg,
+                        state_id,
+                        node)
 
         else:
             for dim in range(len(scope_map.range)):
