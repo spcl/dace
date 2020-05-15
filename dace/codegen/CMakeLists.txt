@@ -8,6 +8,9 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(HLSLIB_PART_NAME "${DACE_XILINX_PART_NAME}")
 
+# FPGA specific
+set(DACE_FPGA_AUTOBUILD_BITSTREAM OFF CACHE STRING "Automatically build bitstreams if they are not present.")
+
 # Allow passing flags to various stages of Xilinx compilation process
 set(DACE_XILINX_MODE "simulation" CACHE STRING "Type of compilation/execution [simulation/software_emulation/hardware_emulation/hardware].")
 set(DACE_XILINX_HOST_FLAGS "" CACHE STRING "Extra flags to host code")
@@ -35,6 +38,7 @@ set(DACE_ENABLE_INTELFPGA OFF)
 foreach(DACE_FILE ${DACE_FILES})
   # Extract the target from the folder name
   get_filename_component(DACE_FILE_NAME "${DACE_FILE}" NAME_WE)
+  get_filename_component(DACE_FILE_EXT "${DACE_FILE}" EXT)
   get_filename_component(DACE_FILE_SUBDIR "${DACE_FILE}" DIRECTORY)
   get_filename_component(DACE_FILE_DIR "${DACE_FILE_SUBDIR}" DIRECTORY)
   get_filename_component(DACE_FILE_TARGET "${DACE_FILE_DIR}" NAME)
@@ -54,7 +58,7 @@ foreach(DACE_FILE ${DACE_FILES})
     set(DACE_ENABLE_XILINX ON)
     if(DACE_FILE_TARGET_TYPE MATCHES "host") 
       set(DACE_XILINX_HOST_FILES ${DACE_XILINX_HOST_FILES} ${DACE_FILE})
-    else()
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
@@ -267,6 +271,7 @@ if(DACE_ENABLE_XILINX)
   set(DACE_SYNTHESIS_TARGETS)
   foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
     get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
+    get_filename_component(DACE_KERNEL_DIRECTORY ${DACE_KERNEL_FILE} DIRECTORY)
     string(REGEX REPLACE "(.+).cpp" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
     string(REPLACE " " ";" DACE_XILINX_SYNTHESIS_FLAGS_INTERNAL ${DACE_XILINX_SYNTHESIS_FLAGS})
     set(DACE_VITIS_KERNEL_FILES ${DACE_VITIS_KERNEL_FILES} ${DACE_KERNEL_FILE})
@@ -283,6 +288,20 @@ if(DACE_ENABLE_XILINX)
       set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
           --advanced.prop kernel.${DACE_KERNEL_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
     endif()
+
+    # Load kernel memory interface assignments
+    file(STRINGS
+         ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv
+         _ASSIGNMENTS)
+    foreach(_ASSIGNMENT ${_ASSIGNMENTS})
+      string(REPLACE "," ";" _ASSIGNMENT ${_ASSIGNMENT})
+      list(GET _ASSIGNMENT 0 _INTERFACE_NAME)
+      list(GET _ASSIGNMENT 1 _INTERFACE_TYPE)
+      list(GET _ASSIGNMENT 2 _INTERFACE_INDEX)
+      set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
+          --sp "${DACE_KERNEL_NAME}_1.m_axi_${_INTERFACE_NAME}:${_INTERFACE_TYPE}[${_INTERFACE_INDEX}]")
+    endforeach()
+
   endforeach()
   set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} "${DACE_VITIS_KERNELS}")
 
@@ -500,7 +519,7 @@ if(DACE_ENABLE_INTELFPGA)
       add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_emulator
                         DEPENDS ${DACE_PROGRAM_NAME}_emulator.aocx)
   endif()
-  if(DACE_INTELFPGA_MODE STREQUAL "hardware")
+  if(DACE_INTELFPGA_MODE STREQUAL "hardware" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
       add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_hardware
                         ALL DEPENDS ${DACE_PROGRAM_NAME}_hardware.aocx)
   else()
@@ -528,7 +547,7 @@ if(DACE_ENABLE_XILINX)
   endif()
   add_custom_target(xilinx_link_hardware_emulation DEPENDS
                     xilinx_link_${DACE_PROGRAM_NAME}_hardware_emulation)
-  if(DACE_XILINX_MODE STREQUAL "hardware")
+  if(DACE_XILINX_MODE STREQUAL "hardware" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
       add_custom_target(xilinx_link_${DACE_PROGRAM_NAME}_hardware
                         ALL DEPENDS ${DACE_PROGRAM_NAME}_hw.xclbin) 
   else()

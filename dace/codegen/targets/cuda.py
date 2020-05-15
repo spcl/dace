@@ -18,16 +18,12 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute, DefinedType)
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       cpp_array_expr, synchronize_streams,
-                                      memlet_copy_to_absolute_strides)
+                                      memlet_copy_to_absolute_strides,
+                                      codeblock_to_cpp)
 from dace.codegen.targets.framecode import \
     set_default_schedule_and_storage_types
 
 from dace.codegen import cppunparse
-
-_SPECIAL_RTYPES = {
-    dtypes.ReductionType.Min_Location: 'ArgMin',
-    dtypes.ReductionType.Max_Location: 'ArgMax',
-}
 
 
 def prod(iterable):
@@ -64,6 +60,8 @@ class CUDACodeGen(TargetCodeGenerator):
         self._in_device_code = False
         self._cpu_codegen = None
         self._block_dims = None
+        self._grid_dims = None
+        self._kernel_map = None
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda', '', 'cu',
                                       CUDACodeGen, 'CUDA')
         self._localcode = CodeIOStream()
@@ -95,7 +93,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
         gpu_storage = [
             dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack, dtypes.StorageType.CPU_Pinned
+            dtypes.StorageType.CPU_Pinned
         ]
         dispatcher.register_array_dispatcher(gpu_storage, self)
         dispatcher.register_array_dispatcher(dtypes.StorageType.CPU_Pinned,
@@ -110,11 +108,9 @@ class CUDACodeGen(TargetCodeGenerator):
 
         # Register illegal copies
         cpu_unpinned_storage = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal
         ]
-        gpu_private_storage = [
-            dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Stack
-        ]
+        gpu_private_storage = [dtypes.StorageType.GPU_Shared]
         illegal_copy = IllegalCopy()
         for st in cpu_unpinned_storage:
             for gst in gpu_private_storage:
@@ -148,7 +144,23 @@ DACE_CUDA_CHECK(cudaDeviceSynchronize());''')
     # Generate final code
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
-        self._frame.generate_fileheader(self._global_sdfg, fileheader)
+        self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
+
+        initcode = CodeIOStream()
+        for sd in self._global_sdfg.all_sdfgs_recursive():
+            if None in sd.init_code:
+                initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
+            if 'cuda' in sd.init_code:
+                initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
+        initcode.write(self._initcode.getvalue())
+
+        exitcode = CodeIOStream()
+        for sd in self._global_sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            if 'cuda' in sd.exit_code:
+                exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
+        exitcode.write(self._exitcode.getvalue())
 
         self._codeobject.code = """
 #include <cuda_runtime.h>
@@ -215,8 +227,8 @@ void __dace_exit_cuda({params}) {{
 
 {localcode}
 """.format(params=self._global_sdfg.signature(),
-           initcode=self._initcode.getvalue(),
-           exitcode=self._exitcode.getvalue(),
+           initcode=initcode.getvalue(),
+           exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),
@@ -336,7 +348,7 @@ void __dace_exit_cuda({params}) {{
                         block_size=', '.join(_topy(self._block_dims)),
                         ptr=dataname,
                         elements=sym2cpp(arrsize)))
-        elif nodedesc.storage == dtypes.StorageType.GPU_Stack:
+        elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
             szstr = ' = {0}' if node.setzero else ''
@@ -349,11 +361,6 @@ void __dace_exit_cuda({params}) {{
                                       str(nodedesc.storage))
 
         callsite_stream.write(result.getvalue(), sdfg, state_id, node)
-
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        # No need (for now)
-        pass
 
     def allocate_stream(self, sdfg, dfg, state_id, node, function_stream,
                         callsite_stream):
@@ -446,7 +453,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
             callsite_stream.write('cudaFreeHost(%s);\n' % dataname, sdfg,
                                   state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
-             nodedesc.storage == dtypes.StorageType.GPU_Stack:
+             nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
         else:
             raise NotImplementedError
@@ -559,13 +566,6 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                         (isinstance(path[-1].dst, nodes.CodeNode)
                          and is_devicelevel(cur_sdfg, graph, path[-1].dst))):
                         break
-                    # If leading from/to a GPU reduction, keep stream
-                    if ((isinstance(path[0].src, nodes.Reduce) and
-                         path[0].src.schedule == dtypes.ScheduleType.GPU_Device
-                         ) or
-                        (isinstance(path[-1].dst, nodes.Reduce) and path[-1].
-                         dst.schedule == dtypes.ScheduleType.GPU_Device)):
-                        break
                 else:  # If we did not break, we do not need a CUDA stream
                     if hasattr(node, '_cuda_stream'):
                         delattr(node, '_cuda_stream')
@@ -604,12 +604,11 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         state_dfg = sdfg.nodes()[state_id]
 
         cpu_storage_types = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
             dtypes.StorageType.CPU_Pinned
         ]
         gpu_storage_types = [
-            dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack
+            dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared
         ]
 
         copy_shape = memlet.subset.bounding_box_size()
@@ -961,9 +960,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         state = sdfg.nodes()[state_id]
 
         # If in device-level code, call appropriate function
-        if (self._toplevel_schedule == dtypes.ScheduleType.GPU_Device or
-            (state.scope_dict()[scope_entry] is not None and state.scope_dict(
-            )[scope_entry].map.schedule in dtypes.GPU_SCHEDULES)):
+        if self._kernel_map is not None and self._kernel_map.map.schedule in dtypes.GPU_SCHEDULES:
             self.generate_devicelevel_scope(sdfg, dfg_scope, state_id,
                                             function_stream, callsite_stream)
             return
@@ -1037,12 +1034,9 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         ]
         symbol_names = [k for k in sorted(freesyms.keys())]
 
-        # Hijack symbol_sigs to create a grid barrier object
-        if create_grid_barrier:
-            symbol_sigs.append('cub::GridBarrier __gbar')
-
         # Comprehend grid/block dimensions from scopes
-        grid_dims, block_dims, tbmap = self.get_kernel_dimensions(dfg_scope)
+        grid_dims, block_dims, tbmap, dtbmap = self.get_kernel_dimensions(
+            dfg_scope)
 
         kernel_args = [
             sdfg.arrays[p].signature(False, name=p) for p in sorted(params)
@@ -1069,14 +1063,21 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map,
                                    kernel_name, grid_dims, block_dims, tbmap,
-                                   kernel_args_typed, self._globalcode,
+                                   dtbmap, kernel_args_typed, self._globalcode,
                                    kernel_stream)
+
+        # Add extra kernel arguments for a grid barrier object
+        extra_kernel_args_typed = []
+        if create_grid_barrier:
+            extra_kernel_args_typed.append('cub::GridBarrier __gbar')
 
         # Write kernel prototype
         node = dfg_scope.source_nodes()[0]
         self._localcode.write(
             '__global__ void %s(%s) {\n' %
-            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id, node)
+            (kernel_name,
+             ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg,
+            state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1102,6 +1103,7 @@ void __dace_runkernel_{fname}({fargs})
 """.format(fname=kernel_name, fargs=', '.join(kernel_args_typed)), sdfg,
             state_id, node)
 
+        extra_kernel_args = []
         if create_grid_barrier:
             gbar = '__gbar_' + kernel_name
             self._localcode.write('    cub::GridBarrierLifetime %s;\n' % gbar,
@@ -1109,7 +1111,8 @@ void __dace_runkernel_{fname}({fargs})
             self._localcode.write(
                 '    %s.Setup(%s);\n' % (gbar, ' * '.join(_topy(grid_dims))),
                 sdfg, state_id, node)
-            symbol_names.append(gbar)
+            extra_kernel_args.append('(void *)((cub::GridBarrier *)&%s)' %
+                                     gbar)
 
         # Compute dynamic shared memory
         dynsmem_size = 0
@@ -1144,8 +1147,9 @@ void __dace_runkernel_{fname}({fargs})
 void  *{kname}_args[] = {{ {kargs} }};
 cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
             .format(kname=kernel_name,
-                    kargs=', '.join(['(void *)&' + arg
-                                     for arg in kernel_args]),
+                    kargs=', '.join([
+                        '(void *)&' + arg
+                        for arg in kernel_args] + extra_kernel_args),
                     gdims=','.join(_topy(grid_dims)),
                     bdims=','.join(_topy(block_dims)),
                     dynsmem=_topy(dynsmem_size),
@@ -1220,33 +1224,56 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         grid_size = grid_size + [1] * (3 - len(grid_size))
 
         # Obtain thread-block maps for case (2)
+        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
         tb_maps = [
-            node.map for node, parent in dfg_scope.scope_dict().items()
-            if parent == kernelmap_entry and isinstance(node, nodes.EntryNode)
-            and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            node.map for node in subgraph.nodes()
+            if isinstance(node, nodes.EntryNode) and node.schedule in (
+                dtypes.ScheduleType.GPU_ThreadBlock,
+                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
         ]
         # Append thread-block maps from nested SDFGs
-        for node in dfg_scope.scope_subgraph(kernelmap_entry).nodes():
+        for node in subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 set_default_schedule_and_storage_types(node.sdfg,
                                                        node.schedule)
 
                 tb_maps.extend([
-                    n.map for state in node.sdfg.nodes()
-                    for n in state.nodes() if isinstance(n, nodes.MapEntry)
-                    and n.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                    n.map for n, _ in node.sdfg.all_nodes_recursive()
+                    if isinstance(n, nodes.MapEntry) and n.schedule in (
+                        dtypes.ScheduleType.GPU_ThreadBlock,
+                        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
                 ])
+
+        has_dtbmap = len([
+            tbmap for tbmap in tb_maps
+            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+        ]) > 0
+
+        # keep only thread-block maps
+        tb_maps = [
+            tbmap for tbmap in tb_maps
+            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+        ]
 
         # Case (1): no thread-block maps
         if len(tb_maps) == 0:
 
-            warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                          'block size of (%s)' %
-                          Config.get('compiler', 'cuda', 'default_block_size'))
-            block_size = [
-                int(b) for b in Config.get('compiler', 'cuda',
-                                           'default_block_size').split(',')
-            ]
+            if has_dtbmap:
+                block_size = [
+                    int(b)
+                    for b in Config.get('compiler', 'cuda',
+                                        'dynamic_map_block_size').split(',')
+                ]
+            else:
+                warnings.warn(
+                    'Thread-block maps not found in kernel, assuming ' +
+                    'block size of (%s)' %
+                    Config.get('compiler', 'cuda', 'default_block_size'))
+
+                block_size = [
+                    int(b) for b in Config.get('compiler', 'cuda',
+                                               'default_block_size').split(',')
+                ]
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
             int_ceil = sympy.Function('int_ceil')
@@ -1256,7 +1283,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)
             ]
 
-            return grid_size, block_size, False
+            return grid_size, block_size, False, has_dtbmap
 
         # Find all thread-block maps to determine overall block size
         block_size = [1, 1, 1]
@@ -1287,23 +1314,29 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         #       kernel, raise an invalid SDFG exception and recommend
         #       overapproximation.
 
-        return grid_size, block_size, True
+        if has_dtbmap:  # both thread-block map and dynamic thread-block map exist at the same time
+            raise NotImplementedError(
+                "GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
+                "not supported in the same scope")
 
-    def generate_kernel_scope(
-        self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int,
-        kernel_map: nodes.Map, kernel_name: str, grid_dims: list,
-        block_dims: list, has_tbmap: bool, kernel_params: list,
-        function_stream: CodeIOStream, kernel_stream: CodeIOStream):
+        return grid_size, block_size, True, has_dtbmap
+
+    def generate_kernel_scope(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView,
+                              state_id: int, kernel_map: nodes.Map,
+                              kernel_name: str, grid_dims: list,
+                              block_dims: list, has_tbmap: bool,
+                              has_dtbmap: bool, kernel_params: list,
+                              function_stream: CodeIOStream,
+                              kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
         kernel_stream.write('{', sdfg, state_id, node)
 
-        if not node.map.flatten:
-            # Add more opening braces for scope exit to close
-            for dim in range(len(node.map.range) - 1):
-                kernel_stream.write('{\n', sdfg, state_id, node)
+        # Add more opening braces for scope exit to close
+        for dim in range(len(node.map.range) - 1):
+            kernel_stream.write('{\n', sdfg, state_id, node)
 
         # Generate all index arguments for kernel grid
         krange = subsets.Range(kernel_map.range[::-1])
@@ -1325,7 +1358,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             else:
                 block_expr = 'blockIdx.%s' % _named_idx(i)
                 # If we defaulted to 32 threads per block, offset by thread ID
-                if not has_tbmap:
+                if not has_tbmap or has_dtbmap:
                     block_expr = '(%s * %s + threadIdx.%s)' % (
                         block_expr, _topy(block_dims[i]), _named_idx(i))
 
@@ -1353,7 +1386,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         # Dispatch internal code
         assert self._in_device_code == False
         self._in_device_code = True
+        self._kernel_map = node
         self._block_dims = block_dims
+        self._grid_dims = grid_dims
 
         # Emit internal array allocation (deallocation handled at MapExit)
         scope_entry = dfg_scope.source_nodes()[0]
@@ -1368,13 +1403,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
                                                child, function_stream,
                                                kernel_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 kernel_stream)
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
-        if has_tbmap == False:
+        if has_tbmap == False and has_dtbmap == False:
             dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
             minels = krange.min_element()
             maxels = krange.max_element()
@@ -1405,12 +1437,14 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                            kernel_stream,
                                            skip_entry_node=True)
 
-        if has_tbmap == False:
+        if has_tbmap == False and has_dtbmap == False:
             for _ in kernel_map.params:
                 kernel_stream.write('}\n', sdfg, state_id, node)
 
         self._block_dims = None
+        self._kernel_map = None
         self._in_device_code = False
+        self._grid_dims = None
 
     def get_next_scope_entries(self, dfg, scope_entry):
         parent_scope_entry = dfg.scope_dict()[scope_entry]
@@ -1469,19 +1503,21 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 raise NotImplementedError(
                     'Dynamic block map schedule only '
                     'implemented for 1D blocks currently')
-            pscope = sdict[scope_entry]
-            while pscope is not None and pscope.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
-                pscope = sdict[pscope]
-            if pscope is None:
-                callsite_stream.write('int __dace_tid = threadIdx.x;', sdfg,
-                                      state_id, scope_entry)
-                bname = '__dace_tid'
-            else:
-                bname = pscope.map.params[0]
 
             # Define all input connectors of this map entry
             # Note: no need for a C scope around these, as there will not be
             #       more than one dynamic thread-block map in a GPU device map
+            callsite_stream.write(
+                'unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;',
+                sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                'if (%s < %s) {' %
+                (self._kernel_map.map.params[0],
+                 _topy(
+                     subsets.Range(self._kernel_map.map.range[::-1]).
+                     max_element()[0] + 1)), sdfg, state_id, scope_entry)
+
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
                     self._cpu_codegen.memlet_definition(
@@ -1489,21 +1525,147 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     scope_entry)
 
             callsite_stream.write(
-                'dace::DynamicMap<{bsize}>::template '
-                'schedule({begin}, {end}, {tid}, [&](auto {param}, '
-                'auto {tid}) {{'.format(bsize=total_block_size,
-                                        begin=scope_map.range[0][0],
-                                        end=scope_map.range[0][1] + 1,
-                                        param=scope_map.params[0],
-                                        tid=bname), sdfg, state_id,
+                '__dace_dynmap_begin = {begin};\n'
+                '__dace_dynmap_end = {end};'.format(
+                    begin=scope_map.range[0][0],
+                    end=scope_map.range[0][1] + 1), sdfg, state_id,
                 scope_entry)
+
+            # close if
+            callsite_stream.write('}', sdfg, state_id, scope_entry)
+
+            callsite_stream.write(
+                'dace::DynamicMap<{fine_grained}, {bsize}>::'
+                'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
+                'auto {param}) {{'.format(
+                    fine_grained=('true' if Config.get_bool(
+                        'compiler', 'cuda', 'dynamic_map_fine_grained') else
+                                  'false'),
+                    bsize=total_block_size,
+                    kmapIdx=self._kernel_map.map.params[0],
+                    param=scope_map.params[0]), sdfg, state_id, scope_entry)
+
+        elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
+
+            grid_dims, block_dims, has_tbmap, has_dtbmap = self.get_kernel_dimensions(
+                dfg_scope)
+            block_dims = self._block_dims
+            node = dfg_scope.source_nodes()[0]
+
+            device_map_range = subsets.Range(scope_map.range[::-1])
+            device_map_dims = device_map_range.size()
+            dsym = [
+                symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True)
+                for i in range(len(device_map_range))
+            ]
+            bidx = device_map_range.coord_at(dsym)
+
+            # variables that need to be declared + the value they need to be initialized with
+            declarations = []
+
+            for i in range(min(len(device_map_range), 3)):
+                varname = scope_map.params[-i - 1]
+
+                # Delinearize third dimension if necessary
+                if i == 2 and len(device_map_range) > 3:
+                    block_expr = '(blockIdx.z / (%s))' % _topy(
+                        functools.reduce(sympy.mul.Mul, device_map_dims[3:],
+                                         1))
+                else:
+                    block_expr = 'blockIdx.%s' % _named_idx(i)
+                    # If we defaulted to 32 threads per block, offset by thread ID
+                    if not has_tbmap or has_dtbmap:
+                        block_expr = '(%s * %s + threadIdx.%s)' % (
+                            block_expr, _topy(block_dims[i]), _named_idx(i))
+
+                expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
+
+                declarations.append((varname, expr))
+
+                # callsite_stream.write('for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'.format(
+                #     varname=varname,
+                #     expr=expr,
+                #     cond=None,
+                #     stride=None), sdfg, state_id, node)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar)
+
+            # Delinearize beyond the third dimension
+            if len(device_map_range) > 3:
+                for i in range(3, len(device_map_range)):
+                    varname = scope_map.params[-i - 1]
+                    # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
+                    block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
+                        _topy(
+                            functools.reduce(sympy.mul.Mul,
+                                             device_map_dims[i + 1:], 1)),
+                        _topy(device_map_dims[i]),
+                    )
+
+                    expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
+
+                    declarations.append((varname, expr))
+
+                    # callsite_stream.write('for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'.format(
+                    #     varname=varname,
+                    #     expr=expr,
+                    #     cond=None,
+                    #     stride=None), sdfg, state_id, node)
+                    self._dispatcher.defined_vars.add(varname,
+                                                      DefinedType.Scalar)
+
+            kmap_min = subsets.Range(
+                self._kernel_map.range[::-1]).min_element()
+            kmap_max = subsets.Range(
+                self._kernel_map.range[::-1]).max_element()
+
+            # if has_tbmap == False and has_dtbmap == False:
+            dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
+            minels = device_map_range.min_element()
+            maxels = device_map_range.max_element()
+            for i, (v, minel, maxel) in enumerate(
+                    zip(scope_map.params[::-1], minels, maxels)):
+                condition = ''
+
+                # Optimize conditions if they are always true
+                if i >= 3 or (dsym[i] >= minel) != True:
+                    condition += '%s >= %s' % (v, _topy(minel))
+                if (i >= 3
+                        or ((dsym_end[i] < maxel) != False and
+                            ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                        or (self._block_dims[i] > maxel) == True):
+                    if len(condition) > 0:
+                        condition += ' && '
+                    condition += '%s < %s' % (v, _topy(maxel + 1))
+                if len(condition) > 0:
+                    # callsite_stream.write('if (%s) //{' % condition, sdfg,
+                    #                     state_id, scope_entry)
+                    varname, expr = declarations.pop(0)
+                    callsite_stream.write(
+                        'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'
+                        .format(varname=varname,
+                                expr=expr,
+                                cond=condition,
+                                stride=self._grid_dims[i] if has_tbmap else
+                                (kmap_max[i] + 1 - kmap_min[i])), sdfg,
+                        state_id, node)
+                else:
+                    # callsite_stream.write('// {', sdfg, state_id, scope_entry)
+                    varname, expr = declarations.pop(0)
+                    callsite_stream.write(
+                        'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'
+                        .format(
+                            varname=varname,
+                            expr=expr,
+                            cond='false',  # Will enter loop only once
+                            stride=self._grid_dims[i] if has_tbmap else
+                            (kmap_max[i] + 1 - kmap_min[i])),
+                        sdfg,
+                        state_id,
+                        node)
+
         else:
-            # If integer sets are used, only emit one opening curly brace
-            if scope_map.flatten:
+            for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', sdfg, state_id, scope_entry)
-            else:
-                for dim in range(len(scope_map.range)):
-                    callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         # Emit internal array allocation (deallocation handled at MapExit)
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
@@ -1517,9 +1679,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
                                                child, function_stream,
                                                callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
@@ -1654,273 +1813,6 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
-
-    def _generate_Reduce(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        # Try to autodetect reduction type
-        redtype = operations.detect_reduction_type(node.wcr)
-        schedule = node.schedule
-        node_id = dfg.node_id(node)
-        idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name,
-                                               state=state_id,
-                                               node=node_id)
-
-        output_edge = dfg.out_edges(node)[0]
-        output_memlet = output_edge.data
-        output_type = 'dace::vec<%s, %s>' % (
-            sdfg.arrays[output_memlet.data].dtype.ctype, output_memlet.veclen)
-
-        if node.identity is None:
-            raise ValueError('For GPU reduce nodes, initial value must be '
-                             'defined')
-
-        # Create a functor or use an existing one for reduction
-        if redtype == dtypes.ReductionType.Custom:
-            body, [arg1, arg2] = unparse_cr_split(sdfg, node.wcr)
-            self._globalcode.write(
-                """
-        struct __reduce_{id} {{
-            template <typename T>
-            DACE_HDFI T operator()(const T &{arg1}, const T &{arg2}) const {{
-                {contents}
-            }}
-        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), sdfg,
-                state_id, node_id)
-            reduce_op = ', __reduce_' + idstr + '(), ' + _topy(node.identity)
-        elif redtype in _SPECIAL_RTYPES:
-            reduce_op = ''
-        else:
-            credtype = 'dace::ReductionType::' + str(
-                redtype)[str(redtype).find('.') + 1:]
-            reduce_op = ((', dace::_wcr_fixed<%s, %s>()' %
-                          (credtype, output_type)) + ', ' +
-                         _topy(node.identity))
-
-        # Obtain some SDFG-related information
-        input_data = dfg.memlet_path(dfg.in_edges(node)[0])[0].src
-        output_data = dfg.memlet_path(dfg.out_edges(node)[0])[-1].dst
-        input_memlet = dfg.in_edges(node)[0].data
-        reduce_shape = input_memlet.subset.bounding_box_size()
-        num_items = ' * '.join([_topy(s) for s in reduce_shape])
-        input = (input_memlet.data + ' + ' +
-                 cpp_array_expr(sdfg, input_memlet, with_brackets=False))
-        output = (output_memlet.data + ' + ' +
-                  cpp_array_expr(sdfg, output_memlet, with_brackets=False))
-
-        # Options: Device-wide reduction (even from device code),
-        #          block-wide reduction, sequential reduction (for loop)
-        if node.schedule == dtypes.ScheduleType.GPU_Device:
-
-            input_dims = input_memlet.subset.dims()
-            output_dims = output_memlet.subset.data_dims()
-
-            reduce_all_axes = (node.axes is None
-                               or len(node.axes) == input_dims)
-            if reduce_all_axes:
-                reduce_last_axes = False
-            else:
-                reduce_last_axes = sorted(node.axes) == list(
-                    range(input_dims - len(node.axes), input_dims))
-
-            if (not reduce_all_axes) and (not reduce_last_axes):
-                raise NotImplementedError(
-                    'Multiple axis reductions not supported on GPUs. Please '
-                    'apply ReduceExpansion or make reduce axes to be last in the array'
-                )
-
-            # Verify that data is on the GPU
-            if input_data.desc(sdfg).storage not in [
-                    dtypes.StorageType.GPU_Global,
-                    dtypes.StorageType.CPU_Pinned
-            ]:
-                raise ValueError('Input of GPU reduction must either reside '
-                                 ' in global GPU memory or pinned CPU memory')
-            if output_data.desc(sdfg).storage not in [
-                    dtypes.StorageType.GPU_Global,
-                    dtypes.StorageType.CPU_Pinned
-            ]:
-                raise ValueError('Output of GPU reduction must either reside '
-                                 ' in global GPU memory or pinned CPU memory')
-
-            # TODO(later): Enable device-wide reduction from device through
-            # CUDA dynamic parallelism. It is disabled right now
-            # due to temporary memory allocation (which needs to be done
-            # on the host).
-            if self._in_device_code:
-                raise NotImplementedError('Device-wide reduction can only be'
-                                          ' run on non-GPU code.')
-
-            # Determine reduction type
-            kname = (_SPECIAL_RTYPES[redtype]
-                     if redtype in _SPECIAL_RTYPES else 'Reduce')
-
-            # Create temp memory for this GPU
-            self._globalcode.write(
-                """
-                void *__cub_storage_{sdfg}_{state}_{node} = NULL;
-                size_t __cub_ssize_{sdfg}_{state}_{node} = 0;
-            """.format(sdfg=sdfg.name, state=state_id, node=node_id), sdfg,
-                state_id, node)
-
-            if reduce_all_axes:
-                reduce_type = 'DeviceReduce'
-                reduce_range = num_items
-                reduce_range_def = 'size_t num_items'
-                reduce_range_use = 'num_items'
-                reduce_range_call = num_items
-            elif reduce_last_axes:
-                num_reduce_axes = len(node.axes)
-                not_reduce_axes = reduce_shape[:-num_reduce_axes]
-                reduce_axes = reduce_shape[-num_reduce_axes:]
-
-                num_segments = ' * '.join([_topy(s) for s in not_reduce_axes])
-                segment_size = ' * '.join([_topy(s) for s in reduce_axes])
-
-                reduce_type = 'DeviceSegmentedReduce'
-                iterator = 'dace::stridedIterator({size})'.format(
-                    size=segment_size)
-                reduce_range = '{num}, {it}, {it} + 1'.format(num=num_segments,
-                                                              it=iterator)
-                reduce_range_def = 'size_t num_segments, size_t segment_size'
-                iterator_use = 'dace::stridedIterator(segment_size)'
-                reduce_range_use = 'num_segments, {it}, {it} + 1'.format(
-                    it=iterator_use)
-                reduce_range_call = '%s, %s' % (num_segments, segment_size)
-
-            # Call CUB to get the storage size, allocate and free it
-            self.scope_entry_stream.write(
-                """
-                cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
-                                          ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop});
-                cudaMalloc(&__cub_storage_{sdfg}_{state}_{node}, __cub_ssize_{sdfg}_{state}_{node});
-""".format(sdfg=sdfg.name,
-            state=state_id,
-            node=node_id,
-            reduce_type=reduce_type,
-            reduce_range=reduce_range,
-            redop=reduce_op,
-            intype=input_data.desc(sdfg).dtype.ctype,
-            outtype=output_data.desc(sdfg).dtype.ctype,
-            kname=kname), sdfg, state_id, node)
-
-            self.scope_exit_stream.write(
-                'cudaFree(__cub_storage_{sdfg}_{state}_{node});'.format(
-                    sdfg=sdfg.name, state=state_id, node=node_id), sdfg,
-                state_id, node)
-
-            max_streams = int(
-                Config.get('compiler', 'cuda', 'max_concurrent_streams'))
-            if max_streams >= 0:
-                cudastream = 'dace::cuda::__streams[%d]' % node._cuda_stream
-            else:
-                cudastream = 'nullptr'
-
-            # Write reduction function definition
-            self._localcode.write(
-                """
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def});
-void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def})
-{{
-    cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
-                                input, output, {reduce_range_use}{redop}, {stream});
-}}
-            """.format(id=idstr,
-                       intype=input_data.desc(sdfg).dtype.ctype,
-                       outtype=output_data.desc(sdfg).dtype.ctype,
-                       reduce_type=reduce_type,
-                       reduce_range_def=reduce_range_def,
-                       reduce_range_use=reduce_range_use,
-                       kname=kname,
-                       redop=reduce_op,
-                       stream=cudastream), sdfg, state_id, node)
-
-            # Write reduction function definition in caller file
-            function_stream.write(
-                """
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def});
-            """.format(id=idstr,
-                       reduce_range_def=reduce_range_def,
-                       intype=input_data.desc(sdfg).dtype.ctype,
-                       outtype=output_data.desc(sdfg).dtype.ctype), sdfg,
-                state_id, node)
-
-            # Call reduction function where necessary
-            callsite_stream.write(
-                '__dace_reduce_{id}({input}, {output}, {reduce_range_call});'.
-                format(id=idstr,
-                       input=input,
-                       output=output,
-                       reduce_range_call=reduce_range_call), sdfg, state_id,
-                node)
-
-            synchronize_streams(sdfg, dfg, state_id, node, node,
-                                callsite_stream)
-            return
-
-        # Block-wide reduction
-        elif node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-            input_dims = input_memlet.subset.dims()
-            # Checks
-            if not self._in_device_code:
-                raise ValueError('Block-wide GPU reduction must occur within'
-                                 ' a GPU kernel')
-            for bdim in self._block_dims:
-                if symbolic.issymbolic(bdim, sdfg.constants):
-                    raise ValueError(
-                        'Block size has to be constant for block-wide '
-                        'reduction (got %s)' % str(bdim))
-            if (node.axes is not None and len(node.axes) < input_dims):
-                raise ValueError(
-                    'Only full reduction is supported for block-wide reduce,'
-                    ' please use ReduceExpansion')
-            if (input_data.desc(sdfg).storage != dtypes.StorageType.GPU_Stack
-                    or output_data.desc(sdfg).storage !=
-                    dtypes.StorageType.GPU_Stack):
-                raise ValueError(
-                    'Block-wise reduction only supports GPU register inputs '
-                    'and outputs')
-            if redtype in _SPECIAL_RTYPES:
-                raise ValueError('%s block reduction not supported' % redtype)
-
-            credtype = 'dace::ReductionType::' + str(
-                redtype)[str(redtype).find('.') + 1:]
-            if redtype == dtypes.ReductionType.Custom:
-                redop = '__reduce_%s()' % idstr
-            else:
-                redop = 'dace::_wcr_fixed<%s, %s>()' % (credtype, output_type)
-
-            # Allocate shared memory for block reduce
-            self.scope_entry_stream.write(
-                """
-            typedef cub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
-            __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
-                """.format(id=idstr,
-                           type=output_data.desc(sdfg).dtype.ctype,
-                           numthreads=' * '.join(
-                               str(s) for s in self._block_dims)), sdfg,
-                state_id, node)
-
-            # TODO(later): If less than the whole block is participating,
-            #              use special CUB function
-            output = cpp_array_expr(sdfg, output_memlet)
-            callsite_stream.write(
-                """
-                {output} = BlockReduce_{id}(temp_storage_{id}).Reduce({input}, {redop});
-                """.format(id=idstr,
-                           redop=redop,
-                           input=input_memlet.data,
-                           output=output), sdfg, state_id, node)
-
-            return
-        # Sequential goes to CPU generator
-        elif node.schedule == dtypes.ScheduleType.Sequential:
-            self._cpu_codegen._generate_Reduce(sdfg, dfg, state_id, node,
-                                               function_stream,
-                                               callsite_stream)
-            return
-        else:
-            raise ValueError('Unsupported reduction schedule %s' %
-                             str(node.schedule))
 
 
 ########################################################################

@@ -61,7 +61,7 @@ class FPGATransformState(pattern_matching.Transformation):
                 if nodedesc.storage in [
                         dtypes.StorageType.CPU_Heap,
                         dtypes.StorageType.CPU_Pinned,
-                        dtypes.StorageType.CPU_Stack
+                        dtypes.StorageType.CPU_ThreadLocal
                 ]:
                     return False
 
@@ -148,14 +148,14 @@ class FPGATransformState(pattern_matching.Transformation):
                         for node_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:
-                                outer_name = node_trace.data
+                                outer_node = node_trace
                                 break
-                        else:
-                            # This does not trace back to the current state, so
-                            # we don't care
-                            continue
-                        input_nodes.append(outer_name)
-                        wcr_input_nodes.add(outer_name)
+                            else:
+                                # This does not trace back to the current state, so
+                                # we don't care
+                                continue
+                        input_nodes.append(outer_node)
+                        wcr_input_nodes.add(outer_node)
 
         if input_nodes:
             # create pre_state

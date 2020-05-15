@@ -96,8 +96,6 @@ if __name__ == "__main__":
                                   '20:40, 10:30',
                                   other_subset_str='2, 10:30, 20:40'))
 
-    sdfg.draw_to_file()
-
     array_data = [
         np.random.rand(*[
             dace.symbolic.evaluate(s, {N: N.get()}) for s in a.desc(sdfg).shape

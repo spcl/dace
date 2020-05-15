@@ -216,7 +216,7 @@ class MapFusion(pattern_matching.Transformation):
         first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[
             MapFusion._second_map_entry]]
-        second_exit = graph.exit_nodes(second_entry)[0]
+        second_exit = graph.exit_node(second_entry)
 
         intermediate_nodes = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):

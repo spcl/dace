@@ -35,8 +35,6 @@ if __name__ == '__main__':
     A = np.random.rand(2, 16, 4).astype(np.float32)
     B = np.random.rand(16).astype(np.float32)
 
-    sr.draw_to_file()
-
     sr(A=A, B=B)
 
     diffs = [

@@ -544,13 +544,13 @@ def make_compute_sdfg():
     A_reg_in = state.add_scalar("A_reg",
                                 dtype=dace.float32,
                                 transient=True,
-                                toplevel=True,
+                                lifetime=dace.dtypes.AllocationLifetime.SDFG,
                                 storage=dace.dtypes.StorageType.FPGA_Registers)
     A_reg_out = state.add_scalar(
         "A_reg",
         dtype=dace.float32,
         transient=True,
-        toplevel=True,
+        lifetime=dace.dtypes.AllocationLifetime.SDFG,
         storage=dace.dtypes.StorageType.FPGA_Registers)
 
     state.add_memlet_path(A_pipe,
@@ -804,7 +804,6 @@ if __name__ == "__main__":
     B_regression[:] = B[:]
     C_regression[:] = C[:]
 
-    sdfg.draw_to_file()
     if args["specialize"]:
         sdfg(A=A, B=B, C=C)
     else:

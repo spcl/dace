@@ -41,9 +41,6 @@ if __name__ == '__main__':
                    Memlet.simple(B_, 'k*N/2:(k+1)*N/2'))
     state.add_edge(omap_exit, None, B_, None, Memlet.simple(B_, '0:N'))
 
-    # Left for debugging purposes
-    mysdfg.draw_to_file()
-
     mysdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(10 * input - output) / N.get()

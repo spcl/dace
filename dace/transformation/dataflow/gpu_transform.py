@@ -34,7 +34,9 @@ class GPUTransformMap(pattern_matching.Transformation):
                                     default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _reduce = nodes.Reduce('lambda: None', None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce('lambda: None', None)
 
     @staticmethod
     def expressions():
@@ -71,7 +73,7 @@ class GPUTransformMap(pattern_matching.Transformation):
                     return False
 
             # If one of the outputs is a stream, do not match
-            map_exit = graph.exit_nodes(map_entry)[0]
+            map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
                 if (isinstance(dst, nodes.AccessNode)
@@ -82,10 +84,7 @@ class GPUTransformMap(pattern_matching.Transformation):
         elif expr_index == 1:
             reduce = graph.nodes()[candidate[GPUTransformMap._reduce]]
 
-            # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule in [dtypes.ScheduleType.MPI] +
-                    dtypes.GPU_SCHEDULES):
-                return False
+            # Disallow GPU transformation if already in device-level code
             if sd.is_devicelevel(sdfg, graph, reduce):
                 return False
 

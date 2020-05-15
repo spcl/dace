@@ -113,13 +113,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         and node.desc(sdfg).transient == False):
                     if (state.out_degree(node) > 0
                             and node.data not in input_nodes):
-                        # Special case: nodes that lead to dynamic map ranges
-                        # must stay on host
+                        # Special case: nodes that lead to top-level dynamic
+                        # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode)
                                     and last_edge.dst_conn and
-                                    not last_edge.dst_conn.startswith('IN_')):
+                                    not last_edge.dst_conn.startswith('IN_')
+                                    and sdict[last_edge.dst] is None):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
@@ -128,12 +129,12 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         output_nodes.append((node.data, node.desc(sdfg)))
                 elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
                     if not isinstance(node,
-                                      (nodes.EmptyTasklet, nodes.LibraryNode)):
+                                      (nodes.EmptyTasklet, nodes.LibraryNode, nodes.NestedSDFG)):
                         global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None and e.data.wcr_identity is None:
+                if e.data.wcr is not None:
                     if (e.data.data not in input_nodes
                             and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append(
@@ -238,7 +239,10 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                             for e in state.out_edges(node)):
                         continue
 
-                    if sdict[node] is None:
+                    gpu_storage = [dtypes.StorageType.GPU_Global,
+                                 dtypes.StorageType.GPU_Shared,
+                                  dtypes.StorageType.CPU_Pinned]
+                    if sdict[node] is None and nodedesc.storage not in gpu_storage:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
@@ -246,8 +250,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         # Try to move allocation/deallocation out of loops
                         if (self.toplevel_trans
                                 and not isinstance(nodedesc, data.Stream)):
-                            nodedesc.toplevel = True
-                    else:
+                            nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
+                    elif nodedesc.storage not in gpu_storage:
                         # Make internal transients registers
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
@@ -290,15 +294,16 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 if len(in_edges) == 0:
                     state.add_nedge(me, gcode, memlet.EmptyMemlet())
         #######################################################
-        # Step 6: Change all top-level maps and Reduce nodes to GPU schedule
+        # Step 6: Change all top-level maps and library nodes to GPU schedule
 
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.Reduce)):
+                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, nodes.EntryNode)
+                    elif (isinstance(node,
+                                     (nodes.EntryNode, nodes.LibraryNode))
                           and self.sequential_innermaps):
                         node.schedule = dtypes.ScheduleType.Sequential
 

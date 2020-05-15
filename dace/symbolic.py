@@ -30,6 +30,8 @@ class symbol(sympy.Symbol):
             symbol.s_currentsymbol += 1
         elif name.startswith('__DACE'):
             raise NameError('Symbols cannot start with __DACE')
+        elif not dtypes.validate_name(name):
+            raise NameError('Invalid symbol name "%s"' % name)
 
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
@@ -182,6 +184,8 @@ class SymExpr(object):
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr * other, self.approx * other)
         return self * pystr_to_symbolic(other)
+
+    __rmul__ = __mul__
 
     def __div__(self, other):
         if isinstance(other, SymExpr):
