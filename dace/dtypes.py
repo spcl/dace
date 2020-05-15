@@ -6,7 +6,7 @@ import inspect
 import numpy
 import re
 from functools import wraps
-
+from dace.config import Config
 from dace.registry import extensible_enum
 
 
@@ -65,6 +65,10 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+
+    # Only supported in OpenMP
+    Sub = ()  # Subtraction
+    Div = ()  # Division
 
 
 @extensible_enum
@@ -196,6 +200,41 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
+_LIMITS = {
+    'int': "INT_{}",
+    'float': "FLT_{}",
+    'char': "CHAR_{}",
+    'short': "SHRT_{}",
+    'long long': "LLONG_{}",
+    'unsigned char': "UCHAR_{}",
+    'unsigned short': "USHRT_{}",
+    'unsigned int': "UINT_{}",
+    'unsigned long long': "ULLONG_{}",
+    'double': "DBL_{}",
+}
+
+
+def max_value(dtype):
+    """Get a max value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "true"
+    elif ctype == "dace::float16":
+        return "65504.0"
+    else:
+        return _LIMITS[ctype].format("MAX")
+
+def min_value(dtype):
+    """Get a min value literal for `dtype`."""
+    ctype = dtype.ctype
+    if ctype == "bool":
+        return "false"
+    elif ctype in ["double", "float", "dace::float16"]:
+        # use the sign bit for floats
+        return "-" + max_value(dtype)
+    else:
+        return _LIMITS[ctype].format("MIN")
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -212,10 +251,22 @@ class typeclass(object):
                 wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
+
+        config_data_types = Config.get('compiler', 'default_data_types')
         if wrapped_type is int:
-            wrapped_type = numpy.int64
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.int64
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.int32
+            else:
+                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
         elif wrapped_type is float:
-            wrapped_type = numpy.float64
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.float64
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.float32
+            else:
+                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
         elif wrapped_type is complex:
             wrapped_type = numpy.complex128
 

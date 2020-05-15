@@ -194,16 +194,18 @@ class SDFG(OrderedDiGraph):
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
 
-    global_code = CodeProperty(
-        desc=
-        "Code generated in a global scope on the frame-code generated file.",
-        default=CodeBlock("", dtypes.Language.CPP))
-    init_code = CodeProperty(
-        desc="Code generated in the `__dace_init` function.",
-        default=CodeBlock("", dtypes.Language.CPP))
-    exit_code = CodeProperty(
-        desc="Code generated in the `__dace_exit` function.",
-        default=CodeBlock("", dtypes.Language.CPP))
+    global_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in a global scope on the generated files.")
+    init_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in the `__dace_init` function.")
+    exit_code = DictProperty(
+        str,
+        CodeBlock,
+        desc="Code generated in the `__dace_exit` function.")
 
     def __init__(self,
                  name: str,
@@ -240,6 +242,9 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -421,17 +426,86 @@ class SDFG(OrderedDiGraph):
             raise ValueError("Invalid state ID")
         self._start_state = states[state_id]
 
-    def set_global_code(self, cpp_code: str):
-        """ Sets C++ code that will be generated in a global scope on the frame-code generated file. """
-        self.global_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_global_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in a global scope on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        self.global_code[location] = CodeBlock(cpp_code,
+                                               dace.dtypes.Language.CPP)
 
-    def set_init_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dace_init` function. """
-        self.init_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_init_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in the __dace_init_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        self.init_code[location] = CodeBlock(cpp_code,
+                                             dtypes.Language.CPP)
 
-    def set_exit_code(self, cpp_code: str):
-        """ Sets C++ code, generated in the `__dace_exit` function. """
-        self.exit_code = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
+    def set_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Sets C++ code that will be generated in the __dace_exit_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        self.exit_code[location] = CodeBlock(cpp_code,
+                                             dtypes.Language.CPP)
+
+    def append_global_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in a global scope on 
+        one of the generated code files.
+        :param cpp_code: The code to set.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.global_code:
+            self.global_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.global_code[location].code += cpp_code
+
+    def append_init_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in the __dace_init_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.init_code:
+            self.init_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.init_code[location].code += cpp_code
+
+    def append_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """ 
+        Appends C++ code that will be generated in the __dace_exit_* functions on 
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code. 
+                         Options are None (all files), "frame", "openmp", 
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.exit_code:
+            self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.exit_code[location].code += cpp_code
 
     ##########################################
     # Instrumentation-related methods
@@ -1207,7 +1281,7 @@ class SDFG(OrderedDiGraph):
                   allow_conflicts=False,
                   total_size=None,
                   find_new_name=False,
-                  alignment=0):
+                  alignment=0) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         if not isinstance(name, str):
@@ -1354,7 +1428,7 @@ class SDFG(OrderedDiGraph):
                               True,
                               strides,
                               offset,
-                              lifetime=dace.dtypes.AllocationLifetime.Scope,
+                              lifetime=lifetime,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
@@ -2042,7 +2116,6 @@ class SDFG(OrderedDiGraph):
         return dace.Memlet.from_array(array, self.arrays[array])
 
 
-
 class MemletTrackingView(object):
     """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
     def memlet_path(self,
@@ -2066,9 +2139,7 @@ class MemletTrackingView(object):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
-        while not isinstance(
-                curedge.src,
-            (nd.CodeNode, nd.AccessNode, nd.Reduce, nd.LibraryNode)):
+        while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode)):
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -2083,8 +2154,7 @@ class MemletTrackingView(object):
 
         # Prepend outgoing edges until reaching the sink node
         curedge = edge
-        while not isinstance(curedge.dst,
-                             (nd.CodeNode, nd.AccessNode, nd.Reduce)):
+        while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
@@ -2787,9 +2857,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         outputs: Set[str],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
-        code_global: str = "",
-        code_init: str = "",
-        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -2801,9 +2868,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             outputs,
             code,
             language,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -2964,9 +3028,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             outputs: Dict[str, mm.Memlet],
             schedule=dtypes.ScheduleType.Default,
             unroll_map=False,
-            code_global="",
-            code_init="",
-            code_exit="",
             location=None,
             language=dtypes.Language.Python,
             debuginfo=None,
@@ -2987,9 +3048,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             :param schedule:   Map schedule
             :param unroll_map: True if map should be unrolled in code
                                generation
-            :param code_global: (optional) Global code (outside functions)
-            :param code_init:  Initialization code (in __dace_init_* functions)
-            :param code_exit:  Finalization code (in __dace_exit_* functions)
             :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
@@ -3015,9 +3073,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             set(outputs.keys()),
             code,
             language=language,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -3118,13 +3173,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-        self,
-        wcr,
-        axes,
-        identity=None,
-        schedule=dtypes.ScheduleType.Default,
-        debuginfo=None,
-    ):
+            self,
+            wcr,
+            axes,
+            identity=None,
+            schedule=dtypes.ScheduleType.Default,
+            debuginfo=None,
+    ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
             :param axes: A tuple of axes to reduce the input memlet from, or
@@ -3135,8 +3190,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
             :return: A Reduce node
         """
+        import dace.libraries.standard as stdlib  # Avoid import loop
         debuginfo = getdebuginfo(debuginfo)
-        result = nd.Reduce(wcr, axes, identity, schedule, debuginfo=debuginfo)
+        result = stdlib.Reduce(wcr,
+                               axes,
+                               identity,
+                               schedule=schedule,
+                               debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -3293,13 +3353,15 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         # Verify that connectors exist
         if (not isinstance(memlet, dace.memlet.EmptyMemlet)
                 and hasattr(edges[0].src, "out_connectors")
-                and isinstance(edges[0].src, nd.CodeNode) and
+                and isinstance(edges[0].src, nd.CodeNode)
+                and not isinstance(edges[0].src, nd.LibraryNode) and
             (src_conn is None or src_conn not in edges[0].src.out_connectors)):
             raise ValueError("Output connector {} does not exist in {}".format(
                 src_conn, edges[0].src.label))
         if (not isinstance(memlet, dace.memlet.EmptyMemlet)
                 and hasattr(edges[-1].dst, "in_connectors")
-                and isinstance(edges[-1].dst, nd.CodeNode) and
+                and isinstance(edges[-1].dst, nd.CodeNode)
+                and not isinstance(edges[-1].dst, nd.LibraryNode) and
             (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
             raise ValueError("Input connector {} does not exist in {}".format(
                 dst_conn, edges[-1].dst.label))
@@ -3684,16 +3746,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                             'WARNING: Use of uninitialized transient "%s" in state %s'
                             % (node.data, self.label))
 
-            if isinstance(node,
-                          nd.Reduce) and (len(self.in_edges(node)) != 1
-                                          or len(self.out_edges(node)) != 1):
-                raise InvalidSDFGNodeError(
-                    "Reduce node must have exactly one input and output edges",
-                    sdfg,
-                    state_id,
-                    nid,
-                )
-
             if (isinstance(node, nd.ConsumeEntry)
                     and "IN_stream" not in node.in_connectors):
                 raise InvalidSDFGNodeError(
@@ -3889,7 +3941,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                 if dace.Config.get_bool('experimental', 'validate_undefs'):
                     defined_symbols = set(
                         map(str, scope_tree[scope[e.dst]].defined_vars))
-                    undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
+                    undefs = (e.data.subset.free_symbols.keys() -
+                              defined_symbols)
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet subset' %
@@ -4153,7 +4206,9 @@ def scope_symbols(dfg):
         into (iteration variables, symbols used in subsets). """
     iteration_variables = collections.OrderedDict()
     subset_symbols = collections.OrderedDict()
-    sdict = dfg.scope_dict()
+    parent_scopes = dfg.scope_dict(False)
+    sibling_scopes = dfg.scope_dict(True)
+    all_dynamic_symbols = set()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
         if not isinstance(n, dace.graph.nodes.EntryNode):
@@ -4161,10 +4216,10 @@ def scope_symbols(dfg):
         if isinstance(n, dace.graph.nodes.MapEntry):
             # Collect dynamic map range symbols from parent scopes
             dynamic_symbols = set()
-            parent = n
-            while parent is not None:
-                dynamic_symbols |= parent.in_connectors
-                parent = sdict[parent]
+            x = n
+            while x is not None:
+                dynamic_symbols |= x.in_connectors
+                x = parent_scopes[x]
 
             for param in n.params:
                 iteration_variables[param] = dt.Scalar(
@@ -4190,10 +4245,10 @@ def scope_symbols(dfg):
         elif isinstance(n, dace.graph.nodes.ConsumeEntry):
             # Collect dynamic map range symbols from parent scopes
             dynamic_symbols = set()
-            parent = n
-            while parent is not None:
-                dynamic_symbols |= parent.in_connectors
-                parent = sdict[parent]
+            x = n
+            while x is not None:
+                dynamic_symbols |= x.in_connectors
+                x = parent_scopes[x]
 
             # Add PE index as iteration variable
             iteration_variables[n.consume.pe_index] = dt.Scalar(
@@ -4205,6 +4260,29 @@ def scope_symbols(dfg):
         else:
             raise TypeError("Unsupported entry node type: {}".format(
                 type(n).__name__))
+
+        all_dynamic_symbols |= dynamic_symbols
+
+        for sibling_scope in sibling_scopes[n]:
+            for edge in dfg.in_edges(sibling_scope):
+                if edge.data.data:
+                    subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
+                                        for symname, sym in edge.data.subset.free_symbols.items()
+                                        if symname not in iteration_variables)
+                                        
+
+    for sibling_scope in sibling_scopes[None]:
+        for edge in dfg.in_edges(sibling_scope):
+            if edge.data.data:
+                subset_symbols.update((symname, dt.Scalar(sym.dtype)) 
+                                    for symname, sym in edge.data.subset.free_symbols.items()
+                                    if symname not in iteration_variables)
+
+    for x in all_dynamic_symbols:
+        try:
+            del subset_symbols[x]
+        except:
+            pass
     return iteration_variables, subset_symbols
 
 
@@ -4365,6 +4443,51 @@ def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
             parent = sdfg.parent
         sdfg = parent
     return False
+
+
+def devicelevel_block_size(
+        sdfg: SDFG, state: SDFGState,
+        node: dace.graph.nodes.Node) -> Tuple[symbolic.SymExpr]:
+    """ Returns the current thread-block size if the given node is enclosed in
+        a GPU kernel, or None otherwise.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: A tuple of sizes or None if the node is not in device-level 
+                 code.
+    """
+    while sdfg is not None:
+        sdict = state.scope_dict()
+        scope = sdict[node]
+        while scope is not None:
+            if scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                return tuple(scope.map.range.size())
+            elif scope.schedule == dtypes.ScheduleType.GPU_Device:
+                # No thread-block map, use config default
+                return tuple(
+                    int(s) for s in Config.get(
+                        'compiler', 'cuda', 'default_block_size').split(','))
+            elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
+                # Dynamic thread-block map, use configured value
+                return tuple(
+                    int(s)
+                    for s in Config.get('compiler', 'cuda',
+                                        'dynamic_map_block_size').split(','))
+
+            scope = sdict[scope]
+        # Traverse up nested SDFGs
+        if sdfg.parent is not None:
+            if isinstance(sdfg.parent, SDFGState):
+                parent = sdfg.parent.parent
+            else:
+                parent = sdfg.parent
+            state, node = next(
+                (s, n) for s in parent.nodes() for n in s.nodes()
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+        else:
+            parent = sdfg.parent
+        sdfg = parent
+    return None
 
 
 def _replsym(symlist, symrepl):
@@ -4560,7 +4683,7 @@ def _get_optimizer_class(class_override):
     if class_override is None:
         clazz = Config.get("optimizer", "interface")
 
-    if clazz == "" or clazz == False:
+    if clazz == "" or clazz is False:
         return None
 
     result = locate(clazz)

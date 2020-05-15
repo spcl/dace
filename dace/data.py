@@ -4,9 +4,9 @@ import copy as cp
 import sympy as sp
 import numpy
 
-import dace, dace.dtypes as dtypes
+import dace.dtypes as dtypes
 from dace.codegen import cppunparse
-from dace import symbolic
+from dace import symbolic, serialize
 from dace.properties import (Property, make_properties, DictProperty,
                              ReferenceProperty, ShapeProperty, SubsetProperty,
                              SymbolicProperty, TypeClassProperty,
@@ -43,19 +43,19 @@ class Data(object):
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(dtype=dace.dtypes.StorageType,
+    storage = Property(dtype=dtypes.StorageType,
                        desc="Storage location",
-                       choices=dace.dtypes.StorageType,
-                       default=dace.dtypes.StorageType.Default,
+                       choices=dtypes.StorageType,
+                       default=dtypes.StorageType.Default,
                        from_string=lambda x: dtypes.StorageType[x])
-    lifetime = Property(dtype=dace.dtypes.AllocationLifetime,
+    lifetime = Property(dtype=dtypes.AllocationLifetime,
                         desc='Data allocation span',
-                        choices=dace.dtypes.AllocationLifetime,
-                        default=dace.dtypes.AllocationLifetime.Scope,
+                        choices=dtypes.AllocationLifetime,
+                        default=dtypes.AllocationLifetime.Scope,
                         from_string=lambda x: dtypes.AllocationLifetime[x])
     location = DictProperty(
         key_type=str,
-        value_type=dace.symbolic.pystr_to_symbolic,
+        value_type=symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
 
@@ -86,7 +86,7 @@ class Data(object):
         return True
 
     def to_json(self):
-        attrs = dace.serialize.all_properties_to_json(self)
+        attrs = serialize.all_properties_to_json(self)
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
@@ -94,7 +94,7 @@ class Data(object):
 
     @property
     def toplevel(self):
-        return self.lifetime is not dace.dtypes.AllocationLifetime.Scope
+        return self.lifetime is not dtypes.AllocationLifetime.Scope
 
     def copy(self):
         raise RuntimeError(
@@ -129,10 +129,10 @@ class Scalar(Data):
     def __init__(self,
                  dtype,
                  transient=False,
-                 storage=dace.dtypes.StorageType.Default,
+                 storage=dtypes.StorageType.Default,
                  allow_conflicts=False,
                  location=None,
-                 lifetime=dace.dtypes.AllocationLifetime.Scope,
+                 lifetime=dtypes.AllocationLifetime.Scope,
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
@@ -145,8 +145,8 @@ class Scalar(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Scalar(dace.dtypes.int8)
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        ret = Scalar(dtypes.int8)
+        serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
         ret.validate()
@@ -172,6 +172,10 @@ class Scalar(Data):
     def offset(self):
         return [0]
 
+    @property
+    def materialize_func(self):
+        return None
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -181,7 +185,7 @@ class Scalar(Data):
 
     def signature(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
-        if isinstance(self.dtype, dace.callback):
+        if isinstance(self.dtype, dtypes.callback):
             assert name is not None
             return self.dtype.signature(name)
         return str(self.dtype.ctype) + ' ' + name
@@ -211,11 +215,11 @@ def set_materialize_func(obj, val):
         immaterial.
     """
     if val is not None:
-        if (obj.storage != dace.dtypes.StorageType.Default
-                and obj.storage != dace.dtypes.StorageType.Immaterial):
+        if (obj.storage != dtypes.StorageType.Default
+                and obj.storage != dtypes.StorageType.Immaterial):
             raise ValueError("Immaterial array must have immaterial storage, "
                              "but has: {}".format(obj.storage))
-        obj.storage = dace.dtypes.StorageType.Immaterial
+        obj.storage = dtypes.StorageType.Immaterial
     obj._materialize_func = val
 
 
@@ -270,12 +274,12 @@ class Array(Data):
                  materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
-                 storage=dace.dtypes.StorageType.Default,
+                 storage=dtypes.StorageType.Default,
                  location=None,
                  strides=None,
                  offset=None,
                  may_alias=False,
-                 lifetime=dace.dtypes.AllocationLifetime.Scope,
+                 lifetime=dtypes.AllocationLifetime.Scope,
                  alignment=0,
                  debuginfo=None,
                  total_size=None):
@@ -316,7 +320,7 @@ class Array(Data):
                      self.total_size)
 
     def to_json(self):
-        attrs = dace.serialize.all_properties_to_json(self)
+        attrs = serialize.all_properties_to_json(self)
 
         # Take care of symbolic expressions
         attrs['strides'] = list(map(str, attrs['strides']))
@@ -331,8 +335,8 @@ class Array(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Array(dace.dtypes.int8, ())
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        ret = Array(dtypes.int8, ())
+        serialize.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
 
@@ -462,10 +466,10 @@ class Stream(Data):
                  buffer_size,
                  shape=None,
                  transient=False,
-                 storage=dace.dtypes.StorageType.Default,
+                 storage=dtypes.StorageType.Default,
                  location=None,
                  offset=None,
-                 lifetime=dace.dtypes.AllocationLifetime.Scope,
+                 lifetime=dtypes.AllocationLifetime.Scope,
                  debuginfo=None):
 
         if shape is None:
@@ -485,7 +489,7 @@ class Stream(Data):
                                      location, lifetime, debuginfo)
 
     def to_json(self):
-        attrs = dace.serialize.all_properties_to_json(self)
+        attrs = serialize.all_properties_to_json(self)
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
@@ -497,8 +501,8 @@ class Stream(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Stream(dace.dtypes.int8, 1, 1)
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        ret = Stream(dtypes.int8, 1, 1)
+        serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
         ret.validate()
@@ -542,8 +546,7 @@ class Stream(Data):
     def signature(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
         if self.storage in [
-                dace.dtypes.StorageType.GPU_Global,
-                dace.dtypes.StorageType.GPU_Shared
+                dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared
         ]:
             return 'dace::GPUStream<%s, %s> %s' % (str(
                 self.dtype.ctype), 'true' if sp.log(
@@ -558,9 +561,8 @@ class Stream(Data):
         ]
 
     def size_string(self):
-        return (" * ".join([
-            cppunparse.pyexpr2cpp(dace.symbolic.symstr(s)) for s in self.shape
-        ]))
+        return (" * ".join(
+            [cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in self.shape]))
 
     def is_stream_array(self):
         return _prod(self.shape) != 1

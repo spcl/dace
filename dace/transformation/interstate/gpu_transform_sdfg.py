@@ -129,12 +129,12 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         output_nodes.append((node.data, node.desc(sdfg)))
                 elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
                     if not isinstance(node,
-                                      (nodes.EmptyTasklet, nodes.LibraryNode)):
+                                      (nodes.EmptyTasklet, nodes.LibraryNode, nodes.NestedSDFG)):
                         global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None and e.data.wcr_identity is None:
+                if e.data.wcr is not None:
                     if (e.data.data not in input_nodes
                             and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append(
@@ -294,15 +294,16 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 if len(in_edges) == 0:
                     state.add_nedge(me, gcode, memlet.EmptyMemlet())
         #######################################################
-        # Step 6: Change all top-level maps and Reduce nodes to GPU schedule
+        # Step 6: Change all top-level maps and library nodes to GPU schedule
 
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.Reduce)):
+                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, nodes.EntryNode)
+                    elif (isinstance(node,
+                                     (nodes.EntryNode, nodes.LibraryNode))
                           and self.sequential_innermaps):
                         node.schedule = dtypes.ScheduleType.Sequential
 

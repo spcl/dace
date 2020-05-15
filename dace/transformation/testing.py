@@ -79,6 +79,9 @@ class TransformationTester(Optimizer):
                 if self.validate:
                     new_sdfg.validate()
 
+                # Expand library nodes
+                new_sdfg.expand_library_nodes()
+
                 # Generate code
                 if self.generate_code:
                     new_sdfg.generate_code()

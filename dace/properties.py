@@ -886,8 +886,13 @@ class CodeBlock(object):
         language is Python, or a string otherwise.
     """
     def __init__(self,
-                 code: Union[str, List[ast.AST]],
+                 code: Union[str, List[ast.AST], 'CodeBlock'],
                  language: dace.dtypes.Language = dace.dtypes.Language.Python):
+        if isinstance(code, CodeBlock):
+            self.code = code.code
+            self.language = code.language
+            return
+
         self.language = language
 
         # Convert to the right type
@@ -912,6 +917,44 @@ class CodeBlock(object):
             self.code = ast.parse(code).body
         else:
             self.code = code
+
+    def to_json(self):
+        # Two roundtrips to avoid issues in AST parsing/unparsing of negative
+        # numbers, i.e., "(-1)" becomes "(- 1)"
+        if self.language == dace.dtypes.Language.Python and self.code is not None:
+            code = unparse(ast.parse(self.as_string))
+        else:
+            code = self.as_string
+
+        ret = {'string_data': code, 'language': self.language.name}
+        return ret
+
+    @staticmethod
+    def from_json(tmp, sdfg=None):
+        if tmp is None:
+            return None
+        try:
+            lang = tmp['language']
+        except:
+            lang = None
+
+        if lang == "NoCode":
+            return None
+
+        if lang is None:
+            lang = dace.dtypes.Language.Python
+        elif lang.endswith("Python"):
+            lang = dace.dtypes.Language.Python
+        elif lang.endswith("CPP"):
+            lang = dace.dtypes.Language.CPP
+
+        try:
+            cdata = tmp['string_data']
+        except:
+            print("UNRECOGNIZED CODE JSON: " + str(tmp))
+            cdata = ""
+
+        return CodeBlock(cdata, lang)
 
 
 class CodeProperty(Property):
