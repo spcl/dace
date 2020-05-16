@@ -129,7 +129,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         output_nodes.append((node.data, node.desc(sdfg)))
                 elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
                     if not isinstance(node,
-                                      (nodes.EmptyTasklet, nodes.LibraryNode)):
+                                      (nodes.EmptyTasklet, nodes.LibraryNode, nodes.NestedSDFG)):
                         global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity

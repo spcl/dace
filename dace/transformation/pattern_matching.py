@@ -235,8 +235,8 @@ class ExpandTransformation(Transformation):
         expansion.environments = copy.copy(
             set(map(lambda a: a.__name__,
                     type(self).environments)))
-        dace.graph.nxutil.change_edge_dest(state, node, expansion)
-        dace.graph.nxutil.change_edge_src(state, node, expansion)
+        nxutil.change_edge_dest(state, node, expansion)
+        nxutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
 

@@ -73,9 +73,10 @@ def register_transformation(transformation_cls, library):
        automatically for transformations defined in a DaCe library module,
        but this function can be used to add additional transformations from an
        external context."""
-    if not isinstance(transformation_cls, Transformation):
+
+    if not issubclass(transformation_cls, Transformation):
         raise TypeError("Expected Transformation, got: {}".format(
-            type(transformation_cls).__name__))
+            transformation_cls.__name__))
     if not isinstance(library, types.ModuleType):
         raise TypeError("Expected Python module, got: {}".format(
             type(library).__name__))
