@@ -13,6 +13,7 @@ import subprocess
 import re
 from typing import Any, Dict, List
 import numpy as np
+import sympy as sp
 import warnings
 
 import dace
@@ -209,17 +210,29 @@ class CompiledSDFG(object):
                 raise TypeError(
                     'Passing an object (type %s) to an array in argument "%s"'
                     % (type(arg).__name__, a))
-            if _is_array(arg) and not isinstance(atype, dt.Array):
+            elif _is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
-            if not isinstance(atype, dt.Array) and not isinstance(
+            elif not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg, atype.dtype.type) and not (
-                            isinstance(arg, symbolic.symbol)
-                            and arg.dtype == atype.dtype):
-                print('WARNING: Casting scalar argument "%s" from %s to %s' %
-                      (a, type(arg).__name__, atype.dtype.type))
+                        arg,
+                        (atype.dtype.type,
+                         sp.Basic)) and not (isinstance(arg, symbolic.symbol)
+                                             and arg.dtype == atype.dtype):
+                if isinstance(arg, int) and atype.dtype.type == np.int64:
+                    pass
+                elif isinstance(arg, float) and atype.dtype.type == np.float64:
+                    pass
+                else:
+                    print(
+                        'WARNING: Casting scalar argument "%s" from %s to %s' %
+                        (a, type(arg).__name__, atype.dtype.type))
+            elif isinstance(
+                    atype,
+                    dt.Array) and atype.dtype.as_numpy_dtype() != arg.dtype:
+                print('WARNING: Passing %s array argument "%s" to a %s array' %
+                      (arg.dtype, a, atype.dtype.type.__name__))
 
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):

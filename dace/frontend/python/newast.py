@@ -1988,8 +1988,8 @@ class ProgramVisitor(ExtNodeVisitor):
             op_array = self.sdfg.arrays[op_name]
             op_subset = subsets.Range.from_array(op_array)
 
-        state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
-                                                        c=node.col_offset))
+        state = self._add_state("augassign_{l}_{c}".format(l=node.lineno,
+                                                           c=node.col_offset))
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
