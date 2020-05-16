@@ -52,7 +52,7 @@ class Node(object):
 
         try:
             scope_entry_node = parent.entry_node(self)
-        except RuntimeError:
+        except (RuntimeError, StopIteration):
             scope_entry_node = None
 
         if scope_entry_node is not None:
@@ -67,7 +67,7 @@ class Node(object):
         if isinstance(self, EntryNode):
             try:
                 scope_exit_node = str(parent.node_id(parent.exit_node(self)))
-            except RuntimeError:
+            except (RuntimeError, StopIteration):
                 scope_exit_node = None
 
         retdict = {
