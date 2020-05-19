@@ -3,7 +3,7 @@
 import networkx as nx
 
 from dace import dtypes, registry, sdfg
-from dace.graph import edges, nodes, nxutil
+from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.config import Config
 
@@ -19,7 +19,7 @@ class StateFusion(pattern_matching.Transformation):
 
     _states_fused = 0
     _first_state = sdfg.SDFGState()
-    _edge = edges.InterstateEdge()
+    _edge = sdfg.InterstateEdge()
     _second_state = sdfg.SDFGState()
 
     @staticmethod

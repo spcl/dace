@@ -139,9 +139,8 @@ def make_nested_sdfg(parent):
     compute_state = make_compute_state(sdfg)
     finalize_state = make_write_buffer_state(sdfg)
 
-    sdfg.add_edge(init_state, compute_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(compute_state, finalize_state,
-                  dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(init_state, compute_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, finalize_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
@@ -179,8 +178,8 @@ def make_sdfg(specialize):
 
     copy_to_host_state = make_copy_to_host_state(sdfg)
 
-    sdfg.add_edge(copy_to_fpga_state, state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(state, copy_to_host_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(copy_to_fpga_state, state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(state, copy_to_host_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 

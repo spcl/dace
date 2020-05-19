@@ -5,7 +5,7 @@ import itertools
 
 from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
-from dace.graph import edges, nodes, nxutil
+from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop

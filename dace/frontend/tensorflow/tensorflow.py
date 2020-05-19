@@ -199,23 +199,22 @@ class TFSession:
         self.training = True
 
         # add edges between states
-        sdfg.add_edge(
-            s0, s1,
-            dace.graph.edges.InterstateEdge(assignments=dict(__dacet1=0)))
+        sdfg.add_edge(s0, s1,
+                      dace.sdfg.InterstateEdge(assignments=dict(__dacet1=0)))
         sdfg.add_edge(
             s1,
             reinitState,
-            dace.graph.edges.InterstateEdge(
+            dace.sdfg.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 <" + str(iterations - 1),
                     dace.dtypes.Language.Python),
                 assignments={"__dacet1": "__dacet1+1"},
             ),
         )
-        sdfg.add_edge(reinitState, s1, dace.graph.edges.InterstateEdge())
+        sdfg.add_edge(reinitState, s1, dace.sdfg.InterstateEdge())
         sdfg.add_edge(
             s1, s2,
-            dace.graph.edges.InterstateEdge(
+            dace.sdfg.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 >= " +
                     str(iterations - 1), dace.dtypes.Language.Python)))

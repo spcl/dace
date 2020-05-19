@@ -2300,7 +2300,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if output_indirection:
                     self.sdfg.add_edge(self.last_state, output_indirection,
-                                       dace.graph.edges.InterstateEdge())
+                                       dace.sdfg.InterstateEdge())
                     self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):

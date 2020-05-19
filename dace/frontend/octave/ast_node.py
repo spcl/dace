@@ -294,7 +294,7 @@ class AST_Statements(AST_Node):
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
                 if prevstate is not None:
-                    edge = dace.graph.edges.InterstateEdge()
+                    edge = dace.sdfg.InterstateEdge()
                     sdfg.add_edge(prevstate, newstate, edge)
                 if last_state is None:
                     prevstate = newstate

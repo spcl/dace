@@ -1,5 +1,6 @@
 from dace.sdfg.sdfg import (
     SDFG,  # sdfg.py
+    InterstateEdge,
     SDFGState,  # state.py
     SubgraphView,  # graph.py
 
@@ -16,17 +17,16 @@ from dace.sdfg.sdfg import (
 
     # scopes.py
     ScopeSubgraphView,
-    scope_contains_scope,
     is_devicelevel,
     devicelevel_block_size,
 
     # replace.py
     replace,
-    replace_properties,
+    replace_properties)
 
-    # validation.py
-    InvalidSDFGError,
-    InvalidSDFGNodeError,
-    InvalidSDFGEdgeError,
-    InvalidSDFGInterstateEdgeError,
-    NodeNotExpandedError)
+from dace.sdfg.scope import scope_contains_scope
+
+from dace.sdfg.validation import (InvalidSDFGError, InvalidSDFGNodeError,
+                                  InvalidSDFGEdgeError,
+                                  InvalidSDFGInterstateEdgeError,
+                                  NodeNotExpandedError)

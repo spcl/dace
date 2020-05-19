@@ -1,7 +1,7 @@
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.graph import nodes, nxutil, edges as ed
+from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 
@@ -187,7 +187,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         excluded_copyin = self.exclude_copyin.split(',')
 
         copyin_state = sdfg.add_state(sdfg.label + '_copyin')
-        sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
+        sdfg.add_edge(copyin_state, start_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(input_nodes):
             if nname in excluded_copyin or nname not in cloned_arrays:
@@ -207,7 +207,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         copyout_state = sdfg.add_state(sdfg.label + '_copyout')
         for state in end_states:
-            sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
+            sdfg.add_edge(state, copyout_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(output_nodes):
             if nname in excluded_copyout or nname not in cloned_arrays:
@@ -326,7 +326,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 for e in sdfg.out_edges(state):
                     nxutil.change_edge_src(sdfg, state, co_state)
                 # Add unconditional edge to interim state
-                sdfg.add_edge(state, co_state, ed.InterstateEdge())
+                sdfg.add_edge(state, co_state, sd.InterstateEdge())
 
                 # Add copy-out nodes
                 for nname in arrays_used:

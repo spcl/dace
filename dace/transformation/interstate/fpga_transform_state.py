@@ -2,7 +2,7 @@
 
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
-from dace.graph import edges, nodes, nxutil
+from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 
 
@@ -199,7 +199,7 @@ class FPGATransformState(pattern_matching.Transformation):
 
             sdfg.add_node(pre_state)
             nxutil.change_edge_dest(sdfg, state, pre_state)
-            sdfg.add_edge(pre_state, state, edges.InterstateEdge())
+            sdfg.add_edge(pre_state, state, sd.InterstateEdge())
 
         if output_nodes:
 
@@ -243,7 +243,7 @@ class FPGATransformState(pattern_matching.Transformation):
 
             sdfg.add_node(post_state)
             nxutil.change_edge_src(sdfg, state, post_state)
-            sdfg.add_edge(state, post_state, edges.InterstateEdge())
+            sdfg.add_edge(state, post_state, sd.InterstateEdge())
 
         veclen_ = 1
 
