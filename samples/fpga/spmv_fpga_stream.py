@@ -10,9 +10,8 @@ import pdb
 import select
 import sys
 
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, InterstateEdge
 from dace.memlet import Memlet
-from dace.graph.edges import InterstateEdge
 from dace.dtypes import AllocationLifetime, ScheduleType, StorageType, Language
 from dace.properties import CodeProperty
 

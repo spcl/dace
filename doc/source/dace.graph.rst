@@ -12,14 +12,6 @@ dace.graph.dot module
    :undoc-members:
    :show-inheritance:
 
-dace.graph.edges module
------------------------
-
-.. automodule:: dace.graph.edges
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.graph.graph module
 -----------------------
 
