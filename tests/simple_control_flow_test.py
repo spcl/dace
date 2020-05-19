@@ -59,5 +59,4 @@ def myprogram(A, B, tol):
 
 
 if __name__ == '__main__':
-    dace.compile(myprogram, dace.float32[W, H], dace.float32[H, W],
-                 dace.float32[1])
+    myprogram.compile(dace.float32[W, H], dace.float32[H, W], dace.float32[1])

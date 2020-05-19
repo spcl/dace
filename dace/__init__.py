@@ -7,7 +7,7 @@ from .frontend.python.ndloop import ndrange
 from .frontend.operations import *
 
 from .config import Config
-from .sdfg import compile, SDFG, SDFGState
+from .sdfg import SDFG, SDFGState
 from .memlet import Memlet, EmptyMemlet
 from .graph import nodes
 from .graph.edges import InterstateEdge
