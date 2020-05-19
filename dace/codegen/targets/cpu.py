@@ -7,7 +7,7 @@ from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.cpp import *
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_devicelevel, is_array_stream_view,
                        NodeNotExpandedError)

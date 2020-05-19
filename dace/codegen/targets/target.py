@@ -6,7 +6,8 @@ import warnings
 
 import dace
 from dace import dtypes
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace.sdfg.utils import dfs_topological_sort
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.registry import extensible_enum, make_registry
 
@@ -445,7 +446,7 @@ class TargetDispatcher(object):
             assert len(start_nodes) == 1
             nodes_to_skip.add(start_nodes[0])
 
-        for v in nxutil.dfs_topological_sort(dfg, start_nodes):
+        for v in dfs_topological_sort(dfg, start_nodes):
             if v in nodes_to_skip:
                 continue
 

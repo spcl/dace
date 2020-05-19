@@ -1,7 +1,8 @@
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 
@@ -324,7 +325,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
                 # Reconnect outgoing edges to after interim copyout state
                 for e in sdfg.out_edges(state):
-                    nxutil.change_edge_src(sdfg, state, co_state)
+                    sdutil.change_edge_src(sdfg, state, co_state)
                 # Add unconditional edge to interim state
                 sdfg.add_edge(state, co_state, sd.InterstateEdge())
 

@@ -44,10 +44,10 @@ dace.graph.nodes module
    :undoc-members:
    :show-inheritance:
 
-dace.graph.nxutil module
+dace.sdfg.utils module
 ------------------------
 
-.. automodule:: dace.graph.nxutil
+.. automodule:: dace.sdfg.utils
    :members:
    :undoc-members:
    :show-inheritance:

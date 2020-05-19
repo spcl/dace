@@ -3,9 +3,10 @@
 
 from copy import deepcopy as dcpy
 from dace import dtypes, registry, symbolic, subsets
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from typing import List, Union
 import networkx as nx
@@ -48,7 +49,7 @@ class MapFusion(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(
                 MapFusion._first_map_exit,
                 MapFusion._some_array,
                 MapFusion._second_map_entry,

@@ -23,7 +23,7 @@ from dace import data, subsets as sbs, dtypes
 from dace import registry, subsets
 import pydoc
 import warnings
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
 from dace.transformation import pattern_matching as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA

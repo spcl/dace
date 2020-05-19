@@ -3,7 +3,8 @@
 from typing import Dict
 import dace
 from dace import dtypes, registry, subsets, symbolic
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace.sdfg import utils as sdutil
 from dace.graph.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import pattern_matching as pm
 
@@ -25,7 +26,7 @@ class MapExpansion(pm.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapExpansion._map_entry)]
+        return [sdutil.node_path_graph(MapExpansion._map_entry)]
 
     @staticmethod
     def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,

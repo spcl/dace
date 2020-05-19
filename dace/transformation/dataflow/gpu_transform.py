@@ -1,7 +1,8 @@
 """ Contains the GPU Transform Map transformation. """
 
 from dace import data, dtypes, sdfg as sd, registry
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace.sdfg import utils as sdutil
 from dace.graph.graph import SubgraphView
 from dace.transformation import pattern_matching, helpers
 from dace.properties import Property, make_properties
@@ -41,8 +42,8 @@ class GPUTransformMap(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(GPUTransformMap._map_entry),
-            nxutil.node_path_graph(GPUTransformMap._reduce)
+            sdutil.node_path_graph(GPUTransformMap._map_entry),
+            sdutil.node_path_graph(GPUTransformMap._reduce)
         ]
 
     @staticmethod

@@ -7,9 +7,10 @@ import dace
 import inspect
 from typing import Dict
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import utils as sdutil
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
-from dace.graph import labeling, graph as gr, nodes as nd, nxutil
+from dace.graph import labeling, graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
@@ -185,7 +186,7 @@ class ExpandTransformation(Transformation):
     """
     @classmethod
     def expressions(clc):
-        return [nxutil.node_path_graph(clc._match_node)]
+        return [sdutil.node_path_graph(clc._match_node)]
 
     @staticmethod
     def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
@@ -235,8 +236,8 @@ class ExpandTransformation(Transformation):
         expansion.environments = copy.copy(
             set(map(lambda a: a.__name__,
                     type(self).environments)))
-        nxutil.change_edge_dest(state, node, expansion)
-        nxutil.change_edge_src(state, node, expansion)
+        sdutil.change_edge_dest(state, node, expansion)
+        sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
 

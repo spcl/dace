@@ -4,7 +4,7 @@ import sympy as sp
 import networkx as nx
 
 from dace import sdfg as sd
-from dace.graph import nxutil
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -78,7 +78,7 @@ class DetectLoop(pattern_matching.Transformation):
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(sdfg.nx,
                                                        sdfg.start_state)
-        loop_nodes = nxutil.dfs_topological_sort(
+        loop_nodes = sdutil.dfs_topological_sort(
             sdfg, sources=[begin], condition=lambda _, child: child != guard)
         backedge_found = False
         for node in loop_nodes:

@@ -5,7 +5,8 @@ import itertools
 
 from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -27,7 +28,7 @@ class DoubleBuffering(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(DoubleBuffering._map_entry,
+            sdutil.node_path_graph(DoubleBuffering._map_entry,
                                    DoubleBuffering._transient)
         ]
 

@@ -4,7 +4,8 @@
 import dace
 from dace import data, registry, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.graph import nodes, nxutil
+from dace.graph import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
@@ -26,7 +27,7 @@ class MapToForLoop(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapToForLoop._map_entry)]
+        return [sdutil.node_path_graph(MapToForLoop._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):

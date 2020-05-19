@@ -7,7 +7,8 @@ from typing import List, Optional, Tuple
 
 from dace import dtypes, registry, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.graph import graph as gr, nodes, nxutil
+from dace.graph import graph as gr, nodes
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import DetectLoop
 
@@ -131,7 +132,7 @@ class LoopUnroll(DetectLoop):
 
         # Get loop states
         loop_states = list(
-            nxutil.dfs_topological_sort(
+            sdutil.dfs_topological_sort(
                 sdfg,
                 sources=[begin],
                 condition=lambda _, child: child != guard))
